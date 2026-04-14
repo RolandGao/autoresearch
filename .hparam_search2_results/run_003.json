@@ -1,0 +1,23 @@
+{
+  "depth": 8,
+  "description": "linear lr 0.5 wd 0.3",
+  "device_batch_size": 64,
+  "grad_accum_steps": 1,
+  "hparams": {
+    "end_ratio": 0.0,
+    "lr_multiplier": 0.5,
+    "schedule_name": "linear",
+    "total_batch_size": 131072,
+    "warmdown_ratio": 0.7,
+    "warmup_ratio": 0.0,
+    "weight_decay": 0.3
+  },
+  "mfu_percent": 13.07274212439723,
+  "num_params_M": 50.332176,
+  "num_steps": 1249,
+  "peak_vram_mb": 22652.44873046875,
+  "total_seconds": 343.8447058200836,
+  "total_tokens_M": 163.708928,
+  "training_seconds": 300.15050649642944,
+  "val_bpb": 1.0551551242608994
+}

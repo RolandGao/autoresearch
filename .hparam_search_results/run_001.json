@@ -1,0 +1,21 @@
+{
+  "depth": 8,
+  "description": "warmdown 0.5",
+  "device_batch_size": 64,
+  "grad_accum_steps": 1,
+  "hparams": {
+    "lr_multiplier": 1.0,
+    "total_batch_size": 131072,
+    "warmdown_ratio": 0.5,
+    "warmup_ratio": 0.0,
+    "weight_decay": 0.2
+  },
+  "mfu_percent": 13.08825570985443,
+  "num_params_M": 50.332176,
+  "num_steps": 1250,
+  "peak_vram_mb": 22652.44873046875,
+  "total_seconds": 344.1238353252411,
+  "total_tokens_M": 163.84,
+  "training_seconds": 300.03670144081116,
+  "val_bpb": 1.0504699984435724
+}

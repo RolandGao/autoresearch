@@ -1,0 +1,78 @@
+Hyperparameter search log
+started: 2026-04-13 21:46:06
+metric: lower val_bpb is better
+base: warmdown=0.5, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+
+## Search warmdown_ratio
+stage_base: warmdown=0.5, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+RUN 001 warmdown 0.5
+  hparams: warmdown=0.5, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+  stats: val_bpb=1.050470, train_s=300.0, total_s=344.1, steps=1250, tokens_M=163.8, mfu=13.09%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 002 warmdown 0.7
+  hparams: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+  stats: val_bpb=1.049182, train_s=300.2, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 003 warmdown 0.9
+  hparams: warmdown=0.9, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+  stats: val_bpb=1.050098, train_s=300.1, total_s=344.2, steps=1248, tokens_M=163.6, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+LOCK warmdown_ratio=0.7
+  best_stats: val_bpb=1.049182, train_s=300.2, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+
+## Search warmup_ratio
+stage_base: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+REUSE warmup 0
+  hparams: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+  stats: val_bpb=1.049182, train_s=300.2, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 004 warmup 0.05
+  hparams: warmdown=0.7, warmup=0.05, batch=131072, lr_mult=1.0, wd=0.2
+  stats: val_bpb=1.052948, train_s=300.2, total_s=344.3, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 005 warmup 0.1
+  hparams: warmdown=0.7, warmup=0.1, batch=131072, lr_mult=1.0, wd=0.2
+  stats: val_bpb=1.053333, train_s=300.1, total_s=343.8, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+LOCK warmup_ratio=0
+  best_stats: val_bpb=1.049182, train_s=300.2, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+
+## Search total_batch_size
+stage_base: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+RUN 006 batch 262144
+  hparams: warmdown=0.7, warmup=0.0, batch=262144, lr_mult=1.0, wd=0.2
+  stats: val_bpb=1.076166, train_s=300.2, total_s=347.0, steps=634, tokens_M=166.2, mfu=13.16%, vram_mb=22804.5, device_batch=64, grad_accum=2
+REUSE batch 131072
+  hparams: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+  stats: val_bpb=1.049182, train_s=300.2, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 007 batch 65536
+  hparams: warmdown=0.7, warmup=0.0, batch=65536, lr_mult=1.0, wd=0.2
+  stats: val_bpb=1.052665, train_s=300.0, total_s=365.3, steps=2413, tokens_M=158.1, mfu=12.68%, vram_mb=11548.9, device_batch=32, grad_accum=1
+LOCK total_batch_size=131072
+  best_stats: val_bpb=1.049182, train_s=300.2, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+
+## Search lr_multiplier
+stage_base: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+RUN 008 lr 0.5
+  hparams: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=0.5, wd=0.2
+  stats: val_bpb=1.056236, train_s=300.2, total_s=344.3, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+REUSE lr 1
+  hparams: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+  stats: val_bpb=1.049182, train_s=300.2, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 009 lr 1.5
+  hparams: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.5, wd=0.2
+  stats: val_bpb=1.048820, train_s=300.1, total_s=344.4, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+LOCK lr_multiplier=1.5
+  best_stats: val_bpb=1.048820, train_s=300.1, total_s=344.4, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+
+## Search weight_decay
+stage_base: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.5, wd=0.2
+RUN 010 wd 0.1
+  hparams: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.5, wd=0.1
+  stats: val_bpb=1.045283, train_s=300.1, total_s=343.8, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+REUSE wd 0.2
+  hparams: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.5, wd=0.2
+  stats: val_bpb=1.048820, train_s=300.1, total_s=344.4, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 011 wd 0.3
+  hparams: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.5, wd=0.3
+  stats: val_bpb=1.052584, train_s=300.2, total_s=344.2, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+LOCK weight_decay=0.1
+  best_stats: val_bpb=1.045283, train_s=300.1, total_s=343.8, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+
+## Final best
+hparams: warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.5, wd=0.1
+stats: val_bpb=1.045283, train_s=300.1, total_s=343.8, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1

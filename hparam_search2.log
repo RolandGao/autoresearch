@@ -1,0 +1,75 @@
+Hyperparameter product search log
+started: 2026-04-13 23:41:51
+metric: lower val_bpb is better
+fixed: batch=131072, warmup=0.0
+mode: Cartesian product under each schedule
+
+## Product search linear
+grid: schedule=linear, end_ratio=0.0, warmdown=0.7, warmup=0.0, batch=131072, lr_mult=[0.5, 1.0, 1.5], wd=[0.1, 0.2, 0.3]
+RUN 001 linear lr 0.5 wd 0.1
+  hparams: schedule=linear, end_ratio=0.0, warmdown=0.7, warmup=0.0, batch=131072, lr_mult=0.5, wd=0.1
+  stats: val_bpb=1.058055, train_s=300.2, total_s=344.4, steps=1251, tokens_M=164.0, mfu=13.09%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 002 linear lr 0.5 wd 0.2
+  hparams: schedule=linear, end_ratio=0.0, warmdown=0.7, warmup=0.0, batch=131072, lr_mult=0.5, wd=0.2
+  stats: val_bpb=1.056181, train_s=300.2, total_s=344.4, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 003 linear lr 0.5 wd 0.3
+  hparams: schedule=linear, end_ratio=0.0, warmdown=0.7, warmup=0.0, batch=131072, lr_mult=0.5, wd=0.3
+  stats: val_bpb=1.055155, train_s=300.2, total_s=343.8, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 004 linear lr 1 wd 0.1
+  hparams: schedule=linear, end_ratio=0.0, warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.1
+  stats: val_bpb=1.048193, train_s=300.0, total_s=344.3, steps=1248, tokens_M=163.6, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 005 linear lr 1 wd 0.2
+  hparams: schedule=linear, end_ratio=0.0, warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+  stats: val_bpb=1.049442, train_s=300.1, total_s=344.2, steps=1248, tokens_M=163.6, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 006 linear lr 1 wd 0.3
+  hparams: schedule=linear, end_ratio=0.0, warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.3
+  stats: val_bpb=1.049532, train_s=300.2, total_s=344.4, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 007 linear lr 1.5 wd 0.1
+  hparams: schedule=linear, end_ratio=0.0, warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.5, wd=0.1
+  stats: val_bpb=1.045133, train_s=300.2, total_s=344.5, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 008 linear lr 1.5 wd 0.2
+  hparams: schedule=linear, end_ratio=0.0, warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.5, wd=0.2
+  stats: val_bpb=1.048785, train_s=300.0, total_s=344.0, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 009 linear lr 1.5 wd 0.3
+  hparams: schedule=linear, end_ratio=0.0, warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.5, wd=0.3
+  stats: val_bpb=1.052623, train_s=300.1, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+BEST linear
+  hparams: schedule=linear, end_ratio=0.0, warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.5, wd=0.1
+  stats: val_bpb=1.045133, train_s=300.2, total_s=344.5, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+
+## Product search exponential
+grid: schedule=exponential, end_ratio=0.01, warmdown=1.0, warmup=0.0, batch=131072, lr_mult=[1.0, 2.0, 3.0], wd=[0.1, 0.2, 0.3]
+RUN 010 exponential lr 1 wd 0.1
+  hparams: schedule=exponential, end_ratio=0.01, warmdown=1.0, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.1
+  stats: val_bpb=1.087589, train_s=300.1, total_s=344.2, steps=1248, tokens_M=163.6, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 011 exponential lr 1 wd 0.2
+  hparams: schedule=exponential, end_ratio=0.01, warmdown=1.0, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.2
+  stats: val_bpb=1.085714, train_s=300.1, total_s=343.9, steps=1248, tokens_M=163.6, mfu=13.06%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 012 exponential lr 1 wd 0.3
+  hparams: schedule=exponential, end_ratio=0.01, warmdown=1.0, warmup=0.0, batch=131072, lr_mult=1.0, wd=0.3
+  stats: val_bpb=1.077417, train_s=300.1, total_s=344.1, steps=1248, tokens_M=163.6, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 013 exponential lr 2 wd 0.1
+  hparams: schedule=exponential, end_ratio=0.01, warmdown=1.0, warmup=0.0, batch=131072, lr_mult=2.0, wd=0.1
+  stats: val_bpb=1.067957, train_s=300.1, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 014 exponential lr 2 wd 0.2
+  hparams: schedule=exponential, end_ratio=0.01, warmdown=1.0, warmup=0.0, batch=131072, lr_mult=2.0, wd=0.2
+  stats: val_bpb=1.063753, train_s=300.1, total_s=344.3, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 015 exponential lr 2 wd 0.3
+  hparams: schedule=exponential, end_ratio=0.01, warmdown=1.0, warmup=0.0, batch=131072, lr_mult=2.0, wd=0.3
+  stats: val_bpb=1.061869, train_s=300.0, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 016 exponential lr 3 wd 0.1
+  hparams: schedule=exponential, end_ratio=0.01, warmdown=1.0, warmup=0.0, batch=131072, lr_mult=3.0, wd=0.1
+  stats: val_bpb=1.066790, train_s=300.1, total_s=344.1, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 017 exponential lr 3 wd 0.2
+  hparams: schedule=exponential, end_ratio=0.01, warmdown=1.0, warmup=0.0, batch=131072, lr_mult=3.0, wd=0.2
+  stats: val_bpb=1.063220, train_s=300.1, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+RUN 018 exponential lr 3 wd 0.3
+  hparams: schedule=exponential, end_ratio=0.01, warmdown=1.0, warmup=0.0, batch=131072, lr_mult=3.0, wd=0.3
+  stats: val_bpb=1.062759, train_s=300.1, total_s=344.4, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+BEST exponential
+  hparams: schedule=exponential, end_ratio=0.01, warmdown=1.0, warmup=0.0, batch=131072, lr_mult=2.0, wd=0.3
+  stats: val_bpb=1.061869, train_s=300.0, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+
+## Final best
+hparams: schedule=linear, end_ratio=0.0, warmdown=0.7, warmup=0.0, batch=131072, lr_mult=1.5, wd=0.1
+stats: val_bpb=1.045133, train_s=300.2, total_s=344.5, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1

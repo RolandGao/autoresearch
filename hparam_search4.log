@@ -1,0 +1,241 @@
+H100-delta ablation search log
+started: 2026-04-14 02:33:52
+metric: lower val_bpb is better
+baseline: train.py settings copied into train3.py
+mode: one-change ablations plus requested interaction checks
+python: /venv/main/bin/python
+
+BASELINE HPARAMS: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+
+## baseline_train_py
+note: literal train.py baseline
+changes: none
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 001
+stats: val_bpb=1.045142, train_s=300.0, total_s=344.1, steps=1252, tokens_M=164.1, mfu=13.11%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: already in baseline / duplicate
+
+## depth9_aspect56
+note: Depth 8 -> 9 with aspect ratio 56, preserving dim=512
+changes: depth: 8->9, aspect_ratio: 64->56
+hparams: depth=9, aspect_ratio=56, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 002
+stats: val_bpb=1.049523, train_s=300.2, total_s=365.7, steps=1126, tokens_M=147.6, mfu=13.32%, vram_mb=25274.5, device_batch=64, grad_accum=1
+verdict: regressed (+0.004381 bpb)
+
+## window_pattern_ssssl
+note: Window pattern SSSL -> SSSSL
+changes: window_pattern: SSSL->SSSSL
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 003
+stats: val_bpb=1.048599, train_s=300.2, total_s=361.7, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.003457 bpb)
+
+## depth9_plus_window_ssssl
+note: Combo check: depth/aspect plus SSSSL window pattern
+changes: depth: 8->9, aspect_ratio: 64->56, window_pattern: SSSL->SSSSL
+hparams: depth=9, aspect_ratio=56, head_dim=128, window_pattern=SSSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 004
+stats: val_bpb=1.048636, train_s=300.1, total_s=365.6, steps=1129, tokens_M=148.0, mfu=13.05%, vram_mb=25274.5, device_batch=64, grad_accum=1
+verdict: regressed (+0.003494 bpb)
+
+## short_window_seq_div8
+note: Short window seq_len/2 -> seq_len/8
+changes: short_window_div: 2->8
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=8, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 005
+stats: val_bpb=1.042524, train_s=300.1, total_s=360.0, steps=1349, tokens_M=176.8, mfu=12.46%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: worked (-0.002618 bpb)
+
+## rope_base_200k
+note: RoPE base 10K -> 200K
+changes: rope_base: 10000->200000
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=200000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 006
+stats: val_bpb=1.048015, train_s=300.1, total_s=344.1, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.002873 bpb)
+
+## embedding_lr_0p9
+note: Embedding LR 0.6 -> 0.9; no-op if already in train.py baseline
+changes: embedding_lr: 0.9->0.9
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 007
+stats: val_bpb=1.045059, train_s=300.1, total_s=344.1, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: neutral (-0.000083 bpb)
+
+## unembedding_lr_0p005
+note: Unembedding LR 0.004 -> 0.005 from the online note
+changes: unembedding_lr: 0.006->0.005
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.005, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 008
+stats: val_bpb=1.047907, train_s=300.1, total_s=344.3, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.002765 bpb)
+
+## h100_lr_pair
+note: Embedding and unembedding LR changes together
+changes: embedding_lr: 0.9->0.9, unembedding_lr: 0.006->0.005
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.005, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 009
+stats: val_bpb=1.047989, train_s=300.1, total_s=344.3, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.002847 bpb)
+
+## warmdown_ratio_0p75
+note: Warmdown ratio -> 0.75
+changes: warmdown_ratio: 0.7->0.75
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.75, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 010
+stats: val_bpb=1.045867, train_s=300.1, total_s=343.8, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.000725 bpb)
+
+## final_lr_frac_0p05
+note: Final LR fraction -> 0.05
+changes: final_lr_frac: 0->0.05
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 011
+stats: val_bpb=1.044551, train_s=300.0, total_s=345.5, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: worked (-0.000591 bpb)
+
+## schedule_warmdown_and_final
+note: Schedule combo: warmdown 0.75 plus final LR fraction 0.05
+changes: warmdown_ratio: 0.7->0.75, final_lr_frac: 0->0.05
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.75, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 012
+stats: val_bpb=1.044814, train_s=300.1, total_s=344.3, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: worked (-0.000328 bpb)
+
+## muon_momentum_warmup_200
+note: Muon momentum warmup 300 -> 200 steps
+changes: muon_momentum_warmup_steps: 300->200
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=200, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 013
+stats: val_bpb=1.045517, train_s=300.2, total_s=344.5, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.000375 bpb)
+
+## init_scale_0p68
+note: Transformer init scale x0.68
+changes: init_scale: 1->0.68
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=0.68, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 014
+stats: val_bpb=1.047109, train_s=300.2, total_s=344.3, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.001967 bpb)
+
+## x0_init_0p05
+note: x0 skip scalar init 0.1 -> 0.05
+changes: x0_init: 0.1->0.05
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.05, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 015
+stats: val_bpb=1.047693, train_s=300.2, total_s=344.6, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.002551 bpb)
+
+## init_scale_plus_x0
+note: Init combo: transformer init scale and x0 skip scalar
+changes: init_scale: 1->0.68, x0_init: 0.1->0.05
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=0.68, x0_init=0.05, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0
+status: RUN 016
+stats: val_bpb=1.048940, train_s=300.2, total_s=344.5, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.003798 bpb)
+
+## lm_head_wd_0p01
+note: AdamW weight decay added to lm_head
+changes: lm_head_wd: 0->0.01
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0, value_embedding_wd=0
+status: RUN 017
+stats: val_bpb=1.045046, train_s=300.0, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: neutral (-0.000097 bpb)
+
+## embedding_wd_0p001
+note: AdamW weight decay added to token embeddings
+changes: embedding_wd: 0->0.001
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0.001, value_embedding_wd=0
+status: RUN 018
+stats: val_bpb=1.045335, train_s=300.0, total_s=344.6, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.000193 bpb)
+
+## value_embedding_wd_0p003
+note: AdamW weight decay added to value embeddings
+changes: value_embedding_wd: 0->0.003
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0, embedding_wd=0, value_embedding_wd=0.003
+status: RUN 019
+stats: val_bpb=1.042760, train_s=300.2, total_s=344.4, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: worked (-0.002382 bpb)
+
+## adamw_decay_all
+note: Regularization combo: all AdamW decay additions
+changes: lm_head_wd: 0->0.01, embedding_wd: 0->0.001, value_embedding_wd: 0->0.003
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 020
+stats: val_bpb=1.042671, train_s=300.1, total_s=344.3, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: worked (-0.002471 bpb)
+
+## h100_lr_pair_plus_adamw_decay_all
+note: LR/WD combo check requested in the prompt
+changes: embedding_lr: 0.9->0.9, unembedding_lr: 0.006->0.005, lm_head_wd: 0->0.01, embedding_wd: 0->0.001, value_embedding_wd: 0->0.003
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_pattern=SSSL, short_window_div=2, rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.005, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 021
+stats: val_bpb=1.045224, train_s=300.0, total_s=344.1, steps=1250, tokens_M=163.8, mfu=13.09%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: neutral (+0.000082 bpb)
+
+## all_listed_h100_deltas
+note: All listed H100 deltas applied on top of train.py baseline
+changes: depth: 8->9, aspect_ratio: 64->56, window_pattern: SSSL->SSSSL, short_window_div: 2->8, rope_base: 10000->200000, embedding_lr: 0.9->0.9, unembedding_lr: 0.006->0.005, warmdown_ratio: 0.7->0.75, final_lr_frac: 0->0.05, muon_momentum_warmup_steps: 300->200, init_scale: 1->0.68, x0_init: 0.1->0.05, lm_head_wd: 0->0.01, embedding_wd: 0->0.001, value_embedding_wd: 0->0.003
+hparams: depth=9, aspect_ratio=56, head_dim=128, window_pattern=SSSSL, short_window_div=8, rope_base=200000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.005, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.75, final_lr_frac=0.05, muon_momentum_warmup_steps=200, init_scale=0.68, x0_init=0.05, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 022
+stats: val_bpb=1.038426, train_s=300.2, total_s=345.8, steps=1221, tokens_M=160.0, mfu=12.36%, vram_mb=25274.5, device_batch=64, grad_accum=1
+verdict: worked (-0.006716 bpb)
+
+## improved_train_reference
+note: Exact-ish improved_train.py reference, including its matrix/scalar LR and Muon WD
+changes: depth: 8->9, aspect_ratio: 64->56, window_pattern: SSSL->SSSSL, short_window_div: 2->8, rope_base: 10000->200000, embedding_lr: 0.9->0.9, unembedding_lr: 0.006->0.005, matrix_lr: 0.06->0.04, scalar_lr: 0.75->0.5, weight_decay: 0.1->0.2, warmdown_ratio: 0.7->0.75, final_lr_frac: 0->0.05, muon_momentum_warmup_steps: 300->200, init_scale: 1->0.68, x0_init: 0.1->0.05, lm_head_wd: 0->0.01, embedding_wd: 0->0.001, value_embedding_wd: 0->0.003
+hparams: depth=9, aspect_ratio=56, head_dim=128, window_pattern=SSSSL, short_window_div=8, rope_base=200000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.005, matrix_lr=0.04, scalar_lr=0.5, weight_decay=0.2, warmup_ratio=0, warmdown_ratio=0.75, final_lr_frac=0.05, muon_momentum_warmup_steps=200, init_scale=0.68, x0_init=0.05, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 023
+stats: val_bpb=1.039143, train_s=300.2, total_s=346.0, steps=1219, tokens_M=159.8, mfu=12.34%, vram_mb=25274.5, device_batch=64, grad_accum=1
+verdict: worked (-0.005999 bpb)
+
+## Ranking
+01. all_listed_h100_deltas: val_bpb=1.038426, train_s=300.2, total_s=345.8, steps=1221, tokens_M=160.0, mfu=12.36%, vram_mb=25274.5, device_batch=64, grad_accum=1; verdict=worked (-0.006716 bpb)
+02. improved_train_reference: val_bpb=1.039143, train_s=300.2, total_s=346.0, steps=1219, tokens_M=159.8, mfu=12.34%, vram_mb=25274.5, device_batch=64, grad_accum=1; verdict=worked (-0.005999 bpb)
+03. short_window_seq_div8: val_bpb=1.042524, train_s=300.1, total_s=360.0, steps=1349, tokens_M=176.8, mfu=12.46%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=worked (-0.002618 bpb)
+04. adamw_decay_all: val_bpb=1.042671, train_s=300.1, total_s=344.3, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=worked (-0.002471 bpb)
+05. value_embedding_wd_0p003: val_bpb=1.042760, train_s=300.2, total_s=344.4, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=worked (-0.002382 bpb)
+06. final_lr_frac_0p05: val_bpb=1.044551, train_s=300.0, total_s=345.5, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=worked (-0.000591 bpb)
+07. schedule_warmdown_and_final: val_bpb=1.044814, train_s=300.1, total_s=344.3, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=worked (-0.000328 bpb)
+08. lm_head_wd_0p01: val_bpb=1.045046, train_s=300.0, total_s=344.2, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=neutral (-0.000097 bpb)
+09. embedding_lr_0p9: val_bpb=1.045059, train_s=300.1, total_s=344.1, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=neutral (-0.000083 bpb)
+10. baseline_train_py: val_bpb=1.045142, train_s=300.0, total_s=344.1, steps=1252, tokens_M=164.1, mfu=13.11%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=already in baseline / duplicate
+11. h100_lr_pair_plus_adamw_decay_all: val_bpb=1.045224, train_s=300.0, total_s=344.1, steps=1250, tokens_M=163.8, mfu=13.09%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=neutral (+0.000082 bpb)
+12. embedding_wd_0p001: val_bpb=1.045335, train_s=300.0, total_s=344.6, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.000193 bpb)
+13. muon_momentum_warmup_200: val_bpb=1.045517, train_s=300.2, total_s=344.5, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.000375 bpb)
+14. warmdown_ratio_0p75: val_bpb=1.045867, train_s=300.1, total_s=343.8, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.000725 bpb)
+15. init_scale_0p68: val_bpb=1.047109, train_s=300.2, total_s=344.3, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.001967 bpb)
+16. x0_init_0p05: val_bpb=1.047693, train_s=300.2, total_s=344.6, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.002551 bpb)
+17. unembedding_lr_0p005: val_bpb=1.047907, train_s=300.1, total_s=344.3, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.002765 bpb)
+18. h100_lr_pair: val_bpb=1.047989, train_s=300.1, total_s=344.3, steps=1249, tokens_M=163.7, mfu=13.07%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.002847 bpb)
+19. rope_base_200k: val_bpb=1.048015, train_s=300.1, total_s=344.1, steps=1249, tokens_M=163.7, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.002873 bpb)
+20. window_pattern_ssssl: val_bpb=1.048599, train_s=300.2, total_s=361.7, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.003457 bpb)
+21. depth9_plus_window_ssssl: val_bpb=1.048636, train_s=300.1, total_s=365.6, steps=1129, tokens_M=148.0, mfu=13.05%, vram_mb=25274.5, device_batch=64, grad_accum=1; verdict=regressed (+0.003494 bpb)
+22. init_scale_plus_x0: val_bpb=1.048940, train_s=300.2, total_s=344.5, steps=1250, tokens_M=163.8, mfu=13.08%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.003798 bpb)
+23. depth9_aspect56: val_bpb=1.049523, train_s=300.2, total_s=365.7, steps=1126, tokens_M=147.6, mfu=13.32%, vram_mb=25274.5, device_batch=64, grad_accum=1; verdict=regressed (+0.004381 bpb)
+
+## Worked vs did not
+depth9_aspect56: regressed (+0.004381 bpb)
+window_pattern_ssssl: regressed (+0.003457 bpb)
+depth9_plus_window_ssssl: regressed (+0.003494 bpb)
+short_window_seq_div8: worked (-0.002618 bpb)
+rope_base_200k: regressed (+0.002873 bpb)
+embedding_lr_0p9: neutral (-0.000083 bpb)
+unembedding_lr_0p005: regressed (+0.002765 bpb)
+h100_lr_pair: regressed (+0.002847 bpb)
+warmdown_ratio_0p75: regressed (+0.000725 bpb)
+final_lr_frac_0p05: worked (-0.000591 bpb)
+schedule_warmdown_and_final: worked (-0.000328 bpb)
+muon_momentum_warmup_200: regressed (+0.000375 bpb)
+init_scale_0p68: regressed (+0.001967 bpb)
+x0_init_0p05: regressed (+0.002551 bpb)
+init_scale_plus_x0: regressed (+0.003798 bpb)
+lm_head_wd_0p01: neutral (-0.000097 bpb)
+embedding_wd_0p001: regressed (+0.000193 bpb)
+value_embedding_wd_0p003: worked (-0.002382 bpb)
+adamw_decay_all: worked (-0.002471 bpb)
+h100_lr_pair_plus_adamw_decay_all: neutral (+0.000082 bpb)
+all_listed_h100_deltas: worked (-0.006716 bpb)
+improved_train_reference: worked (-0.005999 bpb)
