@@ -1,7 +1,7 @@
 """
 Autoresearch pretraining script. Single-GPU, single-file.
 Cherry-picked and simplified from nanochat.
-Usage: /venv/main/bin/python train2.py
+Usage: /venv/main/bin/python train3.py
 """
 
 import argparse
@@ -49,8 +49,7 @@ class GPTConfig:
     n_head: int = 6
     n_kv_head: int = 6
     n_embd: int = 768
-    window_pattern: str = "SSSL"
-    short_window_div: int = 2
+    window_sizes: tuple[int, ...] = ()
     rope_base: int = 10000
     init_scale: float = 1.0
     x0_init: float = 0.1
@@ -209,17 +208,10 @@ class GPT(nn.Module):
         return cos, sin
 
     def _compute_window_sizes(self, config):
-        pattern = config.window_pattern.upper()
-        assert all(c in "SL" for c in pattern)
-        long_window = config.sequence_len
-        short_window = long_window // config.short_window_div
-        char_to_window = {"L": (long_window, 0), "S": (short_window, 0)}
-        window_sizes = []
-        for layer_idx in range(config.n_layer):
-            char = pattern[layer_idx % len(pattern)]
-            window_sizes.append(char_to_window[char])
-        window_sizes[-1] = (long_window, 0)
-        return window_sizes
+        assert len(config.window_sizes) == config.n_layer
+        assert all(0 < window_size <= config.sequence_len for window_size in config.window_sizes)
+        assert all(window_size & (window_size - 1) == 0 for window_size in config.window_sizes)
+        return [(window_size, 0) for window_size in config.window_sizes]
 
     def estimate_flops(self):
         """Estimated FLOPs per token (forward + backward)."""
@@ -443,15 +435,15 @@ class MuonAdamW(torch.optim.Optimizer):
                 self._step_muon(group)
 
 # ---------------------------------------------------------------------------
-# Baseline and ablation settings
+# Baseline and window-size search settings
 # ---------------------------------------------------------------------------
 
-# These defaults intentionally match train.py, not improved_train.py. Some of
-# the online H100 deltas are already partly present in this A100 baseline.
 BASE_LR_MULT = 1.5
 BASE_ADAM_BETAS = (0.8, 0.95)
 DEVICE_BATCH_SIZE = 64
 H100_BF16_PEAK_FLOPS = 989.5e12
+POW2_WINDOW_SIZES = (64, 128, 256, 512, 1024, 2048)
+BASE_WINDOW_SIZES = (256, 256, 256, 2048, 256, 256, 256, 2048)
 
 
 @dataclass(frozen=True)
@@ -460,8 +452,7 @@ class SearchHParams:
     depth: int = 8
     aspect_ratio: int = 64
     head_dim: int = 128
-    window_pattern: str = "SSSL"
-    short_window_div: int = 2
+    window_sizes: tuple[int, ...] = BASE_WINDOW_SIZES
     rope_base: int = 10000
 
     # Optimization and schedules
@@ -473,15 +464,15 @@ class SearchHParams:
     weight_decay: float = 0.1
     warmup_ratio: float = 0.0
     warmdown_ratio: float = 0.7
-    final_lr_frac: float = 0.0
+    final_lr_frac: float = 0.05
     muon_momentum_warmup_steps: int = 300
 
     # Init and AdamW regularization
     init_scale: float = 1.0
     x0_init: float = 0.1
-    lm_head_wd: float = 0.0
-    embedding_wd: float = 0.0
-    value_embedding_wd: float = 0.0
+    lm_head_wd: float = 0.01
+    embedding_wd: float = 0.001
+    value_embedding_wd: float = 0.003
 
 
 @dataclass(frozen=True)
@@ -489,34 +480,6 @@ class AblationRun:
     name: str
     hparams: SearchHParams
     note: str
-
-
-H100_LISTED_DELTAS = {
-    "depth": 9,
-    "aspect_ratio": 56,
-    "window_pattern": "SSSSL",
-    "short_window_div": 8,
-    "rope_base": 200000,
-    "embedding_lr": 0.9,
-    "unembedding_lr": 0.005,
-    "warmdown_ratio": 0.75,
-    "final_lr_frac": 0.05,
-    "muon_momentum_warmup_steps": 200,
-    "init_scale": 0.68,
-    "x0_init": 0.05,
-    "lm_head_wd": 0.01,
-    "embedding_wd": 0.001,
-    "value_embedding_wd": 0.003,
-}
-
-
-# This run mirrors improved_train.py as closely as possible, so the log can
-# separate "listed deltas on train.py" from the exact online reference recipe.
-H100_REFERENCE_EXTRAS = {
-    "matrix_lr": 0.04,
-    "scalar_lr": 0.5,
-    "weight_decay": 0.2,
-}
 
 
 def build_model_config(hparams, vocab_size):
@@ -530,8 +493,7 @@ def build_model_config(hparams, vocab_size):
         n_head=num_heads,
         n_kv_head=num_heads,
         n_embd=model_dim,
-        window_pattern=hparams.window_pattern,
-        short_window_div=hparams.short_window_div,
+        window_sizes=tuple(hparams.window_sizes),
         rope_base=hparams.rope_base,
         init_scale=hparams.init_scale,
         x0_init=hparams.x0_init,
@@ -744,141 +706,157 @@ def run_training_once(hparams, run_description, result_json=None):
     return stats
 
 
-def build_ablation_plan():
-    base = SearchHParams()
-    full_listed = replace(base, **H100_LISTED_DELTAS)
-    full_reference = replace(base, **H100_LISTED_DELTAS, **H100_REFERENCE_EXTRAS)
+def is_power_of_two(value):
+    return value > 0 and value & (value - 1) == 0
 
-    return [
-        AblationRun("baseline_train_py", base, "literal train.py baseline"),
-        AblationRun(
-            "depth9_aspect56",
-            replace(base, depth=9, aspect_ratio=56),
-            "Depth 8 -> 9 with aspect ratio 56, preserving dim=512",
-        ),
-        AblationRun(
-            "window_pattern_ssssl",
-            replace(base, window_pattern="SSSSL"),
-            "Window pattern SSSL -> SSSSL",
-        ),
-        AblationRun(
-            "depth9_plus_window_ssssl",
-            replace(base, depth=9, aspect_ratio=56, window_pattern="SSSSL"),
-            "Combo check: depth/aspect plus SSSSL window pattern",
-        ),
-        AblationRun(
-            "short_window_seq_div8",
-            replace(base, short_window_div=8),
-            "Short window seq_len/2 -> seq_len/8",
-        ),
-        AblationRun(
-            "rope_base_200k",
-            replace(base, rope_base=200000),
-            "RoPE base 10K -> 200K",
-        ),
-        AblationRun(
-            "embedding_lr_0p9",
-            replace(base, embedding_lr=0.9),
-            "Embedding LR 0.6 -> 0.9; no-op if already in train.py baseline",
-        ),
-        AblationRun(
-            "unembedding_lr_0p005",
-            replace(base, unembedding_lr=0.005),
-            "Unembedding LR 0.004 -> 0.005 from the online note",
-        ),
-        AblationRun(
-            "h100_lr_pair",
-            replace(base, embedding_lr=0.9, unembedding_lr=0.005),
-            "Embedding and unembedding LR changes together",
-        ),
-        AblationRun(
-            "warmdown_ratio_0p75",
-            replace(base, warmdown_ratio=0.75),
-            "Warmdown ratio -> 0.75",
-        ),
-        AblationRun(
-            "final_lr_frac_0p05",
-            replace(base, final_lr_frac=0.05),
-            "Final LR fraction -> 0.05",
-        ),
-        AblationRun(
-            "schedule_warmdown_and_final",
-            replace(base, warmdown_ratio=0.75, final_lr_frac=0.05),
-            "Schedule combo: warmdown 0.75 plus final LR fraction 0.05",
-        ),
-        AblationRun(
-            "muon_momentum_warmup_200",
-            replace(base, muon_momentum_warmup_steps=200),
-            "Muon momentum warmup 300 -> 200 steps",
-        ),
-        AblationRun(
-            "init_scale_0p68",
-            replace(base, init_scale=0.68),
-            "Transformer init scale x0.68",
-        ),
-        AblationRun(
-            "x0_init_0p05",
-            replace(base, x0_init=0.05),
-            "x0 skip scalar init 0.1 -> 0.05",
-        ),
-        AblationRun(
-            "init_scale_plus_x0",
-            replace(base, init_scale=0.68, x0_init=0.05),
-            "Init combo: transformer init scale and x0 skip scalar",
-        ),
-        AblationRun(
-            "lm_head_wd_0p01",
-            replace(base, lm_head_wd=0.01),
-            "AdamW weight decay added to lm_head",
-        ),
-        AblationRun(
-            "embedding_wd_0p001",
-            replace(base, embedding_wd=0.001),
-            "AdamW weight decay added to token embeddings",
-        ),
-        AblationRun(
-            "value_embedding_wd_0p003",
-            replace(base, value_embedding_wd=0.003),
-            "AdamW weight decay added to value embeddings",
-        ),
-        AblationRun(
-            "adamw_decay_all",
-            replace(base, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003),
-            "Regularization combo: all AdamW decay additions",
-        ),
-        AblationRun(
-            "h100_lr_pair_plus_adamw_decay_all",
-            replace(
-                base,
-                embedding_lr=0.9,
-                unembedding_lr=0.005,
-                lm_head_wd=0.01,
-                embedding_wd=0.001,
-                value_embedding_wd=0.003,
-            ),
-            "LR/WD combo check requested in the prompt",
-        ),
-        AblationRun(
-            "all_listed_h100_deltas",
-            full_listed,
-            "All listed H100 deltas applied on top of train.py baseline",
-        ),
-        AblationRun(
-            "improved_train_reference",
-            full_reference,
-            "Exact-ish improved_train.py reference, including its matrix/scalar LR and Muon WD",
-        ),
+
+def validate_window_sizes(window_sizes, depth=8):
+    window_sizes = tuple(int(window_size) for window_size in window_sizes)
+    assert len(window_sizes) == depth
+    assert all(is_power_of_two(window_size) for window_size in window_sizes)
+    assert all(window_size <= MAX_SEQ_LEN for window_size in window_sizes)
+    return window_sizes
+
+
+def add_window_design(designs, seen, name, window_sizes, note):
+    if len(designs) >= 100:
+        return
+    window_sizes = validate_window_sizes(window_sizes)
+    if window_sizes in seen:
+        return
+    seen.add(window_sizes)
+    designs.append(AblationRun(name, replace(SearchHParams(), window_sizes=window_sizes), note))
+
+
+def build_ablation_plan():
+    designs = []
+    seen = set()
+
+    add_window_design(
+        designs,
+        seen,
+        "baseline_train_py_windows",
+        BASE_WINDOW_SIZES,
+        "Current train.py window-size baseline",
+    )
+
+    for size in POW2_WINDOW_SIZES:
+        add_window_design(
+            designs,
+            seen,
+            f"uniform_{size}",
+            (size,) * 8,
+            "All layers use the same window size",
+        )
+
+    for small_size in (64, 128, 256):
+        for large_size in (512, 1024, 2048):
+            add_window_design(
+                designs,
+                seen,
+                f"alternating_s{small_size}_l{large_size}",
+                (small_size, large_size, small_size, large_size, small_size, large_size, small_size, large_size),
+                "Alternating small and large windows",
+            )
+            add_window_design(
+                designs,
+                seen,
+                f"paired_s{small_size}_l{large_size}",
+                (small_size, small_size, large_size, large_size, small_size, small_size, large_size, large_size),
+                "Two small-window layers followed by two larger-window layers",
+            )
+
+    ramp_designs = [
+        (64, 64, 128, 128, 256, 256, 512, 512),
+        (64, 128, 128, 256, 256, 512, 512, 1024),
+        (128, 128, 256, 256, 512, 512, 1024, 1024),
+        (128, 256, 256, 512, 512, 1024, 1024, 2048),
+        (256, 256, 512, 512, 1024, 1024, 2048, 2048),
+        (512, 512, 256, 256, 128, 128, 64, 64),
+        (1024, 512, 512, 256, 256, 128, 128, 64),
+        (2048, 1024, 1024, 512, 512, 256, 256, 128),
+        (2048, 2048, 1024, 1024, 512, 512, 256, 256),
+        (64, 128, 256, 512, 1024, 2048, 1024, 512),
+        (128, 256, 512, 1024, 2048, 1024, 512, 256),
+        (256, 512, 1024, 2048, 1024, 512, 256, 128),
     ]
+    for idx, window_sizes in enumerate(ramp_designs, start=1):
+        add_window_design(
+            designs,
+            seen,
+            f"ramp_{idx:02d}",
+            window_sizes,
+            "Ramp or pyramid window-size schedule across depth",
+        )
+
+    for base_size in (128, 256):
+        for spike_size in (512, 2048):
+            if spike_size == base_size:
+                continue
+            for spike_pos in (0, 3, 7):
+                window_sizes = [base_size] * 8
+                window_sizes[spike_pos] = spike_size
+                add_window_design(
+                    designs,
+                    seen,
+                    f"single_spike_b{base_size}_p{spike_pos}_s{spike_size}",
+                    window_sizes,
+                    "One layer differs from an otherwise uniform window size",
+                )
+
+    for base_size in (64, 256):
+        for spike_size in (512, 2048):
+            for first_pos, second_pos in ((0, 4), (1, 5), (2, 6), (3, 7)):
+                window_sizes = [base_size] * 8
+                window_sizes[first_pos] = spike_size
+                window_sizes[second_pos] = spike_size
+                add_window_design(
+                    designs,
+                    seen,
+                    f"double_spike_b{base_size}_p{first_pos}{second_pos}_s{spike_size}",
+                    window_sizes,
+                    "Two larger-window layers in an otherwise uniform stack",
+                )
+
+    for period in (2, 3, 4):
+        for offset in range(period):
+            for short_size in (64, 128, 256, 512):
+                for long_size in POW2_WINDOW_SIZES:
+                    if long_size <= short_size:
+                        continue
+                    window_sizes = tuple(
+                        long_size if layer_idx % period == offset else short_size
+                        for layer_idx in range(8)
+                    )
+                    add_window_design(
+                        designs,
+                        seen,
+                        f"period{period}_off{offset}_s{short_size}_l{long_size}",
+                        window_sizes,
+                        "Periodic larger-window layers among smaller-window layers",
+                    )
+
+    if len(designs) != 100:
+        raise RuntimeError(f"Expected 100 window-size designs, got {len(designs)}")
+    return designs
 
 
 def hparam_key(hparams):
     values = asdict(hparams)
-    return tuple((key, values[key]) for key in sorted(values))
+    key_values = []
+    for key in sorted(values):
+        value = values[key]
+        if isinstance(value, list):
+            value = tuple(value)
+        key_values.append((key, value))
+    return tuple(key_values)
 
 
 def format_value(value):
     if isinstance(value, float):
         return f"{value:g}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(str(item) for item in value) + "]"
     return str(value)
 
 
@@ -930,6 +908,8 @@ def score_result(stats):
 
 def add_hparam_cli_args(cmd, hparams):
     for key, value in asdict(hparams).items():
+        if key == "window_sizes":
+            value = ",".join(str(window_size) for window_size in value)
         cmd.extend([f"--{key.replace('_', '-')}", str(value)])
 
 
@@ -999,11 +979,12 @@ def run_hparam_search(search_log):
     baseline_key = hparam_key(baseline)
 
     log_path.write_text(
-        "H100-delta ablation search log\n"
+        "Window-size design search log\n"
         f"started: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
         "metric: lower val_bpb is better\n"
-        "baseline: train.py settings copied into train3.py\n"
-        "mode: one-change ablations plus requested interaction checks\n"
+        "baseline: current train.py settings copied into train3.py\n"
+        "mode: 100 exact per-layer window-size designs\n"
+        f"allowed_window_sizes: {format_value(POW2_WINDOW_SIZES)}\n"
         f"python: {sys.executable}\n\n"
         f"BASELINE HPARAMS: {format_hparams(baseline)}\n\n",
         encoding="utf-8",
@@ -1031,7 +1012,7 @@ def run_hparam_search(search_log):
             results[key] = stats
             run_idx += 1
 
-        if ablation.name == "baseline_train_py":
+        if ablation.name == "baseline_train_py_windows":
             baseline_stats = stats
 
         append_search_log(log_path, f"stats: {format_run_stats(stats)}")
@@ -1052,7 +1033,7 @@ def run_hparam_search(search_log):
     append_search_log(log_path, "")
     append_search_log(log_path, "## Worked vs did not")
     for ablation, key, stats in all_results:
-        if ablation.name == "baseline_train_py":
+        if ablation.name == "baseline_train_py_windows":
             continue
         append_search_log(log_path, f"{ablation.name}: {verdict_for(stats, baseline_stats, key, baseline_key)}")
 
@@ -1064,22 +1045,31 @@ def run_hparam_search(search_log):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Autoresearch H100-delta ablation runner")
+    parser = argparse.ArgumentParser(description="Autoresearch window-size design search runner")
     parser.add_argument("--single-run", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--run-description", default="manual run", help=argparse.SUPPRESS)
     parser.add_argument("--result-json", default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--search-log", default="hparam_search4.log", help="File for compact per-run ablation results")
+    parser.add_argument("--search-log", default="window_size_search.log", help="File for compact per-run search results")
 
     defaults = SearchHParams()
     for key, value in asdict(defaults).items():
         flag = f"--{key.replace('_', '-')}"
-        if isinstance(value, int):
+        if key == "window_sizes":
+            parser.add_argument(flag, type=parse_window_sizes, default=value, help=argparse.SUPPRESS)
+        elif isinstance(value, int):
             parser.add_argument(flag, type=int, default=value, help=argparse.SUPPRESS)
         elif isinstance(value, float):
             parser.add_argument(flag, type=float, default=value, help=argparse.SUPPRESS)
         else:
             parser.add_argument(flag, default=value, help=argparse.SUPPRESS)
     return parser.parse_args()
+
+
+def parse_window_sizes(text):
+    if isinstance(text, tuple):
+        return text
+    parts = [part.strip() for part in text.replace("[", "").replace("]", "").split(",")]
+    return validate_window_sizes(int(part) for part in parts if part)
 
 
 def args_to_hparams(args):

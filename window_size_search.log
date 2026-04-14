@@ -1,0 +1,1012 @@
+Window-size design search log
+started: 2026-04-14 05:36:36
+metric: lower val_bpb is better
+baseline: current train.py settings copied into train3.py
+mode: 100 exact per-layer window-size designs
+allowed_window_sizes: [64,128,256,512,1024,2048]
+python: /venv/main/bin/python
+
+BASELINE HPARAMS: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,256,2048,256,256,256,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+
+## baseline_train_py_windows
+note: Current train.py window-size baseline
+changes: none
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,256,2048,256,256,256,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 001
+stats: val_bpb=1.039643, train_s=300.2, total_s=343.5, steps=1354, tokens_M=177.5, mfu=12.50%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: already in baseline / duplicate
+
+## uniform_64
+note: All layers use the same window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,64,64,64,64,64,64,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,64,64,64,64,64,64,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 002
+stats: val_bpb=1.112879, train_s=300.2, total_s=359.9, steps=1451, tokens_M=190.2, mfu=11.40%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.073237 bpb)
+
+## uniform_128
+note: All layers use the same window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,128,128,128,128,128,128,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,128,128,128,128,128,128,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 003
+stats: val_bpb=1.083454, train_s=300.0, total_s=361.0, steps=1432, tokens_M=187.7, mfu=11.45%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.043812 bpb)
+
+## uniform_256
+note: All layers use the same window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,256,256,256,256,256,256,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,256,256,256,256,256,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 004
+stats: val_bpb=1.061785, train_s=300.0, total_s=359.8, steps=1397, tokens_M=183.1, mfu=11.56%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.022142 bpb)
+
+## uniform_512
+note: All layers use the same window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,512,512,512,512,512,512,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,512,512,512,512,512,512,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 005
+stats: val_bpb=1.048851, train_s=300.1, total_s=360.6, steps=1343, tokens_M=176.0, mfu=11.84%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.009208 bpb)
+
+## uniform_1024
+note: All layers use the same window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[1024,1024,1024,1024,1024,1024,1024,1024]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[1024,1024,1024,1024,1024,1024,1024,1024], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 006
+stats: val_bpb=1.044931, train_s=300.0, total_s=362.9, steps=1262, tokens_M=165.4, mfu=12.52%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.005288 bpb)
+
+## uniform_2048
+note: All layers use the same window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,2048,2048,2048,2048,2048,2048,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,2048,2048,2048,2048,2048,2048,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 007
+stats: val_bpb=1.044508, train_s=300.2, total_s=361.6, steps=1227, tokens_M=160.8, mfu=14.87%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.004866 bpb)
+
+## alternating_s64_l512
+note: Alternating small and large windows
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,512,64,512,64,512,64,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,512,64,512,64,512,64,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 008
+stats: val_bpb=1.046424, train_s=300.2, total_s=360.5, steps=1394, tokens_M=182.7, mfu=11.62%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.006782 bpb)
+
+## paired_s64_l512
+note: Two small-window layers followed by two larger-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,64,512,512,64,64,512,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,64,512,512,64,64,512,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 009
+stats: val_bpb=1.045931, train_s=300.1, total_s=360.3, steps=1394, tokens_M=182.7, mfu=11.62%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.006288 bpb)
+
+## alternating_s64_l1024
+note: Alternating small and large windows
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,1024,64,1024,64,1024,64,1024]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,1024,64,1024,64,1024,64,1024], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 010
+stats: val_bpb=1.039839, train_s=300.1, total_s=360.9, steps=1353, tokens_M=177.3, mfu=12.03%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.000197 bpb)
+
+## paired_s64_l1024
+note: Two small-window layers followed by two larger-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,64,1024,1024,64,64,1024,1024]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,64,1024,1024,64,64,1024,1024], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 011
+stats: val_bpb=1.038361, train_s=300.1, total_s=360.4, steps=1353, tokens_M=177.3, mfu=12.03%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: worked (-0.001281 bpb)
+
+## alternating_s64_l2048
+note: Alternating small and large windows
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,2048,64,2048,64,2048,64,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,2048,64,2048,64,2048,64,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 012
+stats: val_bpb=1.040784, train_s=300.1, total_s=360.7, steps=1330, tokens_M=174.3, mfu=13.29%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.001141 bpb)
+
+## paired_s64_l2048
+note: Two small-window layers followed by two larger-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,64,2048,2048,64,64,2048,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,64,2048,2048,64,64,2048,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 013
+stats: val_bpb=1.039596, train_s=300.1, total_s=360.6, steps=1330, tokens_M=174.3, mfu=13.29%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: neutral (-0.000046 bpb)
+
+## alternating_s128_l512
+note: Alternating small and large windows
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,512,128,512,128,512,128,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,512,128,512,128,512,128,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 014
+stats: val_bpb=1.045725, train_s=300.1, total_s=359.2, steps=1385, tokens_M=181.5, mfu=11.65%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.006083 bpb)
+
+## paired_s128_l512
+note: Two small-window layers followed by two larger-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,128,512,512,128,128,512,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,128,512,512,128,128,512,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 015
+stats: val_bpb=1.044892, train_s=300.1, total_s=360.1, steps=1385, tokens_M=181.5, mfu=11.65%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.005249 bpb)
+
+## alternating_s128_l1024
+note: Alternating small and large windows
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,1024,128,1024,128,1024,128,1024]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,1024,128,1024,128,1024,128,1024], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 016
+stats: val_bpb=1.038421, train_s=300.2, total_s=360.2, steps=1343, tokens_M=176.0, mfu=12.03%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: worked (-0.001222 bpb)
+
+## paired_s128_l1024
+note: Two small-window layers followed by two larger-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,128,1024,1024,128,128,1024,1024]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,128,1024,1024,128,128,1024,1024], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 017
+stats: val_bpb=1.038991, train_s=300.2, total_s=360.9, steps=1344, tokens_M=176.2, mfu=12.04%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: worked (-0.000651 bpb)
+
+## alternating_s128_l2048
+note: Alternating small and large windows
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,2048,128,2048,128,2048,128,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,2048,128,2048,128,2048,128,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 018
+stats: val_bpb=1.040394, train_s=300.1, total_s=361.1, steps=1322, tokens_M=173.3, mfu=13.30%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.000751 bpb)
+
+## paired_s128_l2048
+note: Two small-window layers followed by two larger-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,128,2048,2048,128,128,2048,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,128,2048,2048,128,128,2048,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 019
+stats: val_bpb=1.039974, train_s=300.2, total_s=361.0, steps=1322, tokens_M=173.3, mfu=13.29%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.000331 bpb)
+
+## alternating_s256_l512
+note: Alternating small and large windows
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,512,256,512,256,512,256,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,512,256,512,256,512,256,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 020
+stats: val_bpb=1.047021, train_s=300.2, total_s=360.4, steps=1365, tokens_M=178.9, mfu=11.66%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.007378 bpb)
+
+## paired_s256_l512
+note: Two small-window layers followed by two larger-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,256,512,512,256,256,512,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,512,512,256,256,512,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 021
+stats: val_bpb=1.046172, train_s=300.1, total_s=359.9, steps=1364, tokens_M=178.8, mfu=11.65%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.006529 bpb)
+
+## alternating_s256_l1024
+note: Alternating small and large windows
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,1024,256,1024,256,1024,256,1024]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,1024,256,1024,256,1024,256,1024], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 022
+stats: val_bpb=1.041066, train_s=300.1, total_s=360.7, steps=1326, tokens_M=173.8, mfu=12.06%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.001423 bpb)
+
+## paired_s256_l1024
+note: Two small-window layers followed by two larger-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,256,1024,1024,256,256,1024,1024]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,1024,1024,256,256,1024,1024], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 023
+stats: val_bpb=1.040133, train_s=300.0, total_s=360.6, steps=1326, tokens_M=173.8, mfu=12.06%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.000490 bpb)
+
+## alternating_s256_l2048
+note: Alternating small and large windows
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,2048,256,2048,256,2048,256,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,2048,256,2048,256,2048,256,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 024
+stats: val_bpb=1.041160, train_s=300.1, total_s=361.2, steps=1305, tokens_M=171.0, mfu=13.31%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.001517 bpb)
+
+## paired_s256_l2048
+note: Two small-window layers followed by two larger-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,256,2048,2048,256,256,2048,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,2048,2048,256,256,2048,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 025
+stats: val_bpb=1.042577, train_s=300.1, total_s=361.0, steps=1305, tokens_M=171.0, mfu=13.31%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.002935 bpb)
+
+## ramp_01
+note: Ramp or pyramid window-size schedule across depth
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,64,128,128,256,256,512,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,64,128,128,256,256,512,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 026
+stats: val_bpb=1.047825, train_s=300.2, total_s=360.3, steps=1404, tokens_M=184.0, mfu=11.56%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.008183 bpb)
+
+## ramp_02
+note: Ramp or pyramid window-size schedule across depth
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,128,128,256,256,512,512,1024]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,128,128,256,256,512,512,1024], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 027
+stats: val_bpb=1.038582, train_s=300.2, total_s=360.2, steps=1378, tokens_M=180.6, mfu=11.70%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: worked (-0.001061 bpb)
+
+## ramp_03
+note: Ramp or pyramid window-size schedule across depth
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,128,256,256,512,512,1024,1024]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,128,256,256,512,512,1024,1024], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 028
+stats: val_bpb=1.039539, train_s=300.2, total_s=360.9, steps=1358, tokens_M=178.0, mfu=11.88%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: worked (-0.000104 bpb)
+
+## ramp_04
+note: Ramp or pyramid window-size schedule across depth
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,256,256,512,512,1024,1024,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,256,256,512,512,1024,1024,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 029
+stats: val_bpb=1.039055, train_s=300.2, total_s=360.8, steps=1329, tokens_M=174.2, mfu=12.31%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: worked (-0.000588 bpb)
+
+## ramp_05
+note: Ramp or pyramid window-size schedule across depth
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,256,512,512,1024,1024,2048,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,512,512,1024,1024,2048,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 030
+stats: val_bpb=1.040771, train_s=300.1, total_s=361.0, steps=1302, tokens_M=170.7, mfu=12.74%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.001128 bpb)
+
+## ramp_06
+note: Ramp or pyramid window-size schedule across depth
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,512,256,256,128,128,64,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,512,256,256,128,128,64,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 031
+stats: val_bpb=1.075269, train_s=300.1, total_s=359.6, steps=1403, tokens_M=183.9, mfu=11.56%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.035626 bpb)
+
+## ramp_07
+note: Ramp or pyramid window-size schedule across depth
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[1024,512,512,256,256,128,128,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[1024,512,512,256,256,128,128,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 032
+stats: val_bpb=1.076080, train_s=300.0, total_s=359.6, steps=1377, tokens_M=180.5, mfu=11.70%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.036437 bpb)
+
+## ramp_08
+note: Ramp or pyramid window-size schedule across depth
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,1024,1024,512,512,256,256,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,1024,1024,512,512,256,256,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 033
+stats: val_bpb=1.061968, train_s=300.1, total_s=361.1, steps=1328, tokens_M=174.1, mfu=12.31%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.022325 bpb)
+
+## ramp_09
+note: Ramp or pyramid window-size schedule across depth
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,2048,1024,1024,512,512,256,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,2048,1024,1024,512,512,256,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 034
+stats: val_bpb=1.056787, train_s=300.2, total_s=361.2, steps=1303, tokens_M=170.8, mfu=12.74%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.017144 bpb)
+
+## ramp_10
+note: Ramp or pyramid window-size schedule across depth
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,128,256,512,1024,2048,1024,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,128,256,512,1024,2048,1024,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 035
+stats: val_bpb=1.039857, train_s=300.1, total_s=361.2, steps=1334, tokens_M=174.9, mfu=12.30%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.000214 bpb)
+
+## ramp_11
+note: Ramp or pyramid window-size schedule across depth
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,256,512,1024,2048,1024,512,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,256,512,1024,2048,1024,512,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 036
+stats: val_bpb=1.040154, train_s=300.2, total_s=361.2, steps=1328, tokens_M=174.1, mfu=12.30%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.000512 bpb)
+
+## ramp_12
+note: Ramp or pyramid window-size schedule across depth
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,512,1024,2048,1024,512,256,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,512,1024,2048,1024,512,256,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 037
+stats: val_bpb=1.046205, train_s=300.1, total_s=360.9, steps=1328, tokens_M=174.1, mfu=12.31%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.006562 bpb)
+
+## single_spike_b128_p0_s512
+note: One layer differs from an otherwise uniform window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,128,128,128,128,128,128,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,128,128,128,128,128,128,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 038
+stats: val_bpb=1.085798, train_s=300.0, total_s=359.9, steps=1418, tokens_M=185.9, mfu=11.49%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.046155 bpb)
+
+## single_spike_b128_p3_s512
+note: One layer differs from an otherwise uniform window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,128,128,512,128,128,128,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,128,128,512,128,128,128,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 039
+stats: val_bpb=1.052525, train_s=300.1, total_s=360.3, steps=1418, tokens_M=185.9, mfu=11.49%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.012883 bpb)
+
+## single_spike_b128_p7_s512
+note: One layer differs from an otherwise uniform window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,128,128,128,128,128,128,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,128,128,128,128,128,128,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 040
+stats: val_bpb=1.048209, train_s=300.1, total_s=360.3, steps=1417, tokens_M=185.7, mfu=11.48%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.008566 bpb)
+
+## single_spike_b128_p0_s2048
+note: One layer differs from an otherwise uniform window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,128,128,128,128,128,128,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,128,128,128,128,128,128,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 041
+stats: val_bpb=1.086164, train_s=300.0, total_s=360.3, steps=1400, tokens_M=183.5, mfu=11.92%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.046521 bpb)
+
+## single_spike_b128_p3_s2048
+note: One layer differs from an otherwise uniform window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,128,128,2048,128,128,128,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,128,128,2048,128,128,128,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 042
+stats: val_bpb=1.045133, train_s=300.1, total_s=360.5, steps=1401, tokens_M=183.6, mfu=11.93%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.005490 bpb)
+
+## single_spike_b128_p7_s2048
+note: One layer differs from an otherwise uniform window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,128,128,128,128,128,128,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,128,128,128,128,128,128,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 043
+stats: val_bpb=1.040505, train_s=300.0, total_s=359.9, steps=1400, tokens_M=183.5, mfu=11.92%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.000862 bpb)
+
+## single_spike_b256_p0_s512
+note: One layer differs from an otherwise uniform window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,256,256,256,256,256,256,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,256,256,256,256,256,256,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 044
+stats: val_bpb=1.063040, train_s=300.1, total_s=360.6, steps=1387, tokens_M=181.8, mfu=11.57%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.023397 bpb)
+
+## single_spike_b256_p3_s512
+note: One layer differs from an otherwise uniform window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,256,256,512,256,256,256,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,256,512,256,256,256,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 045
+stats: val_bpb=1.050811, train_s=300.1, total_s=360.4, steps=1387, tokens_M=181.8, mfu=11.57%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.011168 bpb)
+
+## single_spike_b256_p7_s512
+note: One layer differs from an otherwise uniform window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,256,256,256,256,256,256,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,256,256,256,256,256,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 046
+stats: val_bpb=1.048019, train_s=300.1, total_s=360.5, steps=1387, tokens_M=181.8, mfu=11.57%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.008376 bpb)
+
+## single_spike_b256_p0_s2048
+note: One layer differs from an otherwise uniform window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,256,256,256,256,256,256,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,256,256,256,256,256,256,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 047
+stats: val_bpb=1.064446, train_s=300.0, total_s=360.6, steps=1369, tokens_M=179.4, mfu=11.99%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.024804 bpb)
+
+## single_spike_b256_p3_s2048
+note: One layer differs from an otherwise uniform window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,256,256,2048,256,256,256,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,256,2048,256,256,256,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 048
+stats: val_bpb=1.043737, train_s=300.1, total_s=360.6, steps=1369, tokens_M=179.4, mfu=11.98%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.004094 bpb)
+
+## single_spike_b256_p7_s2048
+note: One layer differs from an otherwise uniform window size
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,256,256,256,256,256,256,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,256,256,256,256,256,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 049
+stats: val_bpb=1.039590, train_s=300.2, total_s=361.1, steps=1369, tokens_M=179.4, mfu=11.98%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: neutral (-0.000053 bpb)
+
+## double_spike_b64_p04_s512
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,64,64,64,512,64,64,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,64,64,64,512,64,64,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 050
+stats: val_bpb=1.057604, train_s=300.1, total_s=360.1, steps=1419, tokens_M=186.0, mfu=11.49%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.017962 bpb)
+
+## double_spike_b64_p15_s512
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,512,64,64,64,512,64,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,512,64,64,64,512,64,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 051
+stats: val_bpb=1.049034, train_s=300.0, total_s=359.9, steps=1417, tokens_M=185.7, mfu=11.48%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.009391 bpb)
+
+## double_spike_b64_p26_s512
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,64,512,64,64,64,512,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,64,512,64,64,64,512,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 052
+stats: val_bpb=1.051404, train_s=300.1, total_s=362.2, steps=1419, tokens_M=186.0, mfu=11.49%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.011761 bpb)
+
+## double_spike_b64_p37_s512
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,64,64,512,64,64,64,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,64,64,512,64,64,64,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 053
+stats: val_bpb=1.046504, train_s=300.1, total_s=360.1, steps=1418, tokens_M=185.9, mfu=11.49%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.006861 bpb)
+
+## double_spike_b64_p04_s2048
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,64,64,64,2048,64,64,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,64,64,64,2048,64,64,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 054
+stats: val_bpb=1.051626, train_s=300.1, total_s=360.6, steps=1384, tokens_M=181.4, mfu=12.35%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.011983 bpb)
+
+## double_spike_b64_p15_s2048
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,2048,64,64,64,2048,64,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,2048,64,64,64,2048,64,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 055
+stats: val_bpb=1.041846, train_s=300.1, total_s=361.1, steps=1384, tokens_M=181.4, mfu=12.35%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.002203 bpb)
+
+## double_spike_b64_p26_s2048
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,64,2048,64,64,64,2048,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,64,2048,64,64,64,2048,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 056
+stats: val_bpb=1.044934, train_s=300.2, total_s=360.5, steps=1385, tokens_M=181.5, mfu=12.36%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.005291 bpb)
+
+## double_spike_b64_p37_s2048
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,64,64,2048,64,64,64,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,64,64,2048,64,64,64,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 057
+stats: val_bpb=1.037976, train_s=300.2, total_s=360.5, steps=1384, tokens_M=181.4, mfu=12.35%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: worked (-0.001666 bpb)
+
+## double_spike_b256_p04_s512
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,256,256,256,512,256,256,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,256,256,256,512,256,256,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 058
+stats: val_bpb=1.053158, train_s=300.0, total_s=358.7, steps=1379, tokens_M=180.7, mfu=11.60%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.013516 bpb)
+
+## double_spike_b256_p15_s512
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,512,256,256,256,512,256,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,512,256,256,256,512,256,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 059
+stats: val_bpb=1.048099, train_s=300.0, total_s=360.3, steps=1378, tokens_M=180.6, mfu=11.59%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.008457 bpb)
+
+## double_spike_b256_p26_s512
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,256,512,256,256,256,512,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,512,256,256,256,512,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 060
+stats: val_bpb=1.051411, train_s=300.2, total_s=360.8, steps=1379, tokens_M=180.7, mfu=11.59%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.011768 bpb)
+
+## double_spike_b256_p37_s512
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,256,256,512,256,256,256,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,256,512,256,256,256,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 061
+stats: val_bpb=1.045157, train_s=300.0, total_s=360.4, steps=1378, tokens_M=180.6, mfu=11.59%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.005514 bpb)
+
+## double_spike_b256_p04_s2048
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,256,256,256,2048,256,256,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,256,256,256,2048,256,256,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 062
+stats: val_bpb=1.047706, train_s=300.1, total_s=360.9, steps=1347, tokens_M=176.6, mfu=12.44%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.008064 bpb)
+
+## double_spike_b256_p15_s2048
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,2048,256,256,256,2048,256,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,2048,256,256,256,2048,256,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 063
+stats: val_bpb=1.044229, train_s=300.0, total_s=360.5, steps=1347, tokens_M=176.6, mfu=12.44%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.004586 bpb)
+
+## double_spike_b256_p26_s2048
+note: Two larger-window layers in an otherwise uniform stack
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,256,2048,256,256,256,2048,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,256,2048,256,256,256,2048,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 064
+stats: val_bpb=1.044400, train_s=300.1, total_s=360.5, steps=1347, tokens_M=176.6, mfu=12.44%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.004757 bpb)
+
+## period2_off0_s64_l128
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,64,128,64,128,64,128,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,64,128,64,128,64,128,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 065
+stats: val_bpb=1.090144, train_s=300.1, total_s=359.9, steps=1438, tokens_M=188.5, mfu=11.40%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.050501 bpb)
+
+## period2_off0_s64_l256
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,64,256,64,256,64,256,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,64,256,64,256,64,256,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 066
+stats: val_bpb=1.068048, train_s=300.1, total_s=361.0, steps=1420, tokens_M=186.1, mfu=11.45%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.028405 bpb)
+
+## period2_off0_s64_l512
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,64,512,64,512,64,512,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,64,512,64,512,64,512,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 067
+stats: val_bpb=1.053861, train_s=300.2, total_s=360.2, steps=1391, tokens_M=182.3, mfu=11.60%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.014218 bpb)
+
+## period2_off0_s64_l1024
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[1024,64,1024,64,1024,64,1024,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[1024,64,1024,64,1024,64,1024,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 068
+stats: val_bpb=1.048421, train_s=300.0, total_s=360.7, steps=1348, tokens_M=176.7, mfu=11.99%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.008778 bpb)
+
+## period2_off0_s64_l2048
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,64,2048,64,2048,64,2048,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,64,2048,64,2048,64,2048,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 069
+stats: val_bpb=1.049713, train_s=300.0, total_s=361.2, steps=1326, tokens_M=173.8, mfu=13.25%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.010070 bpb)
+
+## period2_off0_s128_l256
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,128,256,128,256,128,256,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,128,256,128,256,128,256,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 070
+stats: val_bpb=1.067236, train_s=300.1, total_s=360.0, steps=1409, tokens_M=184.7, mfu=11.46%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.027594 bpb)
+
+## period2_off0_s128_l512
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,128,512,128,512,128,512,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,128,512,128,512,128,512,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 071
+stats: val_bpb=1.052872, train_s=300.1, total_s=361.5, steps=1379, tokens_M=180.7, mfu=11.60%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.013229 bpb)
+
+## period2_off0_s128_l1024
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[1024,128,1024,128,1024,128,1024,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[1024,128,1024,128,1024,128,1024,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 072
+stats: val_bpb=1.046653, train_s=300.1, total_s=360.7, steps=1338, tokens_M=175.4, mfu=11.98%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.007011 bpb)
+
+## period2_off0_s128_l2048
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,128,2048,128,2048,128,2048,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,128,2048,128,2048,128,2048,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 073
+stats: val_bpb=1.047730, train_s=300.2, total_s=360.7, steps=1317, tokens_M=172.6, mfu=13.24%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.008087 bpb)
+
+## period2_off0_s256_l512
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,256,512,256,512,256,512,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,256,512,256,512,256,512,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 074
+stats: val_bpb=1.053283, train_s=300.2, total_s=367.6, steps=1362, tokens_M=178.5, mfu=11.64%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.013641 bpb)
+
+## period2_off0_s256_l1024
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[1024,256,1024,256,1024,256,1024,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[1024,256,1024,256,1024,256,1024,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 075
+stats: val_bpb=1.049080, train_s=300.0, total_s=371.0, steps=1321, tokens_M=173.1, mfu=12.02%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.009437 bpb)
+
+## period2_off0_s256_l2048
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,256,2048,256,2048,256,2048,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,256,2048,256,2048,256,2048,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 076
+stats: val_bpb=1.050231, train_s=300.1, total_s=359.3, steps=1300, tokens_M=170.4, mfu=13.26%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.010588 bpb)
+
+## period2_off0_s512_l1024
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[1024,512,1024,512,1024,512,1024,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[1024,512,1024,512,1024,512,1024,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 077
+stats: val_bpb=1.051789, train_s=300.2, total_s=361.1, steps=1295, tokens_M=169.7, mfu=12.13%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.012147 bpb)
+
+## period2_off0_s512_l2048
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,512,2048,512,2048,512,2048,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,512,2048,512,2048,512,2048,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 078
+stats: val_bpb=1.053669, train_s=300.2, total_s=361.4, steps=1275, tokens_M=167.1, mfu=13.34%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.014027 bpb)
+
+## period2_off1_s64_l128
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,128,64,128,64,128,64,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,128,64,128,64,128,64,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 079
+stats: val_bpb=1.084454, train_s=300.1, total_s=360.7, steps=1433, tokens_M=187.8, mfu=11.36%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.044811 bpb)
+
+## period2_off1_s64_l256
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,256,64,256,64,256,64,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,256,64,256,64,256,64,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 080
+stats: val_bpb=1.059906, train_s=300.1, total_s=359.6, steps=1416, tokens_M=185.6, mfu=11.42%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.020263 bpb)
+
+## period2_off1_s128_l256
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,256,128,256,128,256,128,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,256,128,256,128,256,128,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 081
+stats: val_bpb=1.060701, train_s=300.1, total_s=360.4, steps=1407, tokens_M=184.4, mfu=11.44%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.021058 bpb)
+
+## period2_off1_s512_l1024
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,1024,512,1024,512,1024,512,1024]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,1024,512,1024,512,1024,512,1024], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 082
+stats: val_bpb=1.042623, train_s=300.0, total_s=361.8, steps=1295, tokens_M=169.7, mfu=12.14%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.002980 bpb)
+
+## period2_off1_s512_l2048
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,2048,512,2048,512,2048,512,2048]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,2048,512,2048,512,2048,512,2048], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 083
+stats: val_bpb=1.042023, train_s=300.2, total_s=362.3, steps=1276, tokens_M=167.2, mfu=13.35%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.002380 bpb)
+
+## period3_off0_s64_l128
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[128,64,64,128,64,64,128,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[128,64,64,128,64,64,128,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 084
+stats: val_bpb=1.090362, train_s=300.1, total_s=360.3, steps=1438, tokens_M=188.5, mfu=11.37%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.050720 bpb)
+
+## period3_off0_s64_l256
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,64,64,256,64,64,256,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,64,64,256,64,64,256,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 085
+stats: val_bpb=1.071041, train_s=300.1, total_s=360.2, steps=1425, tokens_M=186.8, mfu=11.42%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.031398 bpb)
+
+## period3_off0_s64_l512
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,64,64,512,64,64,512,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,64,64,512,64,64,512,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 086
+stats: val_bpb=1.056577, train_s=300.1, total_s=360.5, steps=1402, tokens_M=183.8, mfu=11.52%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.016935 bpb)
+
+## period3_off0_s64_l1024
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[1024,64,64,1024,64,64,1024,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[1024,64,64,1024,64,64,1024,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 087
+stats: val_bpb=1.051939, train_s=300.1, total_s=359.0, steps=1367, tokens_M=179.2, mfu=11.80%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.012296 bpb)
+
+## period3_off0_s64_l2048
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,64,64,2048,64,64,2048,64]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,64,64,2048,64,64,2048,64], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 088
+stats: val_bpb=1.051376, train_s=300.2, total_s=361.0, steps=1356, tokens_M=177.7, mfu=12.82%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.011733 bpb)
+
+## period3_off0_s128_l256
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[256,128,128,256,128,128,256,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[256,128,128,256,128,128,256,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 089
+stats: val_bpb=1.067976, train_s=300.1, total_s=365.6, steps=1413, tokens_M=185.2, mfu=11.45%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.028333 bpb)
+
+## period3_off0_s128_l512
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,128,128,512,128,128,512,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,128,128,512,128,128,512,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 090
+stats: val_bpb=1.055614, train_s=300.0, total_s=372.9, steps=1391, tokens_M=182.3, mfu=11.56%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.015971 bpb)
+
+## period3_off0_s128_l1024
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[1024,128,128,1024,128,128,1024,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[1024,128,128,1024,128,128,1024,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 091
+stats: val_bpb=1.050088, train_s=300.0, total_s=372.5, steps=1360, tokens_M=178.3, mfu=11.86%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.010445 bpb)
+
+## period3_off0_s128_l2048
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,128,128,2048,128,128,2048,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,128,128,2048,128,128,2048,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 092
+stats: val_bpb=1.050501, train_s=300.1, total_s=370.7, steps=1343, tokens_M=176.0, mfu=12.82%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.010858 bpb)
+
+## period3_off0_s256_l512
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[512,256,256,512,256,256,512,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[512,256,256,512,256,256,512,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 093
+stats: val_bpb=1.053128, train_s=300.1, total_s=362.2, steps=1368, tokens_M=179.3, mfu=11.60%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.013485 bpb)
+
+## period3_off0_s256_l1024
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[1024,256,256,1024,256,256,1024,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[1024,256,256,1024,256,256,1024,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 094
+stats: val_bpb=1.047359, train_s=300.1, total_s=361.0, steps=1338, tokens_M=175.4, mfu=11.89%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.007716 bpb)
+
+## period3_off0_s256_l2048
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,256,256,2048,256,256,2048,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,256,256,2048,256,256,2048,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 095
+stats: val_bpb=1.048106, train_s=300.1, total_s=359.3, steps=1322, tokens_M=173.3, mfu=12.84%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.008463 bpb)
+
+## period3_off0_s512_l1024
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[1024,512,512,1024,512,512,1024,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[1024,512,512,1024,512,512,1024,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 096
+stats: val_bpb=1.045864, train_s=300.1, total_s=362.2, steps=1305, tokens_M=171.0, mfu=12.05%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.006221 bpb)
+
+## period3_off0_s512_l2048
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[2048,512,512,2048,512,512,2048,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[2048,512,512,2048,512,512,2048,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 097
+stats: val_bpb=1.046239, train_s=300.2, total_s=361.6, steps=1290, tokens_M=169.1, mfu=12.97%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.006596 bpb)
+
+## period3_off1_s64_l128
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,128,64,64,128,64,64,128]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,128,64,64,128,64,64,128], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 098
+stats: val_bpb=1.087048, train_s=300.2, total_s=360.7, steps=1437, tokens_M=188.4, mfu=11.37%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.047406 bpb)
+
+## period3_off1_s64_l256
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,256,64,64,256,64,64,256]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,256,64,64,256,64,64,256], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 099
+stats: val_bpb=1.064742, train_s=300.1, total_s=359.8, steps=1423, tokens_M=186.5, mfu=11.40%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.025100 bpb)
+
+## period3_off1_s64_l512
+note: Periodic larger-window layers among smaller-window layers
+changes: window_sizes: [256,256,256,2048,256,256,256,2048]->[64,512,64,64,512,64,64,512]
+hparams: depth=8, aspect_ratio=64, head_dim=128, window_sizes=[64,512,64,64,512,64,64,512], rope_base=10000, total_batch_size=131072, embedding_lr=0.9, unembedding_lr=0.006, matrix_lr=0.06, scalar_lr=0.75, weight_decay=0.1, warmup_ratio=0, warmdown_ratio=0.7, final_lr_frac=0.05, muon_momentum_warmup_steps=300, init_scale=1, x0_init=0.1, lm_head_wd=0.01, embedding_wd=0.001, value_embedding_wd=0.003
+status: RUN 100
+stats: val_bpb=1.046772, train_s=300.1, total_s=360.4, steps=1401, tokens_M=183.6, mfu=11.51%, vram_mb=22652.4, device_batch=64, grad_accum=1
+verdict: regressed (+0.007130 bpb)
+
+## Ranking
+01. double_spike_b64_p37_s2048: val_bpb=1.037976, train_s=300.2, total_s=360.5, steps=1384, tokens_M=181.4, mfu=12.35%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=worked (-0.001666 bpb)
+02. paired_s64_l1024: val_bpb=1.038361, train_s=300.1, total_s=360.4, steps=1353, tokens_M=177.3, mfu=12.03%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=worked (-0.001281 bpb)
+03. alternating_s128_l1024: val_bpb=1.038421, train_s=300.2, total_s=360.2, steps=1343, tokens_M=176.0, mfu=12.03%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=worked (-0.001222 bpb)
+04. ramp_02: val_bpb=1.038582, train_s=300.2, total_s=360.2, steps=1378, tokens_M=180.6, mfu=11.70%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=worked (-0.001061 bpb)
+05. paired_s128_l1024: val_bpb=1.038991, train_s=300.2, total_s=360.9, steps=1344, tokens_M=176.2, mfu=12.04%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=worked (-0.000651 bpb)
+06. ramp_04: val_bpb=1.039055, train_s=300.2, total_s=360.8, steps=1329, tokens_M=174.2, mfu=12.31%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=worked (-0.000588 bpb)
+07. ramp_03: val_bpb=1.039539, train_s=300.2, total_s=360.9, steps=1358, tokens_M=178.0, mfu=11.88%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=worked (-0.000104 bpb)
+08. single_spike_b256_p7_s2048: val_bpb=1.039590, train_s=300.2, total_s=361.1, steps=1369, tokens_M=179.4, mfu=11.98%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=neutral (-0.000053 bpb)
+09. paired_s64_l2048: val_bpb=1.039596, train_s=300.1, total_s=360.6, steps=1330, tokens_M=174.3, mfu=13.29%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=neutral (-0.000046 bpb)
+10. baseline_train_py_windows: val_bpb=1.039643, train_s=300.2, total_s=343.5, steps=1354, tokens_M=177.5, mfu=12.50%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=already in baseline / duplicate
+11. alternating_s64_l1024: val_bpb=1.039839, train_s=300.1, total_s=360.9, steps=1353, tokens_M=177.3, mfu=12.03%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.000197 bpb)
+12. ramp_10: val_bpb=1.039857, train_s=300.1, total_s=361.2, steps=1334, tokens_M=174.9, mfu=12.30%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.000214 bpb)
+13. paired_s128_l2048: val_bpb=1.039974, train_s=300.2, total_s=361.0, steps=1322, tokens_M=173.3, mfu=13.29%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.000331 bpb)
+14. paired_s256_l1024: val_bpb=1.040133, train_s=300.0, total_s=360.6, steps=1326, tokens_M=173.8, mfu=12.06%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.000490 bpb)
+15. ramp_11: val_bpb=1.040154, train_s=300.2, total_s=361.2, steps=1328, tokens_M=174.1, mfu=12.30%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.000512 bpb)
+16. alternating_s128_l2048: val_bpb=1.040394, train_s=300.1, total_s=361.1, steps=1322, tokens_M=173.3, mfu=13.30%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.000751 bpb)
+17. single_spike_b128_p7_s2048: val_bpb=1.040505, train_s=300.0, total_s=359.9, steps=1400, tokens_M=183.5, mfu=11.92%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.000862 bpb)
+18. ramp_05: val_bpb=1.040771, train_s=300.1, total_s=361.0, steps=1302, tokens_M=170.7, mfu=12.74%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.001128 bpb)
+19. alternating_s64_l2048: val_bpb=1.040784, train_s=300.1, total_s=360.7, steps=1330, tokens_M=174.3, mfu=13.29%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.001141 bpb)
+20. alternating_s256_l1024: val_bpb=1.041066, train_s=300.1, total_s=360.7, steps=1326, tokens_M=173.8, mfu=12.06%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.001423 bpb)
+21. alternating_s256_l2048: val_bpb=1.041160, train_s=300.1, total_s=361.2, steps=1305, tokens_M=171.0, mfu=13.31%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.001517 bpb)
+22. double_spike_b64_p15_s2048: val_bpb=1.041846, train_s=300.1, total_s=361.1, steps=1384, tokens_M=181.4, mfu=12.35%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.002203 bpb)
+23. period2_off1_s512_l2048: val_bpb=1.042023, train_s=300.2, total_s=362.3, steps=1276, tokens_M=167.2, mfu=13.35%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.002380 bpb)
+24. paired_s256_l2048: val_bpb=1.042577, train_s=300.1, total_s=361.0, steps=1305, tokens_M=171.0, mfu=13.31%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.002935 bpb)
+25. period2_off1_s512_l1024: val_bpb=1.042623, train_s=300.0, total_s=361.8, steps=1295, tokens_M=169.7, mfu=12.14%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.002980 bpb)
+26. single_spike_b256_p3_s2048: val_bpb=1.043737, train_s=300.1, total_s=360.6, steps=1369, tokens_M=179.4, mfu=11.98%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.004094 bpb)
+27. double_spike_b256_p15_s2048: val_bpb=1.044229, train_s=300.0, total_s=360.5, steps=1347, tokens_M=176.6, mfu=12.44%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.004586 bpb)
+28. double_spike_b256_p26_s2048: val_bpb=1.044400, train_s=300.1, total_s=360.5, steps=1347, tokens_M=176.6, mfu=12.44%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.004757 bpb)
+29. uniform_2048: val_bpb=1.044508, train_s=300.2, total_s=361.6, steps=1227, tokens_M=160.8, mfu=14.87%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.004866 bpb)
+30. paired_s128_l512: val_bpb=1.044892, train_s=300.1, total_s=360.1, steps=1385, tokens_M=181.5, mfu=11.65%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.005249 bpb)
+31. uniform_1024: val_bpb=1.044931, train_s=300.0, total_s=362.9, steps=1262, tokens_M=165.4, mfu=12.52%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.005288 bpb)
+32. double_spike_b64_p26_s2048: val_bpb=1.044934, train_s=300.2, total_s=360.5, steps=1385, tokens_M=181.5, mfu=12.36%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.005291 bpb)
+33. single_spike_b128_p3_s2048: val_bpb=1.045133, train_s=300.1, total_s=360.5, steps=1401, tokens_M=183.6, mfu=11.93%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.005490 bpb)
+34. double_spike_b256_p37_s512: val_bpb=1.045157, train_s=300.0, total_s=360.4, steps=1378, tokens_M=180.6, mfu=11.59%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.005514 bpb)
+35. alternating_s128_l512: val_bpb=1.045725, train_s=300.1, total_s=359.2, steps=1385, tokens_M=181.5, mfu=11.65%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.006083 bpb)
+36. period3_off0_s512_l1024: val_bpb=1.045864, train_s=300.1, total_s=362.2, steps=1305, tokens_M=171.0, mfu=12.05%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.006221 bpb)
+37. paired_s64_l512: val_bpb=1.045931, train_s=300.1, total_s=360.3, steps=1394, tokens_M=182.7, mfu=11.62%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.006288 bpb)
+38. paired_s256_l512: val_bpb=1.046172, train_s=300.1, total_s=359.9, steps=1364, tokens_M=178.8, mfu=11.65%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.006529 bpb)
+39. ramp_12: val_bpb=1.046205, train_s=300.1, total_s=360.9, steps=1328, tokens_M=174.1, mfu=12.31%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.006562 bpb)
+40. period3_off0_s512_l2048: val_bpb=1.046239, train_s=300.2, total_s=361.6, steps=1290, tokens_M=169.1, mfu=12.97%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.006596 bpb)
+41. alternating_s64_l512: val_bpb=1.046424, train_s=300.2, total_s=360.5, steps=1394, tokens_M=182.7, mfu=11.62%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.006782 bpb)
+42. double_spike_b64_p37_s512: val_bpb=1.046504, train_s=300.1, total_s=360.1, steps=1418, tokens_M=185.9, mfu=11.49%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.006861 bpb)
+43. period2_off0_s128_l1024: val_bpb=1.046653, train_s=300.1, total_s=360.7, steps=1338, tokens_M=175.4, mfu=11.98%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.007011 bpb)
+44. period3_off1_s64_l512: val_bpb=1.046772, train_s=300.1, total_s=360.4, steps=1401, tokens_M=183.6, mfu=11.51%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.007130 bpb)
+45. alternating_s256_l512: val_bpb=1.047021, train_s=300.2, total_s=360.4, steps=1365, tokens_M=178.9, mfu=11.66%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.007378 bpb)
+46. period3_off0_s256_l1024: val_bpb=1.047359, train_s=300.1, total_s=361.0, steps=1338, tokens_M=175.4, mfu=11.89%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.007716 bpb)
+47. double_spike_b256_p04_s2048: val_bpb=1.047706, train_s=300.1, total_s=360.9, steps=1347, tokens_M=176.6, mfu=12.44%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.008064 bpb)
+48. period2_off0_s128_l2048: val_bpb=1.047730, train_s=300.2, total_s=360.7, steps=1317, tokens_M=172.6, mfu=13.24%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.008087 bpb)
+49. ramp_01: val_bpb=1.047825, train_s=300.2, total_s=360.3, steps=1404, tokens_M=184.0, mfu=11.56%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.008183 bpb)
+50. single_spike_b256_p7_s512: val_bpb=1.048019, train_s=300.1, total_s=360.5, steps=1387, tokens_M=181.8, mfu=11.57%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.008376 bpb)
+51. double_spike_b256_p15_s512: val_bpb=1.048099, train_s=300.0, total_s=360.3, steps=1378, tokens_M=180.6, mfu=11.59%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.008457 bpb)
+52. period3_off0_s256_l2048: val_bpb=1.048106, train_s=300.1, total_s=359.3, steps=1322, tokens_M=173.3, mfu=12.84%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.008463 bpb)
+53. single_spike_b128_p7_s512: val_bpb=1.048209, train_s=300.1, total_s=360.3, steps=1417, tokens_M=185.7, mfu=11.48%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.008566 bpb)
+54. period2_off0_s64_l1024: val_bpb=1.048421, train_s=300.0, total_s=360.7, steps=1348, tokens_M=176.7, mfu=11.99%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.008778 bpb)
+55. uniform_512: val_bpb=1.048851, train_s=300.1, total_s=360.6, steps=1343, tokens_M=176.0, mfu=11.84%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.009208 bpb)
+56. double_spike_b64_p15_s512: val_bpb=1.049034, train_s=300.0, total_s=359.9, steps=1417, tokens_M=185.7, mfu=11.48%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.009391 bpb)
+57. period2_off0_s256_l1024: val_bpb=1.049080, train_s=300.0, total_s=371.0, steps=1321, tokens_M=173.1, mfu=12.02%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.009437 bpb)
+58. period2_off0_s64_l2048: val_bpb=1.049713, train_s=300.0, total_s=361.2, steps=1326, tokens_M=173.8, mfu=13.25%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.010070 bpb)
+59. period3_off0_s128_l1024: val_bpb=1.050088, train_s=300.0, total_s=372.5, steps=1360, tokens_M=178.3, mfu=11.86%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.010445 bpb)
+60. period2_off0_s256_l2048: val_bpb=1.050231, train_s=300.1, total_s=359.3, steps=1300, tokens_M=170.4, mfu=13.26%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.010588 bpb)
+61. period3_off0_s128_l2048: val_bpb=1.050501, train_s=300.1, total_s=370.7, steps=1343, tokens_M=176.0, mfu=12.82%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.010858 bpb)
+62. single_spike_b256_p3_s512: val_bpb=1.050811, train_s=300.1, total_s=360.4, steps=1387, tokens_M=181.8, mfu=11.57%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.011168 bpb)
+63. period3_off0_s64_l2048: val_bpb=1.051376, train_s=300.2, total_s=361.0, steps=1356, tokens_M=177.7, mfu=12.82%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.011733 bpb)
+64. double_spike_b64_p26_s512: val_bpb=1.051404, train_s=300.1, total_s=362.2, steps=1419, tokens_M=186.0, mfu=11.49%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.011761 bpb)
+65. double_spike_b256_p26_s512: val_bpb=1.051411, train_s=300.2, total_s=360.8, steps=1379, tokens_M=180.7, mfu=11.59%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.011768 bpb)
+66. double_spike_b64_p04_s2048: val_bpb=1.051626, train_s=300.1, total_s=360.6, steps=1384, tokens_M=181.4, mfu=12.35%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.011983 bpb)
+67. period2_off0_s512_l1024: val_bpb=1.051789, train_s=300.2, total_s=361.1, steps=1295, tokens_M=169.7, mfu=12.13%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.012147 bpb)
+68. period3_off0_s64_l1024: val_bpb=1.051939, train_s=300.1, total_s=359.0, steps=1367, tokens_M=179.2, mfu=11.80%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.012296 bpb)
+69. single_spike_b128_p3_s512: val_bpb=1.052525, train_s=300.1, total_s=360.3, steps=1418, tokens_M=185.9, mfu=11.49%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.012883 bpb)
+70. period2_off0_s128_l512: val_bpb=1.052872, train_s=300.1, total_s=361.5, steps=1379, tokens_M=180.7, mfu=11.60%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.013229 bpb)
+71. period3_off0_s256_l512: val_bpb=1.053128, train_s=300.1, total_s=362.2, steps=1368, tokens_M=179.3, mfu=11.60%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.013485 bpb)
+72. double_spike_b256_p04_s512: val_bpb=1.053158, train_s=300.0, total_s=358.7, steps=1379, tokens_M=180.7, mfu=11.60%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.013516 bpb)
+73. period2_off0_s256_l512: val_bpb=1.053283, train_s=300.2, total_s=367.6, steps=1362, tokens_M=178.5, mfu=11.64%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.013641 bpb)
+74. period2_off0_s512_l2048: val_bpb=1.053669, train_s=300.2, total_s=361.4, steps=1275, tokens_M=167.1, mfu=13.34%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.014027 bpb)
+75. period2_off0_s64_l512: val_bpb=1.053861, train_s=300.2, total_s=360.2, steps=1391, tokens_M=182.3, mfu=11.60%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.014218 bpb)
+76. period3_off0_s128_l512: val_bpb=1.055614, train_s=300.0, total_s=372.9, steps=1391, tokens_M=182.3, mfu=11.56%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.015971 bpb)
+77. period3_off0_s64_l512: val_bpb=1.056577, train_s=300.1, total_s=360.5, steps=1402, tokens_M=183.8, mfu=11.52%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.016935 bpb)
+78. ramp_09: val_bpb=1.056787, train_s=300.2, total_s=361.2, steps=1303, tokens_M=170.8, mfu=12.74%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.017144 bpb)
+79. double_spike_b64_p04_s512: val_bpb=1.057604, train_s=300.1, total_s=360.1, steps=1419, tokens_M=186.0, mfu=11.49%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.017962 bpb)
+80. period2_off1_s64_l256: val_bpb=1.059906, train_s=300.1, total_s=359.6, steps=1416, tokens_M=185.6, mfu=11.42%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.020263 bpb)
+81. period2_off1_s128_l256: val_bpb=1.060701, train_s=300.1, total_s=360.4, steps=1407, tokens_M=184.4, mfu=11.44%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.021058 bpb)
+82. uniform_256: val_bpb=1.061785, train_s=300.0, total_s=359.8, steps=1397, tokens_M=183.1, mfu=11.56%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.022142 bpb)
+83. ramp_08: val_bpb=1.061968, train_s=300.1, total_s=361.1, steps=1328, tokens_M=174.1, mfu=12.31%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.022325 bpb)
+84. single_spike_b256_p0_s512: val_bpb=1.063040, train_s=300.1, total_s=360.6, steps=1387, tokens_M=181.8, mfu=11.57%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.023397 bpb)
+85. single_spike_b256_p0_s2048: val_bpb=1.064446, train_s=300.0, total_s=360.6, steps=1369, tokens_M=179.4, mfu=11.99%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.024804 bpb)
+86. period3_off1_s64_l256: val_bpb=1.064742, train_s=300.1, total_s=359.8, steps=1423, tokens_M=186.5, mfu=11.40%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.025100 bpb)
+87. period2_off0_s128_l256: val_bpb=1.067236, train_s=300.1, total_s=360.0, steps=1409, tokens_M=184.7, mfu=11.46%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.027594 bpb)
+88. period3_off0_s128_l256: val_bpb=1.067976, train_s=300.1, total_s=365.6, steps=1413, tokens_M=185.2, mfu=11.45%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.028333 bpb)
+89. period2_off0_s64_l256: val_bpb=1.068048, train_s=300.1, total_s=361.0, steps=1420, tokens_M=186.1, mfu=11.45%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.028405 bpb)
+90. period3_off0_s64_l256: val_bpb=1.071041, train_s=300.1, total_s=360.2, steps=1425, tokens_M=186.8, mfu=11.42%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.031398 bpb)
+91. ramp_06: val_bpb=1.075269, train_s=300.1, total_s=359.6, steps=1403, tokens_M=183.9, mfu=11.56%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.035626 bpb)
+92. ramp_07: val_bpb=1.076080, train_s=300.0, total_s=359.6, steps=1377, tokens_M=180.5, mfu=11.70%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.036437 bpb)
+93. uniform_128: val_bpb=1.083454, train_s=300.0, total_s=361.0, steps=1432, tokens_M=187.7, mfu=11.45%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.043812 bpb)
+94. period2_off1_s64_l128: val_bpb=1.084454, train_s=300.1, total_s=360.7, steps=1433, tokens_M=187.8, mfu=11.36%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.044811 bpb)
+95. single_spike_b128_p0_s512: val_bpb=1.085798, train_s=300.0, total_s=359.9, steps=1418, tokens_M=185.9, mfu=11.49%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.046155 bpb)
+96. single_spike_b128_p0_s2048: val_bpb=1.086164, train_s=300.0, total_s=360.3, steps=1400, tokens_M=183.5, mfu=11.92%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.046521 bpb)
+97. period3_off1_s64_l128: val_bpb=1.087048, train_s=300.2, total_s=360.7, steps=1437, tokens_M=188.4, mfu=11.37%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.047406 bpb)
+98. period2_off0_s64_l128: val_bpb=1.090144, train_s=300.1, total_s=359.9, steps=1438, tokens_M=188.5, mfu=11.40%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.050501 bpb)
+99. period3_off0_s64_l128: val_bpb=1.090362, train_s=300.1, total_s=360.3, steps=1438, tokens_M=188.5, mfu=11.37%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.050720 bpb)
+100. uniform_64: val_bpb=1.112879, train_s=300.2, total_s=359.9, steps=1451, tokens_M=190.2, mfu=11.40%, vram_mb=22652.4, device_batch=64, grad_accum=1; verdict=regressed (+0.073237 bpb)
+
+## Worked vs did not
+uniform_64: regressed (+0.073237 bpb)
+uniform_128: regressed (+0.043812 bpb)
+uniform_256: regressed (+0.022142 bpb)
+uniform_512: regressed (+0.009208 bpb)
+uniform_1024: regressed (+0.005288 bpb)
+uniform_2048: regressed (+0.004866 bpb)
+alternating_s64_l512: regressed (+0.006782 bpb)
+paired_s64_l512: regressed (+0.006288 bpb)
+alternating_s64_l1024: regressed (+0.000197 bpb)
+paired_s64_l1024: worked (-0.001281 bpb)
+alternating_s64_l2048: regressed (+0.001141 bpb)
+paired_s64_l2048: neutral (-0.000046 bpb)
+alternating_s128_l512: regressed (+0.006083 bpb)
+paired_s128_l512: regressed (+0.005249 bpb)
+alternating_s128_l1024: worked (-0.001222 bpb)
+paired_s128_l1024: worked (-0.000651 bpb)
+alternating_s128_l2048: regressed (+0.000751 bpb)
+paired_s128_l2048: regressed (+0.000331 bpb)
+alternating_s256_l512: regressed (+0.007378 bpb)
+paired_s256_l512: regressed (+0.006529 bpb)
+alternating_s256_l1024: regressed (+0.001423 bpb)
+paired_s256_l1024: regressed (+0.000490 bpb)
+alternating_s256_l2048: regressed (+0.001517 bpb)
+paired_s256_l2048: regressed (+0.002935 bpb)
+ramp_01: regressed (+0.008183 bpb)
+ramp_02: worked (-0.001061 bpb)
+ramp_03: worked (-0.000104 bpb)
+ramp_04: worked (-0.000588 bpb)
+ramp_05: regressed (+0.001128 bpb)
+ramp_06: regressed (+0.035626 bpb)
+ramp_07: regressed (+0.036437 bpb)
+ramp_08: regressed (+0.022325 bpb)
+ramp_09: regressed (+0.017144 bpb)
+ramp_10: regressed (+0.000214 bpb)
+ramp_11: regressed (+0.000512 bpb)
+ramp_12: regressed (+0.006562 bpb)
+single_spike_b128_p0_s512: regressed (+0.046155 bpb)
+single_spike_b128_p3_s512: regressed (+0.012883 bpb)
+single_spike_b128_p7_s512: regressed (+0.008566 bpb)
+single_spike_b128_p0_s2048: regressed (+0.046521 bpb)
+single_spike_b128_p3_s2048: regressed (+0.005490 bpb)
+single_spike_b128_p7_s2048: regressed (+0.000862 bpb)
+single_spike_b256_p0_s512: regressed (+0.023397 bpb)
+single_spike_b256_p3_s512: regressed (+0.011168 bpb)
+single_spike_b256_p7_s512: regressed (+0.008376 bpb)
+single_spike_b256_p0_s2048: regressed (+0.024804 bpb)
+single_spike_b256_p3_s2048: regressed (+0.004094 bpb)
+single_spike_b256_p7_s2048: neutral (-0.000053 bpb)
+double_spike_b64_p04_s512: regressed (+0.017962 bpb)
+double_spike_b64_p15_s512: regressed (+0.009391 bpb)
+double_spike_b64_p26_s512: regressed (+0.011761 bpb)
+double_spike_b64_p37_s512: regressed (+0.006861 bpb)
+double_spike_b64_p04_s2048: regressed (+0.011983 bpb)
+double_spike_b64_p15_s2048: regressed (+0.002203 bpb)
+double_spike_b64_p26_s2048: regressed (+0.005291 bpb)
+double_spike_b64_p37_s2048: worked (-0.001666 bpb)
+double_spike_b256_p04_s512: regressed (+0.013516 bpb)
+double_spike_b256_p15_s512: regressed (+0.008457 bpb)
+double_spike_b256_p26_s512: regressed (+0.011768 bpb)
+double_spike_b256_p37_s512: regressed (+0.005514 bpb)
+double_spike_b256_p04_s2048: regressed (+0.008064 bpb)
+double_spike_b256_p15_s2048: regressed (+0.004586 bpb)
+double_spike_b256_p26_s2048: regressed (+0.004757 bpb)
+period2_off0_s64_l128: regressed (+0.050501 bpb)
+period2_off0_s64_l256: regressed (+0.028405 bpb)
+period2_off0_s64_l512: regressed (+0.014218 bpb)
+period2_off0_s64_l1024: regressed (+0.008778 bpb)
+period2_off0_s64_l2048: regressed (+0.010070 bpb)
+period2_off0_s128_l256: regressed (+0.027594 bpb)
+period2_off0_s128_l512: regressed (+0.013229 bpb)
+period2_off0_s128_l1024: regressed (+0.007011 bpb)
+period2_off0_s128_l2048: regressed (+0.008087 bpb)
+period2_off0_s256_l512: regressed (+0.013641 bpb)
+period2_off0_s256_l1024: regressed (+0.009437 bpb)
+period2_off0_s256_l2048: regressed (+0.010588 bpb)
+period2_off0_s512_l1024: regressed (+0.012147 bpb)
+period2_off0_s512_l2048: regressed (+0.014027 bpb)
+period2_off1_s64_l128: regressed (+0.044811 bpb)
+period2_off1_s64_l256: regressed (+0.020263 bpb)
+period2_off1_s128_l256: regressed (+0.021058 bpb)
+period2_off1_s512_l1024: regressed (+0.002980 bpb)
+period2_off1_s512_l2048: regressed (+0.002380 bpb)
+period3_off0_s64_l128: regressed (+0.050720 bpb)
+period3_off0_s64_l256: regressed (+0.031398 bpb)
+period3_off0_s64_l512: regressed (+0.016935 bpb)
+period3_off0_s64_l1024: regressed (+0.012296 bpb)
+period3_off0_s64_l2048: regressed (+0.011733 bpb)
+period3_off0_s128_l256: regressed (+0.028333 bpb)
+period3_off0_s128_l512: regressed (+0.015971 bpb)
+period3_off0_s128_l1024: regressed (+0.010445 bpb)
+period3_off0_s128_l2048: regressed (+0.010858 bpb)
+period3_off0_s256_l512: regressed (+0.013485 bpb)
+period3_off0_s256_l1024: regressed (+0.007716 bpb)
+period3_off0_s256_l2048: regressed (+0.008463 bpb)
+period3_off0_s512_l1024: regressed (+0.006221 bpb)
+period3_off0_s512_l2048: regressed (+0.006596 bpb)
+period3_off1_s64_l128: regressed (+0.047406 bpb)
+period3_off1_s64_l256: regressed (+0.025100 bpb)
+period3_off1_s64_l512: regressed (+0.007130 bpb)

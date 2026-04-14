@@ -71,3 +71,5 @@ transformer: fov up, speed down, precision same
 
 rebase train3.py on the recent changes in train.py and have new experiments 
 []
+
+
