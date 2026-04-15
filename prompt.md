@@ -92,3 +92,24 @@ seed_sweep, seeds 42..51:
   min:    1.037529
   max:    1.043113
   range:  0.005584
+
+
+work under autoresearch directory. python is /venv/main/bin/python.
+modify only train_scheduler.py
+implement a hparam beam search scheduler. let's take lr for example.
+beam search takes input k.
+at the start, we try out many different lrs {0.5,0.75,1.0,1.25,1.5,1.75,2.0}
+we train from the randomly initialized checkpoint on each of them for 50 steps, use the avg of the last 3 steps as the avg_loss metric.
+find the k lrs that achieve the lowest avg_loss. for each of the k checkpoints, try out 0.8*lr, 1.0*lr, 1.2*lr for 50 steps to get 3*k checkpoints. find the k checkpoints that achieve the lowest avg_loss. repeat this process, until we get to 1350 steps.
+we can't put all checkpoints in memory because memory is limited, so we have to save them to files. but we only need to keep k checkpoints at any given time. we can always delete the worst checkpoint to make room for the new checkpoint such that we keep at most k checkpoints at any given time.
+the point of this is to find a good lr scheduler.
+common values of k that i plan to try are 1 and 3. 
+modify only train_scheduler.py
+for lr, we are actually talking about LR_MULT in the codebase.
+ask questions before you implement. 
+
+
+
+> beam_search.log 2>&1
+
+TODO: cooldown period for beam search might be necessary.
