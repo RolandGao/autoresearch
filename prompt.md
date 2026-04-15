@@ -72,4 +72,23 @@ transformer: fov up, speed down, precision same
 rebase train3.py on the recent changes in train.py and have new experiments 
 []
 
+10 runs different seed
+mean val_bpb:   1.040451
+stddev:         0.001608
+min:            1.037853
+max:            1.043623
+range:          0.005770
 
+same_seed, seed 42 x10:
+  mean:   1.039560
+  stdev:  0.000165
+  min:    1.039284
+  max:    1.039785
+  range:  0.000501
+
+seed_sweep, seeds 42..51:
+  mean:   1.040167
+  stdev:  0.001511
+  min:    1.037529
+  max:    1.043113
+  range:  0.005584
