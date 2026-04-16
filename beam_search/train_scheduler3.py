@@ -463,13 +463,11 @@ H100_BF16_PEAK_FLOPS = 989.5e12
 # ---------------------------------------------------------------------------
 
 BEAM_WIDTH = 1
-BEAM_PREFIX_STEPS = (50, 200, 800, 1600)
-BEAM_START_LR_MULT = 1.5
+INITIAL_LR_MULTS = (0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
 CHILD_LR_FACTORS = (0.8, 1.0, 1.2)
 BEAM_SEGMENT_STEPS = 20
-BEAM_STOP_LR_MULT = 0.01
-BEAM_MAX_SEARCH_ROUNDS = 10_000
-WEIGHT_DECAY_DECAY_STEPS = 1350
+BEAM_COOLDOWN_STEPS = 200
+BEAM_TOTAL_STEPS = 1160
 BEAM_SEED = 42
 CHECKPOINT_ROOT = Path(__file__).resolve().parent / "beam_search_checkpoints"
 
@@ -537,7 +535,7 @@ def set_optimizer_lr_mult(optimizer, model_dim, lr_mult):
 
 def set_step_schedules(optimizer, model_dim, lr_mult, step):
     set_optimizer_lr_mult(optimizer, model_dim, lr_mult)
-    progress = min(step / WEIGHT_DECAY_DECAY_STEPS, 1.0)
+    progress = min(step / BEAM_TOTAL_STEPS+BEAM_COOLDOWN_STEPS, 1.0)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
     for group in optimizer.param_groups:
@@ -590,9 +588,14 @@ def clean_checkpoint_dir(checkpoint_dir):
         path.unlink()
 
 
-def load_segment_batches(train_loader, grad_accum_steps):
+def cooldown_lr_mult(candidate_lr_mult, cooldown_step_idx):
+    x = cooldown_step_idx + 1
+    return candidate_lr_mult * 0.1 ** ((x / 170) ** 0.42)
+
+
+def load_step_batches(train_loader, grad_accum_steps, num_steps):
     segment_batches = []
-    for _ in range(BEAM_SEGMENT_STEPS):
+    for _ in range(num_steps):
         micro_batches = []
         for _ in range(grad_accum_steps):
             x, y, epoch = next(train_loader)
@@ -603,7 +606,7 @@ def load_segment_batches(train_loader, grad_accum_steps):
 
 def train_candidate_segment(model, compiled_model, optimizer, segment_batches, lr_mult,
                             start_step, grad_accum_steps, autocast_ctx, num_flops_per_token,
-                            display_total_steps=None):
+                            lr_mult_for_step=None, display_total_steps=BEAM_TOTAL_STEPS):
     model.train()
     model.zero_grad(set_to_none=True)
     losses = []
@@ -632,7 +635,8 @@ def train_candidate_segment(model, compiled_model, optimizer, segment_batches, l
             model.zero_grad(set_to_none=True)
             break
 
-        set_step_schedules(optimizer, model.config.n_embd, lr_mult, global_step)
+        step_lr_mult = lr_mult if lr_mult_for_step is None else lr_mult_for_step(local_step)
+        set_step_schedules(optimizer, model.config.n_embd, step_lr_mult, global_step)
         optimizer.step()
         model.zero_grad(set_to_none=True)
         losses.append(train_loss_f)
@@ -643,10 +647,9 @@ def train_candidate_segment(model, compiled_model, optimizer, segment_batches, l
         tok_per_sec = int(TOTAL_BATCH_SIZE / dt) if dt > 0 else 0
         mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS if dt > 0 else 0
         avg3 = sum(losses[-3:]) / min(len(losses), 3)
-        step_total = f"/{display_total_steps}" if display_total_steps is not None else ""
         print(
-            f"\r    step {global_step + 1:04d}{step_total} | "
-            f"LR_MULT {lr_mult:.6g} | loss {train_loss_f:.6f} | "
+            f"\r    step {global_step + 1:04d}/{display_total_steps} | "
+            f"LR_MULT {step_lr_mult:.6g} | loss {train_loss_f:.6f} | "
             f"avg3 {avg3:.6f} | dt {dt*1000:.0f}ms | tok/sec {tok_per_sec:,} | "
             f"mfu {mfu:.1f}% | epoch {last_epoch}    ",
             end="",
@@ -676,49 +679,21 @@ def format_lr_history(lr_history):
     return "[" + ", ".join(f"{value:.6g}" for value in lr_history) + "]"
 
 
-def candidate_lrs_for_beam(beam):
-    for parent in beam:
-        for factor in CHILD_LR_FACTORS:
-            yield parent, parent.lr_mult * factor
+def candidate_lrs_for_round(beam, round_idx):
+    if round_idx == 0:
+        for lr_mult in INITIAL_LR_MULTS:
+            yield None, lr_mult
+    else:
+        for parent in beam:
+            for factor in CHILD_LR_FACTORS:
+                yield parent, parent.lr_mult * factor
 
 
-def run_fixed_prefix(model, compiled_model, optimizer, train_loader, grad_accum_steps,
-                     autocast_ctx, num_flops_per_token, prefix_steps):
-    assert prefix_steps % BEAM_SEGMENT_STEPS == 0
-    total_training_time = 0.0
-    prefix_losses = []
-
-    for segment_idx in range(prefix_steps // BEAM_SEGMENT_STEPS):
-        start_step = segment_idx * BEAM_SEGMENT_STEPS
-        end_step = start_step + BEAM_SEGMENT_STEPS
-        print("---")
-        print(
-            f"Fixed prefix {segment_idx + 1}/{prefix_steps // BEAM_SEGMENT_STEPS}: "
-            f"steps {start_step + 1}-{end_step} | LR_MULT={BEAM_START_LR_MULT:.6g}"
-        )
-        segment_batches = load_segment_batches(train_loader, grad_accum_steps)
-        avg_loss, losses, train_dt = train_candidate_segment(
-            model, compiled_model, optimizer, segment_batches, BEAM_START_LR_MULT,
-            start_step, grad_accum_steps, autocast_ctx, num_flops_per_token,
-            display_total_steps=prefix_steps,
-        )
-        total_training_time += train_dt
-        if math.isinf(avg_loss):
-            raise RuntimeError(f"Fixed prefix failed at steps {start_step + 1}-{end_step}")
-        prefix_losses.extend(losses)
-        del segment_batches
-        gc.collect()
-
-    if len(prefix_losses) < 3:
-        raise RuntimeError("Fixed prefix produced fewer than 3 losses")
-
-    return sum(prefix_losses[-3:]) / 3, tuple(prefix_losses[-3:]), total_training_time
-
-
-def run_beam_search(prefix_steps, beam_width=BEAM_WIDTH):
+def run_beam_search(beam_width=BEAM_WIDTH):
     assert beam_width == 1
+    assert BEAM_TOTAL_STEPS % BEAM_SEGMENT_STEPS == 0
     t_start = time.time()
-    checkpoint_dir = CHECKPOINT_ROOT / f"k{beam_width}_prefix{prefix_steps}"
+    checkpoint_dir = CHECKPOINT_ROOT / f"k{beam_width}"
     clean_checkpoint_dir(checkpoint_dir)
 
     torch.manual_seed(BEAM_SEED)
@@ -730,11 +705,12 @@ def run_beam_search(prefix_steps, beam_width=BEAM_WIDTH):
     autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
 
     print("===")
-    print(f"Beam search k={beam_width}, fixed prefix={prefix_steps} steps")
+    print(f"Beam search k={beam_width}")
     print(f"Seed: {BEAM_SEED}")
-    print(f"Fixed prefix LR_MULT: {BEAM_START_LR_MULT}")
-    print(f"Stop when selected LR_MULT < {BEAM_STOP_LR_MULT}")
+    print(f"Total steps: {BEAM_TOTAL_STEPS}")
     print(f"Segment steps: {BEAM_SEGMENT_STEPS}")
+    print(f"Cooldown steps: {BEAM_COOLDOWN_STEPS}")
+    print(f"Initial LR_MULTs: {INITIAL_LR_MULTS}")
     print(f"Child LR factors: {CHILD_LR_FACTORS}")
 
     tokenizer = Tokenizer.from_directory()
@@ -763,98 +739,129 @@ def run_beam_search(prefix_steps, beam_width=BEAM_WIDTH):
     print(f"Device batch size: {DEVICE_BATCH_SIZE}")
     print(f"Gradient accumulation steps: {grad_accum_steps}")
 
-    optimizer = make_optimizer(model, BEAM_START_LR_MULT)
+    optimizer = make_optimizer(model, LR_MULT)
     compiled_model = torch.compile(model, dynamic=False)
 
-    train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
-    prefix_avg_loss, prefix_last_losses, total_training_time = run_fixed_prefix(
-        model, compiled_model, optimizer, train_loader, grad_accum_steps,
-        autocast_ctx, num_flops_per_token, prefix_steps,
-    )
-
-    prefix_path = checkpoint_dir / f"prefix_step_{prefix_steps:04d}_lr_{BEAM_START_LR_MULT:.8g}.pt"
-    save_checkpoint(prefix_path, model, optimizer, {
+    initial_path = checkpoint_dir / "initial.pt"
+    save_checkpoint(initial_path, model, optimizer, {
         "beam_width": beam_width,
-        "fixed_prefix_steps": prefix_steps,
-        "fixed_prefix_lr_mult": BEAM_START_LR_MULT,
-        "global_step": prefix_steps,
-        "lr_mult": BEAM_START_LR_MULT,
+        "global_step": 0,
+        "lr_mult": None,
         "lr_history": [],
-        "avg_loss": prefix_avg_loss,
-        "last_losses": prefix_last_losses,
+        "avg_loss": None,
     })
     beam = [BeamEntry(
-        path=prefix_path,
-        lr_mult=BEAM_START_LR_MULT,
-        avg_loss=prefix_avg_loss,
-        global_step=prefix_steps,
+        path=initial_path,
+        lr_mult=LR_MULT,
+        avg_loss=float("inf"),
+        global_step=0,
         lr_history=(),
-        last_losses=prefix_last_losses,
+        last_losses=(),
     )]
 
-    round_idx = 0
-    while beam[0].lr_mult >= BEAM_STOP_LR_MULT:
-        if round_idx >= BEAM_MAX_SEARCH_ROUNDS:
-            raise RuntimeError(
-                f"Reached {BEAM_MAX_SEARCH_ROUNDS} beam rounds without LR_MULT < {BEAM_STOP_LR_MULT}"
-            )
-        start_step = beam[0].global_step
+    train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
+    num_rounds = BEAM_TOTAL_STEPS // BEAM_SEGMENT_STEPS
+    total_training_time = 0.0
+
+    for round_idx in range(num_rounds):
+        start_step = round_idx * BEAM_SEGMENT_STEPS
         end_step = start_step + BEAM_SEGMENT_STEPS
-        round_idx += 1
+        cooldown_end_step = end_step + BEAM_COOLDOWN_STEPS
         print("---")
         print(
-            f"Beam round {round_idx}: steps {start_step + 1}-{end_step} | "
-            f"current LR_MULT={beam[0].lr_mult:.6g}"
+            f"Round {round_idx + 1}/{num_rounds}: fixed steps {start_step + 1}-{end_step}, "
+            f"cooldown scoring steps {end_step + 1}-{cooldown_end_step}"
         )
-        segment_batches = load_segment_batches(train_loader, grad_accum_steps)
+        segment_batches = load_step_batches(train_loader, grad_accum_steps, BEAM_SEGMENT_STEPS)
+        cooldown_batches = load_step_batches(train_loader, grad_accum_steps, BEAM_COOLDOWN_STEPS)
         child_beam = []
         parent_paths = {entry.path for entry in beam}
-        candidates = list(candidate_lrs_for_beam(beam))
+        candidates = list(candidate_lrs_for_round(beam, round_idx))
 
         for candidate_idx, (parent, lr_mult) in enumerate(candidates, start=1):
+            parent_entry = beam[0] if parent is None else parent
             print(
                 f"  candidate {candidate_idx}/{len(candidates)} | "
-                f"parent_step={parent.global_step} | LR_MULT={lr_mult:.6g}"
+                f"parent_step={parent_entry.global_step} | LR_MULT={lr_mult:.6g}"
             )
-            load_checkpoint(parent.path, model, optimizer)
+            load_checkpoint(parent_entry.path, model, optimizer)
             set_optimizer_lr_mult(optimizer, model.config.n_embd, lr_mult)
-            avg_loss, losses, train_dt = train_candidate_segment(
+            fixed_avg_loss, fixed_losses, train_dt = train_candidate_segment(
                 model, compiled_model, optimizer, segment_batches, lr_mult,
                 start_step, grad_accum_steps, autocast_ctx, num_flops_per_token,
             )
             total_training_time += train_dt
 
-            if math.isinf(avg_loss):
+            if math.isinf(fixed_avg_loss):
                 print("    candidate failed; not checkpointing")
                 continue
 
+            temp_fixed_path = checkpoint_dir / (
+                f"tmp_round_{round_idx + 1:02d}_cand_{candidate_idx:03d}_"
+                f"step_{end_step:04d}_lr_{lr_mult:.8g}.pt"
+            )
+            save_checkpoint(temp_fixed_path, model, optimizer, {
+                "beam_width": beam_width,
+                "round": round_idx + 1,
+                "global_step": end_step,
+                "lr_mult": lr_mult,
+                "lr_history": parent_entry.lr_history + (lr_mult,),
+                "fixed_avg_loss": fixed_avg_loss,
+                "fixed_last_losses": fixed_losses[-3:],
+                "cooldown_discarded": True,
+            })
+
+            print(
+                f"    cooldown scoring | steps {end_step + 1}-{cooldown_end_step} | "
+                f"base LR_MULT={lr_mult:.6g}"
+            )
+            avg_loss, cooldown_losses, cooldown_dt = train_candidate_segment(
+                model, compiled_model, optimizer, cooldown_batches, lr_mult,
+                end_step, grad_accum_steps, autocast_ctx, num_flops_per_token,
+                lr_mult_for_step=lambda cooldown_step_idx: cooldown_lr_mult(lr_mult, cooldown_step_idx),
+                display_total_steps=cooldown_end_step,
+            )
+            total_training_time += cooldown_dt
+
+            if math.isinf(avg_loss):
+                remove_checkpoint(temp_fixed_path)
+                print("    cooldown failed; not checkpointing")
+                continue
+
             if not reserve_child_slot(child_beam, avg_loss, beam_width):
+                remove_checkpoint(temp_fixed_path)
                 print(f"    avg_loss={avg_loss:.6f} | discarded")
                 continue
 
             child_path = checkpoint_dir / (
-                f"round_{round_idx:04d}_cand_{candidate_idx:03d}_"
+                f"round_{round_idx + 1:02d}_cand_{candidate_idx:03d}_"
                 f"step_{end_step:04d}_lr_{lr_mult:.8g}.pt"
             )
-            lr_history = parent.lr_history + (lr_mult,)
+            lr_history = parent_entry.lr_history + (lr_mult,)
+            load_checkpoint(temp_fixed_path, model, optimizer)
             save_checkpoint(child_path, model, optimizer, {
                 "beam_width": beam_width,
-                "fixed_prefix_steps": prefix_steps,
-                "fixed_prefix_lr_mult": BEAM_START_LR_MULT,
-                "round": round_idx,
+                "round": round_idx + 1,
                 "global_step": end_step,
+                "cooldown_global_step": cooldown_end_step,
                 "lr_mult": lr_mult,
                 "lr_history": lr_history,
                 "avg_loss": avg_loss,
-                "last_losses": losses[-3:],
+                "last_losses": cooldown_losses[-3:],
+                "fixed_avg_loss": fixed_avg_loss,
+                "fixed_last_losses": fixed_losses[-3:],
+                "cooldown_steps": BEAM_COOLDOWN_STEPS,
+                "cooldown_formula": "lr_mult * 0.1 ** ((x / 170) ** 0.42), x starts at 1",
+                "cooldown_checkpoint_discarded": True,
             })
+            remove_checkpoint(temp_fixed_path)
             entry = BeamEntry(
                 path=child_path,
                 lr_mult=lr_mult,
                 avg_loss=avg_loss,
                 global_step=end_step,
                 lr_history=lr_history,
-                last_losses=losses[-3:],
+                last_losses=cooldown_losses[-3:],
             )
             child_beam.append(entry)
             child_beam.sort(key=lambda beam_entry: beam_entry.avg_loss)
@@ -864,7 +871,7 @@ def run_beam_search(prefix_steps, beam_width=BEAM_WIDTH):
             remove_checkpoint(path)
 
         if not child_beam:
-            raise RuntimeError(f"All candidates failed in beam round {round_idx}")
+            raise RuntimeError(f"All candidates failed in round {round_idx + 1}")
 
         beam = child_beam
         print("  survivors:")
@@ -874,15 +881,13 @@ def run_beam_search(prefix_steps, beam_width=BEAM_WIDTH):
                 f"LR_MULT={entry.lr_mult:.6g}, path={entry.path.name}"
             )
         del segment_batches
+        del cooldown_batches
         gc.collect()
 
     best = beam[0]
     print("---")
-    print(f"Best prefix={prefix_steps} k={beam_width} avg_loss: {best.avg_loss:.6f}")
-    print(
-        f"Best prefix={prefix_steps} LR_MULT schedule: "
-        f"{BEAM_START_LR_MULT:.6g} for {prefix_steps} steps, then {format_lr_history(best.lr_history)}"
-    )
+    print(f"Best k={beam_width} avg_loss: {best.avg_loss:.6f}")
+    print(f"Best k={beam_width} LR_MULT schedule: {format_lr_history(best.lr_history)}")
 
     load_checkpoint(best.path, model, optimizer)
     model.eval()
@@ -890,10 +895,9 @@ def run_beam_search(prefix_steps, beam_width=BEAM_WIDTH):
         val_bpb = evaluate_bpb(compiled_model, tokenizer, DEVICE_BATCH_SIZE)
 
     t_end = time.time()
-    total_steps = best.global_step
-    total_tokens = total_steps * TOTAL_BATCH_SIZE
+    total_tokens = BEAM_TOTAL_STEPS * TOTAL_BATCH_SIZE
     steady_state_mfu = (
-        100 * num_flops_per_token * TOTAL_BATCH_SIZE * total_steps
+        100 * num_flops_per_token * TOTAL_BATCH_SIZE * BEAM_TOTAL_STEPS
         / total_training_time / H100_BF16_PEAK_FLOPS
         if total_training_time > 0 else 0
     )
@@ -901,27 +905,22 @@ def run_beam_search(prefix_steps, beam_width=BEAM_WIDTH):
 
     print("---")
     print(f"k:                {beam_width}")
-    print(f"prefix_steps:     {prefix_steps}")
     print(f"val_bpb:          {val_bpb:.6f}")
     print(f"best_avg_loss:    {best.avg_loss:.6f}")
-    print(f"final_lr_mult:    {best.lr_mult:.6g}")
     print(f"training_seconds: {total_training_time:.1f}")
     print(f"total_seconds:    {t_end - t_start:.1f}")
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
     print(f"mfu_percent:      {steady_state_mfu:.2f}")
     print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
-    print(f"num_steps:        {total_steps}")
+    print(f"num_steps:        {BEAM_TOTAL_STEPS}")
     print(f"num_params_M:     {num_params / 1e6:.1f}")
     print(f"depth:            {DEPTH}")
     print(f"checkpoint_dir:   {checkpoint_dir}")
 
     return {
         "k": beam_width,
-        "prefix_steps": prefix_steps,
         "val_bpb": float(val_bpb),
         "best_avg_loss": float(best.avg_loss),
-        "final_lr_mult": float(best.lr_mult),
-        "num_steps": total_steps,
         "lr_history": best.lr_history,
         "checkpoint": best.path,
         "survivors": beam,
@@ -930,21 +929,17 @@ def run_beam_search(prefix_steps, beam_width=BEAM_WIDTH):
 
 def main():
     results = []
-    for prefix_steps in BEAM_PREFIX_STEPS:
-        results.append(run_beam_search(prefix_steps))
-        gc.collect()
-        torch.cuda.empty_cache()
+    results.append(run_beam_search(BEAM_WIDTH))
+    gc.collect()
+    torch.cuda.empty_cache()
 
     print("===")
     print("Beam search summary")
     for result in results:
         print(
-            f"prefix={result['prefix_steps']} | k={result['k']} | "
-            f"steps={result['num_steps']} | val_bpb={result['val_bpb']:.6f} | "
+            f"k={result['k']} | val_bpb={result['val_bpb']:.6f} | "
             f"best_avg_loss={result['best_avg_loss']:.6f} | "
-            f"final_lr_mult={result['final_lr_mult']:.6g} | "
-            f"schedule={BEAM_START_LR_MULT:.6g} for {result['prefix_steps']} steps, "
-            f"then {format_lr_history(result['lr_history'])} | "
+            f"schedule={format_lr_history(result['lr_history'])} | "
             f"checkpoint={result['checkpoint']}"
         )
 

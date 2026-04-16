@@ -115,3 +115,9 @@ ask questions before you implement.
 pip install kernels pyarrow requests rustbpe tiktoken matplotlib
 
 TODO: cooldown period for beam search might be necessary.
+
+
+cooldown formula
+0.1 ** ((x/170) ** 0.42) where x is the step count starting from the cooldown. 
+
+original train has linear weight decay
