@@ -10,6 +10,7 @@ os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
 import math
+import sys
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -23,6 +24,10 @@ cap = torch.cuda.get_device_capability()
 # varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
 repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
 fa3 = get_kernel(repo).flash_attn_interface
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from prepare import MAX_SEQ_LEN, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -465,9 +470,13 @@ H100_BF16_PEAK_FLOPS = 989.5e12
 BEAM_WIDTH = 1
 INITIAL_LR_MULTS = (0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
 CHILD_LR_FACTORS = (0.8, 1.0, 1.2)
-BEAM_SEGMENT_STEPS = 20
-BEAM_COOLDOWN_STEPS = 200
 BEAM_TOTAL_STEPS = 1160
+BEAM_EXPERIMENTS = (
+    (20, 20),
+    (20, 10),
+    (50, 50),
+    (50, 25),
+)
 BEAM_SEED = 42
 CHECKPOINT_ROOT = Path(__file__).resolve().parent / "beam_search_checkpoints"
 
@@ -533,15 +542,26 @@ def set_optimizer_lr_mult(optimizer, model_dim, lr_mult):
         group["lr"] = group["initial_lr"]
 
 
-def set_step_schedules(optimizer, model_dim, lr_mult, step):
+def set_step_schedules(optimizer, model_dim, lr_mult, step, total_steps,
+                       muon_schedule_constants=None):
     set_optimizer_lr_mult(optimizer, model_dim, lr_mult)
-    progress = min(step / BEAM_TOTAL_STEPS+BEAM_COOLDOWN_STEPS, 1.0)
-    muon_momentum = get_muon_momentum(step)
-    muon_weight_decay = get_weight_decay(progress)
+    if muon_schedule_constants is None:
+        progress = min(step / total_steps, 1.0)
+        muon_momentum = get_muon_momentum(step)
+        muon_weight_decay = get_weight_decay(progress)
+    else:
+        muon_momentum, muon_weight_decay = muon_schedule_constants
     for group in optimizer.param_groups:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
+
+
+def get_muon_schedule_constants(optimizer):
+    for group in optimizer.param_groups:
+        if group['kind'] == 'muon':
+            return group["momentum"], group["weight_decay"]
+    return None
 
 
 def to_cpu(obj):
@@ -588,9 +608,9 @@ def clean_checkpoint_dir(checkpoint_dir):
         path.unlink()
 
 
-def cooldown_lr_mult(candidate_lr_mult, cooldown_step_idx):
+def cooldown_lr_mult(candidate_lr_mult, cooldown_step_idx, cooldown_steps):
     x = cooldown_step_idx + 1
-    return candidate_lr_mult * 0.1 ** ((x / 170) ** 0.42)
+    return candidate_lr_mult * (1 - x / cooldown_steps)
 
 
 def load_step_batches(train_loader, grad_accum_steps, num_steps):
@@ -606,7 +626,8 @@ def load_step_batches(train_loader, grad_accum_steps, num_steps):
 
 def train_candidate_segment(model, compiled_model, optimizer, segment_batches, lr_mult,
                             start_step, grad_accum_steps, autocast_ctx, num_flops_per_token,
-                            lr_mult_for_step=None, display_total_steps=BEAM_TOTAL_STEPS):
+                            total_steps, lr_mult_for_step=None,
+                            muon_schedule_constants=None, display_total_steps=None):
     model.train()
     model.zero_grad(set_to_none=True)
     losses = []
@@ -636,7 +657,10 @@ def train_candidate_segment(model, compiled_model, optimizer, segment_batches, l
             break
 
         step_lr_mult = lr_mult if lr_mult_for_step is None else lr_mult_for_step(local_step)
-        set_step_schedules(optimizer, model.config.n_embd, step_lr_mult, global_step)
+        set_step_schedules(
+            optimizer, model.config.n_embd, step_lr_mult, global_step, total_steps,
+            muon_schedule_constants=muon_schedule_constants,
+        )
         optimizer.step()
         model.zero_grad(set_to_none=True)
         losses.append(train_loss_f)
@@ -647,8 +671,9 @@ def train_candidate_segment(model, compiled_model, optimizer, segment_batches, l
         tok_per_sec = int(TOTAL_BATCH_SIZE / dt) if dt > 0 else 0
         mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS if dt > 0 else 0
         avg3 = sum(losses[-3:]) / min(len(losses), 3)
+        step_total = total_steps if display_total_steps is None else display_total_steps
         print(
-            f"\r    step {global_step + 1:04d}/{display_total_steps} | "
+            f"\r    step {global_step + 1:04d}/{step_total} | "
             f"LR_MULT {step_lr_mult:.6g} | loss {train_loss_f:.6f} | "
             f"avg3 {avg3:.6f} | dt {dt*1000:.0f}ms | tok/sec {tok_per_sec:,} | "
             f"mfu {mfu:.1f}% | epoch {last_epoch}    ",
@@ -689,11 +714,15 @@ def candidate_lrs_for_round(beam, round_idx):
                 yield parent, parent.lr_mult * factor
 
 
-def run_beam_search(beam_width=BEAM_WIDTH):
+def run_beam_search(segment_steps, cooldown_steps, beam_width=BEAM_WIDTH):
     assert beam_width == 1
-    assert BEAM_TOTAL_STEPS % BEAM_SEGMENT_STEPS == 0
+    assert segment_steps > 0
+    assert cooldown_steps > 0
+    total_steps = (BEAM_TOTAL_STEPS // segment_steps) * segment_steps
+    if total_steps == 0:
+        raise ValueError(f"segment_steps={segment_steps} exceeds BEAM_TOTAL_STEPS={BEAM_TOTAL_STEPS}")
     t_start = time.time()
-    checkpoint_dir = CHECKPOINT_ROOT / f"k{beam_width}"
+    checkpoint_dir = CHECKPOINT_ROOT / f"k{beam_width}_seg{segment_steps}_cool{cooldown_steps}"
     clean_checkpoint_dir(checkpoint_dir)
 
     torch.manual_seed(BEAM_SEED)
@@ -705,11 +734,12 @@ def run_beam_search(beam_width=BEAM_WIDTH):
     autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
 
     print("===")
-    print(f"Beam search k={beam_width}")
+    print(f"Beam search k={beam_width}, segment={segment_steps}, cooldown={cooldown_steps}")
     print(f"Seed: {BEAM_SEED}")
-    print(f"Total steps: {BEAM_TOTAL_STEPS}")
-    print(f"Segment steps: {BEAM_SEGMENT_STEPS}")
-    print(f"Cooldown steps: {BEAM_COOLDOWN_STEPS}")
+    print(f"Target steps: {BEAM_TOTAL_STEPS}")
+    print(f"Effective total steps: {total_steps}")
+    print(f"Segment steps: {segment_steps}")
+    print(f"Cooldown steps: {cooldown_steps}")
     print(f"Initial LR_MULTs: {INITIAL_LR_MULTS}")
     print(f"Child LR factors: {CHILD_LR_FACTORS}")
 
@@ -760,20 +790,20 @@ def run_beam_search(beam_width=BEAM_WIDTH):
     )]
 
     train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
-    num_rounds = BEAM_TOTAL_STEPS // BEAM_SEGMENT_STEPS
+    num_rounds = total_steps // segment_steps
     total_training_time = 0.0
 
     for round_idx in range(num_rounds):
-        start_step = round_idx * BEAM_SEGMENT_STEPS
-        end_step = start_step + BEAM_SEGMENT_STEPS
-        cooldown_end_step = end_step + BEAM_COOLDOWN_STEPS
+        start_step = round_idx * segment_steps
+        end_step = start_step + segment_steps
+        cooldown_end_step = end_step + cooldown_steps
         print("---")
         print(
             f"Round {round_idx + 1}/{num_rounds}: fixed steps {start_step + 1}-{end_step}, "
             f"cooldown scoring steps {end_step + 1}-{cooldown_end_step}"
         )
-        segment_batches = load_step_batches(train_loader, grad_accum_steps, BEAM_SEGMENT_STEPS)
-        cooldown_batches = load_step_batches(train_loader, grad_accum_steps, BEAM_COOLDOWN_STEPS)
+        segment_batches = load_step_batches(train_loader, grad_accum_steps, segment_steps)
+        cooldown_batches = load_step_batches(train_loader, grad_accum_steps, cooldown_steps)
         child_beam = []
         parent_paths = {entry.path for entry in beam}
         candidates = list(candidate_lrs_for_round(beam, round_idx))
@@ -789,6 +819,7 @@ def run_beam_search(beam_width=BEAM_WIDTH):
             fixed_avg_loss, fixed_losses, train_dt = train_candidate_segment(
                 model, compiled_model, optimizer, segment_batches, lr_mult,
                 start_step, grad_accum_steps, autocast_ctx, num_flops_per_token,
+                total_steps,
             )
             total_training_time += train_dt
 
@@ -796,6 +827,7 @@ def run_beam_search(beam_width=BEAM_WIDTH):
                 print("    candidate failed; not checkpointing")
                 continue
 
+            cooldown_muon_constants = get_muon_schedule_constants(optimizer)
             temp_fixed_path = checkpoint_dir / (
                 f"tmp_round_{round_idx + 1:02d}_cand_{candidate_idx:03d}_"
                 f"step_{end_step:04d}_lr_{lr_mult:.8g}.pt"
@@ -808,6 +840,7 @@ def run_beam_search(beam_width=BEAM_WIDTH):
                 "lr_history": parent_entry.lr_history + (lr_mult,),
                 "fixed_avg_loss": fixed_avg_loss,
                 "fixed_last_losses": fixed_losses[-3:],
+                "cooldown_muon_constants": cooldown_muon_constants,
                 "cooldown_discarded": True,
             })
 
@@ -818,7 +851,11 @@ def run_beam_search(beam_width=BEAM_WIDTH):
             avg_loss, cooldown_losses, cooldown_dt = train_candidate_segment(
                 model, compiled_model, optimizer, cooldown_batches, lr_mult,
                 end_step, grad_accum_steps, autocast_ctx, num_flops_per_token,
-                lr_mult_for_step=lambda cooldown_step_idx: cooldown_lr_mult(lr_mult, cooldown_step_idx),
+                total_steps,
+                lr_mult_for_step=lambda cooldown_step_idx: cooldown_lr_mult(
+                    lr_mult, cooldown_step_idx, cooldown_steps,
+                ),
+                muon_schedule_constants=cooldown_muon_constants,
                 display_total_steps=cooldown_end_step,
             )
             total_training_time += cooldown_dt
@@ -850,8 +887,10 @@ def run_beam_search(beam_width=BEAM_WIDTH):
                 "last_losses": cooldown_losses[-3:],
                 "fixed_avg_loss": fixed_avg_loss,
                 "fixed_last_losses": fixed_losses[-3:],
-                "cooldown_steps": BEAM_COOLDOWN_STEPS,
-                "cooldown_formula": "lr_mult * 0.1 ** ((x / 170) ** 0.42), x starts at 1",
+                "segment_steps": segment_steps,
+                "cooldown_steps": cooldown_steps,
+                "cooldown_formula": "lr_mult * (1 - x / cooldown_steps), x starts at 1",
+                "cooldown_muon_constants": cooldown_muon_constants,
                 "cooldown_checkpoint_discarded": True,
             })
             remove_checkpoint(temp_fixed_path)
@@ -895,9 +934,9 @@ def run_beam_search(beam_width=BEAM_WIDTH):
         val_bpb = evaluate_bpb(compiled_model, tokenizer, DEVICE_BATCH_SIZE)
 
     t_end = time.time()
-    total_tokens = BEAM_TOTAL_STEPS * TOTAL_BATCH_SIZE
+    total_tokens = total_steps * TOTAL_BATCH_SIZE
     steady_state_mfu = (
-        100 * num_flops_per_token * TOTAL_BATCH_SIZE * BEAM_TOTAL_STEPS
+        100 * num_flops_per_token * TOTAL_BATCH_SIZE * total_steps
         / total_training_time / H100_BF16_PEAK_FLOPS
         if total_training_time > 0 else 0
     )
@@ -912,13 +951,18 @@ def run_beam_search(beam_width=BEAM_WIDTH):
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
     print(f"mfu_percent:      {steady_state_mfu:.2f}")
     print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
-    print(f"num_steps:        {BEAM_TOTAL_STEPS}")
+    print(f"num_steps:        {total_steps}")
+    print(f"segment_steps:    {segment_steps}")
+    print(f"cooldown_steps:   {cooldown_steps}")
     print(f"num_params_M:     {num_params / 1e6:.1f}")
     print(f"depth:            {DEPTH}")
     print(f"checkpoint_dir:   {checkpoint_dir}")
 
     return {
         "k": beam_width,
+        "num_steps": total_steps,
+        "segment_steps": segment_steps,
+        "cooldown_steps": cooldown_steps,
         "val_bpb": float(val_bpb),
         "best_avg_loss": float(best.avg_loss),
         "lr_history": best.lr_history,
@@ -929,15 +973,18 @@ def run_beam_search(beam_width=BEAM_WIDTH):
 
 def main():
     results = []
-    results.append(run_beam_search(BEAM_WIDTH))
-    gc.collect()
-    torch.cuda.empty_cache()
+    for segment_steps, cooldown_steps in BEAM_EXPERIMENTS:
+        results.append(run_beam_search(segment_steps, cooldown_steps, BEAM_WIDTH))
+        gc.collect()
+        torch.cuda.empty_cache()
 
     print("===")
     print("Beam search summary")
     for result in results:
         print(
-            f"k={result['k']} | val_bpb={result['val_bpb']:.6f} | "
+            f"k={result['k']} | steps={result['num_steps']} | "
+            f"segment={result['segment_steps']} | cooldown={result['cooldown_steps']} | "
+            f"val_bpb={result['val_bpb']:.6f} | "
             f"best_avg_loss={result['best_avg_loss']:.6f} | "
             f"schedule={format_lr_history(result['lr_history'])} | "
             f"checkpoint={result['checkpoint']}"

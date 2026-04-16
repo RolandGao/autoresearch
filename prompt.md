@@ -116,8 +116,56 @@ pip install kernels pyarrow requests rustbpe tiktoken matplotlib
 
 TODO: cooldown period for beam search might be necessary.
 
+original train has linear weight decay
+
+algorithm description
+i train a neural network. 
+it chooses initial lr from (0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0). train each of them for 20 steps, and then finds the one with the lowest avg train loss over the last 3 steps. uses that checkpoint to continue. from that lr, it creates three child runs with (0.8, 1.0, 1.2) * lr, trains each of them for 20 steps, picks the best one, and then creates three child runs from that. I call this algorithm beam search with k = 1. 
+
+If I just run this algorithm, the lr decreases too quickly and reaches a local minimum. so I added a 200 step cooldown from each checkpoint so that the searched lr does not have to do the cooldown itself and can focus on generalization while the cooldown will focus on getting to the local minimum to have a fair comparison. cuz without the cooldown, high lr gets punished. the future search continues from the 20 step checkpoint, and the cooldowned checkpoint is discarded. After i did this, lr becomes too high and the final loss is also not good. 
 
 cooldown formula
 0.1 ** ((x/170) ** 0.42) where x is the step count starting from the cooldown. 
 
-original train has linear weight decay
+without cooldown 
+lrs = [1.75, 1.05, 1.05, 1.05, 0.84, 0.672, 0.5376, 0.5376, 0.5376, 0.43008, 0.43008, 0.344064, 0.344064, 0.344064, 0.275251, 0.220201, 0.176161, 0.176161, 0.140929, 0.140929, 0.140929, 0.112743, 0.112743, 0.0901943, 0.0901943, 0.0901943, 0.0901943, 0.0721555, 0.0721555,...]
+loss = 3.278825
+
+with cooldown
+[2, 2.4, 2.88, 3.456, 4.1472, 4.97664, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197, 5.97197]
+loss = 2.999505
+
+a baseline run with constant lr for 0.3 of the run and then linear decay to 0:
+loss: 2.922183
+
+idea: reduce cooldown steps
+20 search steps + 20 cooldown steps
+20 search steps + 40 cooldown steps
+40 search steps + 40 cooldown steps
+
+idea: search from a baseline
+actual_lr = global_lr(step) * searched_multiplier
+searched_multiplier in [0.8, 1.0, 1.2]
+
+idea: every 50 steps, evaluate on the whole train set. 
+
+
+change the cooldown lr to linear candidate_lr_mult * (1-x/cooldown_steps)
+during cooldown, fix the momentum and weight decay to constants instead of whatever schedule they were on. 
+
+run four experiments. 
+1. BEAM_SEGMENT_STEPS = 20 and BEAM_COOLDOWN_STEPS = 20
+2. BEAM_SEGMENT_STEPS = 20 and BEAM_COOLDOWN_STEPS = 10
+
+3. BEAM_SEGMENT_STEPS = 50 and BEAM_COOLDOWN_STEPS = 50
+4. BEAM_SEGMENT_STEPS = 50 and BEAM_COOLDOWN_STEPS = 25
+
+write the code, i will run the experiments
+modify only train_scheduler3.py
+
+train with a constant lr with 1.0 or 5.0 for 1600 steps and checkpoint at 50, 200 and 1600, including the optimizer states. 
+then we experiment with the cooldown to see how to cooldown the fastest. 
+with fewer steps, the cooldown of 5.0 should be better. if 1600 steps, the cooldown of 1.0 should be better. 
+
+
+remove weight decay 
