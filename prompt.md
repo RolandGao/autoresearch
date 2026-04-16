@@ -110,6 +110,8 @@ ask questions before you implement.
 
 
 
-> beam_search.log 2>&1
+> beam_search2.log 2>&1
+
+pip install kernels pyarrow requests rustbpe tiktoken matplotlib
 
 TODO: cooldown period for beam search might be necessary.
