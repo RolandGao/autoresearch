@@ -56,6 +56,51 @@ def collect_series(records: list[dict], section: str) -> dict[str, tuple[list[in
     return dict(series)
 
 
+def collect_ratio_series(
+    records: list[dict],
+    numerator_section: str,
+    denominator_section: str,
+) -> dict[str, tuple[list[int], list[float]]]:
+    series = defaultdict(lambda: ([], []))
+    for record in records:
+        step = record["step"]
+        numerators = record.get(numerator_section, {})
+        denominators = record.get(denominator_section, {})
+        for name, numerator in numerators.items():
+            denominator = denominators.get(name)
+            if numerator is None or denominator is None:
+                continue
+            numerator = float(numerator)
+            denominator = float(denominator)
+            if denominator == 0 or not math.isfinite(numerator) or not math.isfinite(denominator):
+                continue
+            steps, values = series[name]
+            steps.append(step)
+            values.append(numerator / denominator)
+    return dict(series)
+
+
+def filter_series(
+    series: dict[str, tuple[list[int], list[float]]],
+    min_step: int | None = None,
+    positive_only: bool = False,
+) -> dict[str, tuple[list[int], list[float]]]:
+    filtered = {}
+    for name, (steps, values) in series.items():
+        kept_steps = []
+        kept_values = []
+        for step, value in zip(steps, values):
+            if min_step is not None and step < min_step:
+                continue
+            if positive_only and value <= 0:
+                continue
+            kept_steps.append(step)
+            kept_values.append(value)
+        if kept_steps:
+            filtered[name] = (kept_steps, kept_values)
+    return filtered
+
+
 def layer_index(name: str) -> int:
     match = re.match(r"h\.(\d+)(?:\.|$)", name)
     return int(match.group(1)) if match else -1
@@ -135,12 +180,17 @@ def plot_series_page(
     names: list[str],
     series: dict[str, tuple[list[int], list[float]]],
     ylabel: str,
+    force_linear_y: bool = False,
+    y_scale: str | None = None,
 ) -> None:
     fig, ax = plt.subplots(figsize=(13, 7.5), constrained_layout=True)
     for name in names:
         steps, values = series[name]
         ax.plot(steps, values, linewidth=1.25, label=name)
-    set_norm_scale(ax, names, series)
+    if y_scale is not None:
+        ax.set_yscale(y_scale)
+    elif not force_linear_y:
+        set_norm_scale(ax, names, series)
     ax.set_title(title)
     ax.set_xlabel("step")
     ax.set_ylabel(ylabel)
@@ -156,6 +206,8 @@ def plot_section(
     section_title: str,
     series: dict[str, tuple[list[int], list[float]]],
     max_lines_per_page: int,
+    force_linear_y: bool = False,
+    y_scale: str | None = None,
 ) -> int:
     pages = 0
     for group_title, names in group_series(series):
@@ -168,6 +220,8 @@ def plot_section(
                 chunk,
                 series,
                 section_title.lower(),
+                force_linear_y=force_linear_y,
+                y_scale=y_scale,
             )
             pages += 1
     return pages
@@ -184,6 +238,10 @@ def plot_activations(pdf: PdfPages, series: dict[str, tuple[list[int], list[floa
 def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) -> int:
     weight_series = collect_series(records, "weight_norms")
     grad_series = collect_series(records, "grad_norms")
+    update_series = collect_series(records, "update_norms")
+    effective_lr_series = collect_ratio_series(records, "update_norms", "weight_norms")
+    effective_lr_log_series = filter_series(effective_lr_series, positive_only=True)
+    effective_lr_linear_series = filter_series(effective_lr_series, min_step=20)
     activation_series = collect_series(records, "activation_l2_norms")
 
     pages = 0
@@ -192,6 +250,21 @@ def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) ->
         pages += plot_activations(pdf, activation_series)
         pages += plot_section(pdf, "Weight Norms", weight_series, max_lines_per_page)
         pages += plot_section(pdf, "Gradient Norms", grad_series, max_lines_per_page)
+        pages += plot_section(pdf, "Update Norms", update_series, max_lines_per_page)
+        pages += plot_section(
+            pdf,
+            "Effective LR (Log Scale)",
+            effective_lr_log_series,
+            max_lines_per_page,
+            y_scale="log",
+        )
+        pages += plot_section(
+            pdf,
+            "Effective LR (Linear, Step >= 20)",
+            effective_lr_linear_series,
+            max_lines_per_page,
+            force_linear_y=True,
+        )
     return pages
 
 

@@ -224,3 +224,12 @@ linear search on one batch to find the lowest loss achievable in one step. that 
 
 
 > more_logging.log 2>&1
+
+from train.py, add update norms. the update tensor differs from the gradient tensor in that the gradient tensor is the raw gradient whiel the update tensor is the tensor that actually gets put into the weight
+
+For Adam, p.add_(exp_avg / denom, alpha=-step_size), update is exp_avg / denom * step_size. 
+
+For Muon, 
+stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
+update is lr * g. 
+ignore the weight decay for the update tensor. i think one way to log these update tensors is to set p.grad = update_tensor and then check p.grad, before zeroing out p.grad again for the next step.
