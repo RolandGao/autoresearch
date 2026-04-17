@@ -169,3 +169,13 @@ with fewer steps, the cooldown of 5.0 should be better. if 1600 steps, the coold
 
 
 remove weight decay 
+smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
+train loss is smoothedå
+
+
+work under autoresearch directory. python is /venv/main/bin/python. work under the beam_search directory. modify only train_scheduler2.py.
+segment_steps = 50. try cooldown with 25, 50 steps. for cooldown, try both linear decay and the exponential formula 0.1 ** (x/cooldown_steps) where x is the step count starting from the cooldown, starting from 1. have 1350 total steps, where 1350-cooldown_steps steps are the searched steps and the last cooldown steps are the cooldown. evaluate val_bpb after 1350 steps. when cooldown_steps = 25, the last searched steps is 75 steps instead of 50 to align up to the 1350 target.
+
+ for each round of segment of 20 steps, add a 200 step lr_mult cooldown after the 20 step of fixed lr. the cooldown formula is 0.1 ** ((x/170) ** 0.42) where x is the step count starting from the cooldown. the avg3 train loss is calculated at the end of the cooldown, but the checkpoint saved should be the one after the 20 step fixed lr and before the cooldown. the checkpoint after cooldown is always discarded. have the beam search for 1150 steps so as to save 200 steps for the cooldown. 
+
+ask questions before you implement

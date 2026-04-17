@@ -470,12 +470,18 @@ H100_BF16_PEAK_FLOPS = 989.5e12
 BEAM_WIDTH = 1
 INITIAL_LR_MULTS = (0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
 CHILD_LR_FACTORS = (0.8, 1.0, 1.2)
-BEAM_TOTAL_STEPS = 1160
+CHILD_LR_FACTOR_STEP = 0.2
+CHILD_LR_FACTOR_MIN = 0.2
+CHILD_LR_FACTOR_MAX = 2.0
+BEAM_SEGMENT_STEPS = 50
+BEAM_TOTAL_STEPS = 1350
+LOSS_AVG_WINDOW = 5
+COOLDOWN_FORMULAS = ("linear", "exponential")
 BEAM_EXPERIMENTS = (
-    (20, 20),
-    (20, 10),
-    (50, 50),
-    (50, 25),
+    (BEAM_SEGMENT_STEPS, 25, "linear"),
+    (BEAM_SEGMENT_STEPS, 25, "exponential"),
+    (BEAM_SEGMENT_STEPS, 50, "linear"),
+    (BEAM_SEGMENT_STEPS, 50, "exponential"),
 )
 BEAM_SEED = 42
 CHECKPOINT_ROOT = Path(__file__).resolve().parent / "beam_search_checkpoints"
@@ -489,6 +495,7 @@ class BeamEntry:
     global_step: int
     lr_history: tuple[float, ...]
     last_losses: tuple[float, ...]
+    lr_factor: float | None = None
 
 
 def build_model_config(depth, vocab_size):
@@ -608,9 +615,52 @@ def clean_checkpoint_dir(checkpoint_dir):
         path.unlink()
 
 
-def cooldown_lr_mult(candidate_lr_mult, cooldown_step_idx, cooldown_steps):
+def build_search_segment_lengths(total_steps, segment_steps, cooldown_steps):
+    searched_steps = total_steps - cooldown_steps
+    if searched_steps <= 0:
+        raise ValueError(
+            f"cooldown_steps={cooldown_steps} leaves no searched steps for total_steps={total_steps}"
+        )
+    full_segments, remainder = divmod(searched_steps, segment_steps)
+    if remainder == 0:
+        return (segment_steps,) * full_segments
+    if full_segments == 0:
+        return (searched_steps,)
+    return (segment_steps,) * (full_segments - 1) + (segment_steps + remainder,)
+
+
+def format_search_segment_lengths(segment_lengths):
+    if not segment_lengths:
+        return "[]"
+    chunks = []
+    run_value = segment_lengths[0]
+    run_count = 1
+    for value in segment_lengths[1:]:
+        if value == run_value:
+            run_count += 1
+        else:
+            chunks.append(f"{run_count}x{run_value}" if run_count > 1 else str(run_value))
+            run_value = value
+            run_count = 1
+    chunks.append(f"{run_count}x{run_value}" if run_count > 1 else str(run_value))
+    return "[" + ", ".join(chunks) + "]"
+
+
+def cooldown_formula_description(cooldown_formula):
+    if cooldown_formula == "linear":
+        return "lr_mult * (1 - x / cooldown_steps), x starts at 1"
+    if cooldown_formula == "exponential":
+        return "lr_mult * (0.1 ** (x / cooldown_steps)), x starts at 1"
+    raise ValueError(f"unknown cooldown_formula={cooldown_formula!r}")
+
+
+def cooldown_lr_mult(candidate_lr_mult, cooldown_step_idx, cooldown_steps, cooldown_formula):
     x = cooldown_step_idx + 1
-    return candidate_lr_mult * (1 - x / cooldown_steps)
+    if cooldown_formula == "linear":
+        return candidate_lr_mult * (1 - x / cooldown_steps)
+    if cooldown_formula == "exponential":
+        return candidate_lr_mult * (0.1 ** (x / cooldown_steps))
+    raise ValueError(f"unknown cooldown_formula={cooldown_formula!r}")
 
 
 def load_step_batches(train_loader, grad_accum_steps, num_steps):
@@ -670,21 +720,21 @@ def train_candidate_segment(model, compiled_model, optimizer, segment_batches, l
         total_dt += dt
         tok_per_sec = int(TOTAL_BATCH_SIZE / dt) if dt > 0 else 0
         mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS if dt > 0 else 0
-        avg3 = sum(losses[-3:]) / min(len(losses), 3)
+        avg_loss_window = sum(losses[-LOSS_AVG_WINDOW:]) / min(len(losses), LOSS_AVG_WINDOW)
         step_total = total_steps if display_total_steps is None else display_total_steps
         print(
             f"\r    step {global_step + 1:04d}/{step_total} | "
             f"LR_MULT {step_lr_mult:.6g} | loss {train_loss_f:.6f} | "
-            f"avg3 {avg3:.6f} | dt {dt*1000:.0f}ms | tok/sec {tok_per_sec:,} | "
+            f"avg{LOSS_AVG_WINDOW} {avg_loss_window:.6f} | dt {dt*1000:.0f}ms | tok/sec {tok_per_sec:,} | "
             f"mfu {mfu:.1f}% | epoch {last_epoch}    ",
             end="",
             flush=True,
         )
 
     print()
-    if failed or len(losses) < 3:
+    if failed or len(losses) < LOSS_AVG_WINDOW:
         return float("inf"), tuple(losses), total_dt
-    return sum(losses[-3:]) / 3, tuple(losses), total_dt
+    return sum(losses[-LOSS_AVG_WINDOW:]) / LOSS_AVG_WINDOW, tuple(losses), total_dt
 
 
 def reserve_child_slot(child_beam, avg_loss, beam_width):
@@ -704,25 +754,55 @@ def format_lr_history(lr_history):
     return "[" + ", ".join(f"{value:.6g}" for value in lr_history) + "]"
 
 
+def round_child_lr_factor(factor):
+    return round(factor, 10)
+
+
 def candidate_lrs_for_round(beam, round_idx):
     if round_idx == 0:
         for lr_mult in INITIAL_LR_MULTS:
-            yield None, lr_mult
+            yield None, lr_mult, None
     else:
         for parent in beam:
             for factor in CHILD_LR_FACTORS:
-                yield parent, parent.lr_mult * factor
+                factor = round_child_lr_factor(factor)
+                yield parent, parent.lr_mult * factor, factor
 
 
-def run_beam_search(segment_steps, cooldown_steps, beam_width=BEAM_WIDTH):
+def maybe_next_adaptive_factor(child_beam, evaluated_factors):
+    if not child_beam or not evaluated_factors:
+        return None
+
+    best_factor = child_beam[0].lr_factor
+    if best_factor is None:
+        return None
+
+    min_factor = min(evaluated_factors)
+    max_factor = max(evaluated_factors)
+    if best_factor == min_factor and min_factor > CHILD_LR_FACTOR_MIN:
+        return round_child_lr_factor(max(CHILD_LR_FACTOR_MIN, min_factor - CHILD_LR_FACTOR_STEP))
+    if best_factor == max_factor and max_factor < CHILD_LR_FACTOR_MAX:
+        return round_child_lr_factor(min(CHILD_LR_FACTOR_MAX, max_factor + CHILD_LR_FACTOR_STEP))
+    return None
+
+
+def run_beam_search(segment_steps, cooldown_steps, cooldown_formula, beam_width=BEAM_WIDTH):
     assert beam_width == 1
     assert segment_steps > 0
     assert cooldown_steps > 0
-    total_steps = (BEAM_TOTAL_STEPS // segment_steps) * segment_steps
-    if total_steps == 0:
-        raise ValueError(f"segment_steps={segment_steps} exceeds BEAM_TOTAL_STEPS={BEAM_TOTAL_STEPS}")
+    if cooldown_formula not in COOLDOWN_FORMULAS:
+        raise ValueError(f"unknown cooldown_formula={cooldown_formula!r}")
+    total_steps = BEAM_TOTAL_STEPS
+    searched_steps = total_steps - cooldown_steps
+    search_segment_lengths = build_search_segment_lengths(total_steps, segment_steps, cooldown_steps)
+    if sum(search_segment_lengths) != searched_steps:
+        raise RuntimeError(
+            f"search segment lengths sum to {sum(search_segment_lengths)}, expected {searched_steps}"
+        )
     t_start = time.time()
-    checkpoint_dir = CHECKPOINT_ROOT / f"k{beam_width}_seg{segment_steps}_cool{cooldown_steps}"
+    checkpoint_dir = CHECKPOINT_ROOT / (
+        f"k{beam_width}_seg{segment_steps}_cool{cooldown_steps}_{cooldown_formula}"
+    )
     clean_checkpoint_dir(checkpoint_dir)
 
     torch.manual_seed(BEAM_SEED)
@@ -734,14 +814,23 @@ def run_beam_search(segment_steps, cooldown_steps, beam_width=BEAM_WIDTH):
     autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
 
     print("===")
-    print(f"Beam search k={beam_width}, segment={segment_steps}, cooldown={cooldown_steps}")
+    print(
+        f"Beam search k={beam_width}, segment={segment_steps}, "
+        f"cooldown={cooldown_steps}, formula={cooldown_formula}"
+    )
     print(f"Seed: {BEAM_SEED}")
-    print(f"Target steps: {BEAM_TOTAL_STEPS}")
-    print(f"Effective total steps: {total_steps}")
+    print(f"Total steps: {total_steps}")
+    print(f"Searched steps: {searched_steps}")
     print(f"Segment steps: {segment_steps}")
+    print(f"Search segment lengths: {format_search_segment_lengths(search_segment_lengths)}")
     print(f"Cooldown steps: {cooldown_steps}")
+    print(f"Cooldown formula: {cooldown_formula_description(cooldown_formula)}")
     print(f"Initial LR_MULTs: {INITIAL_LR_MULTS}")
     print(f"Child LR factors: {CHILD_LR_FACTORS}")
+    print(
+        f"Adaptive child LR factor bounds: "
+        f"{CHILD_LR_FACTOR_MIN:.1f}-{CHILD_LR_FACTOR_MAX:.1f} step {CHILD_LR_FACTOR_STEP:.1f}"
+    )
 
     tokenizer = Tokenizer.from_directory()
     vocab_size = tokenizer.get_vocab_size()
@@ -790,29 +879,37 @@ def run_beam_search(segment_steps, cooldown_steps, beam_width=BEAM_WIDTH):
     )]
 
     train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
-    num_rounds = total_steps // segment_steps
+    num_rounds = len(search_segment_lengths)
     total_training_time = 0.0
+    start_step = 0
 
-    for round_idx in range(num_rounds):
-        start_step = round_idx * segment_steps
-        end_step = start_step + segment_steps
+    for round_idx, current_segment_steps in enumerate(search_segment_lengths):
+        end_step = start_step + current_segment_steps
         cooldown_end_step = end_step + cooldown_steps
+        is_final_round = round_idx == num_rounds - 1
         print("---")
         print(
             f"Round {round_idx + 1}/{num_rounds}: fixed steps {start_step + 1}-{end_step}, "
             f"cooldown scoring steps {end_step + 1}-{cooldown_end_step}"
         )
-        segment_batches = load_step_batches(train_loader, grad_accum_steps, segment_steps)
+        segment_batches = load_step_batches(train_loader, grad_accum_steps, current_segment_steps)
         cooldown_batches = load_step_batches(train_loader, grad_accum_steps, cooldown_steps)
         child_beam = []
         parent_paths = {entry.path for entry in beam}
-        candidates = list(candidate_lrs_for_round(beam, round_idx))
+        pending_candidates = list(candidate_lrs_for_round(beam, round_idx))
+        evaluated_factors = set()
+        candidate_idx = 0
 
-        for candidate_idx, (parent, lr_mult) in enumerate(candidates, start=1):
+        while pending_candidates:
+            parent, lr_mult, lr_factor = pending_candidates.pop(0)
+            candidate_idx += 1
+            if lr_factor is not None:
+                evaluated_factors.add(lr_factor)
             parent_entry = beam[0] if parent is None else parent
+            factor_text = "" if lr_factor is None else f" | factor={lr_factor:.6g}"
             print(
-                f"  candidate {candidate_idx}/{len(candidates)} | "
-                f"parent_step={parent_entry.global_step} | LR_MULT={lr_mult:.6g}"
+                f"  candidate {candidate_idx} | "
+                f"parent_step={parent_entry.global_step}{factor_text} | LR_MULT={lr_mult:.6g}"
             )
             load_checkpoint(parent_entry.path, model, optimizer)
             set_optimizer_lr_mult(optimizer, model.config.n_embd, lr_mult)
@@ -825,6 +922,11 @@ def run_beam_search(segment_steps, cooldown_steps, beam_width=BEAM_WIDTH):
 
             if math.isinf(fixed_avg_loss):
                 print("    candidate failed; not checkpointing")
+                if not pending_candidates and round_idx != 0:
+                    next_factor = maybe_next_adaptive_factor(child_beam, evaluated_factors)
+                    if next_factor is not None and next_factor not in evaluated_factors:
+                        pending_candidates.append((beam[0], beam[0].lr_mult * next_factor, next_factor))
+                        print(f"    adaptive expansion queued factor={next_factor:.6g}")
                 continue
 
             cooldown_muon_constants = get_muon_schedule_constants(optimizer)
@@ -837,9 +939,10 @@ def run_beam_search(segment_steps, cooldown_steps, beam_width=BEAM_WIDTH):
                 "round": round_idx + 1,
                 "global_step": end_step,
                 "lr_mult": lr_mult,
+                "lr_factor": lr_factor,
                 "lr_history": parent_entry.lr_history + (lr_mult,),
                 "fixed_avg_loss": fixed_avg_loss,
-                "fixed_last_losses": fixed_losses[-3:],
+                "fixed_last_losses": fixed_losses[-LOSS_AVG_WINDOW:],
                 "cooldown_muon_constants": cooldown_muon_constants,
                 "cooldown_discarded": True,
             })
@@ -853,7 +956,7 @@ def run_beam_search(segment_steps, cooldown_steps, beam_width=BEAM_WIDTH):
                 end_step, grad_accum_steps, autocast_ctx, num_flops_per_token,
                 total_steps,
                 lr_mult_for_step=lambda cooldown_step_idx: cooldown_lr_mult(
-                    lr_mult, cooldown_step_idx, cooldown_steps,
+                    lr_mult, cooldown_step_idx, cooldown_steps, cooldown_formula,
                 ),
                 muon_schedule_constants=cooldown_muon_constants,
                 display_total_steps=cooldown_end_step,
@@ -863,48 +966,71 @@ def run_beam_search(segment_steps, cooldown_steps, beam_width=BEAM_WIDTH):
             if math.isinf(avg_loss):
                 remove_checkpoint(temp_fixed_path)
                 print("    cooldown failed; not checkpointing")
+                if not pending_candidates and round_idx != 0:
+                    next_factor = maybe_next_adaptive_factor(child_beam, evaluated_factors)
+                    if next_factor is not None and next_factor not in evaluated_factors:
+                        pending_candidates.append((beam[0], beam[0].lr_mult * next_factor, next_factor))
+                        print(f"    adaptive expansion queued factor={next_factor:.6g}")
                 continue
 
             if not reserve_child_slot(child_beam, avg_loss, beam_width):
                 remove_checkpoint(temp_fixed_path)
                 print(f"    avg_loss={avg_loss:.6f} | discarded")
+                if not pending_candidates and round_idx != 0:
+                    next_factor = maybe_next_adaptive_factor(child_beam, evaluated_factors)
+                    if next_factor is not None and next_factor not in evaluated_factors:
+                        pending_candidates.append((beam[0], beam[0].lr_mult * next_factor, next_factor))
+                        print(f"    adaptive expansion queued factor={next_factor:.6g}")
                 continue
 
             child_path = checkpoint_dir / (
                 f"round_{round_idx + 1:02d}_cand_{candidate_idx:03d}_"
-                f"step_{end_step:04d}_lr_{lr_mult:.8g}.pt"
+                f"step_{cooldown_end_step if is_final_round else end_step:04d}_lr_{lr_mult:.8g}.pt"
             )
             lr_history = parent_entry.lr_history + (lr_mult,)
-            load_checkpoint(temp_fixed_path, model, optimizer)
+            checkpoint_global_step = cooldown_end_step if is_final_round else end_step
+            if not is_final_round:
+                load_checkpoint(temp_fixed_path, model, optimizer)
             save_checkpoint(child_path, model, optimizer, {
                 "beam_width": beam_width,
                 "round": round_idx + 1,
-                "global_step": end_step,
+                "global_step": checkpoint_global_step,
+                "searched_global_step": end_step,
                 "cooldown_global_step": cooldown_end_step,
                 "lr_mult": lr_mult,
+                "lr_factor": lr_factor,
                 "lr_history": lr_history,
                 "avg_loss": avg_loss,
-                "last_losses": cooldown_losses[-3:],
+                "last_losses": cooldown_losses[-LOSS_AVG_WINDOW:],
                 "fixed_avg_loss": fixed_avg_loss,
-                "fixed_last_losses": fixed_losses[-3:],
+                "fixed_last_losses": fixed_losses[-LOSS_AVG_WINDOW:],
                 "segment_steps": segment_steps,
+                "current_segment_steps": current_segment_steps,
                 "cooldown_steps": cooldown_steps,
-                "cooldown_formula": "lr_mult * (1 - x / cooldown_steps), x starts at 1",
+                "cooldown_formula": cooldown_formula_description(cooldown_formula),
+                "cooldown_formula_name": cooldown_formula,
                 "cooldown_muon_constants": cooldown_muon_constants,
-                "cooldown_checkpoint_discarded": True,
+                "cooldown_checkpoint_discarded": not is_final_round,
+                "final_cooldown_applied": is_final_round,
             })
             remove_checkpoint(temp_fixed_path)
             entry = BeamEntry(
                 path=child_path,
                 lr_mult=lr_mult,
                 avg_loss=avg_loss,
-                global_step=end_step,
+                global_step=checkpoint_global_step,
                 lr_history=lr_history,
-                last_losses=cooldown_losses[-3:],
+                last_losses=cooldown_losses[-LOSS_AVG_WINDOW:],
+                lr_factor=lr_factor,
             )
             child_beam.append(entry)
             child_beam.sort(key=lambda beam_entry: beam_entry.avg_loss)
             print(f"    avg_loss={avg_loss:.6f} | kept")
+            if not pending_candidates and round_idx != 0:
+                next_factor = maybe_next_adaptive_factor(child_beam, evaluated_factors)
+                if next_factor is not None and next_factor not in evaluated_factors:
+                    pending_candidates.append((beam[0], beam[0].lr_mult * next_factor, next_factor))
+                    print(f"    adaptive expansion queued factor={next_factor:.6g}")
 
         for path in parent_paths:
             remove_checkpoint(path)
@@ -915,18 +1041,24 @@ def run_beam_search(segment_steps, cooldown_steps, beam_width=BEAM_WIDTH):
         beam = child_beam
         print("  survivors:")
         for rank, entry in enumerate(beam, start=1):
+            factor_text = "" if entry.lr_factor is None else f", factor={entry.lr_factor:.6g}"
             print(
                 f"    #{rank}: avg_loss={entry.avg_loss:.6f}, "
-                f"LR_MULT={entry.lr_mult:.6g}, path={entry.path.name}"
+                f"LR_MULT={entry.lr_mult:.6g}{factor_text}, path={entry.path.name}"
             )
         del segment_batches
         del cooldown_batches
         gc.collect()
+        start_step = end_step
 
     best = beam[0]
     print("---")
     print(f"Best k={beam_width} avg_loss: {best.avg_loss:.6f}")
     print(f"Best k={beam_width} LR_MULT schedule: {format_lr_history(best.lr_history)}")
+    if best.global_step != total_steps:
+        raise RuntimeError(
+            f"best checkpoint is at step {best.global_step}, expected final step {total_steps}"
+        )
 
     load_checkpoint(best.path, model, optimizer)
     model.eval()
@@ -952,8 +1084,10 @@ def run_beam_search(segment_steps, cooldown_steps, beam_width=BEAM_WIDTH):
     print(f"mfu_percent:      {steady_state_mfu:.2f}")
     print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
     print(f"num_steps:        {total_steps}")
+    print(f"searched_steps:   {searched_steps}")
     print(f"segment_steps:    {segment_steps}")
     print(f"cooldown_steps:   {cooldown_steps}")
+    print(f"cooldown_formula: {cooldown_formula}")
     print(f"num_params_M:     {num_params / 1e6:.1f}")
     print(f"depth:            {DEPTH}")
     print(f"checkpoint_dir:   {checkpoint_dir}")
@@ -961,8 +1095,10 @@ def run_beam_search(segment_steps, cooldown_steps, beam_width=BEAM_WIDTH):
     return {
         "k": beam_width,
         "num_steps": total_steps,
+        "searched_steps": searched_steps,
         "segment_steps": segment_steps,
         "cooldown_steps": cooldown_steps,
+        "cooldown_formula": cooldown_formula,
         "val_bpb": float(val_bpb),
         "best_avg_loss": float(best.avg_loss),
         "lr_history": best.lr_history,
@@ -973,8 +1109,8 @@ def run_beam_search(segment_steps, cooldown_steps, beam_width=BEAM_WIDTH):
 
 def main():
     results = []
-    for segment_steps, cooldown_steps in BEAM_EXPERIMENTS:
-        results.append(run_beam_search(segment_steps, cooldown_steps, BEAM_WIDTH))
+    for segment_steps, cooldown_steps, cooldown_formula in BEAM_EXPERIMENTS:
+        results.append(run_beam_search(segment_steps, cooldown_steps, cooldown_formula, BEAM_WIDTH))
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -983,7 +1119,9 @@ def main():
     for result in results:
         print(
             f"k={result['k']} | steps={result['num_steps']} | "
+            f"searched={result['searched_steps']} | "
             f"segment={result['segment_steps']} | cooldown={result['cooldown_steps']} | "
+            f"formula={result['cooldown_formula']} | "
             f"val_bpb={result['val_bpb']:.6f} | "
             f"best_avg_loss={result['best_avg_loss']:.6f} | "
             f"schedule={format_lr_history(result['lr_history'])} | "
