@@ -9,9 +9,15 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
+import json
 import math
+import sys
 import time
 from dataclasses import dataclass, asdict
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 import torch
 import torch.nn as nn
@@ -258,10 +264,11 @@ class GPT(nn.Module):
             group["initial_lr"] = group["lr"]
         return optimizer
 
-    def forward(self, idx, targets=None, reduction='mean'):
+    def forward(self, idx, targets=None, reduction='mean', return_activation_norms=False):
         B, T = idx.size()
         assert T <= self.cos.size(1)
         cos_sin = self.cos[:, :T], self.sin[:, :T]
+        activation_norms = []
 
         x = self.transformer.wte(idx)
         x = norm(x)
@@ -270,6 +277,8 @@ class GPT(nn.Module):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i])
+            if return_activation_norms:
+                activation_norms.append(x.detach().float().norm())
         x = norm(x)
 
         softcap = 15
@@ -280,7 +289,11 @@ class GPT(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
                                    ignore_index=-1, reduction=reduction)
+            if return_activation_norms:
+                return loss, activation_norms
             return loss
+        if return_activation_norms:
+            return logits, activation_norms
         return logits
 
 # ---------------------------------------------------------------------------
@@ -455,6 +468,7 @@ EMBEDDING_WD = 0.001    # AdamW weight decay for token embeddings
 VALUE_EMBEDDING_WD = 0.003 # AdamW weight decay for value embeddings
 
 DEVICE_BATCH_SIZE = 64  # per-device batch size (reduce if OOM)
+NORM_LOG_EVERY = 1      # optimizer steps between norm logs
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
@@ -514,6 +528,7 @@ optimizer = model.setup_optimizer(
     value_embedding_wd=VALUE_EMBEDDING_WD,
 )
 
+uncompiled_model = model
 model = torch.compile(model, dynamic=False)
 
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
@@ -540,6 +555,58 @@ def get_muon_momentum(step):
 def get_weight_decay(progress):
     return WEIGHT_DECAY * (1 - progress)
 
+
+def matrix_scaled_norm(t):
+    rows, cols = t.shape
+    return t.detach().float().norm() / math.sqrt(max(rows, cols))
+
+
+def scalar_abs(t):
+    return t.detach().float().abs()
+
+
+@torch.no_grad()
+def add_norm_pair(record, name, p, scalar_index=None):
+    if scalar_index is None:
+        weight_norm = matrix_scaled_norm(p)
+        grad_norm = matrix_scaled_norm(p.grad) if p.grad is not None else None
+    else:
+        weight_norm = scalar_abs(p[scalar_index])
+        grad_norm = scalar_abs(p.grad[scalar_index]) if p.grad is not None else None
+    record["weight_norms"][name] = float(weight_norm.item())
+    record["grad_norms"][name] = None if grad_norm is None else float(grad_norm.item())
+
+
+@torch.no_grad()
+def build_norm_log(model, activation_norms, step):
+    record = {
+        "type": "norms",
+        "step": step,
+        "weight_norms": {},
+        "grad_norms": {},
+        "activation_l2_norms": {},
+    }
+    add_norm_pair(record, "wte", model.transformer.wte.weight)
+    add_norm_pair(record, "lm_head", model.lm_head.weight)
+    for i, block in enumerate(model.transformer.h):
+        prefix = f"h.{i}"
+        add_norm_pair(record, f"{prefix}.q", block.attn.c_q.weight)
+        add_norm_pair(record, f"{prefix}.k", block.attn.c_k.weight)
+        add_norm_pair(record, f"{prefix}.v", block.attn.c_v.weight)
+        add_norm_pair(record, f"{prefix}.attn.c_proj", block.attn.c_proj.weight)
+        add_norm_pair(record, f"{prefix}.mlp.c_fc", block.mlp.c_fc.weight)
+        add_norm_pair(record, f"{prefix}.mlp.c_proj", block.mlp.c_proj.weight)
+        add_norm_pair(record, f"{prefix}.resid_lambdas", model.resid_lambdas, i)
+        add_norm_pair(record, f"{prefix}.x0_lambdas", model.x0_lambdas, i)
+        if str(i) in model.value_embeds:
+            add_norm_pair(record, f"{prefix}.ve", model.value_embeds[str(i)].weight)
+        if block.attn.ve_gate is not None:
+            add_norm_pair(record, f"{prefix}.attn.ve_gate", block.attn.ve_gate.weight)
+    if activation_norms is not None:
+        for i, activation_norm in enumerate(activation_norms):
+            record["activation_l2_norms"][f"h.{i}"] = float(activation_norm.item())
+    return record
+
 # ---------------------------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------------------------
@@ -552,9 +619,14 @@ step = 0
 while True:
     torch.cuda.synchronize()
     t0 = time.time()
+    should_log_norms = step % NORM_LOG_EVERY == 0
+    activation_norms = None
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
-            loss = model(x, y)
+            if should_log_norms and micro_step == grad_accum_steps - 1:
+                loss, activation_norms = model(x, y, return_activation_norms=True)
+            else:
+                loss = model(x, y)
         train_loss = loss.detach()
         loss = loss / grad_accum_steps
         loss.backward()
@@ -570,6 +642,8 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
+    if should_log_norms:
+        print(f"\nNORM_LOG {json.dumps(build_norm_log(uncompiled_model, activation_norms, step), sort_keys=True)}", flush=True)
     optimizer.step()
     model.zero_grad(set_to_none=True)
 

@@ -179,3 +179,48 @@ segment_steps = 50. try cooldown with 25, 50 steps. for cooldown, try both linea
  for each round of segment of 20 steps, add a 200 step lr_mult cooldown after the 20 step of fixed lr. the cooldown formula is 0.1 ** ((x/170) ** 0.42) where x is the step count starting from the cooldown. the avg3 train loss is calculated at the end of the cooldown, but the checkpoint saved should be the one after the 20 step fixed lr and before the cooldown. the checkpoint after cooldown is always discarded. have the beam search for 1150 steps so as to save 200 steps for the cooldown. 
 
 ask questions before you implement
+
+loss plateau
+
+
+work under autoresearch directory. python is /venv/main/bin/python. work under the hyperball directory. only modify hyperball/train.py
+
+add logging for weight norms, gradient norms. 
+wte
+lm_head
+q,k,v
+attn.c_proj
+mlp.c_fc
+mlp_c_proj
+resid_lambdas
+x0_lambdas
+ve
+attn.ve_gate
+
+for a matrix A of size N x M, log the Frobenius norm of M divided by sqrt(max(N,M)). 
+for a scalar s, just log the abs(s)
+resid_lambdas and x0_lambdas are scalars. the others are all matrices. 
+
+after log the L2 norm of the activations after each block (x = block(x, ve, cos_sin, self.window_sizes[i])). 
+
+gating is important
+
+for N x M matrix, 
+if N < M, each N-dim vector should be norm 1
+If N > M, each M-dim vector should be norm 1
+each min(N,M) dim vector should be norm 1. 
+
+gating params as norm scalars. e^p > 0. 
+
+0.8**(1.2*x**0.42)
+
+beam_search_with_cooldown.log might actually be good if we allow it to fullly cooldown over 800 steps to 0.01 lr. 
+
+how to properly cooldown. 
+absorption of data. 
+
+neural network is dumb without enough data. 
+linear search on one batch to find the lowest loss achievable in one step. that might be the cooldown? if the model has potential, then if can achieve a lot in one step. but if the model has no potential, then it can't achieve much in one step. put the trust in the river valley??s
+
+
+> more_logging.log 2>&1
