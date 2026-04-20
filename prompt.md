@@ -233,3 +233,15 @@ For Muon,
 stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
 update is lr * g. 
 ignore the weight decay for the update tensor. i think one way to log these update tensors is to set p.grad = update_tensor and then check p.grad, before zeroing out p.grad again for the next step.
+
+train2.py: migration to hyperball
+train3.py: pop off
+
+
+we either do per vector or per matrix norm. 
+
+let's do per matrix norm first. 
+cautious wd decays based on the updated param, traditional weight decay decays based on the old param. 
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under hyperball, and only modify visualize_weight_decay.py. 
