@@ -22,3 +22,5 @@ dev/
 # Results file
 results.tsv
 beam_search_checkpoints/
+*.pdf
+*.log

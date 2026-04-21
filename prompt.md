@@ -357,3 +357,32 @@ the ratio between cautious wd vector and the update vector is a problem
 python train.py > hyperball_baseline2.log 2>&1
 python train2.py > hyperball_better_scheduler2.log 2>&1
 python train3.py > ablation.log 2>&1
+
+ratio of activations
+
+
+attn.c_proj 1.04517236479753
+attn.ve_gate 1.0402585179821096
+k 1.040956598836486
+lm_head 1.042297123275748
+mlp.c_fc 1.0398597169480592
+mlp.c_proj 1.040865771345476
+q 1.0396111926645204
+v 1.0411021275055712
+ve 1.0390418701725663
+wte 1.0412029697902851
+
+
+x = x + self.attn(
+    norm(x), ve, cos_sin, window_size, activation_norms, prefix
+)
+x = x + self.mlp(norm(x), activation_norms, prefix)
+
+for each of the two lines, calculate the norm of x and the norm of the output of the attn or mlp and divide by the sum of the norm so they sum to 1. this is to understand how much the residual path contributes to the final output. add the logging to both train files and also update visualize.py
+
+
+
+softcap = 15
+logits = self.lm_head(x)
+logits = logits.float()
+logits = softcap * torch.tanh(logits / softcap)

@@ -115,6 +115,17 @@ def natural_key(name: str) -> tuple:
     return tuple(int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name))
 
 
+def residual_path_series_key(name: str) -> tuple:
+    suffix = strip_layer(name)
+    term_order = {
+        "attn.x": 0,
+        "attn.out": 1,
+        "mlp.x": 0,
+        "mlp.out": 1,
+    }
+    return (layer_index(name), term_order.get(suffix, 99), natural_key(name))
+
+
 def group_series(series: dict[str, tuple[list[int], list[float]]]) -> list[tuple[str, list[str]]]:
     groups = [
         ("Embeddings And Head", []),
@@ -180,6 +191,32 @@ def group_activation_series(
     for title, names in groups:
         if names:
             result.append((title, sorted(names, key=series_key)))
+    return result
+
+
+def group_residual_path_series(
+    series: dict[str, tuple[list[int], list[float]]],
+) -> list[tuple[str, list[str]]]:
+    groups = [
+        ("Attention Residual Add", []),
+        ("MLP Residual Add", []),
+        ("Other Residual Adds", []),
+    ]
+    by_title = {title: names for title, names in groups}
+
+    for name in series:
+        suffix = strip_layer(name)
+        if suffix in {"attn.x", "attn.out"}:
+            by_title["Attention Residual Add"].append(name)
+        elif suffix in {"mlp.x", "mlp.out"}:
+            by_title["MLP Residual Add"].append(name)
+        else:
+            by_title["Other Residual Adds"].append(name)
+
+    result = []
+    for title, names in groups:
+        if names:
+            result.append((title, sorted(names, key=residual_path_series_key)))
     return result
 
 
@@ -332,6 +369,31 @@ def plot_residual_mix_fractions(
     return pages
 
 
+def plot_residual_path_fractions(
+    pdf: PdfPages,
+    series: dict[str, tuple[list[int], list[float]]],
+    max_lines_per_page: int,
+) -> int:
+    if not series:
+        return 0
+    pages = 0
+    for group_title, names in group_residual_path_series(series):
+        chunks = split_long_group(names, max_lines_per_page)
+        for idx, chunk in enumerate(chunks, start=1):
+            suffix = f" ({idx}/{len(chunks)})" if len(chunks) > 1 else ""
+            plot_series_page(
+                pdf,
+                f"Residual Path L2 Fractions: {group_title}{suffix}",
+                chunk,
+                series,
+                "fraction of residual-add L2 norm",
+                force_linear_y=True,
+                y_limits=(0, 1),
+            )
+            pages += 1
+    return pages
+
+
 def plot_activations(
     pdf: PdfPages,
     series: dict[str, tuple[list[int], list[float]]],
@@ -365,12 +427,16 @@ def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) ->
     effective_lr_linear_series = filter_series(effective_lr_series, min_step=20)
     activation_series = collect_series(records, "activation_l2_norms")
     residual_mix_series = collect_series(records, "residual_mix_l2_fractions")
+    residual_path_series = collect_series(records, "residual_path_l2_fractions")
 
     pages = 0
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with PdfPages(output_path) as pdf:
         pages += plot_residual_mix_fractions(
             pdf, residual_mix_series, max_lines_per_page
+        )
+        pages += plot_residual_path_fractions(
+            pdf, residual_path_series, max_lines_per_page
         )
         pages += plot_activations(pdf, activation_series, max_lines_per_page)
         pages += plot_section(pdf, "Weight Norms", weight_series, max_lines_per_page)
