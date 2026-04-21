@@ -245,3 +245,97 @@ cautious wd decays based on the updated param, traditional weight decay decays b
 
 work under autoresearch directory. python is /venv/main/bin/python.
 work under hyperball, and only modify visualize_weight_decay.py. 
+suppose the weight vector is a 3D vector constrained to unit norm.
+the update vector is also unit norm. 
+we have one toggle to toggle the angle between the update vector and the weight vector. 
+visualize the standard weight decay vector and the catious weight decay vector. 
+cautious weight decay applies a mask (update * weight) < 0 and decays only the weights that satisfy this mask. note that this is the same as (g * weight) >= 0 mask cuz update = -g. 
+standard weight decay does not have this mask
+
+
+
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under hyperball, and only modify precision.py.  
+
+
+if i have a D dim vector and a D x D matrix. both the vector and the matrix have frobenius norm 1.  and i apply the matrix onto the vector.
+
+try out all possible precision settings available on A100, and see the rounding error of the output when compared to the ground truth (aka the highest precision setting).
+vary D and see how the rounding error changes. 
+write the code, i will run it. 
+running it should produce all the results in the output console.
+
+python precision.py --dims 10000,50000 --trials 10 > precision2.log
+
+python precision.py \
+  --dims 10000,50000 \
+  --matrix-norms 1,224,1000 \
+  --vector-norms 1 \
+  --trials 5 > precision3.log
+
+normalization operation dtype
+matrix and vector dtype
+vary dim D and norm C. 
+speed
+relative error
+compile
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under hyperball. modify only precision.py
+
+if i have a D dim vector and a D x D matrix. 
+the vector has norm A and the matrix has frobenius norm B, and I apply the matrix onto the vector. Then, the output vector is normalized to norm A. 
+conduct an ablation study on the effects of dtype on the gpu memory, speed, and the relative error in the output compared to the ground truth.
+try out all dtypes available on A100. reat fp32 highest precision as ground truth, no fp64. 
+measure the relative L2 error and the speed. 
+try out torch.compile. 
+also try out varying the dtype of the normalization operation of the output_vector. 
+write the code in precision.py, run the code, and report the results back to me. iterate on the code so that the result is imformative. 
+
+you can ask me questions first before starting. 
+
+
+
+both the vector and the matrix have frobenius norm 1.  and i apply the matrix onto the vector.
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under hyperball. do not modify any file. 
+
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under hyperball, and only modify train2.py.  Modify only GPT's init_weights. init according to the weight norms in weight_norm.py
+The numbers in weight_norm.py are Frobenius norm divided by sqrt(max(N,M)) for matrices. convert them back to actual Frobenius norm. 
+all the matrices should be initialized using a normal distribution instead of uniform or whatever. keep the init of learnable scalars unchanged
+do not change this part of the code
+norm_scheme = 'matrix'
+assert norm_scheme in {'matrix','per_output','per_input',"per_smaller_vector"}
+for w, norm_value in init_scheme:
+    if norm_scheme == 'matrix':
+        w.div_(w.norm()).mul_(norm_value)
+        continue
+    output_dim, input_dim = w.shape
+    if norm_scheme == 'per_output' or (norm_scheme == 'per_smaller_vector' and output_dim >= input_dim):
+        output_dim, input_dim = w.shape
+        norm_value = norm_value / (output_dim ** 0.5)
+        w.div_(w.norm(dim=1,keepdim=True)).mul_(norm_value)
+    else:
+        output_dim, input_dim = w.shape
+        norm_value = norm_value / (input_dim ** 0.5)
+        w.div_(w.norm(dim=0,keepdim=True)).mul_(norm_value)
+
+
+work under autoresearch directory. python is /venv/main/bin/python. work under the hyperball directory. only modify hyperball/train2.py
+we want more activation norm loggings
+for MLP, log after c_fc, and after c_proj.
+For attention, log before and after this line (v = v + gate.unsqueeze(-1) * ve) and also ve. log before and after c_proj(y). 
+for lm_head, log before and after lm_head. 
+
+do not calculate the norm over all tokens and emd_dim, only over embed_dim, and average over the tokens. 
+
+v = v + gate.unsqueeze(-1) * ve
+
+
+x = self.c_fc(x)
+x = F.relu(x).square()
+x = self.c_proj(x)

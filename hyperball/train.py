@@ -5,6 +5,7 @@ Usage: uv run train.py
 """
 
 import os
+
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
@@ -24,9 +25,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from kernels import get_kernel
+
 cap = torch.cuda.get_device_capability()
 # varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+repo = (
+    "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+)
 fa3 = get_kernel(repo).flash_attn_interface
 
 from prepare import MAX_SEQ_LEN, Tokenizer, make_dataloader, evaluate_bpb
@@ -34,6 +38,7 @@ from prepare import MAX_SEQ_LEN, Tokenizer, make_dataloader, evaluate_bpb
 # ---------------------------------------------------------------------------
 # GPT Model
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class GPTConfig:
@@ -78,7 +83,11 @@ class CausalSelfAttention(nn.Module):
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 32
-        self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+        self.ve_gate = (
+            nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False)
+            if has_ve(layer_idx, config.n_layer)
+            else None
+        )
 
     def forward(self, x, ve, cos_sin, window_size):
         B, T, C = x.size()
@@ -89,7 +98,7 @@ class CausalSelfAttention(nn.Module):
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
         if ve is not None:
             ve = ve.view(B, T, self.n_kv_head, self.head_dim)
-            gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))
+            gate = 2 * torch.sigmoid(self.ve_gate(x[..., : self.ve_gate_channels]))
             v = v + gate.unsqueeze(-1) * ve
 
         cos, sin = cos_sin
@@ -132,20 +141,25 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
         self.window_sizes = self._compute_window_sizes(config)
-        self.transformer = nn.ModuleDict({
-            "wte": nn.Embedding(config.vocab_size, config.n_embd),
-            "h": nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
-        })
+        self.transformer = nn.ModuleDict(
+            {
+                "wte": nn.Embedding(config.vocab_size, config.n_embd),
+                "h": nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
+            }
+        )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
         # Value embeddings
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
-        self.value_embeds = nn.ModuleDict({
-            str(i): nn.Embedding(config.vocab_size, kv_dim)
-            for i in range(config.n_layer) if has_ve(i, config.n_layer)
-        })
+        self.value_embeds = nn.ModuleDict(
+            {
+                str(i): nn.Embedding(config.vocab_size, kv_dim)
+                for i in range(config.n_layer)
+                if has_ve(i, config.n_layer)
+            }
+        )
         # Rotary embeddings
         self.rotary_seq_len = config.sequence_len * 10
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -207,8 +221,12 @@ class GPT(nn.Module):
         """Estimated FLOPs per token (forward + backward)."""
         nparams = sum(p.numel() for p in self.parameters())
         value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
-        nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel +
-                          self.resid_lambdas.numel() + self.x0_lambdas.numel())
+        nparams_exclude = (
+            self.transformer.wte.weight.numel()
+            + value_embeds_numel
+            + self.resid_lambdas.numel()
+            + self.x0_lambdas.numel()
+        )
         h = self.config.n_head
         q = self.config.n_embd // self.config.n_head
         t = self.config.sequence_len
@@ -227,13 +245,26 @@ class GPT(nn.Module):
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
         total = wte + value_embeds + lm_head + transformer_matrices + scalars
         return {
-            'wte': wte, 'value_embeds': value_embeds, 'lm_head': lm_head,
-            'transformer_matrices': transformer_matrices, 'scalars': scalars, 'total': total,
+            "wte": wte,
+            "value_embeds": value_embeds,
+            "lm_head": lm_head,
+            "transformer_matrices": transformer_matrices,
+            "scalars": scalars,
+            "total": total,
         }
 
-    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02,
-                        weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5,
-                        lm_head_wd=0.0, embedding_wd=0.0, value_embedding_wd=0.0):
+    def setup_optimizer(
+        self,
+        unembedding_lr=0.004,
+        embedding_lr=0.2,
+        matrix_lr=0.02,
+        weight_decay=0.0,
+        adam_betas=(0.8, 0.95),
+        scalar_lr=0.5,
+        lm_head_wd=0.0,
+        embedding_wd=0.0,
+        value_embedding_wd=0.0,
+    ):
         model_dim = self.config.n_embd
         matrix_params = list(self.transformer.h.parameters())
         value_embeds_params = list(self.value_embeds.parameters())
@@ -241,30 +272,80 @@ class GPT(nn.Module):
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
-        assert len(list(self.parameters())) == (len(matrix_params) + len(embedding_params) +
-            len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params))
+        assert len(list(self.parameters())) == (
+            len(matrix_params)
+            + len(embedding_params)
+            + len(lm_head_params)
+            + len(value_embeds_params)
+            + len(resid_params)
+            + len(x0_params)
+        )
         # Scale LR ∝ 1/√dmodel (tuned at 768 dim)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
         param_groups = [
-            dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=lm_head_wd),
-            dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=embedding_wd),
-            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=value_embedding_wd),
-            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
+            dict(
+                kind="adamw",
+                params=lm_head_params,
+                lr=unembedding_lr * dmodel_lr_scale,
+                betas=adam_betas,
+                eps=1e-10,
+                weight_decay=lm_head_wd,
+            ),
+            dict(
+                kind="adamw",
+                params=embedding_params,
+                lr=embedding_lr * dmodel_lr_scale,
+                betas=adam_betas,
+                eps=1e-10,
+                weight_decay=embedding_wd,
+            ),
+            dict(
+                kind="adamw",
+                params=value_embeds_params,
+                lr=embedding_lr * dmodel_lr_scale,
+                betas=adam_betas,
+                eps=1e-10,
+                weight_decay=value_embedding_wd,
+            ),
+            dict(
+                kind="adamw",
+                params=resid_params,
+                lr=scalar_lr * 0.01,
+                betas=adam_betas,
+                eps=1e-10,
+                weight_decay=0.0,
+            ),
+            dict(
+                kind="adamw",
+                params=x0_params,
+                lr=scalar_lr,
+                betas=(0.96, 0.95),
+                eps=1e-10,
+                weight_decay=0.0,
+            ),
         ]
         for shape in sorted({p.shape for p in matrix_params}):
             group_params = [p for p in matrix_params if p.shape == shape]
-            param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
-            ))
+            param_groups.append(
+                dict(
+                    kind="muon",
+                    params=group_params,
+                    lr=matrix_lr,
+                    momentum=0.95,
+                    ns_steps=5,
+                    beta2=0.95,
+                    weight_decay=weight_decay,
+                )
+            )
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
         return optimizer
 
-    def forward(self, idx, targets=None, reduction='mean', return_activation_norms=False):
+    def forward(
+        self, idx, targets=None, reduction="mean", return_activation_norms=False
+    ):
         B, T = idx.size()
         assert T <= self.cos.size(1)
         cos_sin = self.cos[:, :T], self.sin[:, :T]
@@ -287,14 +368,19 @@ class GPT(nn.Module):
         logits = softcap * torch.tanh(logits / softcap)
 
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
-                                   ignore_index=-1, reduction=reduction)
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                targets.view(-1),
+                ignore_index=-1,
+                reduction=reduction,
+            )
             if return_activation_norms:
                 return loss, activation_norms
             return loss
         if return_activation_norms:
             return logits, activation_norms
         return logits
+
 
 # ---------------------------------------------------------------------------
 # Optimizer (MuonAdamW, single GPU only)
@@ -308,22 +394,36 @@ polar_express_coeffs = [
     (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
 ]
 
+
 @torch.compile(dynamic=False, fullgraph=True)
-def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t):
+def adamw_step_fused(
+    p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t
+):
     p.mul_(1 - lr_t * wd_t)
     exp_avg.lerp_(grad, 1 - beta1_t)
     exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
-    bias1 = 1 - beta1_t ** step_t
-    bias2 = 1 - beta2_t ** step_t
+    bias1 = 1 - beta1_t**step_t
+    bias2 = 1 - beta2_t**step_t
     denom = (exp_avg_sq / bias2).sqrt() + eps_t
     step_size = lr_t / bias1
     update = exp_avg / denom * step_size
     p.add_(update, alpha=-1)
     return update
 
+
 @torch.compile(dynamic=False, fullgraph=True)
-def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momentum_buffer,
-                    momentum_t, lr_t, wd_t, beta2_t, ns_steps, red_dim):
+def muon_step_fused(
+    stacked_grads,
+    stacked_params,
+    momentum_buffer,
+    second_momentum_buffer,
+    momentum_t,
+    lr_t,
+    wd_t,
+    beta2_t,
+    ns_steps,
+    red_dim,
+):
     # Nesterov momentum
     momentum = momentum_t.to(stacked_grads.dtype)
     momentum_buffer.lerp_(stacked_grads, 1 - momentum)
@@ -349,7 +449,9 @@ def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momen
     red_dim_size = g.size(red_dim)
     v_norm_sq = v_mean.sum(dim=(-2, -1), keepdim=True) * red_dim_size
     v_norm = v_norm_sq.sqrt()
-    second_momentum_buffer.lerp_(v_mean.to(dtype=second_momentum_buffer.dtype), 1 - beta2)
+    second_momentum_buffer.lerp_(
+        v_mean.to(dtype=second_momentum_buffer.dtype), 1 - beta2
+    )
     step_size = second_momentum_buffer.clamp_min(1e-10).rsqrt()
     scaled_sq_sum = (v_mean * red_dim_size) * step_size.float().square()
     v_norm_new = scaled_sq_sum.sum(dim=(-2, -1), keepdim=True).sqrt()
@@ -382,30 +484,39 @@ class MuonAdamW(torch.optim.Optimizer):
         self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
 
     def _step_adamw(self, group, collect_update_norms=False):
-        for p in group['params']:
+        for p in group["params"]:
             if p.grad is None:
                 continue
             grad = p.grad
             state = self.state[p]
             if not state:
-                state['step'] = 0
-                state['exp_avg'] = torch.zeros_like(p)
-                state['exp_avg_sq'] = torch.zeros_like(p)
-            state['step'] += 1
-            self._adamw_step_t.fill_(state['step'])
-            self._adamw_lr_t.fill_(group['lr'])
-            self._adamw_beta1_t.fill_(group['betas'][0])
-            self._adamw_beta2_t.fill_(group['betas'][1])
-            self._adamw_eps_t.fill_(group['eps'])
-            self._adamw_wd_t.fill_(group['weight_decay'])
-            update = adamw_step_fused(p, grad, state['exp_avg'], state['exp_avg_sq'],
-                                      self._adamw_step_t, self._adamw_lr_t, self._adamw_beta1_t,
-                                      self._adamw_beta2_t, self._adamw_eps_t, self._adamw_wd_t)
+                state["step"] = 0
+                state["exp_avg"] = torch.zeros_like(p)
+                state["exp_avg_sq"] = torch.zeros_like(p)
+            state["step"] += 1
+            self._adamw_step_t.fill_(state["step"])
+            self._adamw_lr_t.fill_(group["lr"])
+            self._adamw_beta1_t.fill_(group["betas"][0])
+            self._adamw_beta2_t.fill_(group["betas"][1])
+            self._adamw_eps_t.fill_(group["eps"])
+            self._adamw_wd_t.fill_(group["weight_decay"])
+            update = adamw_step_fused(
+                p,
+                grad,
+                state["exp_avg"],
+                state["exp_avg_sq"],
+                self._adamw_step_t,
+                self._adamw_lr_t,
+                self._adamw_beta1_t,
+                self._adamw_beta2_t,
+                self._adamw_eps_t,
+                self._adamw_wd_t,
+            )
             if collect_update_norms:
                 p.grad = update.to(dtype=p.dtype)
 
     def _step_muon(self, group, collect_update_norms=False):
-        params = group['params']
+        params = group["params"]
         if not params:
             return
         p = params[0]
@@ -413,21 +524,37 @@ class MuonAdamW(torch.optim.Optimizer):
         num_params = len(params)
         shape, device, dtype = p.shape, p.device, p.dtype
         if "momentum_buffer" not in state:
-            state["momentum_buffer"] = torch.zeros(num_params, *shape, dtype=dtype, device=device)
+            state["momentum_buffer"] = torch.zeros(
+                num_params, *shape, dtype=dtype, device=device
+            )
         if "second_momentum_buffer" not in state:
-            state_shape = (num_params, shape[-2], 1) if shape[-2] >= shape[-1] else (num_params, 1, shape[-1])
-            state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
+            state_shape = (
+                (num_params, shape[-2], 1)
+                if shape[-2] >= shape[-1]
+                else (num_params, 1, shape[-1])
+            )
+            state["second_momentum_buffer"] = torch.zeros(
+                state_shape, dtype=dtype, device=device
+            )
         red_dim = -1 if shape[-2] >= shape[-1] else -2
         stacked_grads = torch.stack([p.grad for p in params])
         stacked_params = torch.stack(params)
         self._muon_momentum_t.fill_(group["momentum"])
         self._muon_beta2_t.fill_(group["beta2"] if group["beta2"] is not None else 0.0)
-        self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1])**0.5)
+        self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1]) ** 0.5)
         self._muon_wd_t.fill_(group["weight_decay"])
-        updates = muon_step_fused(stacked_grads, stacked_params,
-                                  state["momentum_buffer"], state["second_momentum_buffer"],
-                                  self._muon_momentum_t, self._muon_lr_t, self._muon_wd_t,
-                                  self._muon_beta2_t, group["ns_steps"], red_dim)
+        updates = muon_step_fused(
+            stacked_grads,
+            stacked_params,
+            state["momentum_buffer"],
+            state["second_momentum_buffer"],
+            self._muon_momentum_t,
+            self._muon_lr_t,
+            self._muon_wd_t,
+            self._muon_beta2_t,
+            group["ns_steps"],
+            red_dim,
+        )
         torch._foreach_copy_(params, list(stacked_params.unbind(0)))
         if collect_update_norms:
             for param, update in zip(params, updates.unbind(0)):
@@ -436,20 +563,21 @@ class MuonAdamW(torch.optim.Optimizer):
     @torch.no_grad()
     def step(self, collect_update_norms=False):
         for group in self.param_groups:
-            if group['kind'] == 'adamw':
+            if group["kind"] == "adamw":
                 self._step_adamw(group, collect_update_norms)
-            elif group['kind'] == 'muon':
+            elif group["kind"] == "muon":
                 self._step_muon(group, collect_update_norms)
+
 
 # ---------------------------------------------------------------------------
 # Hyperparameters (edit these directly, no CLI flags needed)
 # ---------------------------------------------------------------------------
 
 # Model architecture
-DEPTH = 8               # number of transformer layers
-ASPECT_RATIO = 64       # model_dim = depth * ASPECT_RATIO
-HEAD_DIM = 128          # target head dimension for attention
-WINDOW_SIZES = [        # exact per-layer FA3 left-window sizes
+DEPTH = 8  # number of transformer layers
+ASPECT_RATIO = 64  # model_dim = depth * ASPECT_RATIO
+HEAD_DIM = 128  # target head dimension for attention
+WINDOW_SIZES = [  # exact per-layer FA3 left-window sizes
     256,
     256,
     256,
@@ -461,24 +589,24 @@ WINDOW_SIZES = [        # exact per-layer FA3 left-window sizes
 ]
 
 # Optimization
-MAX_STEPS = 1350        # exact number of optimizer steps to train
-TOTAL_BATCH_SIZE = 2**17 # ~524K tokens per optimizer step
+MAX_STEPS = 1350  # exact number of optimizer steps to train
+TOTAL_BATCH_SIZE = 2**17  # ~524K tokens per optimizer step
 LR_MULT = 1.5
-EMBEDDING_LR = 0.6*LR_MULT      # learning rate for token embeddings (Adam)
-UNEMBEDDING_LR = 0.004*LR_MULT  # learning rate for lm_head (Adam)
-MATRIX_LR = 0.04*LR_MULT        # learning rate for matrix parameters (Muon)
-SCALAR_LR = 0.5*LR_MULT         # learning rate for per-layer scalars (Adam)
-WEIGHT_DECAY = 0.1      # cautious weight decay for Muon
-ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
-WARMUP_RATIO = 0.0      # fraction of steps for LR warmup
-WARMDOWN_RATIO = 0.7    # fraction of steps for LR warmdown
-FINAL_LR_FRAC = 0.05    # final LR as fraction of initial
-LM_HEAD_WD = 0.01       # AdamW weight decay for lm_head
-EMBEDDING_WD = 0.001    # AdamW weight decay for token embeddings
-VALUE_EMBEDDING_WD = 0.003 # AdamW weight decay for value embeddings
+EMBEDDING_LR = 0.6 * LR_MULT  # learning rate for token embeddings (Adam)
+UNEMBEDDING_LR = 0.004 * LR_MULT  # learning rate for lm_head (Adam)
+MATRIX_LR = 0.04 * LR_MULT  # learning rate for matrix parameters (Muon)
+SCALAR_LR = 0.5 * LR_MULT  # learning rate for per-layer scalars (Adam)
+WEIGHT_DECAY = 0.1  # cautious weight decay for Muon
+ADAM_BETAS = (0.8, 0.95)  # Adam beta1, beta2
+WARMUP_RATIO = 0.0  # fraction of steps for LR warmup
+WARMDOWN_RATIO = 0.7  # fraction of steps for LR warmdown
+FINAL_LR_FRAC = 0.05  # final LR as fraction of initial
+LM_HEAD_WD = 0.01  # AdamW weight decay for lm_head
+EMBEDDING_WD = 0.001  # AdamW weight decay for token embeddings
+VALUE_EMBEDDING_WD = 0.003  # AdamW weight decay for value embeddings
 
 DEVICE_BATCH_SIZE = 64  # per-device batch size (reduce if OOM)
-NORM_LOG_EVERY = 1      # optimizer steps between norm logs
+NORM_LOG_EVERY = 1  # optimizer steps between norm logs
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
@@ -496,15 +624,21 @@ tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
 print(f"Vocab size: {vocab_size:,}")
 
+
 def build_model_config(depth):
     base_dim = depth * ASPECT_RATIO
     model_dim = ((base_dim + HEAD_DIM - 1) // HEAD_DIM) * HEAD_DIM
     num_heads = model_dim // HEAD_DIM
     return GPTConfig(
-        sequence_len=MAX_SEQ_LEN, vocab_size=vocab_size,
-        n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
+        sequence_len=MAX_SEQ_LEN,
+        vocab_size=vocab_size,
+        n_layer=depth,
+        n_head=num_heads,
+        n_kv_head=num_heads,
+        n_embd=model_dim,
         window_sizes=tuple(WINDOW_SIZES),
     )
+
 
 config = build_model_config(DEPTH)
 print(f"Model config: {asdict(config)}")
@@ -518,7 +652,7 @@ param_counts = model.num_scaling_params()
 print("Parameter counts:")
 for key, value in param_counts.items():
     print(f"  {key:24s}: {value:,}")
-num_params = param_counts['total']
+num_params = param_counts["total"]
 num_flops_per_token = model.estimate_flops()
 print(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
@@ -549,18 +683,26 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 
 # Schedules (all based on fixed-step progress)
 
-def get_lr_multiplier(progress):
-    if progress < WARMUP_RATIO:
-        return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
-    elif progress < 1.0 - WARMDOWN_RATIO:
+
+def get_lr_multiplier_scalar(progress):
+    if progress < 0.3:
         return 1.0
     else:
-        cooldown = (1.0 - progress) / WARMDOWN_RATIO
-        return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
+        cooldown = (1.0 - progress) / 0.3
+        return cooldown * 1.0 + (1 - cooldown) * 0.05
+
+
+def get_lr_multiplier_matrix(steps):
+    if steps < 400:
+        return 0.6 - steps / 400 * 0.4
+    else:
+        return 0.2 - steps / (1350 - 400)
+
 
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
     return (1 - frac) * 0.85 + frac * 0.95
+
 
 def get_weight_decay(progress):
     return WEIGHT_DECAY * (1 - progress)
@@ -593,7 +735,9 @@ def add_update_norm_pair(record, name, p, scalar_index=None):
         update_norm = matrix_scaled_norm(p.grad) if p.grad is not None else None
     else:
         update_norm = scalar_abs(p.grad[scalar_index]) if p.grad is not None else None
-    record["update_norms"][name] = None if update_norm is None else float(update_norm.item())
+    record["update_norms"][name] = (
+        None if update_norm is None else float(update_norm.item())
+    )
 
 
 @torch.no_grad()
@@ -643,9 +787,14 @@ def add_update_norms(record, model):
         add_update_norm_pair(record, f"{prefix}.resid_lambdas", model.resid_lambdas, i)
         add_update_norm_pair(record, f"{prefix}.x0_lambdas", model.x0_lambdas, i)
         if str(i) in model.value_embeds:
-            add_update_norm_pair(record, f"{prefix}.ve", model.value_embeds[str(i)].weight)
+            add_update_norm_pair(
+                record, f"{prefix}.ve", model.value_embeds[str(i)].weight
+            )
         if block.attn.ve_gate is not None:
-            add_update_norm_pair(record, f"{prefix}.attn.ve_gate", block.attn.ve_gate.weight)
+            add_update_norm_pair(
+                record, f"{prefix}.attn.ve_gate", block.attn.ve_gate.weight
+            )
+
 
 # ---------------------------------------------------------------------------
 # Training loop
@@ -674,15 +823,25 @@ while True:
 
     # Progress and schedules
     progress = min(step / max(1, MAX_STEPS - 1), 1.0)
-    lrm = get_lr_multiplier(progress)
+    lrm_matrix = get_lr_multiplier_matrix(step)
+    lrm_scalar = get_lr_multiplier_scalar(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
     for group in optimizer.param_groups:
-        group["lr"] = group["initial_lr"] * lrm
-        if group['kind'] == 'muon':
+        if group["kind"] in {"muon", "adamh"}:
+            group["lr"] = group["initial_lr"] * lrm_matrix
+        elif group["kind"] == "adamw":
+            group["lr"] = group["initial_lr"] * lrm_scalar
+        else:
+            raise NotImplementedError()
+        if group["kind"] == "muon":
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-    norm_log_record = build_norm_log(uncompiled_model, activation_norms, step) if should_log_norms else None
+    norm_log_record = (
+        build_norm_log(uncompiled_model, activation_norms, step)
+        if should_log_norms
+        else None
+    )
     optimizer.step(collect_update_norms=should_log_norms)
     if should_log_norms:
         add_update_norms(norm_log_record, uncompiled_model)
@@ -706,13 +865,17 @@ while True:
     # Logging
     ema_beta = 0.9
     smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
-    debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
+    debiased_smooth_loss = smooth_train_loss / (1 - ema_beta ** (step + 1))
     pct_done = 100 * min((step + 1) / MAX_STEPS, 1.0)
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
     mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
     remaining_steps = max(0, MAX_STEPS - step - 1)
 
-    print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ", end="", flush=True)
+    print(
+        f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
+        end="",
+        flush=True,
+    )
 
     # GC management (Python's GC causes ~500ms stalls)
     if step == 0:
@@ -739,7 +902,16 @@ with autocast_ctx:
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+steady_state_mfu = (
+    100
+    * num_flops_per_token
+    * TOTAL_BATCH_SIZE
+    * (step - 10)
+    / total_training_time
+    / H100_BF16_PEAK_FLOPS
+    if total_training_time > 0
+    else 0
+)
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")

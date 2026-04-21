@@ -17,6 +17,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 
 DEFAULT_LOG = Path(__file__).with_name("more_logging.log")
+GRADIENT_LAMBDA_SMOOTHING = 0.9
 
 
 def parse_norm_records(log_path: Path) -> tuple[list[dict], int]:
@@ -147,6 +148,19 @@ def group_series(series: dict[str, tuple[list[int], list[float]]]) -> list[tuple
     return result
 
 
+def select_group(
+    series: dict[str, tuple[list[int], list[float]]],
+    target_group_title: str,
+) -> dict[str, tuple[list[int], list[float]]]:
+    selected = {}
+    for group_title, names in group_series(series):
+        if group_title == target_group_title:
+            for name in names:
+                selected[name] = series[name]
+            break
+    return selected
+
+
 def series_key(name: str) -> tuple:
     return (strip_layer(name), layer_index(name), natural_key(name))
 
@@ -160,6 +174,20 @@ def positive_range(values: list[float]) -> tuple[float, float] | None:
     if not positives:
         return None
     return min(positives), max(positives)
+
+
+def smooth_values(values: list[float], beta: float) -> list[float]:
+    if not values:
+        return []
+    smoothed = []
+    ema = 0.0
+    power = 1.0
+    for value in values:
+        ema = beta * ema + (1 - beta) * value
+        power *= beta
+        debias = 1 - power
+        smoothed.append(ema / debias if debias > 0 else ema)
+    return smoothed
 
 
 def set_norm_scale(ax, names: list[str], series: dict[str, tuple[list[int], list[float]]]) -> None:
@@ -182,10 +210,13 @@ def plot_series_page(
     ylabel: str,
     force_linear_y: bool = False,
     y_scale: str | None = None,
+    smoothing_beta: float | None = None,
 ) -> None:
     fig, ax = plt.subplots(figsize=(13, 7.5), constrained_layout=True)
     for name in names:
         steps, values = series[name]
+        if smoothing_beta is not None:
+            values = smooth_values(values, smoothing_beta)
         ax.plot(steps, values, linewidth=1.25, label=name)
     if y_scale is not None:
         ax.set_yscale(y_scale)
@@ -211,6 +242,16 @@ def plot_section(
 ) -> int:
     pages = 0
     for group_title, names in group_series(series):
+        smoothing_beta = None
+        group_force_linear_y = force_linear_y
+        if section_title == "Gradient Norms" and group_title == "Lambda Scalars":
+            smoothing_beta = GRADIENT_LAMBDA_SMOOTHING
+            group_force_linear_y = True
+        if section_title == "Update Norms" and group_title == "Lambda Scalars":
+            group_force_linear_y = True
+        if section_title == "Update Norms (Step >= 20)" and group_title == "Lambda Scalars":
+            smoothing_beta = GRADIENT_LAMBDA_SMOOTHING
+            group_force_linear_y = True
         chunks = split_long_group(names, max_lines_per_page)
         for idx, chunk in enumerate(chunks, start=1):
             suffix = f" ({idx}/{len(chunks)})" if len(chunks) > 1 else ""
@@ -220,8 +261,9 @@ def plot_section(
                 chunk,
                 series,
                 section_title.lower(),
-                force_linear_y=force_linear_y,
+                force_linear_y=group_force_linear_y,
                 y_scale=y_scale,
+                smoothing_beta=smoothing_beta,
             )
             pages += 1
     return pages
@@ -239,6 +281,7 @@ def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) ->
     weight_series = collect_series(records, "weight_norms")
     grad_series = collect_series(records, "grad_norms")
     update_series = collect_series(records, "update_norms")
+    update_lambda_late_series = filter_series(select_group(update_series, "Lambda Scalars"), min_step=20)
     effective_lr_series = collect_ratio_series(records, "update_norms", "weight_norms")
     effective_lr_log_series = filter_series(effective_lr_series, positive_only=True)
     effective_lr_linear_series = filter_series(effective_lr_series, min_step=20)
@@ -251,6 +294,13 @@ def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) ->
         pages += plot_section(pdf, "Weight Norms", weight_series, max_lines_per_page)
         pages += plot_section(pdf, "Gradient Norms", grad_series, max_lines_per_page)
         pages += plot_section(pdf, "Update Norms", update_series, max_lines_per_page)
+        pages += plot_section(
+            pdf,
+            "Update Norms (Step >= 20)",
+            update_lambda_late_series,
+            max_lines_per_page,
+            force_linear_y=True,
+        )
         pages += plot_section(
             pdf,
             "Effective LR (Log Scale)",

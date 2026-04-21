@@ -1,0 +1,176 @@
+Environment
+  torch version: 2.11.0+cu128
+  cuda available: True
+  cuda device: NVIDIA A100-PCIE-40GB
+  compute capability: 8.0
+  total memory: 39.5 GiB
+  bf16 supported: True
+  initial float32 matmul precision: highest
+  initial allow_tf32: False
+  initial fp16 reduced reduction: True
+  initial bf16 reduced reduction: True
+
+Precision cases
+  fp64_ground_truth    FP64 CUDA matmul; used as ground truth
+  fp32_ieee            FP32 inputs, TF32 disabled
+  tf32                 FP32 inputs with Ampere TF32 tensor-core path enabled
+  fp32_medium          PyTorch medium internal precision for FP32 matmul
+  bf16_reduced_off     BF16 inputs, reduced-precision reduction disabled if supported
+  bf16_reduced_on      BF16 inputs, reduced-precision reduction enabled if supported
+  fp16_reduced_off     FP16 inputs, reduced-precision reduction disabled if supported
+  fp16_reduced_on      FP16 inputs, reduced-precision reduction enabled if supported
+
+Normalization cases
+  norm_fp64            Compute output norm, scale, and multiply in FP64
+  norm_fp32            Compute output norm, scale, and multiply in FP32
+  norm_bf16            Compute output norm, scale, and multiply in BF16
+  norm_fp16            Compute output norm, scale, and multiply in FP16
+
+Setup: each trial draws FP64 Gaussian inputs, normalizes the matrix to Frobenius norm 1 and the vector to L2/Frobenius norm 1, rescales them to the requested constants, then casts those same inputs to each precision case.
+Dims: 10000, 50000
+Matrix Frobenius norms: 1, 224, 1000
+Vector L2/Frobenius norms: 1
+Trials per D: 5
+Base seed: 12345
+Rule of thumb for these random inputs: typical matrix entry is about matrix_norm / D, typical vector entry is about vector_norm / sqrt(D), and typical output entry is about matrix_norm * vector_norm / D.
+renorm_rel is the relative L2 error after normalizing each output to the input-vector norm using FP32 for the normalization operation.
+The separate normalization table compares each normalization precision against FP64-normalized ground truth. Rows with matmul_precision=fp64_ground_truth isolate normalization error.
+
+Results
+      D  matrix_norm  vector_norm  precision               rel_l2_mean    rel_l2_std     renorm_rel    abs_l2_mean   rms_abs_mean   max_abs_mean
+----------------------------------------------------------------------------------------------------------------------------------------------
+  10000   1.0000e+00   1.0000e+00  fp64_ground_truth      0.000000e+00  0.000000e+00   4.685344e-08   0.000000e+00   0.000000e+00   0.000000e+00
+  10000   1.0000e+00   1.0000e+00  fp32_ieee              4.506469e-07  4.887404e-09   4.525016e-07   4.504041e-09   4.504041e-11   2.024822e-10
+  10000   1.0000e+00   1.0000e+00  tf32                   4.506469e-07  4.887404e-09   4.525016e-07   4.504041e-09   4.504041e-11   2.024822e-10
+  10000   1.0000e+00   1.0000e+00  fp32_medium            4.506469e-07  4.887404e-09   4.525016e-07   4.504041e-09   4.504041e-11   2.024822e-10
+  10000   1.0000e+00   1.0000e+00  bf16_reduced_off       2.875055e-03  2.963079e-05   2.874801e-03   2.873443e-05   2.873443e-07   1.347779e-06
+  10000   1.0000e+00   1.0000e+00  bf16_reduced_on        2.875055e-03  2.963079e-05   2.874801e-03   2.873443e-05   2.873443e-07   1.347779e-06
+  10000   1.0000e+00   1.0000e+00  fp16_reduced_off       3.928505e-04  3.587756e-06   3.926897e-04   3.926315e-06   3.926315e-08   1.730909e-07
+  10000   1.0000e+00   1.0000e+00  fp16_reduced_on        3.928505e-04  3.587756e-06   3.926897e-04   3.926315e-06   3.926315e-08   1.730909e-07
+
+Normalization Results
+      D  matrix_norm  vector_norm  matmul_precision      norm_precision    rel_l2_mean    rel_l2_std   out_norm_err
+----------------------------------------------------------------------------------------------------------------------
+  10000   1.0000e+00   1.0000e+00  fp64_ground_truth     norm_fp64      0.000000e+00  0.000000e+00   4.440892e-17
+  10000   1.0000e+00   1.0000e+00  fp64_ground_truth     norm_fp32      4.685344e-08  5.588503e-09   2.928896e-08
+  10000   1.0000e+00   1.0000e+00  fp64_ground_truth     norm_bf16      3.236469e-03  8.584373e-04   1.967944e-03
+  10000   1.0000e+00   1.0000e+00  fp64_ground_truth     norm_fp16      3.843418e-04  1.004147e-04   1.863063e-04
+  10000   1.0000e+00   1.0000e+00  fp32_ieee             norm_fp64      4.506105e-07  4.871040e-09   6.661338e-17
+  10000   1.0000e+00   1.0000e+00  fp32_ieee             norm_fp32      4.525016e-07  4.701623e-09   3.191665e-08
+  10000   1.0000e+00   1.0000e+00  fp32_ieee             norm_bf16      3.236296e-03  8.584977e-04   1.967717e-03
+  10000   1.0000e+00   1.0000e+00  fp32_ieee             norm_fp16      3.843177e-04  1.003747e-04   1.861884e-04
+  10000   1.0000e+00   1.0000e+00  tf32                  norm_fp64      4.506105e-07  4.871040e-09   6.661338e-17
+  10000   1.0000e+00   1.0000e+00  tf32                  norm_fp32      4.525016e-07  4.701623e-09   3.191665e-08
+  10000   1.0000e+00   1.0000e+00  tf32                  norm_bf16      3.236296e-03  8.584977e-04   1.967717e-03
+  10000   1.0000e+00   1.0000e+00  tf32                  norm_fp16      3.843177e-04  1.003747e-04   1.861884e-04
+  10000   1.0000e+00   1.0000e+00  fp32_medium           norm_fp64      4.506105e-07  4.871040e-09   6.661338e-17
+  10000   1.0000e+00   1.0000e+00  fp32_medium           norm_fp32      4.525016e-07  4.701623e-09   3.191665e-08
+  10000   1.0000e+00   1.0000e+00  fp32_medium           norm_bf16      3.236296e-03  8.584977e-04   1.967717e-03
+  10000   1.0000e+00   1.0000e+00  fp32_medium           norm_fp16      3.843177e-04  1.003747e-04   1.861884e-04
+  10000   1.0000e+00   1.0000e+00  bf16_reduced_off      norm_fp64      2.874801e-03  2.966818e-05   8.881784e-17
+  10000   1.0000e+00   1.0000e+00  bf16_reduced_off      norm_fp32      2.874801e-03  2.966819e-05   2.462388e-08
+  10000   1.0000e+00   1.0000e+00  bf16_reduced_off      norm_bf16      4.037685e-03  7.119280e-04   1.988130e-03
+  10000   1.0000e+00   1.0000e+00  bf16_reduced_off      norm_fp16      2.894598e-03  3.454535e-05   1.710290e-04
+  10000   1.0000e+00   1.0000e+00  bf16_reduced_on       norm_fp64      2.874801e-03  2.966818e-05   8.881784e-17
+  10000   1.0000e+00   1.0000e+00  bf16_reduced_on       norm_fp32      2.874801e-03  2.966819e-05   2.462388e-08
+  10000   1.0000e+00   1.0000e+00  bf16_reduced_on       norm_bf16      4.037685e-03  7.119280e-04   1.988130e-03
+  10000   1.0000e+00   1.0000e+00  bf16_reduced_on       norm_fp16      2.894598e-03  3.454535e-05   1.710290e-04
+  10000   1.0000e+00   1.0000e+00  fp16_reduced_off      norm_fp64      3.926896e-04  3.623906e-06   6.661338e-17
+  10000   1.0000e+00   1.0000e+00  fp16_reduced_off      norm_fp32      3.926897e-04  3.623907e-06   4.859310e-08
+  10000   1.0000e+00   1.0000e+00  fp16_reduced_off      norm_bf16      3.275113e-03  8.304719e-04   1.971511e-03
+  10000   1.0000e+00   1.0000e+00  fp16_reduced_off      norm_fp16      4.999230e-04  7.918215e-05   1.892709e-04
+  10000   1.0000e+00   1.0000e+00  fp16_reduced_on       norm_fp64      3.926896e-04  3.623906e-06   6.661338e-17
+  10000   1.0000e+00   1.0000e+00  fp16_reduced_on       norm_fp32      3.926897e-04  3.623907e-06   4.859310e-08
+  10000   1.0000e+00   1.0000e+00  fp16_reduced_on       norm_bf16      3.275113e-03  8.304719e-04   1.971511e-03
+  10000   1.0000e+00   1.0000e+00  fp16_reduced_on       norm_fp16      4.999230e-04  7.918215e-05   1.892709e-04
+
+  10000   2.2400e+02   1.0000e+00  fp64_ground_truth      0.000000e+00  0.000000e+00   3.843143e-08   0.000000e+00   0.000000e+00   0.000000e+00
+  10000   2.2400e+02   1.0000e+00  fp32_ieee              4.552657e-07  4.725019e-09   4.561780e-07   1.019243e-06   1.019243e-08   4.438580e-08
+  10000   2.2400e+02   1.0000e+00  tf32                   4.552657e-07  4.725019e-09   4.561780e-07   1.019243e-06   1.019243e-08   4.438580e-08
+  10000   2.2400e+02   1.0000e+00  fp32_medium            4.552657e-07  4.725019e-09   4.561780e-07   1.019243e-06   1.019243e-08   4.438580e-08
+  10000   2.2400e+02   1.0000e+00  bf16_reduced_off       2.866110e-03  5.110958e-06   2.865431e-03   6.416913e-03   6.416913e-05   2.966160e-04
+  10000   2.2400e+02   1.0000e+00  bf16_reduced_on        2.866110e-03  5.110958e-06   2.865431e-03   6.416913e-03   6.416913e-05   2.966160e-04
+  10000   2.2400e+02   1.0000e+00  fp16_reduced_off       3.564855e-04  1.987108e-06   3.562359e-04   7.981160e-04   7.981160e-06   3.744402e-05
+  10000   2.2400e+02   1.0000e+00  fp16_reduced_on        3.564855e-04  1.987108e-06   3.562359e-04   7.981160e-04   7.981160e-06   3.744402e-05
+
+Normalization Results
+      D  matrix_norm  vector_norm  matmul_precision      norm_precision    rel_l2_mean    rel_l2_std   out_norm_err
+----------------------------------------------------------------------------------------------------------------------
+  10000   2.2400e+02   1.0000e+00  fp64_ground_truth     norm_fp64      0.000000e+00  0.000000e+00   8.881784e-17
+  10000   2.2400e+02   1.0000e+00  fp64_ground_truth     norm_fp32      3.843143e-08  3.136407e-09   1.199279e-08
+  10000   2.2400e+02   1.0000e+00  fp64_ground_truth     norm_bf16      2.733806e-03  4.048138e-04   1.289582e-03
+  10000   2.2400e+02   1.0000e+00  fp64_ground_truth     norm_fp16      3.700813e-04  7.594178e-05   2.033191e-04
+  10000   2.2400e+02   1.0000e+00  fp32_ieee             norm_fp64      4.552163e-07  4.778228e-09   2.220446e-17
+  10000   2.2400e+02   1.0000e+00  fp32_ieee             norm_fp32      4.561780e-07  4.810889e-09   1.372979e-08
+  10000   2.2400e+02   1.0000e+00  fp32_ieee             norm_bf16      2.733839e-03  4.048031e-04   1.289325e-03
+  10000   2.2400e+02   1.0000e+00  fp32_ieee             norm_fp16      3.700218e-04  7.594616e-05   2.032472e-04
+  10000   2.2400e+02   1.0000e+00  tf32                  norm_fp64      4.552163e-07  4.778228e-09   2.220446e-17
+  10000   2.2400e+02   1.0000e+00  tf32                  norm_fp32      4.561780e-07  4.810889e-09   1.372979e-08
+  10000   2.2400e+02   1.0000e+00  tf32                  norm_bf16      2.733839e-03  4.048031e-04   1.289325e-03
+  10000   2.2400e+02   1.0000e+00  tf32                  norm_fp16      3.700218e-04  7.594616e-05   2.032472e-04
+  10000   2.2400e+02   1.0000e+00  fp32_medium           norm_fp64      4.552163e-07  4.778228e-09   2.220446e-17
+  10000   2.2400e+02   1.0000e+00  fp32_medium           norm_fp32      4.561780e-07  4.810889e-09   1.372979e-08
+  10000   2.2400e+02   1.0000e+00  fp32_medium           norm_bf16      2.733839e-03  4.048031e-04   1.289325e-03
+  10000   2.2400e+02   1.0000e+00  fp32_medium           norm_fp16      3.700218e-04  7.594616e-05   2.032472e-04
+  10000   2.2400e+02   1.0000e+00  bf16_reduced_off      norm_fp64      2.865431e-03  4.976473e-06   2.220446e-17
+  10000   2.2400e+02   1.0000e+00  bf16_reduced_off      norm_fp32      2.865431e-03  4.976638e-06   2.643305e-08
+  10000   2.2400e+02   1.0000e+00  bf16_reduced_off      norm_bf16      3.605916e-03  3.349958e-04   1.296022e-03
+  10000   2.2400e+02   1.0000e+00  bf16_reduced_off      norm_fp16      2.881353e-03  1.303128e-05   1.887053e-04
+  10000   2.2400e+02   1.0000e+00  bf16_reduced_on       norm_fp64      2.865431e-03  4.976473e-06   2.220446e-17
+  10000   2.2400e+02   1.0000e+00  bf16_reduced_on       norm_fp32      2.865431e-03  4.976638e-06   2.643305e-08
+  10000   2.2400e+02   1.0000e+00  bf16_reduced_on       norm_bf16      3.605916e-03  3.349958e-04   1.296022e-03
+  10000   2.2400e+02   1.0000e+00  bf16_reduced_on       norm_fp16      2.881353e-03  1.303128e-05   1.887053e-04
+  10000   2.2400e+02   1.0000e+00  fp16_reduced_off      norm_fp64      3.562359e-04  1.909328e-06   6.661338e-17
+  10000   2.2400e+02   1.0000e+00  fp16_reduced_off      norm_fp32      3.562359e-04  1.909392e-06   3.104962e-08
+  10000   2.2400e+02   1.0000e+00  fp16_reduced_off      norm_bf16      2.771372e-03  4.128275e-04   1.306341e-03
+  10000   2.2400e+02   1.0000e+00  fp16_reduced_off      norm_fp16      4.765256e-04  6.729756e-05   2.087080e-04
+  10000   2.2400e+02   1.0000e+00  fp16_reduced_on       norm_fp64      3.562359e-04  1.909328e-06   6.661338e-17
+  10000   2.2400e+02   1.0000e+00  fp16_reduced_on       norm_fp32      3.562359e-04  1.909392e-06   3.104962e-08
+  10000   2.2400e+02   1.0000e+00  fp16_reduced_on       norm_bf16      2.771372e-03  4.128275e-04   1.306341e-03
+  10000   2.2400e+02   1.0000e+00  fp16_reduced_on       norm_fp16      4.765256e-04  6.729756e-05   2.087080e-04
+
+  10000   1.0000e+03   1.0000e+00  fp64_ground_truth      0.000000e+00  0.000000e+00   5.120739e-08   0.000000e+00   0.000000e+00   0.000000e+00
+  10000   1.0000e+03   1.0000e+00  fp32_ieee              4.538983e-07  3.105555e-09   4.562464e-07   4.536529e-06   4.536529e-08   1.830473e-07
+  10000   1.0000e+03   1.0000e+00  tf32                   4.538983e-07  3.105555e-09   4.562464e-07   4.536529e-06   4.536529e-08   1.830473e-07
+  10000   1.0000e+03   1.0000e+00  fp32_medium            4.538983e-07  3.105555e-09   4.562464e-07   4.536529e-06   4.536529e-08   1.830473e-07
+  10000   1.0000e+03   1.0000e+00  bf16_reduced_off       2.886003e-03  9.661287e-06   2.885964e-03   2.884508e-02   2.884508e-04   1.318754e-03
+  10000   1.0000e+03   1.0000e+00  bf16_reduced_on        2.886003e-03  9.661287e-06   2.885964e-03   2.884508e-02   2.884508e-04   1.318754e-03
+  10000   1.0000e+03   1.0000e+00  fp16_reduced_off       3.599739e-04  2.359158e-06   3.597028e-04   3.597825e-03   3.597825e-05   1.777056e-04
+  10000   1.0000e+03   1.0000e+00  fp16_reduced_on        3.599739e-04  2.359158e-06   3.597028e-04   3.597825e-03   3.597825e-05   1.777056e-04
+
+Normalization Results
+      D  matrix_norm  vector_norm  matmul_precision      norm_precision    rel_l2_mean    rel_l2_std   out_norm_err
+----------------------------------------------------------------------------------------------------------------------
+  10000   1.0000e+03   1.0000e+00  fp64_ground_truth     norm_fp64      0.000000e+00  0.000000e+00   2.220446e-17
+  10000   1.0000e+03   1.0000e+00  fp64_ground_truth     norm_fp32      5.120739e-08  1.423110e-08   3.155561e-08
+  10000   1.0000e+03   1.0000e+00  fp64_ground_truth     norm_bf16      3.266212e-03  1.158281e-03   1.957767e-03
+  10000   1.0000e+03   1.0000e+00  fp64_ground_truth     norm_fp16      3.861624e-04  7.327612e-05   2.246477e-04
+  10000   1.0000e+03   1.0000e+00  fp32_ieee             norm_fp64      4.538932e-07  3.108019e-09   4.440892e-17
+  10000   1.0000e+03   1.0000e+00  fp32_ieee             norm_fp32      4.562464e-07  3.181263e-09   3.248304e-08
+  10000   1.0000e+03   1.0000e+00  fp32_ieee             norm_bf16      3.266221e-03  1.158297e-03   1.957779e-03
+  10000   1.0000e+03   1.0000e+00  fp32_ieee             norm_fp16      3.860805e-04  7.345437e-05   2.246421e-04
+  10000   1.0000e+03   1.0000e+00  tf32                  norm_fp64      4.538932e-07  3.108019e-09   4.440892e-17
+  10000   1.0000e+03   1.0000e+00  tf32                  norm_fp32      4.562464e-07  3.181263e-09   3.248304e-08
+  10000   1.0000e+03   1.0000e+00  tf32                  norm_bf16      3.266221e-03  1.158297e-03   1.957779e-03
+  10000   1.0000e+03   1.0000e+00  tf32                  norm_fp16      3.860805e-04  7.345437e-05   2.246421e-04
+  10000   1.0000e+03   1.0000e+00  fp32_medium           norm_fp64      4.538932e-07  3.108019e-09   4.440892e-17
+  10000   1.0000e+03   1.0000e+00  fp32_medium           norm_fp32      4.562464e-07  3.181263e-09   3.248304e-08
+  10000   1.0000e+03   1.0000e+00  fp32_medium           norm_bf16      3.266221e-03  1.158297e-03   1.957779e-03
+  10000   1.0000e+03   1.0000e+00  fp32_medium           norm_fp16      3.860805e-04  7.345437e-05   2.246421e-04
+  10000   1.0000e+03   1.0000e+00  bf16_reduced_off      norm_fp64      2.885964e-03  9.686406e-06   6.661338e-17
+  10000   1.0000e+03   1.0000e+00  bf16_reduced_off      norm_fp32      2.885964e-03  9.686210e-06   5.060830e-08
+  10000   1.0000e+03   1.0000e+00  bf16_reduced_off      norm_bf16      4.073059e-03  9.572441e-04   1.973538e-03
+  10000   1.0000e+03   1.0000e+00  bf16_reduced_off      norm_fp16      2.904565e-03  2.127218e-05   2.327187e-04
+  10000   1.0000e+03   1.0000e+00  bf16_reduced_on       norm_fp64      2.885964e-03  9.686406e-06   6.661338e-17
+  10000   1.0000e+03   1.0000e+00  bf16_reduced_on       norm_fp32      2.885964e-03  9.686210e-06   5.060830e-08
+  10000   1.0000e+03   1.0000e+00  bf16_reduced_on       norm_bf16      4.073059e-03  9.572441e-04   1.973538e-03
+  10000   1.0000e+03   1.0000e+00  bf16_reduced_on       norm_fp16      2.904565e-03  2.127218e-05   2.327187e-04
+  10000   1.0000e+03   1.0000e+00  fp16_reduced_off      norm_fp64      3.597030e-04  2.398282e-06   2.220446e-17
+  10000   1.0000e+03   1.0000e+00  fp16_reduced_off      norm_fp32      3.597028e-04  2.398044e-06   2.681956e-08
+  10000   1.0000e+03   1.0000e+00  fp16_reduced_off      norm_bf16      3.294428e-03  1.127126e-03   1.941235e-03
+  10000   1.0000e+03   1.0000e+00  fp16_reduced_off      norm_fp16      4.891636e-04  5.739519e-05   2.325248e-04
+  10000   1.0000e+03   1.0000e+00  fp16_reduced_on       norm_fp64      3.597030e-04  2.398282e-06   2.220446e-17
+  10000   1.0000e+03   1.0000e+00  fp16_reduced_on       norm_fp32      3.597028e-04  2.398044e-06   2.681956e-08
+  10000   1.0000e+03   1.0000e+00  fp16_reduced_on       norm_bf16      3.294428e-03  1.127126e-03   1.941235e-03
+  10000   1.0000e+03   1.0000e+00  fp16_reduced_on       norm_fp16      4.891636e-04  5.739519e-05   2.325248e-04
+

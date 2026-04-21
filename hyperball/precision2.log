@@ -1,0 +1,48 @@
+Environment
+  torch version: 2.11.0+cu128
+  cuda available: True
+  cuda device: NVIDIA A100-PCIE-40GB
+  compute capability: 8.0
+  total memory: 39.5 GiB
+  bf16 supported: True
+  initial float32 matmul precision: highest
+  initial allow_tf32: False
+  initial fp16 reduced reduction: True
+  initial bf16 reduced reduction: True
+
+Precision cases
+  fp64_ground_truth    FP64 CUDA matmul; used as ground truth
+  fp32_ieee            FP32 inputs, TF32 disabled
+  tf32                 FP32 inputs with Ampere TF32 tensor-core path enabled
+  fp32_medium          PyTorch medium internal precision for FP32 matmul
+  bf16_reduced_off     BF16 inputs, reduced-precision reduction disabled if supported
+  bf16_reduced_on      BF16 inputs, reduced-precision reduction enabled if supported
+  fp16_reduced_off     FP16 inputs, reduced-precision reduction disabled if supported
+  fp16_reduced_on      FP16 inputs, reduced-precision reduction enabled if supported
+
+Setup: each trial draws FP64 Gaussian inputs, normalizes the matrix to Frobenius norm 1 and the vector to L2/Frobenius norm 1, then casts those same inputs to each precision case.
+Dims: 10000, 50000
+Trials per D: 10
+Base seed: 12345
+
+Results
+      D  precision               rel_l2_mean    rel_l2_std    abs_l2_mean   rms_abs_mean   max_abs_mean
+-----------------------------------------------------------------------------------------------------
+  10000  fp64_ground_truth      0.000000e+00  0.000000e+00   0.000000e+00   0.000000e+00   0.000000e+00
+  10000  fp32_ieee              4.512625e-07  4.474195e-09   4.513781e-09   4.513781e-11   1.994795e-10
+  10000  tf32                   4.512625e-07  4.474195e-09   4.513781e-09   4.513781e-11   1.994795e-10
+  10000  fp32_medium            4.512625e-07  4.474195e-09   4.513781e-09   4.513781e-11   1.994795e-10
+  10000  bf16_reduced_off       2.875424e-03  2.132628e-05   2.876143e-05   2.876143e-07   1.402904e-06
+  10000  bf16_reduced_on        2.875424e-03  2.132628e-05   2.876143e-05   2.876143e-07   1.402904e-06
+  10000  fp16_reduced_off       3.923860e-04  2.602207e-06   3.924868e-06   3.924868e-08   1.740046e-07
+  10000  fp16_reduced_on        3.923860e-04  2.602207e-06   3.924868e-06   3.924868e-08   1.740046e-07
+
+  50000  fp64_ground_truth      0.000000e+00  0.000000e+00   0.000000e+00   0.000000e+00   0.000000e+00
+  50000  fp32_ieee              1.706992e-07  8.025817e-10   7.631553e-10   3.412934e-12   2.099309e-11
+  50000  tf32                   1.706992e-07  8.025817e-10   7.631553e-10   3.412934e-12   2.099309e-11
+  50000  fp32_medium            1.706992e-07  8.025817e-10   7.631553e-10   3.412934e-12   2.099309e-11
+  50000  bf16_reduced_off       2.878820e-03  7.737978e-06   1.287052e-05   5.755872e-08   3.085200e-07
+  50000  bf16_reduced_on        3.348763e-03  9.251589e-06   1.497152e-05   6.695465e-08   3.925892e-07
+  50000  fp16_reduced_off       1.235545e-03  6.018280e-06   5.523810e-06   2.470323e-08   9.583136e-08
+  50000  fp16_reduced_on        1.734562e-03  7.293728e-06   7.754786e-06   3.468046e-08   1.351727e-07
+
