@@ -339,3 +339,5 @@ v = v + gate.unsqueeze(-1) * ve
 x = self.c_fc(x)
 x = F.relu(x).square()
 x = self.c_proj(x)
+
+python train2.py > hyperball.log 2>&1

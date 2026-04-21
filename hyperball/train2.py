@@ -515,6 +515,7 @@ def adamh_step_fused(
     p_norm = adamh_norm(p)
     update = update / update_norm.clamp_min(1e-12) * p_norm * lr_t
     p.add_(update, alpha=-1)
+    p.div_(adamh_norm(p).clamp_min(1e-12)).mul_(p_norm)
     return update
 
 
@@ -588,6 +589,7 @@ def muon_step_fused(
     p_norm = muon_norm(stacked_params)
     update = update / update_norm.clamp_min(1e-12) * p_norm * lr
     stacked_params.sub_(update)
+    stacked_params.div_(muon_norm(stacked_params).clamp_min(1e-12)).mul_(p_norm)
     return update
 
 
@@ -696,7 +698,9 @@ class MuonAdamW(torch.optim.Optimizer):
         stacked_params = torch.stack(params)
         self._muon_momentum_t.fill_(group["momentum"])
         self._muon_beta2_t.fill_(group["beta2"] if group["beta2"] is not None else 0.0)
-        self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1]) ** 0.5)
+        # this lr scaling is not needed cuz of hyperball
+        # group["lr"] * max(1.0, shape[-2] / shape[-1]) ** 0.5
+        self._muon_lr_t.fill_(group["lr"])
         self._muon_wd_t.fill_(group["weight_decay"])
         updates = muon_step_fused(
             stacked_grads,
@@ -848,9 +852,9 @@ def get_lr_multiplier_scalar(progress):
 
 def get_lr_multiplier_matrix(steps):
     if steps < 400:
-        return 0.6 - steps / 400 * 0.4
+        return (0.6 - steps / 400 * 0.4) / 0.6
     else:
-        return 0.2 - (steps - 400) / (MAX_STEPS - 400) * 0.2
+        return (0.2 - (steps - 400) / (MAX_STEPS - 400) * 0.2) / 0.6
 
 
 def get_muon_momentum(step):
