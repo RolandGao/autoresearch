@@ -341,3 +341,12 @@ x = F.relu(x).square()
 x = self.c_proj(x)
 
 python train2.py > hyperball.log 2>&1
+
+
+0.0006
+0.06
+
+ideas for the discrepancy: zero init, cautious wd. 
+zero init is the most likely: loss curve was worse from the beginning.
+try using hyperball for most weights but fallback on some weights to debug, such as the zero init weights. 
+the ratio between cautious wd vector and the update vector is a problem

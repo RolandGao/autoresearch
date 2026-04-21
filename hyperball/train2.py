@@ -354,15 +354,31 @@ class GPT(nn.Module):
 
     def setup_optimizer(
         self,
-        matrix_lr=0.06,
+        matrix_lrs=None,
         matrix_weight_decay=0.0,
         adam_betas=(0.8, 0.95),
         scalar_lr=0.5,
     ):
-        matrix_params = list(self.transformer.h.parameters())
-        value_embeds_params = list(self.value_embeds.parameters())
+        if matrix_lrs is None:
+            matrix_lrs = FITTED_EFFECTIVE_LR_BY_WEIGHT_KIND
+        matrix_param_specs = []
+        for block in self.transformer.h:
+            matrix_param_specs.extend(
+                [
+                    ("q", block.attn.c_q.weight),
+                    ("k", block.attn.c_k.weight),
+                    ("v", block.attn.c_v.weight),
+                    ("attn.c_proj", block.attn.c_proj.weight),
+                    ("mlp.c_fc", block.mlp.c_fc.weight),
+                    ("mlp.c_proj", block.mlp.c_proj.weight),
+                ]
+            )
+            if block.attn.ve_gate is not None:
+                matrix_param_specs.append(("attn.ve_gate", block.attn.ve_gate.weight))
+        matrix_params = [p for _, p in matrix_param_specs]
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
+        value_embeds_params = list(self.value_embeds.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
         assert len(list(self.parameters())) == (
@@ -376,8 +392,25 @@ class GPT(nn.Module):
         param_groups = [
             dict(
                 kind="adamh",
-                params=lm_head_params + embedding_params + value_embeds_params,
-                lr=matrix_lr,
+                weight_kind="lm_head",
+                params=lm_head_params,
+                lr=matrix_lrs["lm_head"],
+                betas=adam_betas,
+                eps=1e-10,
+            ),
+            dict(
+                kind="adamh",
+                weight_kind="wte",
+                params=embedding_params,
+                lr=matrix_lrs["wte"],
+                betas=adam_betas,
+                eps=1e-10,
+            ),
+            dict(
+                kind="adamh",
+                weight_kind="ve",
+                params=value_embeds_params,
+                lr=matrix_lrs["ve"],
                 betas=adam_betas,
                 eps=1e-10,
             ),
@@ -398,13 +431,21 @@ class GPT(nn.Module):
                 weight_decay=0.0,
             ),
         ]
-        for shape in sorted({p.shape for p in matrix_params}):
-            group_params = [p for p in matrix_params if p.shape == shape]
+        matrix_group_keys = sorted(
+            {(weight_kind, tuple(param.shape)) for weight_kind, param in matrix_param_specs}
+        )
+        for weight_kind, shape in matrix_group_keys:
+            group_params = [
+                param
+                for param_kind, param in matrix_param_specs
+                if param_kind == weight_kind and tuple(param.shape) == shape
+            ]
             param_groups.append(
                 dict(
                     kind="muon",
+                    weight_kind=weight_kind,
                     params=group_params,
-                    lr=matrix_lr,
+                    lr=matrix_lrs[weight_kind],
                     momentum=0.95,
                     ns_steps=5,
                     beta2=0.95,
@@ -583,7 +624,8 @@ def muon_step_fused(
     wd = wd_t.to(g.dtype)
     mask = (g * stacked_params) >= 0
     # putting the wd into the update vector cuz cautious wd might be doing more than keeping the weight norm.
-    update = g + wd * stacked_params * mask
+    # update = g + wd * stacked_params * mask
+    update = g
 
     update_norm = muon_norm(update)
     p_norm = muon_norm(stacked_params)
@@ -752,15 +794,35 @@ WINDOW_SIZES = [  # exact per-layer FA3 left-window sizes
 # Optimization
 MAX_STEPS = 1350  # exact number of optimizer steps to train
 TOTAL_BATCH_SIZE = 2**17  # ~524K tokens per optimizer step
-MATRIX_LR = 0.06  # learning rate for matrix parameters (Muon)
 SCALAR_LR = 0.75  # learning rate for per-layer scalars (Adam)
 WEIGHT_DECAY = 0.1  # cautious weight decay for Muon
 ADAM_BETAS = (0.8, 0.95)  # Adam beta1, beta2
+FITTED_EFFECTIVE_LR_BY_WEIGHT_KIND = {
+    "attn.c_proj": 0.0558109,
+    "attn.ve_gate": 0.106307,
+    "k": 0.0636095,
+    "lm_head": 0.0627555,
+    "mlp.c_fc": 0.0659059,
+    "mlp.c_proj": 0.0540803,
+    "q": 0.0628415,
+    "v": 0.0491089,
+    "ve": 0.110348,
+    "wte": 0.0742992,
+}
+EFFECTIVE_LR_LOG_LINEAR_KNOTS = (
+    (20, 1.0),
+    (200, 0.458328),
+    (400, 0.282636),
+    (700, 0.170964),
+    (1000, 0.0958409),
+    (1200, 0.0477203),
+    (1349, 0.0118781),
+)
 # LM_HEAD_WD = 0.01  # AdamW weight decay for lm_head
 # EMBEDDING_WD = 0.001  # AdamW weight decay for token embeddings
 # VALUE_EMBEDDING_WD = 0.003  # AdamW weight decay for value embeddings
 
-NORM_SCHEME = "matrix"
+NORM_SCHEME = "per_smaller_vector"
 assert NORM_SCHEME in {
     "matrix",
     "per_output",
@@ -824,7 +886,7 @@ assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
 grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
 
 optimizer = model.setup_optimizer(
-    matrix_lr=MATRIX_LR,
+    matrix_lrs=FITTED_EFFECTIVE_LR_BY_WEIGHT_KIND,
     matrix_weight_decay=WEIGHT_DECAY,
     adam_betas=ADAM_BETAS,
     scalar_lr=SCALAR_LR,
@@ -850,11 +912,17 @@ def get_lr_multiplier_scalar(progress):
         return cooldown * 1.0 + (1 - cooldown) * 0.05
 
 
-def get_lr_multiplier_matrix(steps):
-    if steps < 400:
-        return (0.6 - steps / 400 * 0.4) / 0.6
-    else:
-        return (0.2 - (steps - 400) / (MAX_STEPS - 400) * 0.2) / 0.6
+def get_lr_multiplier_non_scalar(steps):
+    knots = EFFECTIVE_LR_LOG_LINEAR_KNOTS
+    if steps <= knots[0][0]:
+        return knots[0][1]
+    for (left_step, left_value), (right_step, right_value) in zip(knots, knots[1:]):
+        if steps <= right_step:
+            frac = (steps - left_step) / (right_step - left_step)
+            left_log = math.log(left_value)
+            right_log = math.log(right_value)
+            return math.exp(left_log + frac * (right_log - left_log))
+    return knots[-1][1]
 
 
 def get_muon_momentum(step):
@@ -981,13 +1049,13 @@ while True:
 
     # Progress and schedules
     progress = min(step / max(1, MAX_STEPS - 1), 1.0)
-    lrm_matrix = get_lr_multiplier_matrix(step)
+    lrm_non_scalar = get_lr_multiplier_non_scalar(step)
     lrm_scalar = get_lr_multiplier_scalar(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
     for group in optimizer.param_groups:
         if group["kind"] in {"muon", "adamh"}:
-            group["lr"] = group["initial_lr"] * lrm_matrix
+            group["lr"] = group["initial_lr"] * lrm_non_scalar
         elif group["kind"] == "adamw":
             group["lr"] = group["initial_lr"] * lrm_scalar
         else:
@@ -1030,7 +1098,7 @@ while True:
     remaining_steps = max(0, MAX_STEPS - step - 1)
 
     print(
-        f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm_matrix: {lrm_matrix:.2f} | lrm_scalar: {lrm_scalar:.2f} | dt: {dt * 1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
+        f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm_non_scalar: {lrm_non_scalar:.2f} | lrm_scalar: {lrm_scalar:.2f} | dt: {dt * 1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
         end="",
         flush=True,
     )
