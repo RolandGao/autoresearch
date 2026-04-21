@@ -356,3 +356,4 @@ the ratio between cautious wd vector and the update vector is a problem
 
 python train.py > hyperball_baseline2.log 2>&1
 python train2.py > hyperball_better_scheduler2.log 2>&1
+python train3.py > ablation.log 2>&1

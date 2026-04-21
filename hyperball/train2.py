@@ -280,13 +280,13 @@ class GPT(nn.Module):
                 (block.attn.c_q.weight, f"{prefix}.q"),
                 (block.attn.c_k.weight, f"{prefix}.k"),
                 (block.attn.c_v.weight, f"{prefix}.v"),
-                (block.attn.c_proj.weight, f"{prefix}.attn.c_proj"),
                 (block.mlp.c_fc.weight, f"{prefix}.mlp.c_fc"),
-                (block.mlp.c_proj.weight, f"{prefix}.mlp.c_proj"),
             )
             for w, key in matrix_weights:
                 torch.nn.init.normal_(w, mean=0.0, std=1.0)
                 init_scheme.append((w, actual_frobenius_norm(w, weight_norm[key])))
+            torch.nn.init.zeros_(block.attn.c_proj.weight)
+            torch.nn.init.zeros_(block.mlp.c_proj.weight)
             if block.attn.ve_gate is not None:
                 w = block.attn.ve_gate.weight
                 key = f"{prefix}.attn.ve_gate"
@@ -391,20 +391,26 @@ class GPT(nn.Module):
         if matrix_lrs is None:
             matrix_lrs = FITTED_EFFECTIVE_LR_BY_WEIGHT_KIND
         matrix_param_specs = []
+        legacy_muon_param_specs = []
         for block in self.transformer.h:
             matrix_param_specs.extend(
                 [
                     ("q", block.attn.c_q.weight),
                     ("k", block.attn.c_k.weight),
                     ("v", block.attn.c_v.weight),
-                    ("attn.c_proj", block.attn.c_proj.weight),
                     ("mlp.c_fc", block.mlp.c_fc.weight),
+                ]
+            )
+            legacy_muon_param_specs.extend(
+                [
+                    ("attn.c_proj", block.attn.c_proj.weight),
                     ("mlp.c_proj", block.mlp.c_proj.weight),
                 ]
             )
             if block.attn.ve_gate is not None:
                 matrix_param_specs.append(("attn.ve_gate", block.attn.ve_gate.weight))
         matrix_params = [p for _, p in matrix_param_specs]
+        legacy_muon_params = [p for _, p in legacy_muon_param_specs]
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         value_embeds_params = list(self.value_embeds.parameters())
@@ -412,6 +418,7 @@ class GPT(nn.Module):
         x0_params = [self.x0_lambdas]
         assert len(list(self.parameters())) == (
             len(matrix_params)
+            + len(legacy_muon_params)
             + len(embedding_params)
             + len(lm_head_params)
             + len(value_embeds_params)
@@ -472,6 +479,30 @@ class GPT(nn.Module):
             param_groups.append(
                 dict(
                     kind="muon",
+                    weight_kind=weight_kind,
+                    params=group_params,
+                    lr=matrix_lrs[weight_kind],
+                    momentum=0.95,
+                    ns_steps=5,
+                    beta2=0.95,
+                    weight_decay=matrix_weight_decay,
+                )
+            )
+        legacy_muon_group_keys = sorted(
+            {
+                (weight_kind, tuple(param.shape))
+                for weight_kind, param in legacy_muon_param_specs
+            }
+        )
+        for weight_kind, shape in legacy_muon_group_keys:
+            group_params = [
+                param
+                for param_kind, param in legacy_muon_param_specs
+                if param_kind == weight_kind and tuple(param.shape) == shape
+            ]
+            param_groups.append(
+                dict(
+                    kind="muon_legacy",
                     weight_kind=weight_kind,
                     params=group_params,
                     lr=matrix_lrs[weight_kind],
@@ -673,6 +704,60 @@ def muon_step_fused(
     return update
 
 
+@torch.compile(dynamic=False, fullgraph=True)
+def muon_legacy_step_fused(
+    stacked_grads,
+    stacked_params,
+    momentum_buffer,
+    second_momentum_buffer,
+    momentum_t,
+    lr_t,
+    wd_t,
+    beta2_t,
+    ns_steps,
+    red_dim,
+):
+    # Nesterov momentum
+    momentum = momentum_t.to(stacked_grads.dtype)
+    momentum_buffer.lerp_(stacked_grads, 1 - momentum)
+    g = stacked_grads.lerp_(momentum_buffer, momentum)
+    # Polar express orthogonalization
+    X = g.bfloat16()
+    X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.02 + 1e-6)
+    if g.size(-2) > g.size(-1):
+        for a, b, c in polar_express_coeffs[:ns_steps]:
+            A = X.mT @ X
+            B = b * A + c * (A @ A)
+            X = a * X + X @ B
+    else:
+        for a, b, c in polar_express_coeffs[:ns_steps]:
+            A = X @ X.mT
+            B = b * A + c * (A @ A)
+            X = a * X + B @ X
+    g = X
+    # NorMuon variance reduction
+    beta2 = beta2_t.to(g.dtype)
+    v_mean = g.float().square().mean(dim=red_dim, keepdim=True)
+    red_dim_size = g.size(red_dim)
+    v_norm_sq = v_mean.sum(dim=(-2, -1), keepdim=True) * red_dim_size
+    v_norm = v_norm_sq.sqrt()
+    second_momentum_buffer.lerp_(
+        v_mean.to(dtype=second_momentum_buffer.dtype), 1 - beta2
+    )
+    step_size = second_momentum_buffer.clamp_min(1e-10).rsqrt()
+    scaled_sq_sum = (v_mean * red_dim_size) * step_size.float().square()
+    v_norm_new = scaled_sq_sum.sum(dim=(-2, -1), keepdim=True).sqrt()
+    final_scale = step_size * (v_norm / v_norm_new.clamp_min(1e-10))
+    g = g * final_scale.to(g.dtype)
+    # Cautious weight decay + parameter update
+    lr = lr_t.to(g.dtype)
+    wd = wd_t.to(g.dtype)
+    mask = (g * stacked_params) >= 0
+    update = lr * g
+    stacked_params.sub_(update + lr * wd * stacked_params * mask)
+    return update
+
+
 class MuonAdamW(torch.optim.Optimizer):
     """Combined optimizer: Muon for 2D matrix params, AdamW for others."""
 
@@ -799,6 +884,51 @@ class MuonAdamW(torch.optim.Optimizer):
             for param, update in zip(params, updates.unbind(0)):
                 param.grad = update.to(dtype=param.dtype)
 
+    def _step_muon_legacy(self, group, collect_update_norms=False):
+        params = group["params"]
+        if not params:
+            return
+        p = params[0]
+        state = self.state[p]
+        num_params = len(params)
+        shape, device, dtype = p.shape, p.device, p.dtype
+        if "momentum_buffer" not in state:
+            state["momentum_buffer"] = torch.zeros(
+                num_params, *shape, dtype=dtype, device=device
+            )
+        if "second_momentum_buffer" not in state:
+            state_shape = (
+                (num_params, shape[-2], 1)
+                if shape[-2] >= shape[-1]
+                else (num_params, 1, shape[-1])
+            )
+            state["second_momentum_buffer"] = torch.zeros(
+                state_shape, dtype=dtype, device=device
+            )
+        red_dim = -1 if shape[-2] >= shape[-1] else -2
+        stacked_grads = torch.stack([p.grad for p in params])
+        stacked_params = torch.stack(params)
+        self._muon_momentum_t.fill_(group["momentum"])
+        self._muon_beta2_t.fill_(group["beta2"] if group["beta2"] is not None else 0.0)
+        self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1]) ** 0.5)
+        self._muon_wd_t.fill_(group["weight_decay"])
+        updates = muon_legacy_step_fused(
+            stacked_grads,
+            stacked_params,
+            state["momentum_buffer"],
+            state["second_momentum_buffer"],
+            self._muon_momentum_t,
+            self._muon_lr_t,
+            self._muon_wd_t,
+            self._muon_beta2_t,
+            group["ns_steps"],
+            red_dim,
+        )
+        torch._foreach_copy_(params, list(stacked_params.unbind(0)))
+        if collect_update_norms:
+            for param, update in zip(params, updates.unbind(0)):
+                param.grad = update.to(dtype=param.dtype)
+
     @torch.no_grad()
     def step(self, collect_update_norms=False):
         for group in self.param_groups:
@@ -808,6 +938,8 @@ class MuonAdamW(torch.optim.Optimizer):
                 self._step_adamh(group, collect_update_norms)
             elif group["kind"] == "muon":
                 self._step_muon(group, collect_update_norms)
+            elif group["kind"] == "muon_legacy":
+                self._step_muon_legacy(group, collect_update_norms)
 
 
 # ---------------------------------------------------------------------------
@@ -856,6 +988,9 @@ EFFECTIVE_LR_LOG_LINEAR_KNOTS = (
     (1200, 0.0477203),
     (1349, 0.0118781),
 )
+OLD_TRAIN_WARMUP_RATIO = 0.0
+OLD_TRAIN_WARMDOWN_RATIO = 0.7
+OLD_TRAIN_FINAL_LR_FRAC = 0.05
 # LM_HEAD_WD = 0.01  # AdamW weight decay for lm_head
 # EMBEDDING_WD = 0.001  # AdamW weight decay for token embeddings
 # VALUE_EMBEDDING_WD = 0.003  # AdamW weight decay for value embeddings
@@ -942,12 +1077,18 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 # Schedules (all based on fixed-step progress)
 
 
-def get_lr_multiplier_scalar(progress):
-    if progress < 0.3:
+def get_lr_multiplier_old_train(progress):
+    if progress < OLD_TRAIN_WARMUP_RATIO:
+        return (
+            progress / OLD_TRAIN_WARMUP_RATIO
+            if OLD_TRAIN_WARMUP_RATIO > 0
+            else 1.0
+        )
+    elif progress < 1.0 - OLD_TRAIN_WARMDOWN_RATIO:
         return 1.0
     else:
-        cooldown = (1.0 - progress) / 0.7
-        return cooldown * 1.0 + (1 - cooldown) * 0.05
+        cooldown = (1.0 - progress) / OLD_TRAIN_WARMDOWN_RATIO
+        return cooldown * 1.0 + (1 - cooldown) * OLD_TRAIN_FINAL_LR_FRAC
 
 
 def get_lr_multiplier_non_scalar(steps):
@@ -969,6 +1110,10 @@ def get_muon_momentum(step):
 
 
 def get_weight_decay(progress):
+    return WEIGHT_DECAY * (1 - progress)
+
+
+def get_weight_decay_old_train(progress):
     return WEIGHT_DECAY * (1 - progress)
 
 
@@ -1102,19 +1247,25 @@ while True:
     # Progress and schedules
     progress = min(step / max(1, MAX_STEPS - 1), 1.0)
     lrm_non_scalar = get_lr_multiplier_non_scalar(step)
-    lrm_scalar = get_lr_multiplier_scalar(progress)
+    lrm_old_train = get_lr_multiplier_old_train(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
+    muon_weight_decay_old_train = get_weight_decay_old_train(progress)
     for group in optimizer.param_groups:
         if group["kind"] in {"muon", "adamh"}:
             group["lr"] = group["initial_lr"] * lrm_non_scalar
+        elif group["kind"] == "muon_legacy":
+            group["lr"] = group["initial_lr"] * lrm_old_train
         elif group["kind"] == "adamw":
-            group["lr"] = group["initial_lr"] * lrm_scalar
+            group["lr"] = group["initial_lr"] * lrm_old_train
         else:
             raise NotImplementedError()
         if group["kind"] == "muon":
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
+        elif group["kind"] == "muon_legacy":
+            group["momentum"] = muon_momentum
+            group["weight_decay"] = muon_weight_decay_old_train
     norm_log_record = (
         build_norm_log(
             uncompiled_model, activation_norms, residual_mix_l2_fractions, step
@@ -1152,7 +1303,7 @@ while True:
     remaining_steps = max(0, MAX_STEPS - step - 1)
 
     print(
-        f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm_non_scalar: {lrm_non_scalar:.2f} | lrm_scalar: {lrm_scalar:.2f} | dt: {dt * 1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
+        f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm_non_scalar: {lrm_non_scalar:.2f} | lrm_old_train: {lrm_old_train:.2f} | dt: {dt * 1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
         end="",
         flush=True,
     )
