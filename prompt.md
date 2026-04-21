@@ -350,3 +350,9 @@ ideas for the discrepancy: zero init, cautious wd.
 zero init is the most likely: loss curve was worse from the beginning.
 try using hyperball for most weights but fallback on some weights to debug, such as the zero init weights. 
 the ratio between cautious wd vector and the update vector is a problem
+
+
+
+
+python train.py > hyperball_baseline2.log 2>&1
+python train2.py > hyperball_better_scheduler2.log 2>&1

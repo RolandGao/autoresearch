@@ -55,6 +55,26 @@ def norm(x):
     return F.rms_norm(x, (x.size(-1),))
 
 
+def activation_l2_norm(x):
+    x = x.detach().float().flatten(2)
+    return x.norm(dim=-1).mean()
+
+
+def log_activation_norm(activation_norms, name, x):
+    if activation_norms is not None:
+        activation_norms[name] = activation_l2_norm(x)
+
+
+def log_residual_mix_fractions(residual_mix_l2_fractions, prefix, resid_term, x0_term):
+    if residual_mix_l2_fractions is None:
+        return
+    resid_norm = activation_l2_norm(resid_term)
+    x0_norm = activation_l2_norm(x0_term)
+    total_norm = (resid_norm + x0_norm).clamp_min(1e-12)
+    residual_mix_l2_fractions[f"{prefix}.resid"] = resid_norm / total_norm
+    residual_mix_l2_fractions[f"{prefix}.x0"] = x0_norm / total_norm
+
+
 def has_ve(layer_idx, n_layer):
     """Returns True if layer should have Value Embedding (alternating, last always included)."""
     return layer_idx % 2 == (n_layer - 1) % 2
@@ -89,7 +109,7 @@ class CausalSelfAttention(nn.Module):
             else None
         )
 
-    def forward(self, x, ve, cos_sin, window_size):
+    def forward(self, x, ve, cos_sin, window_size, activation_norms=None, prefix=""):
         B, T, C = x.size()
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
         k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
@@ -98,8 +118,11 @@ class CausalSelfAttention(nn.Module):
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
         if ve is not None:
             ve = ve.view(B, T, self.n_kv_head, self.head_dim)
+            log_activation_norm(activation_norms, f"{prefix}.attn.ve", ve)
+            log_activation_norm(activation_norms, f"{prefix}.attn.v_before_ve", v)
             gate = 2 * torch.sigmoid(self.ve_gate(x[..., : self.ve_gate_channels]))
             v = v + gate.unsqueeze(-1) * ve
+            log_activation_norm(activation_norms, f"{prefix}.attn.v_after_ve", v)
 
         cos, sin = cos_sin
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
@@ -107,7 +130,9 @@ class CausalSelfAttention(nn.Module):
 
         y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
         y = y.contiguous().view(B, T, -1)
+        log_activation_norm(activation_norms, f"{prefix}.attn.c_proj_in", y)
         y = self.c_proj(y)
+        log_activation_norm(activation_norms, f"{prefix}.attn.c_proj_out", y)
         return y
 
 
@@ -117,10 +142,12 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
 
-    def forward(self, x):
+    def forward(self, x, activation_norms=None, prefix=""):
         x = self.c_fc(x)
+        log_activation_norm(activation_norms, f"{prefix}.mlp.c_fc_out", x)
         x = F.relu(x).square()
         x = self.c_proj(x)
+        log_activation_norm(activation_norms, f"{prefix}.mlp.c_proj_out", x)
         return x
 
 
@@ -130,9 +157,11 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
-    def forward(self, x, ve, cos_sin, window_size):
-        x = x + self.attn(norm(x), ve, cos_sin, window_size)
-        x = x + self.mlp(norm(x))
+    def forward(self, x, ve, cos_sin, window_size, activation_norms=None, prefix=""):
+        x = x + self.attn(
+            norm(x), ve, cos_sin, window_size, activation_norms, prefix
+        )
+        x = x + self.mlp(norm(x), activation_norms, prefix)
         return x
 
 
@@ -349,21 +378,30 @@ class GPT(nn.Module):
         B, T = idx.size()
         assert T <= self.cos.size(1)
         cos_sin = self.cos[:, :T], self.sin[:, :T]
-        activation_norms = []
+        activation_norms = {} if return_activation_norms else None
+        residual_mix_l2_fractions = {} if return_activation_norms else None
 
         x = self.transformer.wte(idx)
         x = norm(x)
         x0 = x
         for i, block in enumerate(self.transformer.h):
-            x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
+            prefix = f"h.{i}"
+            resid_term = self.resid_lambdas[i] * x
+            x0_term = self.x0_lambdas[i] * x0
+            log_residual_mix_fractions(
+                residual_mix_l2_fractions, prefix, resid_term, x0_term
+            )
+            x = resid_term + x0_term
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i])
+            x = block(x, ve, cos_sin, self.window_sizes[i], activation_norms, prefix)
             if return_activation_norms:
-                activation_norms.append(x.detach().float().norm())
+                log_activation_norm(activation_norms, prefix, x)
         x = norm(x)
 
         softcap = 15
+        log_activation_norm(activation_norms, "lm_head_in", x)
         logits = self.lm_head(x)
+        log_activation_norm(activation_norms, "lm_head_out", logits)
         logits = logits.float()
         logits = softcap * torch.tanh(logits / softcap)
 
@@ -375,10 +413,10 @@ class GPT(nn.Module):
                 reduction=reduction,
             )
             if return_activation_norms:
-                return loss, activation_norms
+                return loss, activation_norms, residual_mix_l2_fractions
             return loss
         if return_activation_norms:
-            return logits, activation_norms
+            return logits, activation_norms, residual_mix_l2_fractions
         return logits
 
 
@@ -736,7 +774,7 @@ def add_update_norm_pair(record, name, p, scalar_index=None):
 
 
 @torch.no_grad()
-def build_norm_log(model, activation_norms, step):
+def build_norm_log(model, activation_norms, residual_mix_l2_fractions, step):
     record = {
         "type": "norms",
         "step": step,
@@ -744,6 +782,7 @@ def build_norm_log(model, activation_norms, step):
         "grad_norms": {},
         "update_norms": {},
         "activation_l2_norms": {},
+        "residual_mix_l2_fractions": {},
     }
     add_norm_pair(record, "wte", model.transformer.wte.weight)
     add_norm_pair(record, "lm_head", model.lm_head.weight)
@@ -762,8 +801,18 @@ def build_norm_log(model, activation_norms, step):
         if block.attn.ve_gate is not None:
             add_norm_pair(record, f"{prefix}.attn.ve_gate", block.attn.ve_gate.weight)
     if activation_norms is not None:
-        for i, activation_norm in enumerate(activation_norms):
-            record["activation_l2_norms"][f"h.{i}"] = float(activation_norm.item())
+        if isinstance(activation_norms, dict):
+            activation_items = activation_norms.items()
+        else:
+            activation_items = (
+                (f"h.{i}", activation_norm)
+                for i, activation_norm in enumerate(activation_norms)
+            )
+        for name, activation_norm in activation_items:
+            record["activation_l2_norms"][name] = float(activation_norm.item())
+    if residual_mix_l2_fractions is not None:
+        for name, fraction in residual_mix_l2_fractions.items():
+            record["residual_mix_l2_fractions"][name] = float(fraction.item())
     return record
 
 
@@ -805,10 +854,13 @@ while True:
     t0 = time.time()
     should_log_norms = step % NORM_LOG_EVERY == 0
     activation_norms = None
+    residual_mix_l2_fractions = None
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
             if should_log_norms and micro_step == grad_accum_steps - 1:
-                loss, activation_norms = model(x, y, return_activation_norms=True)
+                loss, activation_norms, residual_mix_l2_fractions = model(
+                    x, y, return_activation_norms=True
+                )
             else:
                 loss = model(x, y)
         train_loss = loss.detach()
@@ -827,7 +879,9 @@ while True:
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
     norm_log_record = (
-        build_norm_log(uncompiled_model, activation_norms, step)
+        build_norm_log(
+            uncompiled_model, activation_norms, residual_mix_l2_fractions, step
+        )
         if should_log_norms
         else None
     )

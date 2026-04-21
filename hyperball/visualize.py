@@ -148,6 +148,41 @@ def group_series(series: dict[str, tuple[list[int], list[float]]]) -> list[tuple
     return result
 
 
+def group_activation_series(
+    series: dict[str, tuple[list[int], list[float]]],
+) -> list[tuple[str, list[str]]]:
+    groups = [
+        ("Block Outputs", []),
+        ("Attention Value Residual", []),
+        ("Attention Projection Activations", []),
+        ("MLP Activations", []),
+        ("LM Head Activations", []),
+        ("Other Activations", []),
+    ]
+    by_title = {title: names for title, names in groups}
+
+    for name in series:
+        suffix = strip_layer(name)
+        if not name.startswith("h."):
+            by_title["LM Head Activations"].append(name)
+        elif re.fullmatch(r"h\.\d+", name):
+            by_title["Block Outputs"].append(name)
+        elif suffix in {"attn.ve", "attn.v_before_ve", "attn.v_after_ve"}:
+            by_title["Attention Value Residual"].append(name)
+        elif suffix in {"attn.c_proj_in", "attn.c_proj_out"}:
+            by_title["Attention Projection Activations"].append(name)
+        elif suffix in {"mlp.c_fc_out", "mlp.c_proj_out"}:
+            by_title["MLP Activations"].append(name)
+        else:
+            by_title["Other Activations"].append(name)
+
+    result = []
+    for title, names in groups:
+        if names:
+            result.append((title, sorted(names, key=series_key)))
+    return result
+
+
 def select_group(
     series: dict[str, tuple[list[int], list[float]]],
     target_group_title: str,
@@ -211,6 +246,7 @@ def plot_series_page(
     force_linear_y: bool = False,
     y_scale: str | None = None,
     smoothing_beta: float | None = None,
+    y_limits: tuple[float, float] | None = None,
 ) -> None:
     fig, ax = plt.subplots(figsize=(13, 7.5), constrained_layout=True)
     for name in names:
@@ -222,6 +258,8 @@ def plot_series_page(
         ax.set_yscale(y_scale)
     elif not force_linear_y:
         set_norm_scale(ax, names, series)
+    if y_limits is not None:
+        ax.set_ylim(*y_limits)
     ax.set_title(title)
     ax.set_xlabel("step")
     ax.set_ylabel(ylabel)
@@ -269,12 +307,52 @@ def plot_section(
     return pages
 
 
-def plot_activations(pdf: PdfPages, series: dict[str, tuple[list[int], list[float]]]) -> int:
+def plot_residual_mix_fractions(
+    pdf: PdfPages,
+    series: dict[str, tuple[list[int], list[float]]],
+    max_lines_per_page: int,
+) -> int:
     if not series:
         return 0
+    pages = 0
     names = sorted(series, key=series_key)
-    plot_series_page(pdf, "Activation L2 Norms After Each Block", names, series, "activation L2 norm")
-    return 1
+    chunks = split_long_group(names, max_lines_per_page)
+    for idx, chunk in enumerate(chunks, start=1):
+        suffix = f" ({idx}/{len(chunks)})" if len(chunks) > 1 else ""
+        plot_series_page(
+            pdf,
+            f"Residual Mix L2 Fractions{suffix}",
+            chunk,
+            series,
+            "fraction of residual mix L2 norm",
+            force_linear_y=True,
+            y_limits=(0, 1),
+        )
+        pages += 1
+    return pages
+
+
+def plot_activations(
+    pdf: PdfPages,
+    series: dict[str, tuple[list[int], list[float]]],
+    max_lines_per_page: int,
+) -> int:
+    if not series:
+        return 0
+    pages = 0
+    for group_title, names in group_activation_series(series):
+        chunks = split_long_group(names, max_lines_per_page)
+        for idx, chunk in enumerate(chunks, start=1):
+            suffix = f" ({idx}/{len(chunks)})" if len(chunks) > 1 else ""
+            plot_series_page(
+                pdf,
+                f"Activation L2 Norms: {group_title}{suffix}",
+                chunk,
+                series,
+                "activation L2 norm",
+            )
+            pages += 1
+    return pages
 
 
 def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) -> int:
@@ -286,11 +364,15 @@ def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) ->
     effective_lr_log_series = filter_series(effective_lr_series, positive_only=True)
     effective_lr_linear_series = filter_series(effective_lr_series, min_step=20)
     activation_series = collect_series(records, "activation_l2_norms")
+    residual_mix_series = collect_series(records, "residual_mix_l2_fractions")
 
     pages = 0
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with PdfPages(output_path) as pdf:
-        pages += plot_activations(pdf, activation_series)
+        pages += plot_residual_mix_fractions(
+            pdf, residual_mix_series, max_lines_per_page
+        )
+        pages += plot_activations(pdf, activation_series, max_lines_per_page)
         pages += plot_section(pdf, "Weight Norms", weight_series, max_lines_per_page)
         pages += plot_section(pdf, "Gradient Norms", grad_series, max_lines_per_page)
         pages += plot_section(pdf, "Update Norms", update_series, max_lines_per_page)
