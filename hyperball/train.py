@@ -684,19 +684,14 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 # Schedules (all based on fixed-step progress)
 
 
-def get_lr_multiplier_scalar(progress):
-    if progress < 0.3:
+def get_lr_multiplier(progress):
+    if progress < WARMUP_RATIO:
+        return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
+    elif progress < 1.0 - WARMDOWN_RATIO:
         return 1.0
     else:
-        cooldown = (1.0 - progress) / 0.3
-        return cooldown * 1.0 + (1 - cooldown) * 0.05
-
-
-def get_lr_multiplier_matrix(steps):
-    if steps < 400:
-        return 0.6 - steps / 400 * 0.4
-    else:
-        return 0.2 - steps / (1350 - 400)
+        cooldown = (1.0 - progress) / WARMDOWN_RATIO
+        return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
 
 
 def get_muon_momentum(step):
@@ -823,17 +818,11 @@ while True:
 
     # Progress and schedules
     progress = min(step / max(1, MAX_STEPS - 1), 1.0)
-    lrm_matrix = get_lr_multiplier_matrix(step)
-    lrm_scalar = get_lr_multiplier_scalar(progress)
+    lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
     for group in optimizer.param_groups:
-        if group["kind"] in {"muon", "adamh"}:
-            group["lr"] = group["initial_lr"] * lrm_matrix
-        elif group["kind"] == "adamw":
-            group["lr"] = group["initial_lr"] * lrm_scalar
-        else:
-            raise NotImplementedError()
+        group["lr"] = group["initial_lr"] * lrm
         if group["kind"] == "muon":
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay

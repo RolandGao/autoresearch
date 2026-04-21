@@ -136,11 +136,6 @@ class Block(nn.Module):
         return x
 
 
-def matrix_norm(w, norm_scheme="matrix"):
-    if norm_scheme == "matrix":
-        return w.norm(dim=1, keepdim=True)
-
-
 class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -286,11 +281,9 @@ class GPT(nn.Module):
             if NORM_SCHEME == "per_output" or (
                 NORM_SCHEME == "per_smaller_vector" and output_dim >= input_dim
             ):
-                output_dim, input_dim = w.shape
                 norm_value = norm_value / (output_dim**0.5)
                 w.div_(w.norm(dim=1, keepdim=True)).mul_(norm_value)
             else:
-                output_dim, input_dim = w.shape
                 norm_value = norm_value / (input_dim**0.5)
                 w.div_(w.norm(dim=0, keepdim=True)).mul_(norm_value)
 
@@ -491,8 +484,16 @@ def adamw_step_fused(
     return update
 
 
-def fnorm(m):
-    return torch.sqrt(torch.sum(m**2))
+def adamh_norm(w):
+    if NORM_SCHEME == "matrix":
+        return w.norm()
+    output_dim, input_dim = w.shape
+    if NORM_SCHEME == "per_output" or (
+        NORM_SCHEME == "per_smaller_vector" and output_dim >= input_dim
+    ):
+        return w.norm(dim=1, keepdim=True)
+    else:
+        return w.norm(dim=0, keepdim=True)
 
 
 @torch.compile(dynamic=False, fullgraph=True)
@@ -510,15 +511,24 @@ def adamh_step_fused(
     # not needed after norm
     # exp_avg = exp_avg / bias1
     update = exp_avg / denom
-    update_norm = fnorm(update)
-    p_norm = fnorm(p)
-    update = update / update_norm * p_norm * lr_t
+    update_norm = adamh_norm(update)
+    p_norm = adamh_norm(p)
+    update = update / update_norm.clamp_min(1e-12) * p_norm * lr_t
     p.add_(update, alpha=-1)
     return update
 
 
-def fnorm2(m):
-    return torch.sqrt(torch.sum(m**2, dim=(-2, -1), keepdim=True))
+# TODO: this one should be usable for adamh_norm as well.
+def muon_norm(w):
+    if NORM_SCHEME == "matrix":
+        return w.norm(dim=(-2, -1), keepdim=True)
+    output_dim, input_dim = w.shape[-2:]
+    if NORM_SCHEME == "per_output" or (
+        NORM_SCHEME == "per_smaller_vector" and output_dim >= input_dim
+    ):
+        return w.norm(dim=-1, keepdim=True)
+    else:
+        return w.norm(dim=-2, keepdim=True)
 
 
 @torch.compile(dynamic=False, fullgraph=True)
@@ -574,9 +584,9 @@ def muon_step_fused(
     # putting the wd into the update vector cuz cautious wd might be doing more than keeping the weight norm.
     update = g + wd * stacked_params * mask
 
-    update_norm = fnorm2(update)
-    p_norm = fnorm2(stacked_params)
-    update = update / update_norm * p_norm * lr
+    update_norm = muon_norm(update)
+    p_norm = muon_norm(stacked_params)
+    update = update / update_norm.clamp_min(1e-12) * p_norm * lr
     stacked_params.sub_(update)
     return update
 
@@ -646,7 +656,7 @@ class MuonAdamW(torch.optim.Optimizer):
             self._adamw_beta1_t.fill_(group["betas"][0])
             self._adamw_beta2_t.fill_(group["betas"][1])
             self._adamw_eps_t.fill_(group["eps"])
-            update = adamw_step_fused(
+            update = adamh_step_fused(
                 p,
                 grad,
                 state["exp_avg"],
@@ -710,6 +720,8 @@ class MuonAdamW(torch.optim.Optimizer):
         for group in self.param_groups:
             if group["kind"] == "adamw":
                 self._step_adamw(group, collect_update_norms)
+            elif group["kind"] == "adamh":
+                self._step_adamh(group, collect_update_norms)
             elif group["kind"] == "muon":
                 self._step_muon(group, collect_update_norms)
 
@@ -740,9 +752,6 @@ MATRIX_LR = 0.06  # learning rate for matrix parameters (Muon)
 SCALAR_LR = 0.75  # learning rate for per-layer scalars (Adam)
 WEIGHT_DECAY = 0.1  # cautious weight decay for Muon
 ADAM_BETAS = (0.8, 0.95)  # Adam beta1, beta2
-WARMUP_RATIO = 0.0  # fraction of steps for LR warmup
-WARMDOWN_RATIO = 0.7  # fraction of steps for LR warmdown
-FINAL_LR_FRAC = 0.05  # final LR as fraction of initial
 # LM_HEAD_WD = 0.01  # AdamW weight decay for lm_head
 # EMBEDDING_WD = 0.001  # AdamW weight decay for token embeddings
 # VALUE_EMBEDDING_WD = 0.003  # AdamW weight decay for value embeddings
@@ -811,12 +820,10 @@ assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
 grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
 
 optimizer = model.setup_optimizer(
-    unembedding_lr=UNEMBEDDING_LR,
-    embedding_lr=EMBEDDING_LR,
-    scalar_lr=SCALAR_LR,
-    adam_betas=ADAM_BETAS,
     matrix_lr=MATRIX_LR,
-    weight_decay=WEIGHT_DECAY,
+    matrix_weight_decay=WEIGHT_DECAY,
+    adam_betas=ADAM_BETAS,
+    scalar_lr=SCALAR_LR,
 )
 
 uncompiled_model = model
@@ -831,14 +838,19 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 # Schedules (all based on fixed-step progress)
 
 
-def get_lr_multiplier(progress):
-    if progress < WARMUP_RATIO:
-        return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
-    elif progress < 1.0 - WARMDOWN_RATIO:
+def get_lr_multiplier_scalar(progress):
+    if progress < 0.3:
         return 1.0
     else:
-        cooldown = (1.0 - progress) / WARMDOWN_RATIO
-        return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
+        cooldown = (1.0 - progress) / 0.7
+        return cooldown * 1.0 + (1 - cooldown) * 0.05
+
+
+def get_lr_multiplier_matrix(steps):
+    if steps < 400:
+        return 0.6 - steps / 400 * 0.4
+    else:
+        return 0.2 - (steps - 400) / (MAX_STEPS - 400) * 0.2
 
 
 def get_muon_momentum(step):
@@ -965,11 +977,17 @@ while True:
 
     # Progress and schedules
     progress = min(step / max(1, MAX_STEPS - 1), 1.0)
-    lrm = get_lr_multiplier(progress)
+    lrm_matrix = get_lr_multiplier_matrix(step)
+    lrm_scalar = get_lr_multiplier_scalar(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
     for group in optimizer.param_groups:
-        group["lr"] = group["initial_lr"] * lrm
+        if group["kind"] in {"muon", "adamh"}:
+            group["lr"] = group["initial_lr"] * lrm_matrix
+        elif group["kind"] == "adamw":
+            group["lr"] = group["initial_lr"] * lrm_scalar
+        else:
+            raise NotImplementedError()
         if group["kind"] == "muon":
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
@@ -1008,7 +1026,7 @@ while True:
     remaining_steps = max(0, MAX_STEPS - step - 1)
 
     print(
-        f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
+        f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm_matrix: {lrm_matrix:.2f} | lrm_scalar: {lrm_scalar:.2f} | dt: {dt * 1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
         end="",
         flush=True,
     )
