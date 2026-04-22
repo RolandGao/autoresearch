@@ -26,6 +26,16 @@ ADAM_H_VARIANTS = ("AdamH_H1", "AdamH_H2")
 MUON_H_VARIANTS = ("MuonH_H1", "MuonH_H2")
 SGD_H_VARIANTS = tuple(f"SGDH_H{i}" for i in range(1, 11))
 ALL_VARIANTS = BASELINE_VARIANTS + ADAM_H_VARIANTS + MUON_H_VARIANTS + SGD_H_VARIANTS
+FULL_SEARCH_VARIANTS = ("AdamH_H1", "SGDH_H1")
+FULL_SEARCH_NUM_SAMPLES = 30_000
+FULL_SEARCH_BATCH_SIZES = (4, 8, 16, 32, 64)
+FULL_SEARCH_SAMPLE_MODES = ("shuffle_cycle", "fixed_cycle")
+FULL_SEARCH_LR_POWERS = (1.0, 0.5)
+FULL_SEARCH_CONTINUOUS_SAMPLES = 64
+FULL_SEARCH_SGDH_MOMENTUMS = (0.0, 0.5, 0.7, 0.8, 0.9)
+FULL_SEARCH_ADAM_BETA1S = (0.0, 0.5, 0.8, 0.9, 0.95)
+FULL_SEARCH_ADAM_BETA2S = (0.9, 0.95, 0.99, 0.999)
+FULL_SEARCH_ADAM_EPS = (1e-8, 1e-7, 1e-6)
 
 BEST_HPARAMS: dict[str, dict[str, Any]] = {
     "AdamW": {
@@ -243,7 +253,7 @@ class Config:
     seed: int = 0
     input_dim: int = 128
     num_classes: int = 4000
-    train_size: int = 20_000
+    train_size: int = FULL_SEARCH_NUM_SAMPLES
     batch_size: int = 512
     steps: int = 2_000
     softmax_scale: float = 10.0
@@ -252,12 +262,13 @@ class Config:
     eval_batch_size: int = 512
     runs_per_variant: int = 10
     search_rounds: int = 1
-    optimizer_variants: tuple[str, ...] = ALL_VARIANTS
-    hparam_mode: str = "random"
+    optimizer_variants: tuple[str, ...] = FULL_SEARCH_VARIANTS
+    hparam_mode: str = "full"
     step_mode: str = "config"
     shared_shape: bool = False
     target_rmse: float = 1.19e-5
     log_every: int = 0
+    compile: bool = True
     device: str = "auto"
 
 
@@ -291,9 +302,9 @@ def parse_args() -> Config:
     )
     parser.add_argument(
         "--hparam-mode",
-        choices=("random", "best"),
+        choices=("full", "random", "best"),
         default=Config.hparam_mode,
-        help="Use random search hparams or the saved best hparams.",
+        help="Use the fixed full search, random search hparams, or saved best hparams.",
     )
     parser.add_argument(
         "--step-mode",
@@ -308,6 +319,12 @@ def parse_args() -> Config:
     )
     parser.add_argument("--target-rmse", type=float, default=Config.target_rmse)
     parser.add_argument("--log-every", type=int, default=Config.log_every)
+    parser.add_argument(
+        "--no-compile",
+        action="store_false",
+        dest="compile",
+        help="Disable torch.compile for the AdamH_H1/SGDH_H1 fast path.",
+    )
     parser.add_argument("--device", type=str, default=Config.device)
     return Config(**vars(parser.parse_args()))
 
@@ -399,6 +416,75 @@ def probability_rmse_loss(
 ) -> torch.Tensor:
     output_probs = logits.softmax(dim=1)
     return (output_probs - target_probs).square().mean().sqrt()
+
+
+@torch.compile(dynamic=False, fullgraph=True)
+def probability_rmse_loss_compiled(
+    weight: torch.Tensor,
+    x_batch: torch.Tensor,
+    target_probs: torch.Tensor,
+    softmax_scale: torch.Tensor,
+) -> torch.Tensor:
+    logits = softmax_scale * F.linear(x_batch, weight).float()
+    output_probs = logits.softmax(dim=1)
+    return (output_probs - target_probs).square().mean().sqrt()
+
+
+@torch.compile(dynamic=False, fullgraph=True)
+def softmax_probs_compiled(
+    weight: torch.Tensor,
+    x_batch: torch.Tensor,
+    softmax_scale: torch.Tensor,
+) -> torch.Tensor:
+    logits = softmax_scale * F.linear(x_batch, weight).float()
+    return logits.softmax(dim=1)
+
+
+@torch.compile(dynamic=False, fullgraph=True)
+def adam_h1_step_compiled(
+    weight: torch.Tensor,
+    grad: torch.Tensor,
+    exp_avg: torch.Tensor,
+    exp_avg_sq: torch.Tensor,
+    step_t: torch.Tensor,
+    lr_t: torch.Tensor,
+    beta1_t: torch.Tensor,
+    beta2_t: torch.Tensor,
+    eps_t: torch.Tensor,
+    lr_factor_t: torch.Tensor,
+) -> None:
+    exp_avg.lerp_(grad, 1 - beta1_t)
+    exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
+    bias1 = 1 - beta1_t**step_t
+    bias2 = 1 - beta2_t**step_t
+    update = (exp_avg / bias1) / ((exp_avg_sq / bias2).sqrt() + eps_t)
+    update_norm = update.norm(dim=1, keepdim=True)
+    normalized_update = update / update_norm.clamp_min(1e-12)
+    normalized_update = torch.where(
+        update_norm > 0, normalized_update, torch.zeros_like(normalized_update)
+    )
+    weight.add_(normalized_update * (-lr_t * lr_factor_t))
+    weight.copy_(weight / weight.norm(dim=1, keepdim=True).clamp_min(1e-12))
+
+
+@torch.compile(dynamic=False, fullgraph=True)
+def sgdh_h1_step_compiled(
+    weight: torch.Tensor,
+    grad: torch.Tensor,
+    momentum_buffer: torch.Tensor,
+    lr_t: torch.Tensor,
+    momentum_t: torch.Tensor,
+    lr_factor_t: torch.Tensor,
+) -> None:
+    momentum_buffer.mul_(momentum_t).add_(grad)
+    update = momentum_buffer
+    update_norm = update.norm(dim=1, keepdim=True)
+    normalized_update = update / update_norm.clamp_min(1e-12)
+    normalized_update = torch.where(
+        update_norm > 0, normalized_update, torch.zeros_like(normalized_update)
+    )
+    weight.add_(normalized_update * (-lr_t * lr_factor_t))
+    weight.copy_(weight / weight.norm(dim=1, keepdim=True).clamp_min(1e-12))
 
 
 class FixedScaleSoftmax(nn.Module):
@@ -756,6 +842,29 @@ def evaluate_clean_rmse(
     return math.sqrt(squared_error_sum / num_values)
 
 
+@torch.no_grad()
+def evaluate_clean_rmse_compiled(
+    weight: torch.Tensor,
+    x: torch.Tensor,
+    clean_target_probs: torch.Tensor,
+    config: Config,
+) -> float:
+    squared_error_sum = 0.0
+    num_values = 0
+    softmax_scale_t = torch.tensor(
+        config.softmax_scale, dtype=torch.float32, device="cpu"
+    )
+
+    for start in range(0, x.size(0), config.eval_batch_size):
+        end = min(start + config.eval_batch_size, x.size(0))
+        output_probs = softmax_probs_compiled(weight, x[start:end], softmax_scale_t)
+        diff = output_probs - clean_target_probs[start:end]
+        squared_error_sum += diff.square().sum().item()
+        num_values += diff.numel()
+
+    return math.sqrt(squared_error_sum / num_values)
+
+
 def base_space(variant: str) -> dict[str, tuple[float, float]]:
     if variant == "AdamW":
         return {"lr": (1e-4, 5e-2), "weight_decay": (1e-7, 1e-1)}
@@ -836,6 +945,86 @@ def sample_hparams(
     return hparams
 
 
+def rounded_steps_for_num_samples(num_samples: int, batch_size: int) -> int:
+    return max(1, int(round(num_samples / batch_size)))
+
+
+def full_search_base_hparams(variant: str) -> dict[str, Any]:
+    hparams: dict[str, Any] = {
+        "variant": variant,
+        "weight_decay": 0.0,
+        "lr_schedule": "exp_power",
+    }
+    if variant == "AdamH_H1":
+        return hparams
+    if variant == "SGDH_H1":
+        hparams.update(
+            {
+                "nesterov": False,
+            }
+        )
+        return hparams
+    raise ValueError(
+        "full hparam search supports only: " + ", ".join(FULL_SEARCH_VARIANTS)
+    )
+
+
+def full_search_continuous_samples(
+    config: Config, variant: str
+) -> list[dict[str, Any]]:
+    variant_seed = sum((idx + 1) * ord(ch) for idx, ch in enumerate(variant))
+    rng = random.Random(config.seed + 1_000_003 + variant_seed)
+    samples = []
+    for sample_idx in range(FULL_SEARCH_CONTINUOUS_SAMPLES):
+        hparams: dict[str, Any] = {
+            "sample_idx": sample_idx,
+            "continuous_sample_idx": sample_idx,
+            "lr": log_uniform(rng, 0.001, 0.3),
+            "lr_decay": rng.uniform(3.0, 5.5),
+        }
+        if variant == "AdamH_H1":
+            hparams.update(
+                {
+                    "beta1": rng.choice(FULL_SEARCH_ADAM_BETA1S),
+                    "beta2": rng.choice(FULL_SEARCH_ADAM_BETA2S),
+                    "eps": rng.choice(FULL_SEARCH_ADAM_EPS),
+                }
+            )
+        elif variant == "SGDH_H1":
+            hparams["momentum"] = rng.choice(FULL_SEARCH_SGDH_MOMENTUMS)
+        else:
+            raise ValueError(
+                "full hparam search supports only: " + ", ".join(FULL_SEARCH_VARIANTS)
+            )
+        samples.append(hparams)
+    return samples
+
+
+def build_full_search_hparams(config: Config) -> list[dict[str, Any]]:
+    candidate_specs: list[dict[str, Any]] = []
+    for variant in config.optimizer_variants:
+        continuous_samples = full_search_continuous_samples(config, variant)
+        for batch_size in FULL_SEARCH_BATCH_SIZES:
+            steps = rounded_steps_for_num_samples(FULL_SEARCH_NUM_SAMPLES, batch_size)
+            for sample_mode in FULL_SEARCH_SAMPLE_MODES:
+                for lr_power in FULL_SEARCH_LR_POWERS:
+                    for continuous_sample in continuous_samples:
+                        hparams = full_search_base_hparams(variant)
+                        hparams.update(continuous_sample)
+                        hparams.update(
+                            {
+                                "round": 1,
+                                "batch_size": batch_size,
+                                "steps": steps,
+                                "num_samples": FULL_SEARCH_NUM_SAMPLES,
+                                "sample_mode": sample_mode,
+                                "lr_power": lr_power,
+                            }
+                        )
+                        candidate_specs.append(hparams)
+    return candidate_specs
+
+
 def validate_variants(variants: tuple[str, ...]) -> None:
     unknown = sorted(set(variants) - set(ALL_VARIANTS))
     if unknown:
@@ -859,6 +1048,270 @@ def attach_min_steps(hparams: dict[str, Any]) -> dict[str, Any]:
     return hparams
 
 
+def supports_compiled_run(hparams: dict[str, Any]) -> bool:
+    variant = str(hparams["variant"])
+    if variant == "AdamH_H1":
+        return True
+    if variant == "SGDH_H1":
+        return not bool(hparams.get("nesterov", False))
+    return False
+
+
+def train_one_run_compiled(
+    hparams: dict[str, Any],
+    x: torch.Tensor,
+    noisy_target_probs: torch.Tensor,
+    clean_target_probs: torch.Tensor,
+    initial_weight: torch.Tensor,
+    config: Config,
+    device: torch.device,
+    candidate_idx: int,
+    num_candidates: int,
+) -> dict[str, Any]:
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+    start_time = time.time()
+
+    weight = initial_weight.detach().clone().to(device).requires_grad_(True)
+    batch_generator = torch.Generator(device=device)
+    batch_generator.manual_seed(config.seed + 10_000)
+
+    scalar_device = torch.device("cpu")
+    softmax_scale_t = torch.tensor(
+        config.softmax_scale, dtype=torch.float32, device=scalar_device
+    )
+    lr_t = torch.tensor(float(hparams["lr"]), dtype=torch.float32, device=scalar_device)
+    lr_factor_t = torch.tensor(1.0, dtype=torch.float32, device=scalar_device)
+
+    variant = str(hparams["variant"])
+    if variant == "AdamH_H1":
+        exp_avg = torch.zeros_like(weight)
+        exp_avg_sq = torch.zeros_like(weight)
+        step_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        beta1_t = torch.tensor(
+            float(hparams["beta1"]), dtype=torch.float32, device=scalar_device
+        )
+        beta2_t = torch.tensor(
+            float(hparams["beta2"]), dtype=torch.float32, device=scalar_device
+        )
+        eps_t = torch.tensor(
+            float(hparams["eps"]), dtype=torch.float32, device=scalar_device
+        )
+    elif variant == "SGDH_H1":
+        momentum_buffer = torch.zeros_like(weight)
+        momentum_t = torch.tensor(
+            float(hparams["momentum"]), dtype=torch.float32, device=scalar_device
+        )
+    else:
+        raise ValueError(f"compiled training does not support variant: {variant}")
+
+    last_loss = float("nan")
+    base_lr = float(hparams["lr"])
+    steps = int(hparams.get("steps", config.steps))
+    batch_size = int(hparams.get("batch_size", config.batch_size))
+    sample_mode = str(hparams.get("sample_mode", "randint"))
+    sample_state: dict[str, Any] = {}
+    training_start_time = time.time()
+    for step in range(steps):
+        lr_factor = lr_schedule_factor(step, steps, hparams)
+        lr_factor_t.fill_(lr_factor)
+        batch_idx = next_batch_indices(
+            x.size(0),
+            batch_size,
+            device=device,
+            generator=batch_generator,
+            sample_state=sample_state,
+            sample_mode=sample_mode,
+        )
+        weight.grad = None
+        loss = probability_rmse_loss_compiled(
+            weight, x[batch_idx], noisy_target_probs[batch_idx], softmax_scale_t
+        )
+        loss.backward()
+        grad = weight.grad
+        if grad is None:
+            raise RuntimeError("compiled loss did not produce a weight gradient")
+
+        with torch.no_grad():
+            if variant == "AdamH_H1":
+                step_t.fill_(step + 1)
+                adam_h1_step_compiled(
+                    weight,
+                    grad,
+                    exp_avg,
+                    exp_avg_sq,
+                    step_t,
+                    lr_t,
+                    beta1_t,
+                    beta2_t,
+                    eps_t,
+                    lr_factor_t,
+                )
+            else:
+                sgdh_h1_step_compiled(
+                    weight,
+                    grad,
+                    momentum_buffer,
+                    lr_t,
+                    momentum_t,
+                    lr_factor_t,
+                )
+
+        last_loss = float(loss.detach().item())
+        should_log = config.log_every > 0 and (
+            (step + 1) % config.log_every == 0 or step + 1 == steps
+        )
+        if should_log:
+            print(
+                f"candidate {candidate_idx + 1:04d}/{num_candidates:04d} "
+                f"{hparams['variant']} step {step + 1:05d}/{steps:05d} "
+                f"loss_rmse={last_loss:.8g} lr={base_lr * lr_factor:.6g}",
+                flush=True,
+            )
+
+    weight.grad = None
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    training_elapsed_sec = time.time() - training_start_time
+    clean_rmse = evaluate_clean_rmse_compiled(
+        weight.detach(), x, clean_target_probs, config
+    )
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    elapsed_sec = time.time() - start_time
+    peak_allocated_bytes = (
+        torch.cuda.max_memory_allocated(device) if device.type == "cuda" else 0
+    )
+    peak_reserved_bytes = (
+        torch.cuda.max_memory_reserved(device) if device.type == "cuda" else 0
+    )
+    weight_norms = weight.detach().norm(dim=1)
+    summary = {
+        **hparams,
+        "candidate_idx": candidate_idx,
+        "steps": steps,
+        "batch_size": batch_size,
+        "num_samples": int(hparams.get("num_samples", steps * batch_size)),
+        "actual_samples": steps * batch_size,
+        "compiled": True,
+        "final_train_loss": last_loss,
+        "clean_train_rmse": clean_rmse,
+        "target_met": clean_rmse <= config.target_rmse,
+        "weight_row_norm_mean": float(weight_norms.mean().item()),
+        "weight_row_norm_std": float(weight_norms.std().item()),
+        "training_elapsed_sec": training_elapsed_sec,
+        "elapsed_sec": elapsed_sec,
+        "peak_allocated_bytes": peak_allocated_bytes,
+        "peak_allocated_mib": peak_allocated_bytes / 1024**2,
+        "peak_reserved_bytes": peak_reserved_bytes,
+        "peak_reserved_mib": peak_reserved_bytes / 1024**2,
+    }
+    print(f"RUN_SUMMARY {json.dumps(summary, sort_keys=True)}", flush=True)
+    return summary
+
+
+def warmup_compiled_training(
+    config: Config,
+    x: torch.Tensor,
+    noisy_target_probs: torch.Tensor,
+    initial_weight: torch.Tensor,
+    device: torch.device,
+) -> None:
+    if not config.compile or config.hparam_mode != "full":
+        return
+
+    variants = tuple(
+        variant
+        for variant in config.optimizer_variants
+        if supports_compiled_run(full_search_base_hparams(variant))
+    )
+    if not variants:
+        return
+
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    start_time = time.time()
+    print(
+        "COMPILE_WARMUP_START "
+        + json.dumps(
+            {
+                "batch_sizes": FULL_SEARCH_BATCH_SIZES,
+                "optimizer_variants": variants,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+
+    scalar_device = torch.device("cpu")
+    softmax_scale_t = torch.tensor(
+        config.softmax_scale, dtype=torch.float32, device=scalar_device
+    )
+    lr_t = torch.tensor(0.01, dtype=torch.float32, device=scalar_device)
+    lr_factor_t = torch.tensor(1.0, dtype=torch.float32, device=scalar_device)
+    step_t = torch.tensor(1.0, dtype=torch.float32, device=scalar_device)
+    beta1_t = torch.tensor(0.9, dtype=torch.float32, device=scalar_device)
+    beta2_t = torch.tensor(0.999, dtype=torch.float32, device=scalar_device)
+    eps_t = torch.tensor(1e-6, dtype=torch.float32, device=scalar_device)
+    momentum_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+
+    for batch_size in FULL_SEARCH_BATCH_SIZES:
+        batch_idx = torch.arange(batch_size, device=device) % x.size(0)
+        x_batch = x[batch_idx]
+        target_batch = noisy_target_probs[batch_idx]
+        for variant in variants:
+            weight = initial_weight.detach().clone().to(device).requires_grad_(True)
+            loss = probability_rmse_loss_compiled(
+                weight, x_batch, target_batch, softmax_scale_t
+            )
+            loss.backward()
+            grad = weight.grad
+            if grad is None:
+                raise RuntimeError("compile warmup did not produce a weight gradient")
+            with torch.no_grad():
+                if variant == "AdamH_H1":
+                    adam_h1_step_compiled(
+                        weight,
+                        grad,
+                        torch.zeros_like(weight),
+                        torch.zeros_like(weight),
+                        step_t,
+                        lr_t,
+                        beta1_t,
+                        beta2_t,
+                        eps_t,
+                        lr_factor_t,
+                    )
+                elif variant == "SGDH_H1":
+                    sgdh_h1_step_compiled(
+                        weight,
+                        grad,
+                        torch.zeros_like(weight),
+                        lr_t,
+                        momentum_t,
+                        lr_factor_t,
+                    )
+
+    eval_shapes = {min(config.eval_batch_size, x.size(0))}
+    final_eval_batch = x.size(0) % config.eval_batch_size
+    if final_eval_batch:
+        eval_shapes.add(final_eval_batch)
+    for eval_batch_size in sorted(eval_shapes):
+        _ = softmax_probs_compiled(
+            initial_weight.detach(), x[:eval_batch_size], softmax_scale_t
+        )
+
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    elapsed_sec = time.time() - start_time
+    print(
+        "COMPILE_WARMUP_DONE "
+        + json.dumps({"elapsed_sec": elapsed_sec}, sort_keys=True),
+        flush=True,
+    )
+
+
 def train_one_run(
     hparams: dict[str, Any],
     x: torch.Tensor,
@@ -870,6 +1323,19 @@ def train_one_run(
     candidate_idx: int,
     num_candidates: int,
 ) -> dict[str, Any]:
+    if config.compile and supports_compiled_run(hparams):
+        return train_one_run_compiled(
+            hparams,
+            x,
+            noisy_target_probs,
+            clean_target_probs,
+            initial_weight,
+            config,
+            device,
+            candidate_idx,
+            num_candidates,
+        )
+
     if device.type == "cuda":
         torch.cuda.synchronize(device)
         torch.cuda.reset_peak_memory_stats(device)
@@ -938,7 +1404,9 @@ def train_one_run(
         "candidate_idx": candidate_idx,
         "steps": steps,
         "batch_size": batch_size,
-        "num_samples": steps * batch_size,
+        "num_samples": int(hparams.get("num_samples", steps * batch_size)),
+        "actual_samples": steps * batch_size,
+        "compiled": False,
         "final_train_loss": last_loss,
         "clean_train_rmse": clean_rmse,
         "target_met": clean_rmse <= config.target_rmse,
@@ -958,6 +1426,12 @@ def train_one_run(
 def main() -> None:
     config = parse_args()
     validate_variants(config.optimizer_variants)
+    if config.hparam_mode == "full":
+        unsupported = sorted(set(config.optimizer_variants) - set(FULL_SEARCH_VARIANTS))
+        if unsupported:
+            raise ValueError(
+                "--hparam-mode full supports only: " + ", ".join(FULL_SEARCH_VARIANTS)
+            )
     if config.step_mode == "min" and config.hparam_mode != "best":
         raise ValueError("--step-mode min requires --hparam-mode best")
     if config.shared_shape and config.step_mode != "config":
@@ -980,19 +1454,38 @@ def main() -> None:
     initial_weight = normalize_rows(
         torch.randn(config.num_classes, config.input_dim, device=device)
     )
+    warmup_compiled_training(config, x, noisy_target_probs, initial_weight, device)
 
     summaries: list[dict[str, Any]] = []
     best_by_variant: dict[str, dict[str, Any]] = {}
-    effective_search_rounds = (
-        1 if config.hparam_mode == "best" else config.search_rounds
-    )
-    effective_runs_per_variant = (
-        1 if config.hparam_mode == "best" else config.runs_per_variant
-    )
-    total_candidates = (
-        len(config.optimizer_variants)
-        * effective_runs_per_variant
-        * effective_search_rounds
+    if config.hparam_mode == "full":
+        effective_search_rounds = 1
+        effective_runs_per_variant = 1
+        total_candidates = len(build_full_search_hparams(config))
+    else:
+        effective_search_rounds = (
+            1 if config.hparam_mode == "best" else config.search_rounds
+        )
+        effective_runs_per_variant = (
+            1 if config.hparam_mode == "best" else config.runs_per_variant
+        )
+        total_candidates = (
+            len(config.optimizer_variants)
+            * effective_runs_per_variant
+            * effective_search_rounds
+        )
+
+    print(
+        "SEARCH_PLAN "
+        + json.dumps(
+            {
+                "hparam_mode": config.hparam_mode,
+                "num_candidates": total_candidates,
+                "optimizer_variants": config.optimizer_variants,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
     )
 
     for round_idx in range(effective_search_rounds):
@@ -1000,28 +1493,33 @@ def main() -> None:
             f"SEARCH_ROUND {json.dumps({'round': round_idx + 1, 'search_rounds': effective_search_rounds})}",
             flush=True,
         )
-        candidate_specs = []
-        for variant in config.optimizer_variants:
-            if config.hparam_mode == "best":
-                hparams = saved_hparams(variant, sample_idx=0)
-                hparams["round"] = round_idx + 1
-                if config.step_mode == "min":
-                    hparams = attach_min_steps(hparams)
-                else:
-                    hparams.pop("steps", None)
-                if config.shared_shape:
-                    hparams.pop("batch_size", None)
-                candidate_specs.append(hparams)
-                continue
+        if config.hparam_mode == "full":
+            candidate_specs = build_full_search_hparams(config)
+        else:
+            candidate_specs = []
+            for variant in config.optimizer_variants:
+                if config.hparam_mode == "best":
+                    hparams = saved_hparams(variant, sample_idx=0)
+                    hparams["round"] = round_idx + 1
+                    if config.step_mode == "min":
+                        hparams = attach_min_steps(hparams)
+                    else:
+                        hparams.pop("steps", None)
+                    if config.shared_shape:
+                        hparams.pop("batch_size", None)
+                    candidate_specs.append(hparams)
+                    continue
 
-            variant_seed = sum((idx + 1) * ord(ch) for idx, ch in enumerate(variant))
-            rng = random.Random(config.seed + 100_003 * round_idx + variant_seed)
-            previous_best = best_by_variant.get(variant)
-            for sample_idx in range(effective_runs_per_variant):
-                hparams = sample_hparams(variant, rng, previous_best, round_idx)
-                hparams["round"] = round_idx + 1
-                hparams["sample_idx"] = sample_idx
-                candidate_specs.append(hparams)
+                variant_seed = sum(
+                    (idx + 1) * ord(ch) for idx, ch in enumerate(variant)
+                )
+                rng = random.Random(config.seed + 100_003 * round_idx + variant_seed)
+                previous_best = best_by_variant.get(variant)
+                for sample_idx in range(effective_runs_per_variant):
+                    hparams = sample_hparams(variant, rng, previous_best, round_idx)
+                    hparams["round"] = round_idx + 1
+                    hparams["sample_idx"] = sample_idx
+                    candidate_specs.append(hparams)
 
         for hparams in candidate_specs:
             candidate_idx = len(summaries)

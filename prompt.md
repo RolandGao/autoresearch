@@ -110,7 +110,7 @@ ask questions before you implement.
 
 
 
-> beam_search2.log 2>&1
+
 
 pip install kernels pyarrow requests rustbpe tiktoken matplotlib
 
@@ -506,5 +506,12 @@ lr_schedule 'exp_power'
 lr_power in {1.0, 0.5}
 lr_decay in uniform(3,5.5)
 lr in log_uniform(0.001,0.3)
-
+SGDH1
+momentum in {0, 0.5, 0.7, 0.8, 0.9}
+AdamH1
+hparams["beta1"] = rng.choice((0.0, 0.5, 0.8, 0.9, 0.95))
+hparams["beta2"] = rng.choice((0.9, 0.95, 0.99, 0.999))
+hparams["eps"] = rng.choice((1e-8, 1e-7, 1e-6))
 20 * 64 * 2 = 2560
+
+python train_learnable_softmax.py > softmax2.log 2>&1
