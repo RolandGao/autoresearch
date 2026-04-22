@@ -386,3 +386,90 @@ softcap = 15
 logits = self.lm_head(x)
 logits = logits.float()
 logits = softcap * torch.tanh(logits / softcap)
+
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under the hyperball directory and modify only hyperball/train_learnable_softmax.py.
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under the hyperball directory and modify only hyperball/train_learnable_softmax.py.
+
+the setup is a linear layer then softmax, with cross entropy loss. the input is normalized to norm 1. the weights corresponding to an output neuron is also normalized to norm 1. the weight is optimized using SGD but the update projects the weight to per-output norm 1 again (check train_hyperball.py to get an idea). no weight decay. this is a toy problem. the synthetic ground truth is generated with some ground truth linear layer and softmax_scale with some noise. softmax_scale is defined softmax(softmax_scale * x). softmax_scale is basically 1/temperature. try four softmax setups. 
+1. the vanilla softmax, with a fixed softmax_scale. we will ablate on 5 different softmax_scale and see which one gets the best accuracy. one of the 5 should be the ground_truth softmax_scale.
+2. softmax with learnable softmax_scale. softmax_scale is its own param_group and optimized with SGD with no weight decay. it does not have the norm projection that the linear layer is subject to. 
+try two different setups for this. one is the exp(p) parameterization to ensure softmax_scale is never negative. the other is to clip the softmax_scale back to 1 if it falls below 1. 
+3. fixed softcap. check the following code snippet. ablate over different fixed softcaps.
+softcap = 15
+logits = self.lm_head(x)
+logits = logits.float()
+logits = softcap * torch.tanh(logits / softcap)
+4. learnable softcap. 
+
+
+For all of them, use SGD with no momentum and no weight decay. linear weights are subject to the norm 1 constraint. 
+
+iterate on learnable_softmax_scale_exp. try to use as few samples (batch size * steps) as possible to achieve the target clean RMSE 1.19e-5. 
+
+
+
+
+we have five optimizers.
+Adam is one. you can very the betas.
+for SGD, we have the norm constrained optimizer on the linear weight, but for the scalar, try four variants, whether to do p.grad = sign(p.grad), whether to do update = sign(momentum). without doing any sign operations, it's the current SGD.
+
+so there are 2 optimizers for the weights and 5 optimizers for the scalars.
+
+
+
+
+try AdamW, vanilla SGD, and SGD with the norm constraint (already implemented), also try Muon (reference implementation in train_baseline.py, remove the NorMuon part). for the SGD with norm constraint, add another variant where the gradient is projected to be perpendicular to the weight before adding to the momentum, and the momentum is projected to be perpendicular to the weight before the momentum is normalized to norm lr and added to the weight. 
+for AdamW 
+
+
+for adam, try many betas. 
+for SGD, try four variants, whether to do p.grad = sign(p.grad), whether to do update = sign(momentum). without doing any sign operations, it's the current SGD. try doing the sign operation. 
+
+no weight decay for any of them. momentum can be 0 for SGD.
+
+
+
+
+
+
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under the hyperball directory and modify only hyperball/train_learnable_softmax.py.
+
+first fix the scalar to 10 and train only the linear weight. 
+try the following optimizers
+AdamW, SGD, and Muon. when using these optimizers, weight decay does not have to be zero. weight is not normalized after every update.
+also try the following normalized versions
+AdamH, SGDH, and MuonH. for these optimizers, no weight decay, and weight is row-normalized to 1. 
+there are two variants, call them H1 and H2.
+H1 is as follows.
+p = p - lr * u / norm(u)
+p = p/norm(p)
+H2 is 
+u = projected to be perpendicular to p. 
+p = p - lr * u / norm(u)
+p = p/norm(p)
+for SGD, there are more variants
+H3 to H10: (g_projection in {True, False}) x (g_norm in {True, False}) x (nesterov in {True, False})
+g = g projected to be perpendicular to p
+g = g/norm(g)
+m = momentum * m + g
+m = m projected to be perpendicular to p
+if nesterov:
+    u = g + momentum * m
+else:
+    u = m
+p = p - lr * u / norm(u)
+p = p/norm(p)
+
+norm always means row-wise norm, aka norm of weights per output neuron. 
+
+two adam variants, two muon variants, and 10 sgd variants. 
+report the best results for each optimizer variant.
+we are aiming for the lowest RMSE loss given fixed num samples (batch size * steps). RMSE has to be at most 1.19e-5. 
+write the code that samples 64 runs for each of the 14 optimizers. 
+and run the code to report the results back to me
