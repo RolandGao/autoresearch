@@ -473,3 +473,13 @@ report the best results for each optimizer variant.
 we are aiming for the lowest RMSE loss given fixed num samples (batch size * steps). RMSE has to be at most 1.19e-5. 
 write the code that samples 64 runs for each of the 14 optimizers. 
 and run the code to report the results back to me
+
+
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under the hyperball directory and modify only hyperball/train_learnable_softmax.py.
+
+for each of the 17 optimizers, find the minimum number of samples necessary (batch size * num steps) to reach RMSE at most 1.19e-5. reduce the number of samples necessary by as much as possible. hparams might need tuning as the number of samples are reduced. tune momentums, betas, weight_decays, lr, and lr_scheduler, and sampling_mode. keep ns at 5 for muon. 
+
+
+ try your hardest for two hours, do not stop before two hours. report back the hparams and results for each of the optimizers at the end, and edit the code such that i can reproduce your results. whenever you find a better setting, write it into the code. I think it's possible to get at 30k num samples or even 20k num samples. You can also play around with the lr scheduler. try exponential decay with 0.01 ** ((t/total_steps)**p) where p is 1.0 or 0.5 and the 0.01 can be something else too. 

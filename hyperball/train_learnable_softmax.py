@@ -35,25 +35,30 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "beta2": 0.95,
         "eps": 1e-7,
         "weight_decay": 0.0,
-        "batch_size": 128,
+        "batch_size": 64,
+        "steps": 937,
+        "sample_mode": "shuffle_cycle",
     },
     "SGD": {
         "variant": "SGD",
-        "lr": 3876.4507698198395,
+        "lr": 7752.901539639679,
         "momentum": 0.95,
         "nesterov": False,
-        "ns_steps": 3,
         "weight_decay": 0.0,
-        "batch_size": 512,
+        "batch_size": 1024,
+        "steps": 468,
+        "sample_mode": "shuffle_cycle",
     },
     "Muon": {
         "variant": "Muon",
-        "lr": 0.007613645809311945,
+        "lr": 0.022840937427935835,
         "momentum": 0.5,
         "nesterov": False,
         "ns_steps": 5,
         "weight_decay": 1.7629279980926629e-6,
-        "batch_size": 128,
+        "batch_size": 256,
+        "steps": 312,
+        "sample_mode": "shuffle_cycle",
     },
     "AdamH_H1": {
         "variant": "AdamH_H1",
@@ -62,161 +67,159 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "beta2": 0.999,
         "eps": 1e-6,
         "weight_decay": 0.0,
-        "batch_size": 64,
+        "batch_size": 32,
+        "steps": 1718,
+        "sample_mode": "shuffle_cycle",
     },
     "AdamH_H2": {
         "variant": "AdamH_H2",
-        "lr": 0.010576563910648635,
+        "lr": 0.005288281955324318,
         "beta1": 0.95,
         "beta2": 0.99,
         "eps": 1e-6,
         "weight_decay": 0.0,
-        "batch_size": 512,
+        "batch_size": 64,
+        "steps": 1250,
+        "sample_mode": "shuffle_cycle",
     },
     "MuonH_H1": {
         "variant": "MuonH_H1",
-        "lr": 0.00899591613582685,
+        "lr": 0.022489790339567124,
         "momentum": 0.75,
         "nesterov": True,
         "ns_steps": 5,
         "weight_decay": 0.0,
-        "batch_size": 64,
+        "batch_size": 128,
+        "steps": 429,
+        "sample_mode": "shuffle_cycle",
     },
     "MuonH_H2": {
         "variant": "MuonH_H2",
-        "lr": 0.07763734104562708,
+        "lr": 0.05822800578422031,
         "momentum": 0.0,
         "nesterov": True,
         "ns_steps": 3,
         "weight_decay": 0.0,
-        "batch_size": 1024,
+        "batch_size": 256,
+        "steps": 312,
+        "sample_mode": "shuffle_cycle",
     },
     "SGDH_H1": {
         "variant": "SGDH_H1",
-        "lr": 0.018281167414268582,
+        "lr": 0.03199204297497002,
         "momentum": 0.0,
         "nesterov": False,
-        "ns_steps": 4,
         "weight_decay": 0.0,
         "batch_size": 64,
+        "steps": 562,
+        "sample_mode": "shuffle_cycle",
     },
     "SGDH_H2": {
         "variant": "SGDH_H2",
         "lr": 0.008893846680634183,
         "momentum": 0.8,
         "nesterov": True,
-        "ns_steps": 3,
         "weight_decay": 0.0,
-        "batch_size": 64,
+        "batch_size": 32,
+        "steps": 1250,
+        "sample_mode": "shuffle_cycle",
     },
     "SGDH_H3": {
         "variant": "SGDH_H3",
-        "lr": 0.0445097688311534,
+        "lr": 0.03338232662336505,
         "momentum": 0.0,
         "nesterov": False,
-        "ns_steps": 3,
         "g_projection": False,
         "g_norm": False,
         "weight_decay": 0.0,
-        "batch_size": 256,
+        "batch_size": 64,
+        "steps": 562,
+        "sample_mode": "shuffle_cycle",
     },
     "SGDH_H4": {
         "variant": "SGDH_H4",
-        "lr": 0.07115743100754814,
+        "lr": 0.03557871550377407,
         "momentum": 0.0,
         "nesterov": True,
-        "ns_steps": 4,
         "g_projection": False,
         "g_norm": False,
         "weight_decay": 0.0,
-        "batch_size": 512,
+        "batch_size": 64,
+        "steps": 562,
+        "sample_mode": "shuffle_cycle",
     },
     "SGDH_H5": {
         "variant": "SGDH_H5",
         "lr": 0.0066160278093204475,
         "momentum": 0.8,
         "nesterov": False,
-        "ns_steps": 4,
         "g_projection": False,
         "g_norm": True,
         "weight_decay": 0.0,
-        "batch_size": 64,
+        "batch_size": 32,
+        "steps": 1250,
+        "sample_mode": "shuffle_cycle",
     },
     "SGDH_H6": {
         "variant": "SGDH_H6",
-        "lr": 0.007602983952501097,
+        "lr": 0.02280895185750329,
         "momentum": 0.8,
         "nesterov": True,
-        "ns_steps": 5,
         "g_projection": False,
         "g_norm": True,
         "weight_decay": 0.0,
-        "batch_size": 64,
+        "batch_size": 128,
+        "steps": 312,
+        "sample_mode": "shuffle_cycle",
     },
     "SGDH_H7": {
         "variant": "SGDH_H7",
-        "lr": 0.018034478704542677,
+        "lr": 0.03156033773294969,
         "momentum": 0.0,
         "nesterov": False,
-        "ns_steps": 5,
         "g_projection": True,
         "g_norm": False,
         "weight_decay": 0.0,
         "batch_size": 64,
+        "steps": 562,
+        "sample_mode": "shuffle_cycle",
     },
     "SGDH_H8": {
         "variant": "SGDH_H8",
-        "lr": 0.015242611627336186,
+        "lr": 0.026674570347838326,
         "momentum": 0.5,
         "nesterov": True,
-        "ns_steps": 4,
         "g_projection": True,
         "g_norm": False,
         "weight_decay": 0.0,
         "batch_size": 64,
+        "steps": 562,
+        "sample_mode": "shuffle_cycle",
     },
     "SGDH_H9": {
         "variant": "SGDH_H9",
-        "lr": 0.009671448859907653,
+        "lr": 0.00725358664493074,
         "momentum": 0.8,
         "nesterov": False,
-        "ns_steps": 3,
         "g_projection": True,
         "g_norm": True,
         "weight_decay": 0.0,
-        "batch_size": 128,
+        "batch_size": 32,
+        "steps": 1250,
+        "sample_mode": "shuffle_cycle",
     },
     "SGDH_H10": {
         "variant": "SGDH_H10",
-        "lr": 0.005144990295049246,
+        "lr": 0.006431237868811557,
         "momentum": 0.9,
         "nesterov": True,
-        "ns_steps": 4,
         "g_projection": True,
         "g_norm": True,
         "weight_decay": 0.0,
-        "batch_size": 64,
+        "batch_size": 32,
+        "steps": 1250,
+        "sample_mode": "shuffle_cycle",
     },
-}
-
-MIN_STEPS: dict[str, int] = {
-    "AdamW": 985,
-    "SGD": 953,
-    "Muon": 1213,
-    "AdamH_H1": 1389,
-    "AdamH_H2": 399,
-    "MuonH_H1": 1200,
-    "MuonH_H2": 119,
-    "SGDH_H1": 1044,
-    "SGDH_H2": 1058,
-    "SGDH_H3": 267,
-    "SGDH_H4": 148,
-    "SGDH_H5": 1126,
-    "SGDH_H6": 1083,
-    "SGDH_H7": 1035,
-    "SGDH_H8": 1007,
-    "SGDH_H9": 597,
-    "SGDH_H10": 1159,
 }
 
 
@@ -262,9 +265,7 @@ def parse_args() -> Config:
     )
     parser.add_argument("--prob-noise-std", type=float, default=Config.prob_noise_std)
     parser.add_argument("--eval-batch-size", type=int, default=Config.eval_batch_size)
-    parser.add_argument(
-        "--runs-per-variant", type=int, default=Config.runs_per_variant
-    )
+    parser.add_argument("--runs-per-variant", type=int, default=Config.runs_per_variant)
     parser.add_argument("--search-rounds", type=int, default=Config.search_rounds)
     parser.add_argument(
         "--optimizer-variants",
@@ -448,7 +449,11 @@ class BaselineMuon:
         self.momentum_buffer.lerp_(self.param.grad, 1 - self.momentum)
         update = self.param.grad.lerp(self.momentum_buffer, self.momentum)
         update = zeropower_via_newtonschulz5(update, self.ns_steps)
-        lr = self.lr * lr_factor * max(1.0, self.param.size(0) / self.param.size(1)) ** 0.5
+        lr = (
+            self.lr
+            * lr_factor
+            * max(1.0, self.param.size(0) / self.param.size(1)) ** 0.5
+        )
         if self.weight_decay:
             self.param.mul_(1 - lr * self.weight_decay)
         self.param.add_(update, alpha=-lr)
@@ -653,6 +658,61 @@ def linear_decay_factor(step: int, steps: int) -> float:
     return 1.0 - step / max(1, steps)
 
 
+def lr_schedule_factor(step: int, steps: int, hparams: dict[str, Any]) -> float:
+    schedule = str(hparams.get("lr_schedule", "linear"))
+    progress = step / max(1, steps)
+    if schedule == "linear":
+        return linear_decay_factor(step, steps)
+    if schedule == "constant":
+        return 1.0
+    if schedule == "exp_power":
+        decay = float(hparams.get("lr_decay", 4.0))
+        power = float(hparams.get("lr_power", 1.0))
+        return math.exp(-decay * progress**power)
+    raise ValueError(f"unknown lr_schedule: {schedule}")
+
+
+def next_batch_indices(
+    x_size: int,
+    batch_size: int,
+    device: torch.device,
+    generator: torch.Generator,
+    sample_state: dict[str, Any],
+    sample_mode: str,
+) -> torch.Tensor:
+    if sample_mode == "randint":
+        return torch.randint(
+            x_size,
+            (batch_size,),
+            device=device,
+            generator=generator,
+        )
+    if sample_mode in ("shuffle_cycle", "fixed_cycle"):
+        parts = []
+        remaining = batch_size
+        while remaining > 0:
+            cursor = int(sample_state.get("cursor", 0))
+            permutation = sample_state.get("permutation")
+            if permutation is None:
+                permutation = torch.randperm(x_size, device=device, generator=generator)
+                cursor = 0
+                sample_state["permutation"] = permutation
+            elif cursor >= x_size:
+                if sample_mode == "shuffle_cycle":
+                    permutation = torch.randperm(x_size, device=device, generator=generator)
+                    sample_state["permutation"] = permutation
+                cursor = 0
+
+            take = min(remaining, x_size - cursor)
+            parts.append(permutation[cursor : cursor + take])
+            cursor += take
+            remaining -= take
+            sample_state["cursor"] = cursor
+
+        return torch.cat(parts) if len(parts) > 1 else parts[0]
+    raise ValueError(f"unknown sample_mode: {sample_mode}")
+
+
 @torch.no_grad()
 def evaluate_clean_rmse(
     model: FixedScaleSoftmax,
@@ -728,7 +788,11 @@ def sample_hparams(
         momentum_choices = (0.0, 0.5, 0.8, 0.9, 0.95, 0.98, 0.99)
         if previous_best is not None and round_idx > 0:
             best_momentum = float(previous_best.get("momentum", 0.9))
-            nearby = [best_momentum, max(0.0, best_momentum - 0.05), min(0.99, best_momentum + 0.05)]
+            nearby = [
+                best_momentum,
+                max(0.0, best_momentum - 0.05),
+                min(0.99, best_momentum + 0.05),
+            ]
             hparams["momentum"] = rng.choice(tuple(momentum_choices) + tuple(nearby))
         else:
             hparams["momentum"] = rng.choice(momentum_choices)
@@ -741,6 +805,12 @@ def sample_hparams(
         hparams["g_projection"] = bool(bit_index & 4)
         hparams["g_norm"] = bool(bit_index & 2)
         hparams["nesterov"] = bool(bit_index & 1)
+
+    hparams["lr_schedule"] = rng.choice(("linear", "exp_power"))
+    if hparams["lr_schedule"] == "exp_power":
+        hparams["lr_decay"] = rng.uniform(0.5, 8.0)
+        hparams["lr_power"] = rng.uniform(0.4, 2.5)
+    hparams["sample_mode"] = rng.choice(("randint", "shuffle_cycle", "fixed_cycle"))
 
     return hparams
 
@@ -764,7 +834,7 @@ def saved_hparams(variant: str, sample_idx: int) -> dict[str, Any]:
 
 def attach_min_steps(hparams: dict[str, Any]) -> dict[str, Any]:
     hparams = dict(hparams)
-    hparams["steps"] = MIN_STEPS[str(hparams["variant"])]
+    hparams["steps"] = int(hparams["steps"])
     return hparams
 
 
@@ -789,15 +859,19 @@ def train_one_run(
     base_lr = float(hparams["lr"])
     steps = int(hparams.get("steps", config.steps))
     batch_size = int(hparams.get("batch_size", config.batch_size))
+    sample_mode = str(hparams.get("sample_mode", "randint"))
+    sample_state: dict[str, Any] = {}
     for step in range(steps):
-        lr_factor = linear_decay_factor(step, steps)
+        lr_factor = lr_schedule_factor(step, steps, hparams)
         if isinstance(optimizer, torch.optim.Optimizer):
             set_optimizer_lr(optimizer, base_lr * lr_factor)
-        batch_idx = torch.randint(
+        batch_idx = next_batch_indices(
             x.size(0),
-            (batch_size,),
+            batch_size,
             device=device,
             generator=batch_generator,
+            sample_state=sample_state,
+            sample_mode=sample_mode,
         )
         loss = probability_rmse_loss(model(x[batch_idx]), noisy_target_probs[batch_idx])
 
@@ -809,9 +883,8 @@ def train_one_run(
             optimizer.step(lr_factor)
 
         last_loss = float(loss.detach().item())
-        should_log = (
-            config.log_every > 0
-            and ((step + 1) % config.log_every == 0 or step + 1 == steps)
+        should_log = config.log_every > 0 and (
+            (step + 1) % config.log_every == 0 or step + 1 == steps
         )
         if should_log:
             print(
@@ -866,12 +939,16 @@ def main() -> None:
 
     summaries: list[dict[str, Any]] = []
     best_by_variant: dict[str, dict[str, Any]] = {}
-    effective_search_rounds = 1 if config.hparam_mode == "best" else config.search_rounds
+    effective_search_rounds = (
+        1 if config.hparam_mode == "best" else config.search_rounds
+    )
     effective_runs_per_variant = (
         1 if config.hparam_mode == "best" else config.runs_per_variant
     )
     total_candidates = (
-        len(config.optimizer_variants) * effective_runs_per_variant * effective_search_rounds
+        len(config.optimizer_variants)
+        * effective_runs_per_variant
+        * effective_search_rounds
     )
 
     for round_idx in range(effective_search_rounds):
@@ -886,6 +963,8 @@ def main() -> None:
                 hparams["round"] = round_idx + 1
                 if config.step_mode == "min":
                     hparams = attach_min_steps(hparams)
+                else:
+                    hparams.pop("steps", None)
                 candidate_specs.append(hparams)
                 continue
 
