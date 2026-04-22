@@ -483,3 +483,28 @@ for each of the 17 optimizers, find the minimum number of samples necessary (bat
 
 
  try your hardest for two hours, do not stop before two hours. report back the hparams and results for each of the optimizers at the end, and edit the code such that i can reproduce your results. whenever you find a better setting, write it into the code. I think it's possible to get at 30k num samples or even 20k num samples. You can also play around with the lr scheduler. try exponential decay with 0.01 ** ((t/total_steps)**p) where p is 1.0 or 0.5 and the 0.01 can be something else too. 
+
+speed, and gpu memory
+
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under the hyperball directory and modify only hyperball/train_learnable_softmax.py.
+
+write code that does full hparam search for AdamH1 and SGDH1. log all the hparams and the clean RMSE, and duration for each individual run. the search space is specified below. 
+
+this hparam search should be the default behavior of running python train_learnable_softmax.py
+
+for the discrete hparam spaces, iterate over all of them, for the lr_decay and lr that have continuous spaces, sample 64 of them. 
+
+there should be 20 * 64 * 2 = 2560 runs total. 
+
+fix num samples at 30000. 
+batch_size in {4,8,16,32,64}
+steps = 30000/batch_size rounded. 
+sample_mode in {shuffle_cycle, fixed_cycle}
+lr_schedule 'exp_power'
+lr_power in {1.0, 0.5}
+lr_decay in uniform(3,5.5)
+lr in log_uniform(0.001,0.3)
+
+20 * 64 * 2 = 2560

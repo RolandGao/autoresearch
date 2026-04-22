@@ -36,7 +36,7 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "eps": 1e-7,
         "weight_decay": 0.0,
         "batch_size": 64,
-        "steps": 937,
+        "steps": 913,
         "sample_mode": "shuffle_cycle",
     },
     "SGD": {
@@ -45,63 +45,78 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "momentum": 0.95,
         "nesterov": False,
         "weight_decay": 0.0,
-        "batch_size": 1024,
-        "steps": 468,
+        "batch_size": 768,
+        "steps": 480,
         "sample_mode": "shuffle_cycle",
     },
     "Muon": {
         "variant": "Muon",
-        "lr": 0.022840937427935835,
+        "lr": 0.034261406141903754,
         "momentum": 0.5,
         "nesterov": False,
         "ns_steps": 5,
         "weight_decay": 1.7629279980926629e-6,
-        "batch_size": 256,
-        "steps": 312,
+        "batch_size": 64,
+        "steps": 656,
+        "lr_schedule": "exp_power",
+        "lr_decay": 3.912023005428146,
+        "lr_power": 1.0,
         "sample_mode": "shuffle_cycle",
     },
     "AdamH_H1": {
         "variant": "AdamH_H1",
-        "lr": 0.006039840575835723,
+        "lr": 0.008153784777378227,
         "beta1": 0.9,
         "beta2": 0.999,
         "eps": 1e-6,
         "weight_decay": 0.0,
-        "batch_size": 32,
-        "steps": 1718,
+        "batch_size": 16,
+        "steps": 2750,
+        "lr_schedule": "exp_power",
+        "lr_decay": 3.912023005428146,
+        "lr_power": 1.0,
         "sample_mode": "shuffle_cycle",
     },
     "AdamH_H2": {
         "variant": "AdamH_H2",
-        "lr": 0.005288281955324318,
+        "lr": 0.007139180639687829,
         "beta1": 0.95,
         "beta2": 0.99,
         "eps": 1e-6,
         "weight_decay": 0.0,
-        "batch_size": 64,
-        "steps": 1250,
+        "batch_size": 8,
+        "steps": 3750,
+        "lr_schedule": "exp_power",
+        "lr_decay": 4.605170185988092,
+        "lr_power": 1.0,
         "sample_mode": "shuffle_cycle",
     },
     "MuonH_H1": {
         "variant": "MuonH_H1",
-        "lr": 0.022489790339567124,
+        "lr": 0.03373468550935069,
         "momentum": 0.75,
         "nesterov": True,
         "ns_steps": 5,
         "weight_decay": 0.0,
-        "batch_size": 128,
-        "steps": 429,
+        "batch_size": 32,
+        "steps": 1125,
+        "lr_schedule": "exp_power",
+        "lr_decay": 4.605170185988092,
+        "lr_power": 1.0,
         "sample_mode": "shuffle_cycle",
     },
     "MuonH_H2": {
         "variant": "MuonH_H2",
-        "lr": 0.05822800578422031,
+        "lr": 0.040759604048954214,
         "momentum": 0.0,
         "nesterov": True,
         "ns_steps": 3,
         "weight_decay": 0.0,
-        "batch_size": 256,
-        "steps": 312,
+        "batch_size": 32,
+        "steps": 1312,
+        "lr_schedule": "exp_power",
+        "lr_decay": 3.912023005428146,
+        "lr_power": 1.0,
         "sample_mode": "shuffle_cycle",
     },
     "SGDH_H1": {
@@ -111,7 +126,7 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "nesterov": False,
         "weight_decay": 0.0,
         "batch_size": 64,
-        "steps": 562,
+        "steps": 543,
         "sample_mode": "shuffle_cycle",
     },
     "SGDH_H2": {
@@ -121,7 +136,7 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "nesterov": True,
         "weight_decay": 0.0,
         "batch_size": 32,
-        "steps": 1250,
+        "steps": 1207,
         "sample_mode": "shuffle_cycle",
     },
     "SGDH_H3": {
@@ -133,19 +148,19 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "g_norm": False,
         "weight_decay": 0.0,
         "batch_size": 64,
-        "steps": 562,
+        "steps": 539,
         "sample_mode": "shuffle_cycle",
     },
     "SGDH_H4": {
         "variant": "SGDH_H4",
-        "lr": 0.03557871550377407,
+        "lr": 0.03379977972858536,
         "momentum": 0.0,
         "nesterov": True,
         "g_projection": False,
         "g_norm": False,
         "weight_decay": 0.0,
         "batch_size": 64,
-        "steps": 562,
+        "steps": 546,
         "sample_mode": "shuffle_cycle",
     },
     "SGDH_H5": {
@@ -157,7 +172,7 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "g_norm": True,
         "weight_decay": 0.0,
         "batch_size": 32,
-        "steps": 1250,
+        "steps": 1162,
         "sample_mode": "shuffle_cycle",
     },
     "SGDH_H6": {
@@ -169,7 +184,7 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "g_norm": True,
         "weight_decay": 0.0,
         "batch_size": 128,
-        "steps": 312,
+        "steps": 305,
         "sample_mode": "shuffle_cycle",
     },
     "SGDH_H7": {
@@ -181,7 +196,7 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "g_norm": False,
         "weight_decay": 0.0,
         "batch_size": 64,
-        "steps": 562,
+        "steps": 541,
         "sample_mode": "shuffle_cycle",
     },
     "SGDH_H8": {
@@ -193,7 +208,7 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "g_norm": False,
         "weight_decay": 0.0,
         "batch_size": 64,
-        "steps": 562,
+        "steps": 542,
         "sample_mode": "shuffle_cycle",
     },
     "SGDH_H9": {
@@ -205,7 +220,7 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "g_norm": True,
         "weight_decay": 0.0,
         "batch_size": 32,
-        "steps": 1250,
+        "steps": 1126,
         "sample_mode": "shuffle_cycle",
     },
     "SGDH_H10": {
@@ -217,7 +232,7 @@ BEST_HPARAMS: dict[str, dict[str, Any]] = {
         "g_norm": True,
         "weight_decay": 0.0,
         "batch_size": 32,
-        "steps": 1250,
+        "steps": 1187,
         "sample_mode": "shuffle_cycle",
     },
 }
@@ -240,6 +255,7 @@ class Config:
     optimizer_variants: tuple[str, ...] = ALL_VARIANTS
     hparam_mode: str = "random"
     step_mode: str = "config"
+    shared_shape: bool = False
     target_rmse: float = 1.19e-5
     log_every: int = 0
     device: str = "auto"
@@ -284,6 +300,11 @@ def parse_args() -> Config:
         choices=("config", "min"),
         default=Config.step_mode,
         help="Use --steps for every run or the saved per-variant minimum steps.",
+    )
+    parser.add_argument(
+        "--shared-shape",
+        action="store_true",
+        help="Use --batch-size and --steps for every run, ignoring saved values.",
     )
     parser.add_argument("--target-rmse", type=float, default=Config.target_rmse)
     parser.add_argument("--log-every", type=int, default=Config.log_every)
@@ -849,18 +870,23 @@ def train_one_run(
     candidate_idx: int,
     num_candidates: int,
 ) -> dict[str, Any]:
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+    start_time = time.time()
+
     model = FixedScaleSoftmax(config, initial_weight).to(device)
     optimizer = make_optimizer(model, hparams)
     batch_generator = torch.Generator(device=device)
     batch_generator.manual_seed(config.seed + 10_000)
 
-    start_time = time.time()
     last_loss = float("nan")
     base_lr = float(hparams["lr"])
     steps = int(hparams.get("steps", config.steps))
     batch_size = int(hparams.get("batch_size", config.batch_size))
     sample_mode = str(hparams.get("sample_mode", "randint"))
     sample_state: dict[str, Any] = {}
+    training_start_time = time.time()
     for step in range(steps):
         lr_factor = lr_schedule_factor(step, steps, hparams)
         if isinstance(optimizer, torch.optim.Optimizer):
@@ -894,8 +920,19 @@ def train_one_run(
                 flush=True,
             )
 
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    training_elapsed_sec = time.time() - training_start_time
     clean_rmse = evaluate_clean_rmse(model, x, clean_target_probs, config)
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
     elapsed_sec = time.time() - start_time
+    peak_allocated_bytes = (
+        torch.cuda.max_memory_allocated(device) if device.type == "cuda" else 0
+    )
+    peak_reserved_bytes = (
+        torch.cuda.max_memory_reserved(device) if device.type == "cuda" else 0
+    )
     summary = {
         **hparams,
         "candidate_idx": candidate_idx,
@@ -907,7 +944,12 @@ def train_one_run(
         "target_met": clean_rmse <= config.target_rmse,
         "weight_row_norm_mean": float(model.weight.detach().norm(dim=1).mean().item()),
         "weight_row_norm_std": float(model.weight.detach().norm(dim=1).std().item()),
+        "training_elapsed_sec": training_elapsed_sec,
         "elapsed_sec": elapsed_sec,
+        "peak_allocated_bytes": peak_allocated_bytes,
+        "peak_allocated_mib": peak_allocated_bytes / 1024**2,
+        "peak_reserved_bytes": peak_reserved_bytes,
+        "peak_reserved_mib": peak_reserved_bytes / 1024**2,
     }
     print(f"RUN_SUMMARY {json.dumps(summary, sort_keys=True)}", flush=True)
     return summary
@@ -918,6 +960,8 @@ def main() -> None:
     validate_variants(config.optimizer_variants)
     if config.step_mode == "min" and config.hparam_mode != "best":
         raise ValueError("--step-mode min requires --hparam-mode best")
+    if config.shared_shape and config.step_mode != "config":
+        raise ValueError("--shared-shape requires --step-mode config")
     if config.softmax_scale != 10.0:
         raise ValueError("this experiment fixes --softmax-scale to 10.0")
     if config.ground_truth_softmax_scale != 10.0:
@@ -965,6 +1009,8 @@ def main() -> None:
                     hparams = attach_min_steps(hparams)
                 else:
                     hparams.pop("steps", None)
+                if config.shared_shape:
+                    hparams.pop("batch_size", None)
                 candidate_specs.append(hparams)
                 continue
 
