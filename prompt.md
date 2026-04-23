@@ -608,3 +608,9 @@ lr = 0.000916766120626 * batch_size + 0.0371030911324
 R^2 = 0.910525505187
 
 python train_learnable_softmax2.py > sgdh_ablation.log 2>&1
+
+
+
+batch size tolerance is important
+
+i think the boostrap CI sampling 100 depends on how many samples you have. 
