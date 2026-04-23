@@ -514,7 +514,7 @@ hparams["beta2"] = rng.choice((0.9, 0.95, 0.99, 0.999))
 hparams["eps"] = rng.choice((1e-8, 1e-7, 1e-6))
 20 * 64 * 2 = 2560
 
-python train_learnable_softmax.py > softmax2.log 2>&1
+python train_learnable_softmax.py > softmax3.log 2>&1
 
 
 
@@ -532,12 +532,12 @@ there should be 10*2*50=1000 runs
 
 
 fix num samples at 30000. 
-batch_size in {1,2,4,8,16,32,64,128,256,512}
+batch_size in {4,8,16,32,64,128,256,512}
 steps = 30000/batch_size rounded. 
 sample_mode =fixed_cycle
 lr_schedule 'exp_power'
-lr_power in uniform(0.8,1.2)
-lr_decay in uniform(2.5,6)
+lr_power = 1
+lr_decay in uniform(3.5,6)
 SGDH1
 momentum in {0, 0.5, 0.7, 0.8, 0.9}
 predicted_lr(batch_size) = 0.001409420528 * batch_size + 0.002388538963
@@ -550,6 +550,36 @@ lr(batch_size) = 0.001215494191 * batch_size + 0.009600782619
 lr in log_uniform(predicted_lr/10, predicted_lr*10)
 
 
+work under autoresearch directory. python is /venv/main/bin/python.
+work under the hyperball directory and modify only hyperball/train_learnable_softmax2.py.
+iterate over the 16 optimizer settings and the 2 batch size settings. the rest of the hparam are randomly sampled 100 times each.
+
+there are 16*2*100=3200 runs total.
+
+SGDH
+(g_projection in {True, False}) x (g_norm in {True, False}) x (nesterov in {True, False}) x (m_projection in {True, False})
+g = g projected to be perpendicular to p
+g = g/norm(g)
+m = momentum * m + g
+m = m projected to be perpendicular to p
+if nesterov:
+    u = g + momentum * m
+else:
+    u = m
+p = p - lr * u / norm(u)
+p = p/norm(p)
+
+now, do ablation study on the 16 variants of SGDH. 
+(g_projection in {True, False}) x (g_norm in {True, False}) x (nesterov in {True, False}) x (m_projection in {True, False})
+batch size {32,128}
+steps = 30000/batch_size rounded
+sample_mode =fixed_cycle
+lr_schedule 'exp_power'
+lr_power = 1
+lr_decay in uniform(3.5,6)
+momentum in {0, 0.5, 0.7, 0.8, 0.9}
+predicted_lr(batch_size) = 0.001409420528 * batch_size + 0.002388538963
+lr in log_uniform(predicted_lr/10, predicted_lr*10)
 
 
 SGDH_H1:
@@ -559,3 +589,22 @@ R^2 = 0.9951
 AdamH_H1:
 lr(batch_size) = 0.001215494191 * batch_size + 0.009600782619
 R^2 = 0.7929
+
+
+SGDH_H1:
+lr = 0.00384310831113 * batch_size^0.84355406331
+R^2 = 0.940723716984
+
+AdamH_H1:
+lr = 0.00300750300518 * batch_size^0.864040017614
+R^2 = 0.959164237596
+
+SGD
+lr = 0.00227815808734 * batch_size - 0.025830735378
+R^2 = 0.967007417256
+
+Adam
+lr = 0.000916766120626 * batch_size + 0.0371030911324
+R^2 = 0.910525505187
+
+python train_learnable_softmax2.py > sgdh_ablation.log 2>&1

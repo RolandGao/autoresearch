@@ -23,13 +23,16 @@ NON_HPARAM_KEYS = {
     "actual_samples",
     "batch_size",
     "candidate_idx",
+    "clean_rmse",
     "clean_train_rmse",
     "compiled",
+    "duration_sec",
     "elapsed_sec",
     "final_train_loss",
     "num_candidates",
     "peak_allocated_bytes",
     "peak_allocated_mib",
+    "predicted_lr",
     "peak_reserved_bytes",
     "peak_reserved_mib",
     "round",
@@ -43,7 +46,7 @@ NON_HPARAM_KEYS = {
     "weight_row_norm_mean",
     "weight_row_norm_std",
 }
-PREFERRED_HPARAM_ORDER = (
+SEARCH_HPARAM_KEYS = {
     "lr",
     "lr_decay",
     "lr_power",
@@ -55,9 +58,30 @@ PREFERRED_HPARAM_ORDER = (
     "nesterov",
     "weight_decay",
     "lr_schedule",
+    "ns_steps",
+    "g_projection",
+    "g_norm",
+}
+PREFERRED_HPARAM_ORDER = (
+    "batch_size",
+    "lr",
+    "lr_decay",
+    "lr_power",
+    "sample_mode",
+    "beta1",
+    "beta2",
+    "eps",
+    "momentum",
+    "nesterov",
+    "weight_decay",
+    "lr_schedule",
+    "ns_steps",
+    "g_projection",
+    "g_norm",
 )
 LOG_X_HPARAMS = {"lr", "eps", "weight_decay"}
 SUMMARY_FILENAME = "bootstrap_hparam_summary.txt"
+SPEED_TIME_KEYS = ("training_elapsed_sec", "duration_sec", "elapsed_sec")
 
 
 def parse_args() -> argparse.Namespace:
@@ -120,7 +144,9 @@ def hparam_names(rows: list[dict[str, Any]]) -> list[str]:
         key
         for row in rows
         for key, value in row.items()
-        if key not in NON_HPARAM_KEYS and is_plot_value(value)
+        if key in SEARCH_HPARAM_KEYS
+        and key not in NON_HPARAM_KEYS
+        and is_plot_value(value)
     }
     varying = [name for name in names if len({normalize_value(row.get(name)) for row in rows}) > 1]
     preferred = [name for name in PREFERRED_HPARAM_ORDER if name in varying]
@@ -228,6 +254,33 @@ def format_value(value: Any) -> str:
     return str(value)
 
 
+def samples_per_sec(row: dict[str, Any]) -> float | None:
+    samples = row.get("actual_samples", row.get("num_samples"))
+    if samples is None:
+        return None
+    for key in SPEED_TIME_KEYS:
+        elapsed = row.get(key)
+        if elapsed is not None and float(elapsed) > 0.0:
+            return float(samples) / float(elapsed)
+    return None
+
+
+def batch_metric_values(
+    rows: list[dict[str, Any]], metric: str
+) -> dict[int, list[float]]:
+    values_by_batch: dict[int, list[float]] = defaultdict(list)
+    for row in rows:
+        if metric == "speed":
+            value = samples_per_sec(row)
+        elif metric == "rmse":
+            value = float(row[RMSE_KEY])
+        else:
+            raise ValueError(f"unknown metric: {metric}")
+        if value is not None and math.isfinite(value):
+            values_by_batch[int(row["batch_size"])].append(float(value))
+    return dict(values_by_batch)
+
+
 def bootstrap_numeric_summary(
     rows: list[dict[str, Any]],
     hparam: str,
@@ -238,6 +291,24 @@ def bootstrap_numeric_summary(
     summary = numeric_bootstrap_summary(boot_values)
     if summary is not None:
         return summary
+    fallback = float(best_row(rows)[hparam])
+    return fallback, fallback, fallback
+
+
+def bootstrap_discrete_numeric_summary(
+    rows: list[dict[str, Any]],
+    hparam: str,
+    rng: np.random.Generator,
+    bootstrap_samples: int,
+) -> tuple[float, float, float]:
+    boot_values = bootstrap_best_values(rows, hparam, rng, bootstrap_samples)
+    if len(boot_values):
+        numeric = np.array(boot_values, dtype=float)
+        return (
+            discrete_quantile(numeric, 0.025),
+            discrete_quantile(numeric, 0.5),
+            discrete_quantile(numeric, 0.975),
+        )
     fallback = float(best_row(rows)[hparam])
     return fallback, fallback, fallback
 
@@ -458,7 +529,7 @@ def plot_variant_hparam(
         )
 
     panel_count = len(batch_sizes) + 1
-    ncols = min(3, panel_count)
+    ncols = min(5, panel_count)
     nrows = math.ceil(panel_count / ncols)
     fig, axes = plt.subplots(
         nrows=nrows,
@@ -514,6 +585,149 @@ def plot_variant_hparam(
     return out_path, summary_rows
 
 
+def plot_variant_batch_metric(
+    rows: list[dict[str, Any]],
+    variant: str,
+    metric: str,
+    out_dir: Path,
+    rng: np.random.Generator,
+    dpi: int,
+) -> Path | None:
+    values_by_batch = batch_metric_values(rows, metric)
+    if not values_by_batch:
+        return None
+
+    batch_sizes = np.array(sorted(values_by_batch), dtype=float)
+    medians = np.array(
+        [np.median(values_by_batch[int(batch_size)]) for batch_size in batch_sizes],
+        dtype=float,
+    )
+    lows = np.array(
+        [np.percentile(values_by_batch[int(batch_size)], 25.0) for batch_size in batch_sizes],
+        dtype=float,
+    )
+    highs = np.array(
+        [np.percentile(values_by_batch[int(batch_size)], 75.0) for batch_size in batch_sizes],
+        dtype=float,
+    )
+
+    if metric == "speed":
+        y_label = "samples/sec"
+        title = f"{variant}: speed vs batch size"
+        file_suffix = "speed_vs_batch_size"
+        summary_label = "median speed"
+    elif metric == "rmse":
+        y_label = "clean train RMSE"
+        title = f"{variant}: RMSE vs batch size"
+        file_suffix = "rmse_vs_batch_size"
+        summary_label = "median RMSE"
+    else:
+        raise ValueError(f"unknown metric: {metric}")
+
+    fig, ax = plt.subplots(figsize=(10.5, 6.0))
+    for batch_size in batch_sizes:
+        y = np.array(values_by_batch[int(batch_size)], dtype=float)
+        x = batch_size * rng.uniform(0.96, 1.04, size=len(y))
+        ax.scatter(x, y, s=18, alpha=0.45, linewidths=0, color="#31688e")
+
+    ax.plot(batch_sizes, medians, "o-", color="#b83232", linewidth=1.8, label=summary_label)
+    ax.fill_between(batch_sizes, lows, highs, color="#b83232", alpha=0.12, label="25%-75% range")
+
+    if metric == "rmse":
+        bests = np.array(
+            [np.min(values_by_batch[int(batch_size)]) for batch_size in batch_sizes],
+            dtype=float,
+        )
+        ax.plot(batch_sizes, bests, "o-", color="#2d6a4f", linewidth=1.4, label="best RMSE")
+        ax.set_yscale("log")
+    elif finite_positive(list(medians) + list(lows) + list(highs)):
+        ax.set_yscale("log")
+
+    ax.set_xscale("log", base=2)
+    ax.set_xticks(batch_sizes)
+    ax.set_xticklabels([str(int(batch_size)) for batch_size in batch_sizes])
+    ax.set_xlabel("batch size")
+    ax.set_ylabel(y_label)
+    ax.set_title(title)
+    ax.grid(True, which="both", alpha=0.22)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+
+    out_path = out_dir / f"{safe_filename(variant)}_{file_suffix}.png"
+    fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+    return out_path
+
+
+def plot_variant_batch_size_hparam(
+    rows: list[dict[str, Any]],
+    variant: str,
+    out_dir: Path,
+    rng: np.random.Generator,
+    bootstrap_samples: int,
+    dpi: int,
+) -> tuple[Path, dict[str, Any]] | None:
+    if not rows:
+        return None
+    x = np.array([float(row["batch_size"]) for row in rows], dtype=float)
+    y = np.array([float(row[RMSE_KEY]) for row in rows], dtype=float)
+    lo, median, hi = bootstrap_discrete_numeric_summary(
+        rows, "batch_size", rng, bootstrap_samples
+    )
+    observed_best = best_row(rows)
+
+    fig, ax = plt.subplots(figsize=(10.5, 6.0))
+    jitter = rng.uniform(0.96, 1.04, size=len(x))
+    ax.scatter(x * jitter, y, s=18, alpha=0.45, linewidths=0, color="#31688e")
+    ax.axvline(median, color="#b83232", linewidth=1.8, label="bootstrap median best")
+    if lo <= hi:
+        ax.axvspan(lo, hi, color="#b83232", alpha=0.14, label="95% bootstrap CI")
+    ax.scatter(
+        [float(observed_best["batch_size"])],
+        [float(observed_best[RMSE_KEY])],
+        s=58,
+        color="#2d6a4f",
+        edgecolors="white",
+        linewidths=0.8,
+        label="observed best run",
+        zorder=4,
+    )
+    batch_sizes = np.array(sorted({int(row["batch_size"]) for row in rows}), dtype=float)
+    ax.set_xscale("log", base=2)
+    ax.set_yscale("log")
+    ax.set_xticks(batch_sizes)
+    ax.set_xticklabels([str(int(batch_size)) for batch_size in batch_sizes])
+    ax.set_xlabel("batch size")
+    ax.set_ylabel("clean train RMSE")
+    ax.set_title(f"{variant}: RMSE vs batch size as hparam")
+    ax.grid(True, which="both", alpha=0.22)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+
+    out_path = out_dir / f"{safe_filename(variant)}_rmse_vs_batch_size.png"
+    fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+    return out_path, {
+        "variant": variant,
+        "hparam": "batch_size",
+        "batch_size": "all",
+        "n_pairs": len(rows),
+        "bootstrap_fraction": BOOTSTRAP_FRACTION,
+        "bootstrap_samples": bootstrap_samples,
+        "hparam_type": "numeric_discrete",
+        "bootstrap_ci_low": lo,
+        "bootstrap_median_best": median,
+        "bootstrap_ci_high": hi,
+        "bootstrap_ci_low_code": lo,
+        "bootstrap_median_best_code": median,
+        "bootstrap_ci_high_code": hi,
+        "observed_best_hparam": normalize_value(observed_best["batch_size"]),
+        "observed_best_rmse": float(observed_best[RMSE_KEY]),
+        "categories": "",
+        "summary_scope": "all_batches",
+    }
+
+
 def write_summary(summary_path: Path, rows: list[dict[str, Any]]) -> None:
     with summary_path.open("w", encoding="utf-8") as handle:
         handle.write("Bootstrap hyperparameter summary\n")
@@ -544,7 +758,13 @@ def write_summary(summary_path: Path, rows: list[dict[str, Any]]) -> None:
                 hparam_rows = [
                     row for row in variant_rows_ if row["hparam"] == hparam
                 ]
-                hparam_rows.sort(key=lambda row: int(row["batch_size"]))
+                hparam_rows.sort(
+                    key=lambda row: (
+                        -1
+                        if str(row["batch_size"]) == "all"
+                        else int(row["batch_size"])
+                    )
+                )
                 first = hparam_rows[0]
                 handle.write(f"Hparam: {hparam}\n")
                 handle.write(f"Type: {first['hparam_type']}\n")
@@ -556,7 +776,10 @@ def write_summary(summary_path: Path, rows: list[dict[str, Any]]) -> None:
                     handle.write("Category codes follow the category order above.\n")
                 handle.write("\n")
                 for row in hparam_rows:
-                    handle.write(f"  Batch size {row['batch_size']} (n={row['n_pairs']})\n")
+                    if row.get("summary_scope") == "all_batches":
+                        handle.write(f"  All batch sizes (n={row['n_pairs']})\n")
+                    else:
+                        handle.write(f"  Batch size {row['batch_size']} (n={row['n_pairs']})\n")
                     handle.write(
                         "    Bootstrap median best: "
                         f"{format_value(row['bootstrap_median_best'])}\n"
@@ -590,6 +813,28 @@ def main() -> None:
     outputs: list[Path] = []
     summary_rows: list[dict[str, Any]] = []
     for variant, group in sorted(variant_rows(rows).items()):
+        output = plot_variant_batch_metric(
+            group,
+            variant,
+            "speed",
+            args.out_dir,
+            rng,
+            args.dpi,
+        )
+        if output is not None:
+            outputs.append(output)
+        batch_size_result = plot_variant_batch_size_hparam(
+            group,
+            variant,
+            args.out_dir,
+            rng,
+            args.bootstrap_samples,
+            args.dpi,
+        )
+        if batch_size_result is not None:
+            output, batch_size_summary = batch_size_result
+            outputs.append(output)
+            summary_rows.append(batch_size_summary)
         for hparam in hparam_names(group):
             result = plot_variant_hparam(
                 group,

@@ -28,14 +28,16 @@ SGD_H_VARIANTS = tuple(f"SGDH_H{i}" for i in range(1, 11))
 ALL_VARIANTS = BASELINE_VARIANTS + ADAM_H_VARIANTS + MUON_H_VARIANTS + SGD_H_VARIANTS
 FULL_SEARCH_VARIANTS = ("AdamH_H1", "SGDH_H1")
 FULL_SEARCH_NUM_SAMPLES = 30_000
-FULL_SEARCH_BATCH_SIZES = (4, 8, 16, 32, 64)
-FULL_SEARCH_SAMPLE_MODES = ("shuffle_cycle", "fixed_cycle")
-FULL_SEARCH_LR_POWERS = (1.0, 0.5)
-FULL_SEARCH_CONTINUOUS_SAMPLES = 64
+FULL_SEARCH_BATCH_SIZES = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512)
+FULL_SEARCH_RUNS_PER_BATCH_SIZE = 50
 FULL_SEARCH_SGDH_MOMENTUMS = (0.0, 0.5, 0.7, 0.8, 0.9)
 FULL_SEARCH_ADAM_BETA1S = (0.0, 0.5, 0.8, 0.9, 0.95)
 FULL_SEARCH_ADAM_BETA2S = (0.9, 0.95, 0.99, 0.999)
 FULL_SEARCH_ADAM_EPS = (1e-8, 1e-7, 1e-6)
+FULL_SEARCH_SGDH_LR_SLOPE = 0.001409420528
+FULL_SEARCH_SGDH_LR_INTERCEPT = 0.002388538963
+FULL_SEARCH_ADAMH_LR_SLOPE = 0.001215494191
+FULL_SEARCH_ADAMH_LR_INTERCEPT = 0.009600782619
 
 BEST_HPARAMS: dict[str, dict[str, Any]] = {
     "AdamW": {
@@ -418,7 +420,7 @@ def probability_rmse_loss(
     return (output_probs - target_probs).square().mean().sqrt()
 
 
-@torch.compile(dynamic=False, fullgraph=True)
+@torch.compile(dynamic=True, fullgraph=True)
 def probability_rmse_loss_compiled(
     weight: torch.Tensor,
     x_batch: torch.Tensor,
@@ -430,7 +432,7 @@ def probability_rmse_loss_compiled(
     return (output_probs - target_probs).square().mean().sqrt()
 
 
-@torch.compile(dynamic=False, fullgraph=True)
+@torch.compile(dynamic=True, fullgraph=True)
 def softmax_probs_compiled(
     weight: torch.Tensor,
     x_batch: torch.Tensor,
@@ -806,7 +808,9 @@ def next_batch_indices(
                 sample_state["permutation"] = permutation
             elif cursor >= x_size:
                 if sample_mode == "shuffle_cycle":
-                    permutation = torch.randperm(x_size, device=device, generator=generator)
+                    permutation = torch.randperm(
+                        x_size, device=device, generator=generator
+                    )
                     sample_state["permutation"] = permutation
                 cursor = 0
 
@@ -954,6 +958,7 @@ def full_search_base_hparams(variant: str) -> dict[str, Any]:
         "variant": variant,
         "weight_decay": 0.0,
         "lr_schedule": "exp_power",
+        "sample_mode": "fixed_cycle",
     }
     if variant == "AdamH_H1":
         return hparams
@@ -969,18 +974,31 @@ def full_search_base_hparams(variant: str) -> dict[str, Any]:
     )
 
 
-def full_search_continuous_samples(
-    config: Config, variant: str
+def predicted_full_search_lr(variant: str, batch_size: int) -> float:
+    if variant == "AdamH_H1":
+        return FULL_SEARCH_ADAMH_LR_SLOPE * batch_size + FULL_SEARCH_ADAMH_LR_INTERCEPT
+    if variant == "SGDH_H1":
+        return FULL_SEARCH_SGDH_LR_SLOPE * batch_size + FULL_SEARCH_SGDH_LR_INTERCEPT
+    raise ValueError(
+        "full hparam search supports only: " + ", ".join(FULL_SEARCH_VARIANTS)
+    )
+
+
+def full_search_samples_for_batch(
+    config: Config, variant: str, batch_size: int
 ) -> list[dict[str, Any]]:
     variant_seed = sum((idx + 1) * ord(ch) for idx, ch in enumerate(variant))
-    rng = random.Random(config.seed + 1_000_003 + variant_seed)
+    rng = random.Random(config.seed + 1_000_003 + variant_seed + 1009 * batch_size)
+    predicted_lr = predicted_full_search_lr(variant, batch_size)
     samples = []
-    for sample_idx in range(FULL_SEARCH_CONTINUOUS_SAMPLES):
+    for sample_idx in range(FULL_SEARCH_RUNS_PER_BATCH_SIZE):
         hparams: dict[str, Any] = {
             "sample_idx": sample_idx,
             "continuous_sample_idx": sample_idx,
-            "lr": log_uniform(rng, 0.001, 0.3),
-            "lr_decay": rng.uniform(3.0, 5.5),
+            "predicted_lr": predicted_lr,
+            "lr": log_uniform(rng, predicted_lr / 10, predicted_lr * 10),
+            "lr_decay": rng.uniform(2.5, 6.0),
+            "lr_power": rng.uniform(0.8, 1.2),
         }
         if variant == "AdamH_H1":
             hparams.update(
@@ -1003,25 +1021,21 @@ def full_search_continuous_samples(
 def build_full_search_hparams(config: Config) -> list[dict[str, Any]]:
     candidate_specs: list[dict[str, Any]] = []
     for variant in config.optimizer_variants:
-        continuous_samples = full_search_continuous_samples(config, variant)
         for batch_size in FULL_SEARCH_BATCH_SIZES:
             steps = rounded_steps_for_num_samples(FULL_SEARCH_NUM_SAMPLES, batch_size)
-            for sample_mode in FULL_SEARCH_SAMPLE_MODES:
-                for lr_power in FULL_SEARCH_LR_POWERS:
-                    for continuous_sample in continuous_samples:
-                        hparams = full_search_base_hparams(variant)
-                        hparams.update(continuous_sample)
-                        hparams.update(
-                            {
-                                "round": 1,
-                                "batch_size": batch_size,
-                                "steps": steps,
-                                "num_samples": FULL_SEARCH_NUM_SAMPLES,
-                                "sample_mode": sample_mode,
-                                "lr_power": lr_power,
-                            }
-                        )
-                        candidate_specs.append(hparams)
+            samples = full_search_samples_for_batch(config, variant, batch_size)
+            for sample in samples:
+                hparams = full_search_base_hparams(variant)
+                hparams.update(sample)
+                hparams.update(
+                    {
+                        "round": 1,
+                        "batch_size": batch_size,
+                        "steps": steps,
+                        "num_samples": FULL_SEARCH_NUM_SAMPLES,
+                    }
+                )
+                candidate_specs.append(hparams)
     return candidate_specs
 
 
@@ -1196,10 +1210,12 @@ def train_one_run_compiled(
         "actual_samples": steps * batch_size,
         "compiled": True,
         "final_train_loss": last_loss,
+        "clean_rmse": clean_rmse,
         "clean_train_rmse": clean_rmse,
         "target_met": clean_rmse <= config.target_rmse,
         "weight_row_norm_mean": float(weight_norms.mean().item()),
         "weight_row_norm_std": float(weight_norms.std().item()),
+        "duration_sec": elapsed_sec,
         "training_elapsed_sec": training_elapsed_sec,
         "elapsed_sec": elapsed_sec,
         "peak_allocated_bytes": peak_allocated_bytes,
@@ -1408,10 +1424,12 @@ def train_one_run(
         "actual_samples": steps * batch_size,
         "compiled": False,
         "final_train_loss": last_loss,
+        "clean_rmse": clean_rmse,
         "clean_train_rmse": clean_rmse,
         "target_met": clean_rmse <= config.target_rmse,
         "weight_row_norm_mean": float(model.weight.detach().norm(dim=1).mean().item()),
         "weight_row_norm_std": float(model.weight.detach().norm(dim=1).std().item()),
+        "duration_sec": elapsed_sec,
         "training_elapsed_sec": training_elapsed_sec,
         "elapsed_sec": elapsed_sec,
         "peak_allocated_bytes": peak_allocated_bytes,
