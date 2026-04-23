@@ -1,0 +1,326 @@
+Bootstrap hyperparameter summary
+===============================
+
+Each batch-size entry uses the same bootstrap result shown in the matching plot panel.
+Bootstrap algorithm: sample 25% of pairs with replacement, pick the sampled pair with minimum RMSE, repeat N times.
+
+Optimizer: AdamH_H1
+-------------------
+
+Hparam: lr
+Type: numeric
+Bootstrap repeats: 10000
+
+  Batch size 4 (n=256)
+    Bootstrap median best: 0.005381853469
+    95% bootstrap CI: [0.004997028028, 0.01560055058]
+    Observed best run: 0.005381853469 (RMSE=1.008734733e-05)
+  Batch size 8 (n=256)
+    Bootstrap median best: 0.01318783506
+    95% bootstrap CI: [0.01133379555, 0.05793620632]
+    Observed best run: 0.01318783506 (RMSE=1.019406212e-05)
+  Batch size 16 (n=256)
+    Bootstrap median best: 0.0304756674
+    95% bootstrap CI: [0.0150829616, 0.05793620632]
+    Observed best run: 0.05793620632 (RMSE=1.078922212e-05)
+  Batch size 32 (n=256)
+    Bootstrap median best: 0.07412240561
+    95% bootstrap CI: [0.05793620632, 0.1276221491]
+    Observed best run: 0.05793620632 (RMSE=1.019727055e-05)
+  Batch size 64 (n=256)
+    Bootstrap median best: 0.0755574312
+    95% bootstrap CI: [0.04335913174, 0.1276221491]
+    Observed best run: 0.1276221491 (RMSE=1.067006219e-05)
+
+Hparam: lr_decay
+Type: numeric
+Bootstrap repeats: 10000
+
+  Batch size 4 (n=256)
+    Bootstrap median best: 5.159812663
+    95% bootstrap CI: [3.746146023, 5.289428013]
+    Observed best run: 5.244750368 (RMSE=1.008734733e-05)
+  Batch size 8 (n=256)
+    Bootstrap median best: 5.131875784
+    95% bootstrap CI: [3.978503169, 5.37164554]
+    Observed best run: 5.131875784 (RMSE=1.019406212e-05)
+  Batch size 16 (n=256)
+    Bootstrap median best: 5.159812663
+    95% bootstrap CI: [3.129038854, 5.37164554]
+    Observed best run: 5.37164554 (RMSE=1.078922212e-05)
+  Batch size 32 (n=256)
+    Bootstrap median best: 4.472969917
+    95% bootstrap CI: [3.712979349, 5.37164554]
+    Observed best run: 5.37164554 (RMSE=1.019727055e-05)
+  Batch size 64 (n=256)
+    Bootstrap median best: 4.224598191
+    95% bootstrap CI: [3.064373126, 4.943707526]
+    Observed best run: 4.472969917 (RMSE=1.067006219e-05)
+
+Hparam: lr_power
+Type: numeric
+Bootstrap repeats: 10000
+
+  Batch size 4 (n=256)
+    Bootstrap median best: 1
+    95% bootstrap CI: [0.5, 1]
+    Observed best run: 1 (RMSE=1.008734733e-05)
+  Batch size 8 (n=256)
+    Bootstrap median best: 1
+    95% bootstrap CI: [0.5, 1]
+    Observed best run: 1 (RMSE=1.019406212e-05)
+  Batch size 16 (n=256)
+    Bootstrap median best: 1
+    95% bootstrap CI: [0.5, 1]
+    Observed best run: 1 (RMSE=1.078922212e-05)
+  Batch size 32 (n=256)
+    Bootstrap median best: 1
+    95% bootstrap CI: [0.5, 1]
+    Observed best run: 1 (RMSE=1.019727055e-05)
+  Batch size 64 (n=256)
+    Bootstrap median best: 1
+    95% bootstrap CI: [1, 1]
+    Observed best run: 1 (RMSE=1.067006219e-05)
+
+Hparam: sample_mode
+Type: categorical
+Bootstrap repeats: 10000
+Categories: fixed_cycle, shuffle_cycle
+Category codes follow the category order above.
+
+  Batch size 4 (n=256)
+    Bootstrap median best: fixed_cycle
+    95% bootstrap CI: [fixed_cycle, shuffle_cycle]
+    Encoded median/CI: 0 [0, 1]
+    Observed best run: shuffle_cycle (RMSE=1.008734733e-05)
+  Batch size 8 (n=256)
+    Bootstrap median best: fixed_cycle
+    95% bootstrap CI: [fixed_cycle, shuffle_cycle]
+    Encoded median/CI: 0 [0, 1]
+    Observed best run: shuffle_cycle (RMSE=1.019406212e-05)
+  Batch size 16 (n=256)
+    Bootstrap median best: shuffle_cycle
+    95% bootstrap CI: [fixed_cycle, shuffle_cycle]
+    Encoded median/CI: 1 [0, 1]
+    Observed best run: shuffle_cycle (RMSE=1.078922212e-05)
+  Batch size 32 (n=256)
+    Bootstrap median best: fixed_cycle
+    95% bootstrap CI: [fixed_cycle, shuffle_cycle]
+    Encoded median/CI: 0 [0, 1]
+    Observed best run: fixed_cycle (RMSE=1.019727055e-05)
+  Batch size 64 (n=256)
+    Bootstrap median best: fixed_cycle
+    95% bootstrap CI: [fixed_cycle, shuffle_cycle]
+    Encoded median/CI: 0 [0, 1]
+    Observed best run: fixed_cycle (RMSE=1.067006219e-05)
+
+Hparam: beta1
+Type: numeric
+Bootstrap repeats: 10000
+
+  Batch size 4 (n=256)
+    Bootstrap median best: 0.95
+    95% bootstrap CI: [0.8, 0.95]
+    Observed best run: 0.95 (RMSE=1.008734733e-05)
+  Batch size 8 (n=256)
+    Bootstrap median best: 0.8
+    95% bootstrap CI: [0.5, 0.9]
+    Observed best run: 0.8 (RMSE=1.019406212e-05)
+  Batch size 16 (n=256)
+    Bootstrap median best: 0.5
+    95% bootstrap CI: [0, 0.9]
+    Observed best run: 0.5 (RMSE=1.078922212e-05)
+  Batch size 32 (n=256)
+    Bootstrap median best: 0.5
+    95% bootstrap CI: [0, 0.9]
+    Observed best run: 0.5 (RMSE=1.019727055e-05)
+  Batch size 64 (n=256)
+    Bootstrap median best: 0
+    95% bootstrap CI: [0, 0.9]
+    Observed best run: 0 (RMSE=1.067006219e-05)
+
+Hparam: beta2
+Type: numeric
+Bootstrap repeats: 10000
+
+  Batch size 4 (n=256)
+    Bootstrap median best: 0.99
+    95% bootstrap CI: [0.95, 0.999]
+    Observed best run: 0.95 (RMSE=1.008734733e-05)
+  Batch size 8 (n=256)
+    Bootstrap median best: 0.99
+    95% bootstrap CI: [0.99, 0.999]
+    Observed best run: 0.99 (RMSE=1.019406212e-05)
+  Batch size 16 (n=256)
+    Bootstrap median best: 0.99
+    95% bootstrap CI: [0.9, 0.999]
+    Observed best run: 0.99 (RMSE=1.078922212e-05)
+  Batch size 32 (n=256)
+    Bootstrap median best: 0.95
+    95% bootstrap CI: [0.9, 0.999]
+    Observed best run: 0.99 (RMSE=1.019727055e-05)
+  Batch size 64 (n=256)
+    Bootstrap median best: 0.95
+    95% bootstrap CI: [0.9, 0.999]
+    Observed best run: 0.95 (RMSE=1.067006219e-05)
+
+Hparam: eps
+Type: numeric
+Bootstrap repeats: 10000
+
+  Batch size 4 (n=256)
+    Bootstrap median best: 1e-06
+    95% bootstrap CI: [1e-08, 1e-06]
+    Observed best run: 1e-06 (RMSE=1.008734733e-05)
+  Batch size 8 (n=256)
+    Bootstrap median best: 1e-07
+    95% bootstrap CI: [1e-08, 1e-06]
+    Observed best run: 1e-07 (RMSE=1.019406212e-05)
+  Batch size 16 (n=256)
+    Bootstrap median best: 1e-07
+    95% bootstrap CI: [1e-08, 1e-06]
+    Observed best run: 1e-07 (RMSE=1.078922212e-05)
+  Batch size 32 (n=256)
+    Bootstrap median best: 1e-07
+    95% bootstrap CI: [1e-08, 1e-07]
+    Observed best run: 1e-07 (RMSE=1.019727055e-05)
+  Batch size 64 (n=256)
+    Bootstrap median best: 1e-07
+    95% bootstrap CI: [1e-08, 1e-06]
+    Observed best run: 1e-07 (RMSE=1.067006219e-05)
+
+Optimizer: SGDH_H1
+------------------
+
+Hparam: lr
+Type: numeric
+Bootstrap repeats: 10000
+
+  Batch size 4 (n=256)
+    Bootstrap median best: 0.007608365605
+    95% bootstrap CI: [0.00598080097, 0.01603678895]
+    Observed best run: 0.00598080097 (RMSE=1.053884448e-05)
+  Batch size 8 (n=256)
+    Bootstrap median best: 0.01566422663
+    95% bootstrap CI: [0.01037089446, 0.02513445386]
+    Observed best run: 0.01037089446 (RMSE=1.001541834e-05)
+  Batch size 16 (n=256)
+    Bootstrap median best: 0.02143058089
+    95% bootstrap CI: [0.01603678895, 0.06456431322]
+    Observed best run: 0.01813689748 (RMSE=1.000912647e-05)
+  Batch size 32 (n=256)
+    Bootstrap median best: 0.05003593864
+    95% bootstrap CI: [0.03358373884, 0.1049254649]
+    Observed best run: 0.03358373884 (RMSE=1.014832803e-05)
+  Batch size 64 (n=256)
+    Bootstrap median best: 0.09197172855
+    95% bootstrap CI: [0.06456431322, 0.1679025169]
+    Observed best run: 0.09197172855 (RMSE=1.02188282e-05)
+
+Hparam: lr_decay
+Type: numeric
+Bootstrap repeats: 10000
+
+  Batch size 4 (n=256)
+    Bootstrap median best: 4.414721044
+    95% bootstrap CI: [3.816378035, 5.398004381]
+    Observed best run: 3.816378035 (RMSE=1.053884448e-05)
+  Batch size 8 (n=256)
+    Bootstrap median best: 4.913356232
+    95% bootstrap CI: [4.279155943, 5.398004381]
+    Observed best run: 4.656423883 (RMSE=1.001541834e-05)
+  Batch size 16 (n=256)
+    Bootstrap median best: 4.64638827
+    95% bootstrap CI: [4.279155943, 5.192430357]
+    Observed best run: 4.64638827 (RMSE=1.000912647e-05)
+  Batch size 32 (n=256)
+    Bootstrap median best: 4.311800361
+    95% bootstrap CI: [4.034187685, 5.065533795]
+    Observed best run: 4.034187685 (RMSE=1.014832803e-05)
+  Batch size 64 (n=256)
+    Bootstrap median best: 4.798841163
+    95% bootstrap CI: [3.795964467, 5.430738046]
+    Observed best run: 4.798841163 (RMSE=1.02188282e-05)
+
+Hparam: lr_power
+Type: numeric
+Bootstrap repeats: 10000
+
+  Batch size 4 (n=256)
+    Bootstrap median best: 1
+    95% bootstrap CI: [0.5, 1]
+    Observed best run: 1 (RMSE=1.053884448e-05)
+  Batch size 8 (n=256)
+    Bootstrap median best: 1
+    95% bootstrap CI: [0.5, 1]
+    Observed best run: 1 (RMSE=1.001541834e-05)
+  Batch size 16 (n=256)
+    Bootstrap median best: 1
+    95% bootstrap CI: [0.5, 1]
+    Observed best run: 1 (RMSE=1.000912647e-05)
+  Batch size 32 (n=256)
+    Bootstrap median best: 1
+    95% bootstrap CI: [0.5, 1]
+    Observed best run: 1 (RMSE=1.014832803e-05)
+  Batch size 64 (n=256)
+    Bootstrap median best: 1
+    95% bootstrap CI: [0.5, 1]
+    Observed best run: 1 (RMSE=1.02188282e-05)
+
+Hparam: sample_mode
+Type: categorical
+Bootstrap repeats: 10000
+Categories: fixed_cycle, shuffle_cycle
+Category codes follow the category order above.
+
+  Batch size 4 (n=256)
+    Bootstrap median best: fixed_cycle
+    95% bootstrap CI: [fixed_cycle, shuffle_cycle]
+    Encoded median/CI: 0 [0, 1]
+    Observed best run: shuffle_cycle (RMSE=1.053884448e-05)
+  Batch size 8 (n=256)
+    Bootstrap median best: fixed_cycle
+    95% bootstrap CI: [fixed_cycle, shuffle_cycle]
+    Encoded median/CI: 0 [0, 1]
+    Observed best run: shuffle_cycle (RMSE=1.001541834e-05)
+  Batch size 16 (n=256)
+    Bootstrap median best: fixed_cycle
+    95% bootstrap CI: [fixed_cycle, shuffle_cycle]
+    Encoded median/CI: 0 [0, 1]
+    Observed best run: shuffle_cycle (RMSE=1.000912647e-05)
+  Batch size 32 (n=256)
+    Bootstrap median best: fixed_cycle
+    95% bootstrap CI: [fixed_cycle, shuffle_cycle]
+    Encoded median/CI: 0 [0, 1]
+    Observed best run: fixed_cycle (RMSE=1.014832803e-05)
+  Batch size 64 (n=256)
+    Bootstrap median best: fixed_cycle
+    95% bootstrap CI: [fixed_cycle, shuffle_cycle]
+    Encoded median/CI: 0 [0, 1]
+    Observed best run: fixed_cycle (RMSE=1.02188282e-05)
+
+Hparam: momentum
+Type: numeric
+Bootstrap repeats: 10000
+
+  Batch size 4 (n=256)
+    Bootstrap median best: 0.8
+    95% bootstrap CI: [0.7, 0.9]
+    Observed best run: 0.8 (RMSE=1.053884448e-05)
+  Batch size 8 (n=256)
+    Bootstrap median best: 0.8
+    95% bootstrap CI: [0.5, 0.9]
+    Observed best run: 0.8 (RMSE=1.001541834e-05)
+  Batch size 16 (n=256)
+    Bootstrap median best: 0.8
+    95% bootstrap CI: [0.5, 0.9]
+    Observed best run: 0.8 (RMSE=1.000912647e-05)
+  Batch size 32 (n=256)
+    Bootstrap median best: 0.5
+    95% bootstrap CI: [0, 0.7]
+    Observed best run: 0.5 (RMSE=1.014832803e-05)
+  Batch size 64 (n=256)
+    Bootstrap median best: 0
+    95% bootstrap CI: [0, 0.9]
+    Observed best run: 0 (RMSE=1.02188282e-05)
+

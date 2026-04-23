@@ -515,3 +515,47 @@ hparams["eps"] = rng.choice((1e-8, 1e-7, 1e-6))
 20 * 64 * 2 = 2560
 
 python train_learnable_softmax.py > softmax2.log 2>&1
+
+
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under the hyperball directory and modify only hyperball/train_learnable_softmax.py.
+
+write code that does full hparam search for AdamH1 and SGDH1. log all the hparams and the clean RMSE, and duration for each individual run. the search space is specified below. 
+
+this hparam search should be the default behavior of running python train_learnable_softmax.py
+
+iterate over each batch size. each batch size gets exactly 50 runs.
+given the batch size, sample the other hparams as follows. there are some optimizer-specific stuff too. be careful of that. 
+
+there should be 10*2*50=1000 runs
+
+
+fix num samples at 30000. 
+batch_size in {1,2,4,8,16,32,64,128,256,512}
+steps = 30000/batch_size rounded. 
+sample_mode =fixed_cycle
+lr_schedule 'exp_power'
+lr_power in uniform(0.8,1.2)
+lr_decay in uniform(2.5,6)
+SGDH1
+momentum in {0, 0.5, 0.7, 0.8, 0.9}
+predicted_lr(batch_size) = 0.001409420528 * batch_size + 0.002388538963
+lr in log_uniform(predicted_lr/10, predicted_lr*10)
+AdamH1
+hparams["beta1"] = rng.choice((0.0, 0.5, 0.8, 0.9, 0.95))
+hparams["beta2"] = rng.choice((0.9, 0.95, 0.99, 0.999))
+hparams["eps"] = rng.choice((1e-8, 1e-7, 1e-6))
+lr(batch_size) = 0.001215494191 * batch_size + 0.009600782619
+lr in log_uniform(predicted_lr/10, predicted_lr*10)
+
+
+
+
+SGDH_H1:
+lr(batch_size) = 0.001409420528 * batch_size + 0.002388538963
+R^2 = 0.9951
+
+AdamH_H1:
+lr(batch_size) = 0.001215494191 * batch_size + 0.009600782619
+R^2 = 0.7929
