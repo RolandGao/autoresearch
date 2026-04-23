@@ -26,3 +26,4 @@ beam_search_checkpoints/
 *.log
 sgd_ablation/
 softmax_hparam_plots/
+sgdh_ablation2_variant_plots/

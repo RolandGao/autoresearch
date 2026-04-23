@@ -614,3 +614,27 @@ python train_learnable_softmax2.py > sgdh_ablation.log 2>&1
 batch size tolerance is important
 
 i think the boostrap CI sampling 100 depends on how many samples you have. 
+
+use the best found hparams to train the models again +- CI and then compare.
+
+check the norm implementation
+
+
+gnorm x momentum has some interactions, given that the update is always normed. 
+if momentum > 0, gnorm = False can enable locally relative norm sizes for g. 
+gnorm = True would destroy the locally relative information. 
+if momentum = 0, gnorm does not matter. 
+this momentum > 0 and gnorm = False interaction is similar to adaptive gnorm. perhaps we can decouple adaptive gnorm from momentum. TODO
+update norm can be challenged too. perhaps some adaptive thing is better. 
+
+gnorm is false, nesterov is true. it does not matter whether g projection and m projection exist. 
+gnorm is OK when batch size is large, but bad when batch size is small. find something that works both when bs is large and small. 
+
+
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under the hyperball directory and modify only hyperball/train_learnable_softmax3.py.
+
+
+
+python train_learnable_softmax3.py > sgd_ablations3.log 2>&1
