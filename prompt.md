@@ -638,3 +638,91 @@ work under the hyperball directory and modify only hyperball/train_learnable_sof
 
 
 python train_learnable_softmax3.py > sgd_ablations3.log 2>&1
+
+here is SGD with momentum with g norm. the problem with this is that when batch size is large, it works pretty well but when batch size is small, the g norm makes things a lot worse. i think the reason is that the norm of g actually holds information about how hard the sample is and g norm removes that information
+
+
+
+ALSO, beta should increase over time, aka ideal batch size should increase over time. we need to capture hard samples in one batch. 
+if the model becomes too good, loss too low, then we need a larger batch size to find hard samples. 
+
+Adam is for scalars. ours is for vectors. ours is basically Adam for vectors. 
+TODO: check out NorMuon. I think it might be related. 
+
+EMA(norm_value) is more correct than sqrt(EMA(norm_value^2)) cuz we want to imitate an unnormalized layer with a specifically tuned lr.
+the purpose of normalizing is so that it's two different layers can use the same lr instead of having a different lr per layer as in the unnormalized case. 
+
+1 x 10 times and 10 x 1 time should be the same as 10 x 10 times and 100 x 1 time. and {2,3,4} should be the same as {3,3,3}. 
+
+denom bias correction makes sense, but numerator bias correction will cause the first few gradients to count for too much. 
+
+how do we know the ideal batch size? the goal is that a batch of the ideal batch size should almost always contain a hard example that gives high loss. 
+
+when batch size large enough, beta2 = 0 and it goes back to u = normalize(u)
+
+the ideal batch size for beta2 might not actually scale with loss. 
+the ideal batch size for beta2 is the number samples required to capture the variance of the distribution.
+if all the samples are equally easy or equally hard, beta2 is the same for both.
+we can try to measure the variance of the gradient norm across batches and use that to calculate beta2. 
+beta2 might be proportional to the slope of loss. 
+
+the ideal batch size for beta depends on whether a sample of ideal batch size can capture most of the variation of the distribution of the gradient norm or loss. find a way to do this without extra forward or backward passes
+
+
+
+beta2 = max(0.0, 1.0 - (batch_size / ideal_batch_size))
+
+SGD2: p, grad, m, v, beta1, beta2, lr, step
+
+m = beta1 * m + (1-beta1) * g
+v = beta2 * v + (1-beta2) * norm(g)
+v_hat = v / (1 - beta2 ** step)
+if nesterov:
+    u = (1-beta1) * g + beta1 * m
+else:
+    u = m
+u = u / v_hat
+p = p - lr * u
+p = p/norm(p)
+
+
+work under autoresearch directory. python is /venv/main/bin/python.
+work under the hyperball directory and modify only hyperball/train_optimizers.py.
+
+conduct hparam search using the following search space. 
+5 optimizers x 3 batchsize x 100 runs = 1500 runs total.
+
+remove old/unused code. 
+
+AdamW, AdamH, Muon, MuonH, SGD
+batchsize in {8,64,512}
+step_size = 30000/batchsize rounded
+predicted_lr = 0.00227815808734 * batch_size - 0.025830735378
+lr in log_uniform(predicted_lr/10, predicted_lr*10)
+sample_mode =fixed_cycle
+lr_schedule 'exp_power'
+lr_power = 1
+lr_decay in uniform(3.5,6.5)
+Muon, MuonH, SGD: 
+momentum in uniform(0,1)
+AdamW, AdamH. 
+hparams["beta1"] = rng.choice((0.0, 0.5, 0.8, 0.9, 0.95))
+hparams["beta2"] = rng.choice((0.9, 0.95, 0.99, 0.999))
+hparams["eps"] = rng.choice((1e-8, 1e-7, 1e-6))
+AdamW, Muon, SGD:
+wd in log_uniform(1e-5, 1e-1)
+
+
+
+, SGD2
+
+
+1. yes
+2. integer step size
+3. the H variants have no wd. their implementation is as follows the non-H variant except that 
+p = p - lr * u / norm(u)
+p = p/norm(p)
+4.
+
+
+python train_optimizers.py > optimizers_logging.log 2>&1
