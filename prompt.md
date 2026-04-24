@@ -726,3 +726,5 @@ p = p/norm(p)
 
 
 python train_optimizers.py > optimizers_logging.log 2>&1
+
+mHC from deepseek might be what i need
