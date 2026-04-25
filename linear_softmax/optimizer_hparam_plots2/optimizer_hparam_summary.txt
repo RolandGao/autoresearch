@@ -1,0 +1,179 @@
+Optimizer hparam plot summary
+=============================
+
+Input log: /workspace/neural_networks_optimization/autoresearch/linear_softmax/optimizers_logging2.log
+Rows: 1781
+Optimizers: AdamW, AdamH, Muon, MuonH, SGD, SGD2
+
+AdamW
+-----
+Figure: optimizer_AdamW.png
+Rows: 300
+Batch sizes: 8, 64, 512
+Hparams: lr, lr_decay, beta1, beta2, eps, wd
+
+lr
+  batch_size=8: median=0.01757455821, 95% CI=[0.007949869969, 0.05097395336]; observed_best=0.04649465625; best_rmse=1.153538558e-05
+  batch_size=64: median=0.01609600834, 95% CI=[0.009994622979, 0.07667694138]; observed_best=0.01099062258; best_rmse=1.22721072e-05
+  batch_size=512: median=0.06091314718, 95% CI=[0.0296705211, 0.2542992133]; observed_best=0.07920270291; best_rmse=2.054177445e-05
+
+lr_decay
+  batch_size=8: median=3.817056241, 95% CI=[3.363532917, 5.530452552]; observed_best=3.744264746; best_rmse=1.153538558e-05
+  batch_size=64: median=3.644229884, 95% CI=[2.393872547, 5.027447593]; observed_best=3.385274672; best_rmse=1.22721072e-05
+  batch_size=512: median=3.833734203, 95% CI=[2.582551193, 5.361479877]; observed_best=4.409117221; best_rmse=2.054177445e-05
+
+beta1
+  batch_size=8: median=0.9, 95% CI=[0, 0.9]; observed_best=0.5; best_rmse=1.153538558e-05
+  batch_size=64: median=0, 95% CI=[0, 0.95]; observed_best=0; best_rmse=1.22721072e-05
+  batch_size=512: median=0.8, 95% CI=[0, 0.95]; observed_best=0.5; best_rmse=2.054177445e-05
+
+beta2
+  batch_size=8: median=0.95, 95% CI=[0.9, 0.99]; observed_best=0.95; best_rmse=1.153538558e-05
+  batch_size=64: median=0.9, 95% CI=[0.9, 0.999]; observed_best=0.9; best_rmse=1.22721072e-05
+  batch_size=512: median=0.95, 95% CI=[0.95, 0.999]; observed_best=0.95; best_rmse=2.054177445e-05
+
+eps
+  batch_size=8: median=1e-07, 95% CI=[1e-08, 1e-06]; observed_best=1e-06; best_rmse=1.153538558e-05
+  batch_size=64: median=1e-08, 95% CI=[1e-08, 1e-07]; observed_best=1e-08; best_rmse=1.22721072e-05
+  batch_size=512: median=1e-08, 95% CI=[1e-08, 1e-07]; observed_best=1e-08; best_rmse=2.054177445e-05
+
+wd
+  batch_size=8: median=5.182499237e-06, 95% CI=[3.061801108e-07, 0.002316276397]; observed_best=5.603049935e-05; best_rmse=1.153538558e-05
+  batch_size=64: median=9.22561702e-05, 95% CI=[1.931971327e-06, 0.003720770899]; observed_best=5.996518818e-05; best_rmse=1.22721072e-05
+  batch_size=512: median=0.3041004556, 95% CI=[0.0005244767961, 1.420158032]; observed_best=0.5916240331; best_rmse=2.054177445e-05
+
+AdamH
+-----
+Figure: optimizer_AdamH.png
+Rows: 300
+Batch sizes: 8, 64, 512
+Hparams: lr, lr_decay, beta1, beta2, eps
+
+lr
+  batch_size=8: median=0.01456653196, 95% CI=[0.01203692777, 0.08517022769]; observed_best=0.01456653196; best_rmse=1.025351564e-05
+  batch_size=64: median=0.09622080537, 95% CI=[0.08556383484, 0.2482260597]; observed_best=0.08929934489; best_rmse=1.012207752e-05
+  batch_size=512: median=1.529256658, 95% CI=[0.5917791191, 7.488801703]; observed_best=0.5917791191; best_rmse=1.053350703e-05
+
+lr_decay
+  batch_size=8: median=5.497542373, 95% CI=[4.275749757, 6.842096604]; observed_best=5.497542373; best_rmse=1.025351564e-05
+  batch_size=64: median=5.75776867, 95% CI=[4.28694205, 6.73362818]; observed_best=5.879222865; best_rmse=1.012207752e-05
+  batch_size=512: median=6.311670032, 95% CI=[4.591742905, 7.311420704]; observed_best=6.311670032; best_rmse=1.053350703e-05
+
+beta1
+  batch_size=8: median=0.8, 95% CI=[0.5, 0.95]; observed_best=0.8; best_rmse=1.025351564e-05
+  batch_size=64: median=0.5, 95% CI=[0, 0.8]; observed_best=0.5; best_rmse=1.012207752e-05
+  batch_size=512: median=0, 95% CI=[0, 0.5]; observed_best=0; best_rmse=1.053350703e-05
+
+beta2
+  batch_size=8: median=0.99, 95% CI=[0.9, 0.999]; observed_best=0.999; best_rmse=1.025351564e-05
+  batch_size=64: median=0.95, 95% CI=[0.9, 0.999]; observed_best=0.9; best_rmse=1.012207752e-05
+  batch_size=512: median=0.95, 95% CI=[0.9, 0.999]; observed_best=0.95; best_rmse=1.053350703e-05
+
+eps
+  batch_size=8: median=1e-06, 95% CI=[1e-08, 1e-06]; observed_best=1e-06; best_rmse=1.025351564e-05
+  batch_size=64: median=1e-07, 95% CI=[1e-08, 1e-06]; observed_best=1e-06; best_rmse=1.012207752e-05
+  batch_size=512: median=1e-06, 95% CI=[1e-08, 1e-06]; observed_best=1e-06; best_rmse=1.053350703e-05
+
+Muon
+----
+Figure: optimizer_Muon.png
+Rows: 300
+Batch sizes: 8, 64, 512
+Hparams: lr, lr_decay, momentum, wd
+
+lr
+  batch_size=8: median=0.0373076675, 95% CI=[0.01413892294, 0.1135694489]; observed_best=0.0373076675; best_rmse=1.203537924e-05
+  batch_size=64: median=0.07456096658, 95% CI=[0.03452128993, 0.1646217428]; observed_best=0.05121736117; best_rmse=1.291647412e-05
+  batch_size=512: median=0.3210092081, 95% CI=[0.1900415235, 0.4278455881]; observed_best=0.3363184555; best_rmse=1.323232583e-05
+
+lr_decay
+  batch_size=8: median=4.975357015, 95% CI=[4.070539682, 6.441240933]; observed_best=4.070539682; best_rmse=1.203537924e-05
+  batch_size=64: median=3.990809719, 95% CI=[3.77138161, 6.631451894]; observed_best=3.990809719; best_rmse=1.291647412e-05
+  batch_size=512: median=5.328442176, 95% CI=[3.844639393, 6.050403367]; observed_best=5.328442176; best_rmse=1.323232583e-05
+
+momentum
+  batch_size=8: median=0.272667754, 95% CI=[0.1123199813, 0.6007137225]; observed_best=0.1725390094; best_rmse=1.203537924e-05
+  batch_size=64: median=0.4079460854, 95% CI=[0.06422982442, 0.8652042255]; observed_best=0.2982766532; best_rmse=1.291647412e-05
+  batch_size=512: median=0.1092902549, 95% CI=[0.04117736106, 0.8052357114]; observed_best=0.09869462529; best_rmse=1.323232583e-05
+
+wd
+  batch_size=8: median=1.005550472e-05, 95% CI=[3.474487151e-07, 0.000696896049]; observed_best=1.86597336e-05; best_rmse=1.203537924e-05
+  batch_size=64: median=0.0003078993475, 95% CI=[1.99284967e-05, 0.00390090904]; observed_best=0.0001873173784; best_rmse=1.291647412e-05
+  batch_size=512: median=0.003539546572, 95% CI=[0.0001262856878, 0.08487474397]; observed_best=0.003539546572; best_rmse=1.323232583e-05
+
+MuonH
+-----
+Figure: optimizer_MuonH.png
+Rows: 300
+Batch sizes: 8, 64, 512
+Hparams: lr, lr_decay, momentum
+
+lr
+  batch_size=8: median=0.002831497554, 95% CI=[0.001585563512, 0.01506045974]; observed_best=0.002117291385; best_rmse=1.097999504e-05
+  batch_size=64: median=0.02227870369, 95% CI=[0.01439495391, 0.03804577666]; observed_best=0.01509074963; best_rmse=1.064245405e-05
+  batch_size=512: median=0.1253942412, 95% CI=[0.07919590403, 0.3242594421]; observed_best=0.1149607062; best_rmse=1.076919281e-05
+
+lr_decay
+  batch_size=8: median=5.470483404, 95% CI=[3.875068701, 6.364820109]; observed_best=3.875068701; best_rmse=1.097999504e-05
+  batch_size=64: median=5.761317725, 95% CI=[4.343178486, 6.846141128]; observed_best=5.761317725; best_rmse=1.064245405e-05
+  batch_size=512: median=6.086793785, 95% CI=[4.643556568, 7.545280476]; observed_best=5.640078824; best_rmse=1.076919281e-05
+
+momentum
+  batch_size=8: median=0.4734553165, 95% CI=[0.1688470776, 0.9659944445]; observed_best=0.2645013816; best_rmse=1.097999504e-05
+  batch_size=64: median=0.5532870697, 95% CI=[0.1156599599, 0.8120440432]; observed_best=0.7066613783; best_rmse=1.064245405e-05
+  batch_size=512: median=0.1694417705, 95% CI=[0.02485293328, 0.4403040272]; observed_best=0.02485293328; best_rmse=1.076919281e-05
+
+SGD
+---
+Figure: optimizer_SGD.png
+Rows: 281
+Batch sizes: 8, 64, 512
+Hparams: lr, lr_decay, momentum, wd
+
+lr
+  batch_size=8: median=0.9066405476, 95% CI=[0.04457127455, 1.560847872]; observed_best=1.334054794; best_rmse=0.0002678630006
+  batch_size=64: median=4.243833048, 95% CI=[1.346831903, 5.783233815]; observed_best=2.766294485; best_rmse=0.0002678730112
+  batch_size=512: median=10.02845734, 95% CI=[0.2651272056, 18.22322656]; observed_best=18.22322656; best_rmse=0.0002678742663
+
+lr_decay
+  batch_size=8: median=5.474818241, 95% CI=[3.562796663, 6.352066117]; observed_best=5.910084903; best_rmse=0.0002678630006
+  batch_size=64: median=4.43985012, 95% CI=[3.272331969, 5.952523047]; observed_best=4.43985012; best_rmse=0.0002678730112
+  batch_size=512: median=5.312445117, 95% CI=[3.369595416, 6.047342862]; observed_best=5.969534126; best_rmse=0.0002678742663
+
+momentum
+  batch_size=8: median=0.9405096658, 95% CI=[0.05828019101, 0.9885441575]; observed_best=0.9405096658; best_rmse=0.0002678630006
+  batch_size=64: median=0.455900442, 95% CI=[0.08676064188, 0.8073028423]; observed_best=0.8073028423; best_rmse=0.0002678730112
+  batch_size=512: median=0.7591567661, 95% CI=[0.05192598595, 0.915985822]; observed_best=0.7329476719; best_rmse=0.0002678742663
+
+wd
+  batch_size=8: median=0.0395312345, 95% CI=[0.005158108665, 0.2873103319]; observed_best=0.005158108665; best_rmse=0.0002678630006
+  batch_size=64: median=0.02026938404, 95% CI=[0.01278958154, 0.1680880155]; observed_best=0.02026938404; best_rmse=0.0002678730112
+  batch_size=512: median=0.156467576, 95% CI=[0.05772537581, 1.932387507]; observed_best=0.05772537581; best_rmse=0.0002678742663
+
+SGD2
+----
+Figure: optimizer_SGD2.png
+Rows: 300
+Batch sizes: 8, 64, 512
+Hparams: lr, lr_decay, beta1, beta2
+
+lr
+  batch_size=8: median=0.03615338131, 95% CI=[0.03223052054, 0.1388051566]; observed_best=0.03602616837; best_rmse=1.001560677e-05
+  batch_size=64: median=0.2292062772, 95% CI=[0.1251311416, 0.6457519413]; observed_best=0.2292062772; best_rmse=1.032755625e-05
+  batch_size=512: median=1.127373038, 95% CI=[0.7324184714, 9.558410119]; observed_best=0.8242230356; best_rmse=1.115614111e-05
+
+lr_decay
+  batch_size=8: median=5.25673378, 95% CI=[4.17561812, 6.153197283]; observed_best=5.361332033; best_rmse=1.001560677e-05
+  batch_size=64: median=5.74425841, 95% CI=[5.217427904, 6.413530228]; observed_best=5.74425841; best_rmse=1.032755625e-05
+  batch_size=512: median=5.846629058, 95% CI=[4.994833652, 7.433884346]; observed_best=5.537336258; best_rmse=1.115614111e-05
+
+beta1
+  batch_size=8: median=0.6042366887, 95% CI=[0.08462670869, 0.9123963366]; observed_best=0.9123963366; best_rmse=1.001560677e-05
+  batch_size=64: median=0.3761825807, 95% CI=[0.07633323036, 0.5187947942]; observed_best=0.5047200138; best_rmse=1.032755625e-05
+  batch_size=512: median=0.2863276229, 95% CI=[0.05401876174, 0.5779942289]; observed_best=0.3178286096; best_rmse=1.115614111e-05
+
+beta2
+  batch_size=8: median=0.8, 95% CI=[0.5, 0.9]; observed_best=0.9; best_rmse=1.001560677e-05
+  batch_size=64: median=0.5, 95% CI=[0, 0.9]; observed_best=0.5; best_rmse=1.032755625e-05
+  batch_size=512: median=0.5, 95% CI=[0, 0.8]; observed_best=0.5; best_rmse=1.115614111e-05
+

@@ -728,3 +728,22 @@ p = p/norm(p)
 python train_optimizers.py > optimizers_logging.log 2>&1
 
 mHC from deepseek might be what i need
+
+when batch size is >= critical batch size, momentum = 0 is the best
+
+
+work under autoresearch directory. python is /venv/main/bin/python.
+modify only linear_softmax/train_optimizers3.py
+
+remove unused code. 
+
+now we make the toy dataset more general. the ground truth linear weight is no longer row-wise norm 1. 
+sample the row_norm from mean = 3, std = 0.5. remove samples outside [1,5].
+normalize each row to norm 1 and then multiply to a random sample from row_norm.
+for the H variants of optimizer (AdamH, MuonH, SGD2). there are two versions or reparameterization. one version is a matrix-level norm, with a scalar multiplied afterwards. W = W/|W| * s.
+the second version is a row-level norm, with a scalar per-row multiplied afterwards.
+W = W_i / |W_i| * s_i. 
+For the current experiment, for scalars are set to the ground truth and we focus on training the normalized weight.
+The the non-H variants of optimizer (AdamW, SGD, Muon), they stay the same. 
+
+for the search space, all optimizer's beta1 and momentum are searched from (0.0, 0.5, 0.7, 0.8, 0.9, 0.95). 

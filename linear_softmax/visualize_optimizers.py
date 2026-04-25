@@ -18,11 +18,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-DEFAULT_LOG_NAME = "optimizers_logging.log"
-DEFAULT_OUT_DIR = Path(__file__).with_name("optimizer_hparam_plots")
+DEFAULT_LOG_NAME = "optimizers_logging3.log"
+DEFAULT_OUT_DIR = Path(__file__).with_name("optimizer_hparam_plots3")
 RMSE_KEY = "clean_train_rmse"
 SUMMARY_FILENAME = "optimizer_hparam_summary.txt"
+DEFAULT_BOOTSTRAP_SAMPLES = 10_000
 BOOTSTRAP_QUANTILES = (2.5, 50.0, 97.5)
+BOOTSTRAP_SAMPLE_FRACTION = 0.25
 PREFERRED_OPTIMIZER_ORDER = ("AdamW", "AdamH", "Muon", "MuonH", "SGD", "SGD2")
 PREFERRED_HPARAM_ORDER = (
     "lr",
@@ -90,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--bootstrap-samples",
         type=int,
-        default=10000,
+        default=DEFAULT_BOOTSTRAP_SAMPLES,
         help="Bootstrap resamples used for empirical 95%% hparam intervals.",
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed.")
@@ -99,7 +101,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def default_log_path() -> Path:
-    candidates = sorted(Path(__file__).resolve().parents[1].glob(f"**/{DEFAULT_LOG_NAME}"))
+    candidates = sorted(
+        Path(__file__).resolve().parents[1].glob(f"**/{DEFAULT_LOG_NAME}")
+    )
     if len(candidates) != 1:
         raise FileNotFoundError(
             f"expected exactly one {DEFAULT_LOG_NAME}, found {len(candidates)}: "
@@ -122,6 +126,8 @@ def normalize_value(value: Any) -> Any:
 
 def format_value(value: Any) -> str:
     if isinstance(value, float):
+        if not math.isfinite(value):
+            return str(value)
         if math.isclose(value, round(value), rel_tol=0.0, abs_tol=1e-12):
             return str(int(round(value)))
         return f"{value:.10g}"
@@ -152,6 +158,8 @@ def grouped_rows(
 
 def read_run_summaries(log_path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    candidate_rows = 0
+    skipped_nonfinite = 0
     with log_path.open("r", encoding="utf-8") as handle:
         for line_num, line in enumerate(handle, start=1):
             line = line.strip()
@@ -165,8 +173,22 @@ def read_run_summaries(log_path: Path) -> list[dict[str, Any]]:
             except json.JSONDecodeError as exc:
                 raise ValueError(f"invalid JSON on {log_path}:{line_num}") from exc
             if RMSE_KEY in row and "optimizer" in row and "batch_size" in row:
+                candidate_rows += 1
+                try:
+                    rmse = float(row[RMSE_KEY])
+                except (TypeError, ValueError):
+                    skipped_nonfinite += 1
+                    continue
+                if not math.isfinite(rmse):
+                    skipped_nonfinite += 1
+                    continue
                 rows.append(row)
     if not rows:
+        if candidate_rows:
+            raise ValueError(
+                f"no finite RUN_SUMMARY rows with {RMSE_KEY!r} found in {log_path}; "
+                f"skipped {skipped_nonfinite} invalid/non-finite rows"
+            )
         raise ValueError(f"no RUN_SUMMARY rows with {RMSE_KEY!r} found in {log_path}")
     return rows
 
@@ -220,7 +242,7 @@ def bootstrap_best_hparam_values(
         return np.array([], dtype=object)
     rmses = np.array([float(row[RMSE_KEY]) for row in rows], dtype=float)
     values = np.array([normalize_value(row[hparam]) for row in rows], dtype=object)
-    sample_size = len(rows)
+    sample_size = max(1, round(len(rows) * BOOTSTRAP_SAMPLE_FRACTION))
     sampled_idx = rng.integers(0, len(rows), size=(num_samples, sample_size))
     sampled_rmses = rmses[sampled_idx]
     best_positions = np.argmin(sampled_rmses, axis=1)
@@ -239,7 +261,10 @@ def summarize_hparam(
     observed_best = best_row(rows)
     boot_values = bootstrap_best_hparam_values(rows, hparam, rng, bootstrap_samples)
 
-    if all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in values):
+    if all(
+        isinstance(value, (int, float)) and not isinstance(value, bool)
+        for value in values
+    ):
         observed_value = float(observed_best[hparam])
         if len(boot_values):
             lo, median, hi = np.percentile(
@@ -263,7 +288,9 @@ def summarize_hparam(
     encoded_values = np.array([positions[value] for value in values], dtype=float)
     observed_value = normalize_value(observed_best[hparam])
     if len(boot_values):
-        boot_encoded = np.array([positions[value] for value in boot_values], dtype=float)
+        boot_encoded = np.array(
+            [positions[value] for value in boot_values], dtype=float
+        )
         lo, median, hi = np.percentile(boot_encoded, BOOTSTRAP_QUANTILES)
     else:
         lo = median = hi = float(positions[observed_value])
@@ -363,7 +390,10 @@ def draw_ci_vs_batch_subplot(
 
     if first["kind"] == "numeric":
         observed = np.array(
-            [float(summaries_by_batch[batch]["observed_best_value"]) for batch in batch_sizes],
+            [
+                float(summaries_by_batch[batch]["observed_best_value"])
+                for batch in batch_sizes
+            ],
             dtype=float,
         )
         medians = np.array(
@@ -381,7 +411,9 @@ def draw_ci_vs_batch_subplot(
         ax.fill_between(batch_sizes, lo, hi, color="#b83232", alpha=0.14)
         ax.plot(batch_sizes, medians, color="#b83232", marker="o", linewidth=1.5)
         ax.scatter(batch_sizes, observed, color="#256d85", s=34, zorder=4)
-        if hparam in LOG_SCALE_HPARAMS and finite_positive(np.concatenate([observed, medians, lo, hi])):
+        if hparam in LOG_SCALE_HPARAMS and finite_positive(
+            np.concatenate([observed, medians, lo, hi])
+        ):
             ax.set_yscale("log")
         ax.set_ylabel(hparam)
     else:
@@ -538,7 +570,9 @@ def write_summary(
             handle.write("-" * len(optimizer) + "\n")
             handle.write(f"Figure: optimizer_{safe_filename(optimizer)}.png\n")
             handle.write(f"Rows: {len(optimizer_groups[optimizer])}\n")
-            handle.write(f"Batch sizes: {', '.join(str(batch) for batch in batch_sizes)}\n")
+            handle.write(
+                f"Batch sizes: {', '.join(str(batch) for batch in batch_sizes)}\n"
+            )
             handle.write(f"Hparams: {', '.join(hparams)}\n")
             for hparam in hparams:
                 handle.write(f"\n{hparam}\n")
