@@ -26,6 +26,7 @@ DEFAULT_BOOTSTRAP_SAMPLES = 10_000
 BOOTSTRAP_QUANTILES = (2.5, 50.0, 97.5)
 BOOTSTRAP_SAMPLE_FRACTION = 0.25
 PREFERRED_OPTIMIZER_ORDER = ("AdamW", "AdamH", "Muon", "MuonH", "SGD", "SGD2")
+H_NORM_ORDER = ("matrix", "row")
 PREFERRED_HPARAM_ORDER = (
     "lr",
     "lr_decay",
@@ -46,6 +47,7 @@ NON_SEARCH_KEYS = {
     "duration_sec",
     "elapsed_sec",
     "final_train_loss",
+    "h_norm",
     "lr_power",
     "lr_schedule",
     "num_candidates",
@@ -64,6 +66,10 @@ NON_SEARCH_KEYS = {
     "target_met",
     "training_elapsed_sec",
     "variant",
+    "effective_weight_matrix_norm",
+    "effective_weight_row_norm_mean",
+    "effective_weight_row_norm_std",
+    "weight_matrix_norm",
     "weight_row_norm_mean",
     "weight_row_norm_std",
 }
@@ -72,16 +78,16 @@ NON_SEARCH_KEYS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Create one figure per optimizer from optimizers_logging.log. Each "
-            "hparam row contains RMSE-vs-hparam subplots for every batch size "
-            "and one bootstrap hparam-CI-vs-batch-size subplot."
+            "Create one figure per optimizer variant from optimizers_logging3.log. "
+            "Each hparam row contains RMSE-vs-hparam subplots for every batch "
+            "size and one bootstrap hparam-CI-vs-batch-size subplot."
         )
     )
     parser.add_argument(
         "--log",
         type=Path,
         default=None,
-        help="Input log file. Defaults to the single optimizers_logging.log under this repo.",
+        help=f"Input log file. Defaults to the single {DEFAULT_LOG_NAME} under this repo.",
     )
     parser.add_argument(
         "--out-dir",
@@ -201,6 +207,30 @@ def optimizer_sort_key(name: str) -> tuple[int, str]:
     if name in PREFERRED_OPTIMIZER_ORDER:
         return (PREFERRED_OPTIMIZER_ORDER.index(name), name)
     return (len(PREFERRED_OPTIMIZER_ORDER), name)
+
+
+def plot_group_name(row: dict[str, Any]) -> str:
+    variant = row.get("variant")
+    if isinstance(variant, str) and variant:
+        return variant
+    optimizer = str(row["optimizer"])
+    h_norm = row.get("h_norm")
+    if h_norm is None:
+        return optimizer
+    return f"{optimizer}_{h_norm}"
+
+
+def plot_group_sort_key(name: str) -> tuple[int, int, str]:
+    base_optimizer = name
+    h_norm_index = -1
+    for idx, h_norm in enumerate(H_NORM_ORDER):
+        suffix = f"_{h_norm}"
+        if name.endswith(suffix):
+            base_optimizer = name[: -len(suffix)]
+            h_norm_index = idx
+            break
+    optimizer_index = optimizer_sort_key(base_optimizer)[0]
+    return (optimizer_index, h_norm_index, name)
 
 
 def hparams_for_optimizer(rows: list[dict[str, Any]]) -> list[str]:
@@ -478,18 +508,18 @@ def format_ci(summary: dict[str, Any]) -> str:
 
 
 def plot_optimizer_figure(
-    optimizer: str,
-    optimizer_rows: list[dict[str, Any]],
+    plot_group: str,
+    plot_rows: list[dict[str, Any]],
     out_dir: Path,
     rng: np.random.Generator,
     bootstrap_samples: int,
     dpi: int,
 ) -> tuple[Path, list[str], dict[tuple[int, str], dict[str, Any]]]:
-    hparams = hparams_for_optimizer(optimizer_rows)
+    hparams = hparams_for_optimizer(plot_rows)
     if not hparams:
-        raise ValueError(f"no varying searched hparams found for optimizer {optimizer}")
+        raise ValueError(f"no varying searched hparams found for {plot_group}")
 
-    batch_groups = grouped_rows(optimizer_rows, lambda row: int(row["batch_size"]))
+    batch_groups = grouped_rows(plot_rows, lambda row: int(row["batch_size"]))
     batch_sizes = sorted(batch_groups)
     summaries: dict[tuple[int, str], dict[str, Any]] = {}
     for batch_size in batch_sizes:
@@ -526,8 +556,8 @@ def plot_optimizer_figure(
             hparam,
         )
 
-    fig.suptitle(f"{optimizer} hparam search", fontsize=15, y=0.998)
-    out_path = out_dir / f"optimizer_{safe_filename(optimizer)}.png"
+    fig.suptitle(f"{plot_group} hparam search", fontsize=15, y=0.998)
+    out_path = out_dir / f"optimizer_{safe_filename(plot_group)}.png"
     fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
     return out_path, hparams, summaries
@@ -545,9 +575,9 @@ def write_summary(
     out_path: Path,
     log_path: Path,
     rows: list[dict[str, Any]],
-    optimizer_groups: dict[str, list[dict[str, Any]]],
-    optimizer_hparams: dict[str, list[str]],
-    optimizer_summaries: dict[str, dict[tuple[int, str], dict[str, Any]]],
+    plot_groups: dict[str, list[dict[str, Any]]],
+    plot_hparams: dict[str, list[str]],
+    plot_summaries: dict[str, dict[tuple[int, str], dict[str, Any]]],
 ) -> None:
     with out_path.open("w", encoding="utf-8") as handle:
         handle.write("Optimizer hparam plot summary\n")
@@ -555,21 +585,21 @@ def write_summary(
         handle.write(f"Input log: {log_path}\n")
         handle.write(f"Rows: {len(rows)}\n")
         handle.write(
-            "Optimizers: "
-            + ", ".join(sorted(optimizer_groups, key=optimizer_sort_key))
+            "Plot groups: "
+            + ", ".join(sorted(plot_groups, key=plot_group_sort_key))
             + "\n\n"
         )
 
-        for optimizer in sorted(optimizer_groups, key=optimizer_sort_key):
+        for plot_group in sorted(plot_groups, key=plot_group_sort_key):
             batch_sizes = sorted(
-                {int(row["batch_size"]) for row in optimizer_groups[optimizer]}
+                {int(row["batch_size"]) for row in plot_groups[plot_group]}
             )
-            hparams = optimizer_hparams[optimizer]
-            summaries = optimizer_summaries[optimizer]
-            handle.write(f"{optimizer}\n")
-            handle.write("-" * len(optimizer) + "\n")
-            handle.write(f"Figure: optimizer_{safe_filename(optimizer)}.png\n")
-            handle.write(f"Rows: {len(optimizer_groups[optimizer])}\n")
+            hparams = plot_hparams[plot_group]
+            summaries = plot_summaries[plot_group]
+            handle.write(f"{plot_group}\n")
+            handle.write("-" * len(plot_group) + "\n")
+            handle.write(f"Figure: optimizer_{safe_filename(plot_group)}.png\n")
+            handle.write(f"Rows: {len(plot_groups[plot_group])}\n")
             handle.write(
                 f"Batch sizes: {', '.join(str(batch) for batch in batch_sizes)}\n"
             )
@@ -595,32 +625,32 @@ def main() -> None:
     clean_output_dir(args.out_dir)
     rng = np.random.default_rng(args.seed)
 
-    optimizer_groups = grouped_rows(rows, lambda row: str(row["optimizer"]))
+    plot_groups = grouped_rows(rows, plot_group_name)
     outputs: list[Path] = []
-    optimizer_hparams: dict[str, list[str]] = {}
-    optimizer_summaries: dict[str, dict[tuple[int, str], dict[str, Any]]] = {}
+    plot_hparams: dict[str, list[str]] = {}
+    plot_summaries: dict[str, dict[tuple[int, str], dict[str, Any]]] = {}
 
-    for optimizer in sorted(optimizer_groups, key=optimizer_sort_key):
+    for plot_group in sorted(plot_groups, key=plot_group_sort_key):
         output_path, hparams, summaries = plot_optimizer_figure(
-            optimizer,
-            optimizer_groups[optimizer],
+            plot_group,
+            plot_groups[plot_group],
             args.out_dir,
             rng,
             args.bootstrap_samples,
             args.dpi,
         )
         outputs.append(output_path)
-        optimizer_hparams[optimizer] = hparams
-        optimizer_summaries[optimizer] = summaries
+        plot_hparams[plot_group] = hparams
+        plot_summaries[plot_group] = summaries
 
     summary_path = args.out_dir / SUMMARY_FILENAME
     write_summary(
         summary_path,
         log_path,
         rows,
-        optimizer_groups,
-        optimizer_hparams,
-        optimizer_summaries,
+        plot_groups,
+        plot_hparams,
+        plot_summaries,
     )
 
     print(f"read {len(rows)} rows from {log_path}")
