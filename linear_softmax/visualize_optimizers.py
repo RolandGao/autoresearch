@@ -18,9 +18,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-DEFAULT_LOG_NAME = "optimizers_logging3.log"
-DEFAULT_OUT_DIR = Path(__file__).with_name("optimizer_hparam_plots3")
-RMSE_KEY = "clean_train_rmse"
+DEFAULT_LOG_NAME = "optimizers_logging5.log"
+DEFAULT_OUT_DIR = Path(__file__).with_name("optimizer_hparam_plots5")
+SSE_KEY = "clean_train_sse"
 SUMMARY_FILENAME = "optimizer_hparam_summary.txt"
 DEFAULT_BOOTSTRAP_SAMPLES = 10_000
 BOOTSTRAP_QUANTILES = (2.5, 50.0, 97.5)
@@ -41,8 +41,8 @@ NON_SEARCH_KEYS = {
     "actual_samples",
     "batch_size",
     "candidate_idx",
-    "clean_rmse",
-    "clean_train_rmse",
+    "clean_sse",
+    "clean_train_sse",
     "compiled",
     "duration_sec",
     "elapsed_sec",
@@ -78,8 +78,8 @@ NON_SEARCH_KEYS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Create one figure per optimizer variant from optimizers_logging3.log. "
-            "Each hparam row contains RMSE-vs-hparam subplots for every batch "
+            f"Create one figure per optimizer variant from {DEFAULT_LOG_NAME}. "
+            "Each hparam row contains SSE-vs-hparam subplots for every batch "
             "size and one bootstrap hparam-CI-vs-batch-size subplot."
         )
     )
@@ -178,29 +178,29 @@ def read_run_summaries(log_path: Path) -> list[dict[str, Any]]:
                 row = json.loads(payload)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"invalid JSON on {log_path}:{line_num}") from exc
-            if RMSE_KEY in row and "optimizer" in row and "batch_size" in row:
+            if SSE_KEY in row and "optimizer" in row and "batch_size" in row:
                 candidate_rows += 1
                 try:
-                    rmse = float(row[RMSE_KEY])
+                    sse = float(row[SSE_KEY])
                 except (TypeError, ValueError):
                     skipped_nonfinite += 1
                     continue
-                if not math.isfinite(rmse):
+                if not math.isfinite(sse):
                     skipped_nonfinite += 1
                     continue
                 rows.append(row)
     if not rows:
         if candidate_rows:
             raise ValueError(
-                f"no finite RUN_SUMMARY rows with {RMSE_KEY!r} found in {log_path}; "
+                f"no finite RUN_SUMMARY rows with {SSE_KEY!r} found in {log_path}; "
                 f"skipped {skipped_nonfinite} invalid/non-finite rows"
             )
-        raise ValueError(f"no RUN_SUMMARY rows with {RMSE_KEY!r} found in {log_path}")
+        raise ValueError(f"no RUN_SUMMARY rows with {SSE_KEY!r} found in {log_path}")
     return rows
 
 
 def best_row(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    return min(rows, key=lambda row: float(row[RMSE_KEY]))
+    return min(rows, key=lambda row: float(row[SSE_KEY]))
 
 
 def optimizer_sort_key(name: str) -> tuple[int, str]:
@@ -270,12 +270,12 @@ def bootstrap_best_hparam_values(
 ) -> np.ndarray:
     if num_samples <= 0:
         return np.array([], dtype=object)
-    rmses = np.array([float(row[RMSE_KEY]) for row in rows], dtype=float)
+    sses = np.array([float(row[SSE_KEY]) for row in rows], dtype=float)
     values = np.array([normalize_value(row[hparam]) for row in rows], dtype=object)
     sample_size = max(1, round(len(rows) * BOOTSTRAP_SAMPLE_FRACTION))
     sampled_idx = rng.integers(0, len(rows), size=(num_samples, sample_size))
-    sampled_rmses = rmses[sampled_idx]
-    best_positions = np.argmin(sampled_rmses, axis=1)
+    sampled_sses = sses[sampled_idx]
+    best_positions = np.argmin(sampled_sses, axis=1)
     best_idx = sampled_idx[np.arange(num_samples), best_positions]
     return values[best_idx]
 
@@ -287,7 +287,7 @@ def summarize_hparam(
     bootstrap_samples: int,
 ) -> dict[str, Any]:
     values = [normalize_value(row[hparam]) for row in rows]
-    rmses = np.array([float(row[RMSE_KEY]) for row in rows], dtype=float)
+    sses = np.array([float(row[SSE_KEY]) for row in rows], dtype=float)
     observed_best = best_row(rows)
     boot_values = bootstrap_best_hparam_values(rows, hparam, rng, bootstrap_samples)
 
@@ -305,9 +305,9 @@ def summarize_hparam(
         return {
             "kind": "numeric",
             "values": np.array(values, dtype=float),
-            "rmses": rmses,
+            "sses": sses,
             "observed_best_value": observed_value,
-            "observed_best_rmse": float(observed_best[RMSE_KEY]),
+            "observed_best_sse": float(observed_best[SSE_KEY]),
             "boot_lo": float(lo),
             "boot_median": float(median),
             "boot_hi": float(hi),
@@ -327,18 +327,18 @@ def summarize_hparam(
     return {
         "kind": "categorical",
         "values": encoded_values,
-        "rmses": rmses,
+        "sses": sses,
         "categories": categories,
         "positions": positions,
         "observed_best_value": observed_value,
-        "observed_best_rmse": float(observed_best[RMSE_KEY]),
+        "observed_best_sse": float(observed_best[SSE_KEY]),
         "boot_lo": float(lo),
         "boot_median": float(median),
         "boot_hi": float(hi),
     }
 
 
-def draw_rmse_hparam_subplot(
+def draw_sse_hparam_subplot(
     ax: plt.Axes,
     summary: dict[str, Any],
     hparam: str,
@@ -347,7 +347,7 @@ def draw_rmse_hparam_subplot(
 ) -> None:
     if summary["kind"] == "numeric":
         x = summary["values"]
-        ax.scatter(x, summary["rmses"], s=18, alpha=0.72, linewidths=0, color="#256d85")
+        ax.scatter(x, summary["sses"], s=18, alpha=0.72, linewidths=0, color="#256d85")
         ax.axvspan(
             summary["boot_lo"],
             summary["boot_hi"],
@@ -358,7 +358,7 @@ def draw_rmse_hparam_subplot(
         ax.axvline(summary["boot_median"], color="#b83232", linewidth=1.4)
         ax.scatter(
             [summary["observed_best_value"]],
-            [summary["observed_best_rmse"]],
+            [summary["observed_best_sse"]],
             s=52,
             color="#b83232",
             edgecolors="white",
@@ -372,7 +372,7 @@ def draw_rmse_hparam_subplot(
         jitter = rng.uniform(-0.08, 0.08, size=len(x))
         ax.scatter(
             x + jitter,
-            summary["rmses"],
+            summary["sses"],
             s=18,
             alpha=0.72,
             linewidths=0,
@@ -388,7 +388,7 @@ def draw_rmse_hparam_subplot(
         ax.axvline(summary["boot_median"], color="#b83232", linewidth=1.4)
         ax.scatter(
             [summary["positions"][summary["observed_best_value"]]],
-            [summary["observed_best_rmse"]],
+            [summary["observed_best_sse"]],
             s=52,
             color="#b83232",
             edgecolors="white",
@@ -541,14 +541,14 @@ def plot_optimizer_figure(
     for row_idx, hparam in enumerate(hparams):
         for col_idx, batch_size in enumerate(batch_sizes):
             ax = fig.add_subplot(grid[row_idx, col_idx])
-            draw_rmse_hparam_subplot(
+            draw_sse_hparam_subplot(
                 ax,
                 summaries[(batch_size, hparam)],
                 hparam,
                 batch_size,
                 rng,
             )
-            ax.set_ylabel("clean train RMSE" if col_idx == 0 else "")
+            ax.set_ylabel("clean train SSE" if col_idx == 0 else "")
         ax = fig.add_subplot(grid[row_idx, len(batch_sizes)])
         draw_ci_vs_batch_subplot(
             ax,
@@ -611,7 +611,7 @@ def write_summary(
                     handle.write(
                         f"  batch_size={batch_size}: {format_ci(summary)}; "
                         f"observed_best={format_value(summary['observed_best_value'])}; "
-                        f"best_rmse={format_value(summary['observed_best_rmse'])}\n"
+                        f"best_sse={format_value(summary['observed_best_sse'])}\n"
                     )
             handle.write("\n")
 

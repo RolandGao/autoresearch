@@ -1,12 +1,7 @@
-"""Run optimizer hyperparameter search for the fixed-scale softmax problem.
-
-The search covers six optimizers, three batch sizes, and 100 random
-hyperparameter samples for every optimizer/batch-size pair.
-"""
+"""Run optimizer hyperparameter search for the fixed-scale softmax problem."""
 
 from __future__ import annotations
 
-import argparse
 import json
 import math
 import random
@@ -21,37 +16,59 @@ import torch.nn.functional as F
 
 torch._dynamo.config.recompile_limit = 128
 
-NUM_SAMPLES = 30_000
+DATASET_SIZE = 30_000
+NUM_SAMPLE_OPTIONS = (512, 2048, 8192, 32768)
 OPTIMIZERS = ("AdamW", "AdamH", "Muon", "MuonH", "SGD", "SGD2")
+H_OPTIMIZERS = ("AdamH", "MuonH", "SGD2")
+H_NORMS = ("matrix", "row")
+OPTIMIZER_VARIANTS = tuple(
+    optimizer if optimizer not in H_OPTIMIZERS else f"{optimizer}_{h_norm}"
+    for optimizer in OPTIMIZERS
+    for h_norm in (H_NORMS if optimizer in H_OPTIMIZERS else (None,))
+)
 BATCH_SIZES = (8, 64, 512)
 RUNS_PER_SETTING = 100
-MOMENTUM_RANGE = (0.0, 1.0)
-ADAM_BETA1S = (0.0, 0.5, 0.8, 0.9, 0.95)
+BETA1_MOMENTUM_VALUES = (0.0, 0.5, 0.7, 0.8, 0.9, 0.95)
 ADAM_BETA2S = (0.9, 0.95, 0.99, 0.999)
 ADAM_EPS = (1e-8, 1e-7, 1e-6)
 SGD2_BETA2S = (0.0, 0.5, 0.8, 0.9, 0.99)
 MUON_NS_STEPS = 5
-LR_RANGES = {
-    ("AdamW", 8): (0.0007881807678, 0.07881807678),
-    ("AdamW", 64): (0.004050007472, 0.4050007472),
-    ("AdamW", 512): (0.01000403547, 1.000403547),
-    ("AdamH", 8): (0.001236866367, 0.1236866367),
-    ("AdamH", 64): (0.008539522608, 0.8539522608),
-    ("AdamH", 512): (0.08925756724, 8.925756724),
-    ("Muon", 8): (0.01330957796, 1.330957796),
-    ("Muon", 64): (0.007803064933, 0.7803064933),
-    ("Muon", 512): (0.02860816643, 2.860816643),
-    ("MuonH", 8): (0.0002783464019, 0.02783464019),
-    ("MuonH", 64): (0.001543997778, 0.1543997778),
-    ("MuonH", 512): (0.009065081488, 0.9065081488),
-    ("SGD", 8): (0.01796897719, 1.796897719),
-    ("SGD", 64): (0.06224353148, 6.224353148),
-    ("SGD", 512): (0.2275719123, 22.75719123),
-    ("SGD2", 8): (0.003180437797, 0.3180437797),
-    ("SGD2", 64): (0.01368115332, 1.368115332),
-    ("SGD2", 512): (0.1191281515, 11.91281515),
+LR_POWER_RANGE = (0.5, 10.0)
+_BASE_LR_RANGES = {
+    ("AdamW", None, 8): (0.000564373985271, 0.564373985271),
+    ("AdamW", None, 64): (0.00097082418243, 0.97082418243),
+    ("AdamW", None, 512): (0.1, 100),
+    ("AdamH", "matrix", 8): (0.000321558668441, 0.321558668441),
+    ("AdamH", "matrix", 64): (0.000754226690167, 0.754226690168),
+    ("AdamH", "matrix", 512): (0.0041174325842, 4.1174325842),
+    ("AdamH", "row", 8): (0.000455041429207, 0.455041429207),
+    ("AdamH", "row", 64): (0.00167571065974, 1.67571065974),
+    ("AdamH", "row", 512): (0.00867651606696, 8.67651606697),
+    ("Muon", None, 8): (0.00224429988238, 2.24429988239),
+    ("Muon", None, 64): (0.0028108955144, 2.8108955144),
+    ("Muon", None, 512): (0.1, 10),
+    ("MuonH", "matrix", 8): (3.22760398855e-05, 0.0322760398855),
+    ("MuonH", "matrix", 64): (0.000195387431767, 0.195387431767),
+    ("MuonH", "matrix", 512): (0.000670325200695, 0.670325200696),
+    ("MuonH", "row", 8): (0.000232280241754, 0.232280241754),
+    ("MuonH", "row", 64): (0.00101561549891, 1.01561549892),
+    ("MuonH", "row", 512): (0.000694805898839, 0.694805898839),
+    ("SGD", None, 8): (0.0001, 1000),
+    ("SGD", None, 64): (0.0001, 1000),
+    ("SGD", None, 512): (0.0001, 1000),
+    ("SGD2", "matrix", 8): (0.000283270118163, 0.283270118163),
+    ("SGD2", "matrix", 64): (0.000877609154613, 0.877609154613),
+    ("SGD2", "matrix", 512): (0.00669144160666, 6.69144160667),
+    ("SGD2", "row", 8): (0.000818460391287, 0.818460391287),
+    ("SGD2", "row", 64): (0.00266980679043, 2.66980679043),
+    ("SGD2", "row", 512): (0.00538357699407, 5.38357699407),
 }
-LR_DECAY_RANGES = {
+LR_RANGES = {
+    (optimizer, h_norm, num_samples, batch_size): (lr_min, lr_max * 100)
+    for (optimizer, h_norm, batch_size), (lr_min, lr_max) in _BASE_LR_RANGES.items()
+    for num_samples in NUM_SAMPLE_OPTIONS
+}
+_BASE_LR_DECAY_RANGES = {
     ("AdamW", 8): (2.630749191, 5.730749191),
     ("AdamW", 64): (2.151553301, 5.251553301),
     ("AdamW", 512): (2.357988924, 5.457988924),
@@ -71,16 +88,26 @@ LR_DECAY_RANGES = {
     ("SGD2", 64): (3.816028726, 6.916028726),
     ("SGD2", 512): (4.510107057, 7.610107057),
 }
-WD_RANGES = {
+LR_DECAY_RANGES = {
+    (optimizer, num_samples, batch_size): (2.0, lr_decay_max)
+    for (optimizer, batch_size), (_, lr_decay_max) in _BASE_LR_DECAY_RANGES.items()
+    for num_samples in NUM_SAMPLE_OPTIONS
+}
+_BASE_WD_RANGES = {
     ("AdamW", 8): (2.611755814e-07, 0.002611755814),
     ("AdamW", 64): (1.00505955e-06, 0.0100505955),
     ("AdamW", 512): (0.0001518284094, 1.518284094),
     ("Muon", 8): (2.51764845e-07, 0.00251764845),
     ("Muon", 64): (6.615789445e-06, 0.06615789445),
     ("Muon", 512): (1.298919244e-05, 0.1298919244),
-    ("SGD", 8): (0.0009678622434, 9.678622434),
-    ("SGD", 64): (0.0008798088841, 8.798088841),
-    ("SGD", 512): (0.0006095415094, 6.095415094),
+    ("SGD", 8): (1e-7, 10),
+    ("SGD", 64): (1e-7, 10),
+    ("SGD", 512): (1e-7, 10),
+}
+WD_RANGES = {
+    (optimizer, num_samples, batch_size): wd_range
+    for (optimizer, batch_size), wd_range in _BASE_WD_RANGES.items()
+    for num_samples in NUM_SAMPLE_OPTIONS
 }
 
 POLAR_EXPRESS_COEFFS = (
@@ -97,41 +124,13 @@ class Config:
     seed: int = 0
     input_dim: int = 128
     num_classes: int = 4000
-    train_size: int = NUM_SAMPLES
-    softmax_scale: float = 10.0
-    ground_truth_softmax_scale: float = 10.0
+    train_size: int = DATASET_SIZE
     prob_noise_std: float = 1e-4
     eval_batch_size: int = 512
-    target_rmse: float = 1.19e-5
+    target_sse: float = 5.6644e-7
     log_every: int = 0
     compile: bool = True
     device: str = "cuda"
-
-
-def parse_args() -> Config:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=Config.seed)
-    parser.add_argument("--input-dim", type=int, default=Config.input_dim)
-    parser.add_argument("--num-classes", type=int, default=Config.num_classes)
-    parser.add_argument("--train-size", type=int, default=Config.train_size)
-    parser.add_argument("--softmax-scale", type=float, default=Config.softmax_scale)
-    parser.add_argument(
-        "--ground-truth-softmax-scale",
-        type=float,
-        default=Config.ground_truth_softmax_scale,
-    )
-    parser.add_argument("--prob-noise-std", type=float, default=Config.prob_noise_std)
-    parser.add_argument("--eval-batch-size", type=int, default=Config.eval_batch_size)
-    parser.add_argument("--target-rmse", type=float, default=Config.target_rmse)
-    parser.add_argument("--log-every", type=int, default=Config.log_every)
-    parser.add_argument(
-        "--no-compile",
-        action="store_false",
-        dest="compile",
-        help="Disable torch.compile for loss/evaluation kernels.",
-    )
-    parser.add_argument("--device", type=str, default=Config.device)
-    return Config(**vars(parser.parse_args()))
 
 
 def resolve_device(device: str) -> torch.device:
@@ -155,33 +154,104 @@ def normalize_rows(x: torch.Tensor, eps: float = 1e-12) -> torch.Tensor:
     return x / x.norm(dim=1, keepdim=True).clamp_min(eps)
 
 
-def row_normalize_update(update: torch.Tensor, eps: float = 1e-12) -> torch.Tensor:
-    update_norm = update.norm(dim=1, keepdim=True)
+def normalize_matrix(x: torch.Tensor, eps: float = 1e-12) -> torch.Tensor:
+    return x / x.norm().clamp_min(eps)
+
+
+def normalize_by_h_norm(
+    x: torch.Tensor, h_norm: str, eps: float = 1e-12
+) -> torch.Tensor:
+    if h_norm == "row":
+        return normalize_rows(x, eps)
+    if h_norm == "matrix":
+        return normalize_matrix(x, eps)
+    raise ValueError(f"unknown h_norm: {h_norm}")
+
+
+def normalize_update(
+    update: torch.Tensor, h_norm: str, eps: float = 1e-12
+) -> torch.Tensor:
+    if h_norm == "row":
+        update_norm = update.norm(dim=1, keepdim=True)
+    elif h_norm == "matrix":
+        update_norm = update.norm()
+    else:
+        raise ValueError(f"unknown h_norm: {h_norm}")
     normalized = update / update_norm.clamp_min(eps)
     return torch.where(update_norm > 0, normalized, torch.zeros_like(normalized))
+
+
+@torch.no_grad()
+def normalize_weight_(weight: torch.Tensor, h_norm: str) -> None:
+    weight.copy_(normalize_by_h_norm(weight, h_norm))
+
+
+def effective_h_weight(
+    weight: torch.Tensor,
+    h_norm: str | None,
+    ground_truth_row_norms: torch.Tensor,
+    ground_truth_matrix_norm: torch.Tensor,
+) -> torch.Tensor:
+    if h_norm is None:
+        return weight
+    normalized_weight = normalize_by_h_norm(weight, h_norm)
+    if h_norm == "row":
+        return normalized_weight * ground_truth_row_norms
+    if h_norm == "matrix":
+        return normalized_weight * ground_truth_matrix_norm
+    raise ValueError(f"unknown h_norm: {h_norm}")
+
+
+def sample_ground_truth_row_norms(
+    num_rows: int,
+    device: torch.device,
+    mean: float = 3.0,
+    std: float = 0.5,
+    low: float = 1.0,
+    high: float = 5.0,
+) -> torch.Tensor:
+    row_norms = torch.empty(num_rows, 1, device=device)
+    filled = 0
+    while filled < num_rows:
+        sample_count = max(num_rows - filled, 1024)
+        candidates = mean + std * torch.randn(sample_count, device=device)
+        candidates = candidates[(low <= candidates) & (candidates <= high)]
+        if candidates.numel() == 0:
+            continue
+        take = min(num_rows - filled, candidates.numel())
+        row_norms[filled : filled + take, 0] = candidates[:take]
+        filled += take
+    return row_norms
 
 
 def log_uniform(rng: random.Random, low: float, high: float) -> float:
     return math.exp(rng.uniform(math.log(low), math.log(high)))
 
 
-def integer_step_size(batch_size: int) -> int:
-    return max(1, int(round(NUM_SAMPLES / batch_size)))
+def integer_step_size(num_samples: int, batch_size: int) -> int:
+    return max(1, int(round(num_samples / batch_size)))
 
 
 def lr_schedule_factor(step: int, steps: int, hparams: dict[str, Any]) -> float:
     progress = step / max(1, steps)
-    return math.exp(-float(hparams["lr_decay"]) * progress ** float(hparams["lr_power"]))
+    return math.exp(
+        -float(hparams["lr_decay"]) * progress ** float(hparams["lr_power"])
+    )
 
 
 @torch.no_grad()
 def build_problem(
     config: Config, device: torch.device
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     x = normalize_rows(torch.randn(config.train_size, config.input_dim, device=device))
-    ground_truth_weight = normalize_rows(
-        torch.randn(config.num_classes, config.input_dim, device=device)
+    ground_truth_row_norms = sample_ground_truth_row_norms(
+        config.num_classes, device=device
     )
+    ground_truth_weight = (
+        normalize_rows(torch.randn(config.num_classes, config.input_dim, device=device))
+        * ground_truth_row_norms
+    )
+    ground_truth_matrix_norm = ground_truth_weight.norm()
 
     clean_target_probs = torch.empty(
         config.train_size, config.num_classes, device=device
@@ -191,16 +261,20 @@ def build_problem(
     )
     for start in range(0, config.train_size, config.eval_batch_size):
         end = min(start + config.eval_batch_size, config.train_size)
-        clean_logits = config.ground_truth_softmax_scale * F.linear(
-            x[start:end], ground_truth_weight
-        )
+        clean_logits = F.linear(x[start:end], ground_truth_weight)
         clean_probs = clean_logits.softmax(dim=1)
         clean_target_probs[start:end] = clean_probs
         noisy_target_probs[start:end] = make_noisy_probs(
             clean_probs, config.prob_noise_std
         )
 
-    return x, clean_target_probs, noisy_target_probs
+    return (
+        x,
+        clean_target_probs,
+        noisy_target_probs,
+        ground_truth_row_norms,
+        ground_truth_matrix_norm,
+    )
 
 
 def make_noisy_probs(clean_probs: torch.Tensor, noise_std: float) -> torch.Tensor:
@@ -218,52 +292,52 @@ def make_noisy_probs(clean_probs: torch.Tensor, noise_std: float) -> torch.Tenso
     return noisy_probs / row_sums.clamp_min(1e-12)
 
 
-def probability_rmse_loss(
+def probability_batch_sse_loss(
     weight: torch.Tensor,
     x_batch: torch.Tensor,
     target_probs: torch.Tensor,
-    softmax_scale: float,
 ) -> torch.Tensor:
-    logits = softmax_scale * F.linear(x_batch, weight).float()
+    logits = F.linear(x_batch, weight).float()
     output_probs = logits.softmax(dim=1)
-    return (output_probs - target_probs).square().mean().sqrt()
+    return (output_probs - target_probs).square().sum(dim=1).mean()
 
 
 @torch.compile(dynamic=True, fullgraph=True)
-def probability_rmse_loss_compiled(
+def probability_batch_sse_loss_compiled(
     weight: torch.Tensor,
     x_batch: torch.Tensor,
     target_probs: torch.Tensor,
-    softmax_scale_t: torch.Tensor,
 ) -> torch.Tensor:
-    logits = softmax_scale_t * F.linear(x_batch, weight).float()
+    logits = F.linear(x_batch, weight).float()
     output_probs = logits.softmax(dim=1)
-    return (output_probs - target_probs).square().mean().sqrt()
+    return (output_probs - target_probs).square().sum(dim=1).mean()
 
 
 @torch.compile(dynamic=True, fullgraph=True)
 def softmax_probs_compiled(
     weight: torch.Tensor,
     x_batch: torch.Tensor,
-    softmax_scale_t: torch.Tensor,
 ) -> torch.Tensor:
-    logits = softmax_scale_t * F.linear(x_batch, weight).float()
+    logits = F.linear(x_batch, weight).float()
     return logits.softmax(dim=1)
 
 
 def build_fixed_cycle_orders(
     train_size: int, device: torch.device, seed: int
-) -> dict[int, torch.Tensor]:
-    orders: dict[int, torch.Tensor] = {}
+) -> dict[tuple[int, int], torch.Tensor]:
+    orders: dict[tuple[int, int], torch.Tensor] = {}
     generator = torch.Generator(device=device)
     generator.manual_seed(seed + 10_000)
     base_permutation = torch.randperm(train_size, device=device, generator=generator)
 
-    for batch_size in BATCH_SIZES:
-        steps = integer_step_size(batch_size)
-        needed = steps * batch_size
-        repeats = math.ceil(needed / train_size)
-        orders[batch_size] = base_permutation.repeat(repeats)[:needed]
+    for num_samples in NUM_SAMPLE_OPTIONS:
+        for batch_size in BATCH_SIZES:
+            steps = integer_step_size(num_samples, batch_size)
+            needed = steps * batch_size
+            repeats = math.ceil(needed / train_size)
+            orders[(num_samples, batch_size)] = base_permutation.repeat(repeats)[
+                :needed
+            ]
 
     return orders
 
@@ -295,7 +369,7 @@ def adam_step(
     beta2: float,
     eps: float,
     wd: float,
-    h_variant: bool,
+    h_norm: str | None,
 ) -> None:
     exp_avg.lerp_(grad, 1 - beta1)
     exp_avg_sq.lerp_(grad.square(), 1 - beta2)
@@ -304,9 +378,9 @@ def adam_step(
     update = (exp_avg / bias1) / ((exp_avg_sq / bias2).sqrt() + eps)
     step_lr = lr * lr_factor
 
-    if h_variant:
-        weight.add_(row_normalize_update(update), alpha=-step_lr)
-        weight.copy_(normalize_rows(weight))
+    if h_norm is not None:
+        weight.add_(normalize_update(update, h_norm), alpha=-step_lr)
+        normalize_weight_(weight, h_norm)
     else:
         if wd:
             weight.mul_(1 - step_lr * wd)
@@ -322,16 +396,16 @@ def muon_step(
     lr_factor: float,
     momentum: float,
     wd: float,
-    h_variant: bool,
+    h_norm: str | None,
 ) -> None:
     momentum_buffer.lerp_(grad, 1 - momentum)
     update = grad.lerp(momentum_buffer, momentum)
     update = zeropower_via_newtonschulz5(update)
     step_lr = lr * lr_factor * max(1.0, weight.size(0) / weight.size(1)) ** 0.5
 
-    if h_variant:
-        weight.add_(row_normalize_update(update), alpha=-step_lr)
-        weight.copy_(normalize_rows(weight))
+    if h_norm is not None:
+        weight.add_(normalize_update(update, h_norm), alpha=-step_lr)
+        normalize_weight_(weight, h_norm)
     else:
         if wd:
             weight.mul_(1 - step_lr * wd)
@@ -367,9 +441,15 @@ def sgd2_step(
     beta2: float,
     step_count: int,
     nesterov: bool,
+    h_norm: str,
 ) -> None:
     momentum_buffer.mul_(beta1).add_(grad, alpha=1 - beta1)
-    grad_norm = grad.norm(dim=1, keepdim=True)
+    if h_norm == "row":
+        grad_norm = grad.norm(dim=1, keepdim=True)
+    elif h_norm == "matrix":
+        grad_norm = grad.norm()
+    else:
+        raise ValueError(f"unknown h_norm: {h_norm}")
     v_buffer.mul_(beta2).add_(grad_norm, alpha=1 - beta2)
     v_hat = v_buffer / max(1e-12, 1 - beta2**step_count)
 
@@ -379,7 +459,7 @@ def sgd2_step(
         update = momentum_buffer
 
     weight.add_(update / v_hat.clamp_min(1e-12), alpha=-(lr * lr_factor))
-    weight.copy_(normalize_rows(weight))
+    normalize_weight_(weight, h_norm)
 
 
 def build_search_hparams(config: Config) -> list[dict[str, Any]]:
@@ -387,46 +467,69 @@ def build_search_hparams(config: Config) -> list[dict[str, Any]]:
     candidate_specs: list[dict[str, Any]] = []
 
     for optimizer in OPTIMIZERS:
-        for batch_size in BATCH_SIZES:
-            steps = integer_step_size(batch_size)
-            lr_range = LR_RANGES[(optimizer, batch_size)]
-            lr_decay_range = LR_DECAY_RANGES[(optimizer, batch_size)]
-            lr_center = math.sqrt(lr_range[0] * lr_range[1])
-            for sample_idx in range(RUNS_PER_SETTING):
-                hparams: dict[str, Any] = {
-                    "optimizer": optimizer,
-                    "variant": optimizer,
-                    "batch_size": batch_size,
-                    "steps": steps,
-                    "step_size": steps,
-                    "num_samples": NUM_SAMPLES,
-                    "sample_mode": "fixed_cycle",
-                    "lr_schedule": "exp_power",
-                    "lr_power": 1,
-                    "lr_decay": rng.uniform(*lr_decay_range),
-                    "predicted_lr": lr_center,
-                    "lr": log_uniform(rng, *lr_range),
-                    "sample_idx": sample_idx,
-                }
-                if optimizer in ("Muon", "MuonH", "SGD"):
-                    hparams["momentum"] = rng.uniform(*MOMENTUM_RANGE)
-                if optimizer in ("AdamW", "AdamH"):
-                    hparams["beta1"] = rng.choice(ADAM_BETA1S)
-                    hparams["beta2"] = rng.choice(ADAM_BETA2S)
-                    hparams["eps"] = rng.choice(ADAM_EPS)
-                if optimizer == "SGD2":
-                    hparams["beta1"] = rng.uniform(0.0, 1.0)
-                    hparams["beta2"] = rng.choice(SGD2_BETA2S)
-                    hparams["nesterov"] = False
-                if optimizer in ("AdamW", "Muon", "SGD"):
-                    hparams["wd"] = log_uniform(rng, *WD_RANGES[(optimizer, batch_size)])
-                candidate_specs.append(hparams)
+        h_norms: tuple[str | None, ...]
+        if optimizer in H_OPTIMIZERS:
+            h_norms = H_NORMS
+        else:
+            h_norms = (None,)
+        for num_samples in NUM_SAMPLE_OPTIONS:
+            for batch_size in BATCH_SIZES:
+                steps = integer_step_size(num_samples, batch_size)
+                lr_decay_range = LR_DECAY_RANGES[
+                    (optimizer, num_samples, batch_size)
+                ]
+                for h_norm in h_norms:
+                    lr_range = LR_RANGES[
+                        (optimizer, h_norm, num_samples, batch_size)
+                    ]
+                    lr_center = math.sqrt(lr_range[0] * lr_range[1])
+                    for sample_idx in range(RUNS_PER_SETTING):
+                        hparams: dict[str, Any] = {
+                            "optimizer": optimizer,
+                            "variant": optimizer
+                            if h_norm is None
+                            else f"{optimizer}_{h_norm}",
+                            "batch_size": batch_size,
+                            "steps": steps,
+                            "step_size": steps,
+                            "num_samples": num_samples,
+                            "sample_mode": "fixed_cycle",
+                            "lr_schedule": "exp_power",
+                            "lr_power": log_uniform(rng, *LR_POWER_RANGE),
+                            "lr_decay": rng.uniform(*lr_decay_range),
+                            "predicted_lr": lr_center,
+                            "lr": log_uniform(rng, *lr_range),
+                            "sample_idx": sample_idx,
+                        }
+                        if h_norm is not None:
+                            hparams["h_norm"] = h_norm
+                        if optimizer in ("Muon", "MuonH", "SGD"):
+                            hparams["momentum"] = rng.choice(BETA1_MOMENTUM_VALUES)
+                        if optimizer in ("AdamW", "AdamH"):
+                            hparams["beta1"] = rng.choice(BETA1_MOMENTUM_VALUES)
+                            hparams["beta2"] = rng.choice(ADAM_BETA2S)
+                            hparams["eps"] = rng.choice(ADAM_EPS)
+                        if optimizer == "SGD2":
+                            hparams["beta1"] = rng.choice(BETA1_MOMENTUM_VALUES)
+                            hparams["beta2"] = rng.choice(SGD2_BETA2S)
+                            hparams["nesterov"] = False
+                        if optimizer in ("AdamW", "Muon", "SGD"):
+                            hparams["wd"] = log_uniform(
+                                rng, *WD_RANGES[(optimizer, num_samples, batch_size)]
+                            )
+                        candidate_specs.append(hparams)
 
     return candidate_specs
 
 
 def setting_key(hparams: dict[str, Any]) -> str:
-    return f"optimizer={hparams['optimizer']},batch_size={hparams['batch_size']}"
+    key = (
+        f"optimizer={hparams['optimizer']},num_samples={hparams['num_samples']},"
+        f"batch_size={hparams['batch_size']}"
+    )
+    if "h_norm" in hparams:
+        key += f",h_norm={hparams['h_norm']}"
+    return key
 
 
 def warmup_compiled_training(
@@ -434,7 +537,7 @@ def warmup_compiled_training(
     x: torch.Tensor,
     noisy_target_probs: torch.Tensor,
     initial_weight: torch.Tensor,
-    batch_orders: dict[int, torch.Tensor],
+    batch_orders: dict[tuple[int, int], torch.Tensor],
     device: torch.device,
 ) -> None:
     if not config.compile:
@@ -446,20 +549,21 @@ def warmup_compiled_training(
     print(
         "COMPILE_WARMUP_START "
         + json.dumps(
-            {"batch_sizes": BATCH_SIZES, "optimizer_count": len(OPTIMIZERS)},
+            {
+                "batch_sizes": BATCH_SIZES,
+                "optimizer_count": len(OPTIMIZER_VARIANTS),
+            },
             sort_keys=True,
         ),
         flush=True,
     )
 
-    softmax_scale_t = torch.tensor(
-        config.softmax_scale, dtype=torch.float32, device=device
-    )
+    warmup_num_samples = max(NUM_SAMPLE_OPTIONS)
     for batch_size in BATCH_SIZES:
-        batch_idx = batch_orders[batch_size][:batch_size]
+        batch_idx = batch_orders[(warmup_num_samples, batch_size)][:batch_size]
         weight = initial_weight.detach().clone().to(device).requires_grad_()
-        loss = probability_rmse_loss_compiled(
-            weight, x[batch_idx], noisy_target_probs[batch_idx], softmax_scale_t
+        loss = probability_batch_sse_loss_compiled(
+            weight, x[batch_idx], noisy_target_probs[batch_idx]
         )
         loss.backward()
 
@@ -468,9 +572,7 @@ def warmup_compiled_training(
     if final_eval_batch:
         eval_shapes.add(final_eval_batch)
     for eval_batch_size in sorted(eval_shapes):
-        _ = softmax_probs_compiled(
-            initial_weight.detach(), x[:eval_batch_size], softmax_scale_t
-        )
+        _ = softmax_probs_compiled(initial_weight.detach(), x[:eval_batch_size])
 
     if device.type == "cuda":
         torch.cuda.synchronize(device)
@@ -482,7 +584,7 @@ def warmup_compiled_training(
 
 
 @torch.no_grad()
-def evaluate_clean_rmse_tensor(
+def evaluate_clean_sse_tensor(
     weight: torch.Tensor,
     x: torch.Tensor,
     clean_target_probs: torch.Tensor,
@@ -490,25 +592,20 @@ def evaluate_clean_rmse_tensor(
     device: torch.device,
 ) -> float:
     squared_error_sum = 0.0
-    num_values = 0
-    softmax_scale_t = torch.tensor(
-        config.softmax_scale, dtype=torch.float32, device=device
-    )
+    num_examples = 0
 
     for start in range(0, x.size(0), config.eval_batch_size):
         end = min(start + config.eval_batch_size, x.size(0))
         if config.compile:
-            output_probs = softmax_probs_compiled(
-                weight, x[start:end], softmax_scale_t
-            )
+            output_probs = softmax_probs_compiled(weight, x[start:end])
         else:
-            logits = config.softmax_scale * F.linear(x[start:end], weight).float()
+            logits = F.linear(x[start:end], weight).float()
             output_probs = logits.softmax(dim=1)
         diff = output_probs - clean_target_probs[start:end]
         squared_error_sum += diff.square().sum().item()
-        num_values += diff.numel()
+        num_examples += diff.size(0)
 
-    return math.sqrt(squared_error_sum / num_values)
+    return squared_error_sum / num_examples
 
 
 def train_one_run(
@@ -516,8 +613,10 @@ def train_one_run(
     x: torch.Tensor,
     noisy_target_probs: torch.Tensor,
     clean_target_probs: torch.Tensor,
+    ground_truth_row_norms: torch.Tensor,
+    ground_truth_matrix_norm: torch.Tensor,
     initial_weight: torch.Tensor,
-    batch_orders: dict[int, torch.Tensor],
+    batch_orders: dict[tuple[int, int], torch.Tensor],
     config: Config,
     device: torch.device,
     candidate_idx: int,
@@ -528,21 +627,33 @@ def train_one_run(
         torch.cuda.reset_peak_memory_stats(device)
     start_time = time.time()
 
-    weight = initial_weight.detach().clone().to(device).requires_grad_(True)
+    h_norm = hparams.get("h_norm")
+    if h_norm is not None:
+        h_norm = str(h_norm)
+
+    weight = initial_weight.detach().clone().to(device)
+    if h_norm is not None:
+        weight = normalize_by_h_norm(weight, h_norm).detach()
+    weight.requires_grad_(True)
     momentum_buffer = torch.zeros_like(weight)
-    v_buffer = torch.zeros(weight.size(0), 1, device=device, dtype=weight.dtype)
+    if h_norm == "matrix":
+        v_buffer = torch.zeros((), device=device, dtype=weight.dtype)
+    else:
+        v_buffer = torch.zeros(weight.size(0), 1, device=device, dtype=weight.dtype)
     exp_avg = torch.zeros_like(weight)
     exp_avg_sq = torch.zeros_like(weight)
-    softmax_scale_t = torch.tensor(
-        config.softmax_scale, dtype=torch.float32, device=device
-    )
 
     last_loss = float("nan")
     optimizer = str(hparams["optimizer"])
+    if optimizer in H_OPTIMIZERS and h_norm is None:
+        raise ValueError(f"{optimizer} requires h_norm")
+    if optimizer not in H_OPTIMIZERS and h_norm is not None:
+        raise ValueError(f"{optimizer} does not support h_norm")
     base_lr = float(hparams["lr"])
     steps = int(hparams["steps"])
+    num_samples = int(hparams["num_samples"])
     batch_size = int(hparams["batch_size"])
-    batch_order = batch_orders[batch_size]
+    batch_order = batch_orders[(num_samples, batch_size)]
 
     training_start_time = time.time()
     for step in range(steps):
@@ -550,13 +661,20 @@ def train_one_run(
         batch_start = step * batch_size
         batch_idx = batch_order[batch_start : batch_start + batch_size]
         weight.grad = None
+        loss_weight = effective_h_weight(
+            weight, h_norm, ground_truth_row_norms, ground_truth_matrix_norm
+        )
         if config.compile:
-            loss = probability_rmse_loss_compiled(
-                weight, x[batch_idx], noisy_target_probs[batch_idx], softmax_scale_t
+            loss = probability_batch_sse_loss_compiled(
+                loss_weight,
+                x[batch_idx],
+                noisy_target_probs[batch_idx],
             )
         else:
-            loss = probability_rmse_loss(
-                weight, x[batch_idx], noisy_target_probs[batch_idx], config.softmax_scale
+            loss = probability_batch_sse_loss(
+                loss_weight,
+                x[batch_idx],
+                noisy_target_probs[batch_idx],
             )
 
         loss.backward()
@@ -577,7 +695,7 @@ def train_one_run(
                 float(hparams["beta2"]),
                 float(hparams["eps"]),
                 float(hparams.get("wd", 0.0)),
-                optimizer == "AdamH",
+                h_norm,
             )
         elif optimizer in ("Muon", "MuonH"):
             muon_step(
@@ -588,7 +706,7 @@ def train_one_run(
                 lr_factor,
                 float(hparams["momentum"]),
                 float(hparams.get("wd", 0.0)),
-                optimizer == "MuonH",
+                h_norm,
             )
         elif optimizer == "SGD":
             sgd_step(
@@ -612,6 +730,7 @@ def train_one_run(
                 float(hparams["beta2"]),
                 step + 1,
                 bool(hparams["nesterov"]),
+                str(h_norm),
             )
         else:
             raise ValueError(f"unknown optimizer: {optimizer}")
@@ -624,7 +743,7 @@ def train_one_run(
             print(
                 f"candidate {candidate_idx + 1:05d}/{num_candidates:05d} "
                 f"{optimizer} step {step + 1:05d}/{steps:05d} "
-                f"loss_rmse={last_loss:.8g} lr={base_lr * lr_factor:.6g}",
+                f"loss={last_loss:.8g} lr={base_lr * lr_factor:.6g}",
                 flush=True,
             )
 
@@ -632,8 +751,11 @@ def train_one_run(
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     training_elapsed_sec = time.time() - training_start_time
-    clean_rmse = evaluate_clean_rmse_tensor(
-        weight.detach(), x, clean_target_probs, config, device
+    eval_weight = effective_h_weight(
+        weight, h_norm, ground_truth_row_norms, ground_truth_matrix_norm
+    ).detach()
+    clean_sse = evaluate_clean_sse_tensor(
+        eval_weight, x, clean_target_probs, config, device
     )
     if device.type == "cuda":
         torch.cuda.synchronize(device)
@@ -644,19 +766,25 @@ def train_one_run(
     peak_reserved_bytes = (
         torch.cuda.max_memory_reserved(device) if device.type == "cuda" else 0
     )
-    weight_norms = weight.detach().norm(dim=1)
+    weight_detached = weight.detach()
+    weight_norms = weight_detached.norm(dim=1)
+    effective_weight_norms = eval_weight.norm(dim=1)
     summary = {
         **hparams,
         "candidate_idx": candidate_idx,
         "actual_samples": steps * batch_size,
         "compiled": config.compile,
         "final_train_loss": last_loss,
-        "clean_rmse": clean_rmse,
-        "clean_train_rmse": clean_rmse,
-        "target_met": clean_rmse <= config.target_rmse,
+        "clean_sse": clean_sse,
+        "clean_train_sse": clean_sse,
+        "target_met": clean_sse <= config.target_sse,
         "setting_key": setting_key(hparams),
         "weight_row_norm_mean": float(weight_norms.mean().item()),
         "weight_row_norm_std": float(weight_norms.std().item()),
+        "weight_matrix_norm": float(weight_detached.norm().item()),
+        "effective_weight_row_norm_mean": float(effective_weight_norms.mean().item()),
+        "effective_weight_row_norm_std": float(effective_weight_norms.std().item()),
+        "effective_weight_matrix_norm": float(eval_weight.norm().item()),
         "duration_sec": elapsed_sec,
         "training_elapsed_sec": training_elapsed_sec,
         "elapsed_sec": elapsed_sec,
@@ -670,13 +798,9 @@ def train_one_run(
 
 
 def main() -> None:
-    config = parse_args()
-    if config.train_size != NUM_SAMPLES:
-        raise ValueError(f"this experiment fixes --train-size to {NUM_SAMPLES}")
-    if config.softmax_scale != 10.0:
-        raise ValueError("this experiment fixes --softmax-scale to 10.0")
-    if config.ground_truth_softmax_scale != 10.0:
-        raise ValueError("this experiment fixes --ground-truth-softmax-scale to 10.0")
+    config = Config()
+    if config.train_size != DATASET_SIZE:
+        raise ValueError(f"this experiment fixes --train-size to {DATASET_SIZE}")
 
     torch.set_float32_matmul_precision("high")
     set_seed(config.seed)
@@ -693,15 +817,19 @@ def main() -> None:
         + json.dumps(
             {
                 "optimizers": OPTIMIZERS,
+                "optimizer_variants": OPTIMIZER_VARIANTS,
                 "num_candidates": len(candidate_specs),
                 "batch_sizes": BATCH_SIZES,
                 "runs_per_setting": RUNS_PER_SETTING,
-                "num_samples": NUM_SAMPLES,
+                "dataset_size": DATASET_SIZE,
+                "num_samples": NUM_SAMPLE_OPTIONS,
                 "lr_ranges": {str(key): value for key, value in LR_RANGES.items()},
                 "lr_decay_ranges": {
                     str(key): value for key, value in LR_DECAY_RANGES.items()
                 },
-                "momentum_range": MOMENTUM_RANGE,
+                "lr_power_range": LR_POWER_RANGE,
+                "beta1_momentum_values": BETA1_MOMENTUM_VALUES,
+                "h_norms": H_NORMS,
                 "wd_ranges": {str(key): value for key, value in WD_RANGES.items()},
                 "compile": config.compile,
             },
@@ -710,7 +838,13 @@ def main() -> None:
         flush=True,
     )
 
-    x, clean_target_probs, noisy_target_probs = build_problem(config, device)
+    (
+        x,
+        clean_target_probs,
+        noisy_target_probs,
+        ground_truth_row_norms,
+        ground_truth_matrix_norm,
+    ) = build_problem(config, device)
     initial_weight = normalize_rows(
         torch.randn(config.num_classes, config.input_dim, device=device)
     )
@@ -740,6 +874,8 @@ def main() -> None:
             x,
             noisy_target_probs,
             clean_target_probs,
+            ground_truth_row_norms,
+            ground_truth_matrix_norm,
             initial_weight,
             batch_orders,
             config,
@@ -750,16 +886,16 @@ def main() -> None:
         summaries.append(summary)
         key = str(summary["setting_key"])
         best = best_by_setting.get(key)
-        if best is None or float(summary["clean_train_rmse"]) < float(
-            best["clean_train_rmse"]
+        if best is None or float(summary["clean_train_sse"]) < float(
+            best["clean_train_sse"]
         ):
             best_by_setting[key] = summary
 
-    summaries_by_rmse = sorted(
-        summaries, key=lambda item: float(item["clean_train_rmse"])
+    summaries_by_sse = sorted(
+        summaries, key=lambda item: float(item["clean_train_sse"])
     )
     print(f"BEST_BY_SETTING {json.dumps(best_by_setting, sort_keys=True)}", flush=True)
-    print(f"FINAL_SUMMARY {json.dumps(summaries_by_rmse, sort_keys=True)}", flush=True)
+    print(f"FINAL_SUMMARY {json.dumps(summaries_by_sse, sort_keys=True)}", flush=True)
 
 
 if __name__ == "__main__":

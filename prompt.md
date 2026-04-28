@@ -747,3 +747,15 @@ For the current experiment, for scalars are set to the ground truth and we focus
 The the non-H variants of optimizer (AdamW, SGD, Muon), they stay the same. 
 
 for the search space, all optimizer's beta1 and momentum are searched from (0.0, 0.5, 0.7, 0.8, 0.9, 0.95). 
+
+retry projection
+
+
+SSE = RMSE^2 * num_classes
+SSE = (1.0e-5)^2 * 4000
+SSE = 4.0e-7
+if rmse = 1.0e-5, SSE = 4.0e-7
+
+num samples variation. row norm = 10. 
+
+7.050988209e-06 to 2e-7
