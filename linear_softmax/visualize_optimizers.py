@@ -18,8 +18,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-DEFAULT_LOG_NAME = "optimizers_logging5.log"
-DEFAULT_OUT_DIR = Path(__file__).with_name("optimizer_hparam_plots5")
+DEFAULT_LOG_NAME = "optimizers_logging10.log"
+DEFAULT_OUT_DIR = Path(__file__).with_name("optimizer_hparam_plots10")
 SSE_KEY = "clean_train_sse"
 SUMMARY_FILENAME = "optimizer_hparam_summary.txt"
 DEFAULT_BOOTSTRAP_SAMPLES = 10_000
@@ -30,6 +30,7 @@ H_NORM_ORDER = ("matrix", "row")
 PREFERRED_HPARAM_ORDER = (
     "lr",
     "lr_decay",
+    "lr_power",
     "beta1",
     "beta2",
     "eps",
@@ -48,7 +49,6 @@ NON_SEARCH_KEYS = {
     "elapsed_sec",
     "final_train_loss",
     "h_norm",
-    "lr_power",
     "lr_schedule",
     "num_candidates",
     "num_samples",

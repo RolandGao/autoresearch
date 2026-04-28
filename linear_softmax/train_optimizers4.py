@@ -33,7 +33,7 @@ ADAM_BETA2S = (0.9, 0.95, 0.99, 0.999)
 ADAM_EPS = (1e-8, 1e-7, 1e-6)
 SGD2_BETA2S = (0.0, 0.5, 0.8, 0.9, 0.99)
 MUON_NS_STEPS = 5
-LR_POWER_RANGE = (0.5, 10.0)
+LR_POWER = 1.0
 _BASE_LR_RANGES = {
     ("AdamW", None, 8): (0.000564373985271, 0.564373985271),
     ("AdamW", None, 64): (0.00097082418243, 0.97082418243),
@@ -53,9 +53,9 @@ _BASE_LR_RANGES = {
     ("MuonH", "row", 8): (0.000232280241754, 0.232280241754),
     ("MuonH", "row", 64): (0.00101561549891, 1.01561549892),
     ("MuonH", "row", 512): (0.000694805898839, 0.694805898839),
-    ("SGD", None, 8): (0.0001, 1000),
-    ("SGD", None, 64): (0.0001, 1000),
-    ("SGD", None, 512): (0.0001, 1000),
+    ("SGD", None, 8): (10**5, 10**8),
+    ("SGD", None, 64): (10**5, 10**8),
+    ("SGD", None, 512): (10**6, 10**9),
     ("SGD2", "matrix", 8): (0.000283270118163, 0.283270118163),
     ("SGD2", "matrix", 64): (0.000877609154613, 0.877609154613),
     ("SGD2", "matrix", 512): (0.00669144160666, 6.69144160667),
@@ -93,23 +93,6 @@ LR_DECAY_RANGES = {
     for (optimizer, batch_size), (_, lr_decay_max) in _BASE_LR_DECAY_RANGES.items()
     for num_samples in NUM_SAMPLE_OPTIONS
 }
-_BASE_WD_RANGES = {
-    ("AdamW", 8): (2.611755814e-07, 0.002611755814),
-    ("AdamW", 64): (1.00505955e-06, 0.0100505955),
-    ("AdamW", 512): (0.0001518284094, 1.518284094),
-    ("Muon", 8): (2.51764845e-07, 0.00251764845),
-    ("Muon", 64): (6.615789445e-06, 0.06615789445),
-    ("Muon", 512): (1.298919244e-05, 0.1298919244),
-    ("SGD", 8): (1e-7, 10),
-    ("SGD", 64): (1e-7, 10),
-    ("SGD", 512): (1e-7, 10),
-}
-WD_RANGES = {
-    (optimizer, num_samples, batch_size): wd_range
-    for (optimizer, batch_size), wd_range in _BASE_WD_RANGES.items()
-    for num_samples in NUM_SAMPLE_OPTIONS
-}
-
 POLAR_EXPRESS_COEFFS = (
     (8.156554524902461, -22.48329292557795, 15.878769915207462),
     (4.042929935166739, -2.808917465908714, 0.5000178451051316),
@@ -475,13 +458,9 @@ def build_search_hparams(config: Config) -> list[dict[str, Any]]:
         for num_samples in NUM_SAMPLE_OPTIONS:
             for batch_size in BATCH_SIZES:
                 steps = integer_step_size(num_samples, batch_size)
-                lr_decay_range = LR_DECAY_RANGES[
-                    (optimizer, num_samples, batch_size)
-                ]
+                lr_decay_range = LR_DECAY_RANGES[(optimizer, num_samples, batch_size)]
                 for h_norm in h_norms:
-                    lr_range = LR_RANGES[
-                        (optimizer, h_norm, num_samples, batch_size)
-                    ]
+                    lr_range = LR_RANGES[(optimizer, h_norm, num_samples, batch_size)]
                     lr_center = math.sqrt(lr_range[0] * lr_range[1])
                     for sample_idx in range(RUNS_PER_SETTING):
                         hparams: dict[str, Any] = {
@@ -495,7 +474,7 @@ def build_search_hparams(config: Config) -> list[dict[str, Any]]:
                             "num_samples": num_samples,
                             "sample_mode": "fixed_cycle",
                             "lr_schedule": "exp_power",
-                            "lr_power": log_uniform(rng, *LR_POWER_RANGE),
+                            "lr_power": LR_POWER,
                             "lr_decay": rng.uniform(*lr_decay_range),
                             "predicted_lr": lr_center,
                             "lr": log_uniform(rng, *lr_range),
@@ -514,9 +493,7 @@ def build_search_hparams(config: Config) -> list[dict[str, Any]]:
                             hparams["beta2"] = rng.choice(SGD2_BETA2S)
                             hparams["nesterov"] = False
                         if optimizer in ("AdamW", "Muon", "SGD"):
-                            hparams["wd"] = log_uniform(
-                                rng, *WD_RANGES[(optimizer, num_samples, batch_size)]
-                            )
+                            hparams["wd"] = 0.0
                         candidate_specs.append(hparams)
 
     return candidate_specs
@@ -827,10 +804,10 @@ def main() -> None:
                 "lr_decay_ranges": {
                     str(key): value for key, value in LR_DECAY_RANGES.items()
                 },
-                "lr_power_range": LR_POWER_RANGE,
+                "lr_power": LR_POWER,
                 "beta1_momentum_values": BETA1_MOMENTUM_VALUES,
                 "h_norms": H_NORMS,
-                "wd_ranges": {str(key): value for key, value in WD_RANGES.items()},
+                "wd": 0.0,
                 "compile": config.compile,
             },
             sort_keys=True,

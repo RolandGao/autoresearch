@@ -1,0 +1,34 @@
+Optimizer hparam plot summary
+=============================
+
+Input log: /workspace/neural_networks_optimization/autoresearch/linear_softmax/optimizers_logging8.log
+Rows: 300
+Plot groups: SGD
+
+SGD
+---
+Figure: optimizer_SGD.png
+Rows: 300
+Batch sizes: 8, 64, 512
+Hparams: lr, lr_decay, lr_power, momentum
+
+lr
+  batch_size=8: median=654782.8732, 95% CI=[122521.5467, 941664.0559]; observed_best=794885.6765; best_sse=2.38537183e-07
+  batch_size=64: median=496742.9552, 95% CI=[231191.8342, 985721.2681]; observed_best=496742.9552; best_sse=2.654777102e-07
+  batch_size=512: median=759242.6604, 95% CI=[88267.44888, 944914.8303]; observed_best=944914.8303; best_sse=6.838129826e-06
+
+lr_decay
+  batch_size=8: median=4.962912644, 95% CI=[3.867663565, 6.409491697]; observed_best=4.1770384; best_sse=2.38537183e-07
+  batch_size=64: median=4.595534414, 95% CI=[3.67178799, 6.270117596]; observed_best=4.174515815; best_sse=2.654777102e-07
+  batch_size=512: median=4.84720774, 95% CI=[3.125374418, 5.991029578]; observed_best=5.991029578; best_sse=6.838129826e-06
+
+lr_power
+  batch_size=8: median=1.988226681, 95% CI=[0.7642644713, 8.185817202]; observed_best=1.988226681; best_sse=2.38537183e-07
+  batch_size=64: median=4.867666657, 95% CI=[0.5366283722, 8.228910868]; observed_best=4.867666657; best_sse=2.654777102e-07
+  batch_size=512: median=6.968106766, 95% CI=[1.260739274, 9.356858469]; observed_best=7.725727285; best_sse=6.838129826e-06
+
+momentum
+  batch_size=8: median=0.9, 95% CI=[0.7, 0.95]; observed_best=0.7; best_sse=2.38537183e-07
+  batch_size=64: median=0.95, 95% CI=[0.8, 0.95]; observed_best=0.95; best_sse=2.654777102e-07
+  batch_size=512: median=0.9, 95% CI=[0, 0.95]; observed_best=0.95; best_sse=6.838129826e-06
+

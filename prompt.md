@@ -759,3 +759,5 @@ if rmse = 1.0e-5, SSE = 4.0e-7
 num samples variation. row norm = 10. 
 
 7.050988209e-06 to 2e-7
+
+wd = 0!!!
