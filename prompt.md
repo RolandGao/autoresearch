@@ -761,3 +761,23 @@ num samples variation. row norm = 10.
 7.050988209e-06 to 2e-7
 
 wd = 0!!!
+
+
+python train_optimizers4.py > optimizers4_logging.log 2>&1
+> scalar_optimizers_logging.log 2>&1
+
+
+explore adam variants for scalar optimizer
+fix momentum/betas/eps and only search lr. LLM has eps =1e-10
+combine scalar and matrix optimizers
+move to LLM.
+
+
+remove sgd. remove matrix only row. 
+
+create a new optimizer called adam2. 
+on top of adamw, it has the following features:
+nesterov momentum. disable_bias1 option. 
+if adaptive_norm = True, beta2 EMA becomes EMA of abs(grad) and no sqrt when dividing by the beta2 EMA. 
+
+2D heatmap to understand the connection between two hparams. 
