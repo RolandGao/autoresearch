@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from collections import defaultdict
 from pathlib import Path
 
@@ -20,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "log_path",
         nargs="?",
-        default=Path(__file__).with_name("scalar_optimizers_logging5.log"),
+        default=Path(__file__).with_name("scalar_optimizers_logging6.log"),
         type=Path,
         help="Path to scalar optimizer log file.",
     )
@@ -29,12 +30,20 @@ def parse_args() -> argparse.Namespace:
 
 def load_run_summaries(log_path: Path) -> list[dict]:
     rows = []
+    skipped_nonfinite = 0
     with log_path.open() as f:
         for line in f:
             if line.startswith("RUN_SUMMARY "):
-                rows.append(json.loads(line.split(" ", 1)[1]))
+                row = json.loads(line.split(" ", 1)[1])
+                score = float(row["clean_sse"])
+                if not math.isfinite(score):
+                    skipped_nonfinite += 1
+                    continue
+                rows.append(row)
     if not rows:
         raise SystemExit(f"No RUN_SUMMARY rows found in {log_path}")
+    if skipped_nonfinite:
+        print(f"Skipped {skipped_nonfinite} RUN_SUMMARY rows with non-finite clean_sse")
     return rows
 
 
@@ -52,14 +61,24 @@ def dense_ranks_by_score(scores: dict[float, float]) -> dict[float, int]:
 
 
 def optimizer_variant(row: dict) -> str:
-    if row["optimizer"] == "AdamW":
-        return "AdamW_row"
-    return (
-        "Adam2_row"
-        f"__nesterov={int(row['nesterov'])}"
-        f"__disable_bias1={int(row['disable_bias1'])}"
-        f"__adaptive_norm={int(row['adaptive_norm'])}"
-    )
+    variant = row.get("variant")
+    if isinstance(variant, str) and variant:
+        parts = [variant]
+    elif row["optimizer"] == "AdamW":
+        parts = ["AdamW_row"]
+    elif row["optimizer"] == "Adam2":
+        parts = ["Adam2_row"]
+    else:
+        h_norm = row.get("h_norm")
+        if h_norm is None:
+            parts = [str(row["optimizer"])]
+        else:
+            parts = [f"{row['optimizer']}_{h_norm}"]
+
+    for key in ("nesterov", "disable_bias1", "adaptive_norm", "flush_last"):
+        if key in row:
+            parts.append(f"{key}={bool(row[key])}")
+    return "__".join(parts)
 
 
 def rank_rows_by_average(rows: list[list[str]], avg_rank_index: int) -> list[list[str]]:

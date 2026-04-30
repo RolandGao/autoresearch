@@ -792,3 +792,17 @@ scalar adam and matrix adam don't have the same lr.
 
 scalar adam lr:
 lr ≈ 0.15 * (batch_size / 128)^0.75 * (num_samples / 8192)^-0.75
+
+shampoo, muon, gg^t. 
+https://medium.com/@afafel/demystifying-ml-optimizers-understanding-sgd-shampoo-and-beyond-037d94b58239 
+
+flushing actually works!!!!!!!!!!!
+
+
+small batch size prefers larger momentum. this might be because large batch size is better than small lr. 
+hypothesis: momentum is both a batch size enlarger and also a direction stabelizer under full batch size. 
+a larger momentum is usually not harmful, so the chosen momentum would be the max of the momentum required for each subgoal. 
+
+idea: try varying the flush_last lr by 2 and see if the flush_last constant is truly the best. 
+idea: revisit some old ideas under the new infra
+TODO: study beta1_rank.log more closely. i think there's more knowledge in that file. 

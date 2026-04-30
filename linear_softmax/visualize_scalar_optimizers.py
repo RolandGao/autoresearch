@@ -20,12 +20,13 @@ from matplotlib.ticker import FixedFormatter, FixedLocator
 import numpy as np
 
 
-DEFAULT_LOG_NAME = "scalar_optimizers_logging5.log"
-DEFAULT_OUT_DIR = Path(__file__).with_name("scalar_optimizers_logging5_dir")
+DEFAULT_LOG_NAME = "scalar_optimizers_logging6.log"
+DEFAULT_OUT_DIR = Path(__file__).with_name("scalar_optimizers_logging6_dir")
 SSE_KEY = "clean_train_sse"
 SUMMARY_FILENAME = "optimizer_hparam_summary.txt"
 TOP_K = 3
 BETA1_SPLIT_HPARAM = "beta1"
+SPLIT_HPARAMS = (BETA1_SPLIT_HPARAM, "flush_last")
 PREFERRED_OPTIMIZER_ORDER = (
     "AdamW",
     "Adam2",
@@ -37,6 +38,7 @@ PREFERRED_OPTIMIZER_ORDER = (
 )
 H_NORM_ORDER = ("matrix", "row")
 ADAM2_OPTION_KEYS = ("nesterov", "disable_bias1", "adaptive_norm")
+PLOT_OPTION_KEYS = (*ADAM2_OPTION_KEYS, "flush_last", BETA1_SPLIT_HPARAM)
 PREFERRED_HPARAM_ORDER = (
     "lr",
     "lr_decay",
@@ -98,7 +100,7 @@ NON_SEARCH_KEYS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            f"Create one figure per optimizer variant and beta1 from {DEFAULT_LOG_NAME}. "
+            f"Create one figure per optimizer variant/split from {DEFAULT_LOG_NAME}. "
             "Each hparam row plots the three best observed hparam values across "
             "batch sizes and sample counts."
         )
@@ -151,6 +153,23 @@ def format_value(value: Any) -> str:
             return str(int(round(value)))
         return f"{value:.10g}"
     return str(value)
+
+
+def parse_boolish(value: str) -> int:
+    if value in {"1", "True", "true"}:
+        return 1
+    if value in {"0", "False", "false"}:
+        return 0
+    return -1
+
+
+def parse_plot_option(key: str, value: str) -> float:
+    if key == BETA1_SPLIT_HPARAM:
+        try:
+            return float(value)
+        except ValueError:
+            return -1.0
+    return float(parse_boolish(value))
 
 
 def safe_filename(value: str) -> str:
@@ -262,39 +281,39 @@ def plot_group_name(row: dict[str, Any]) -> str:
             f"{key}={int(bool(row[key]))}" for key in ADAM2_OPTION_KEYS if key in row
         )
         if option_suffix:
-            return f"{base_name}__{option_suffix}"
+            base_name = f"{base_name}__{option_suffix}"
     return base_name
 
 
-def beta1_split_value(row: dict[str, Any]) -> Any | None:
-    value = row.get(BETA1_SPLIT_HPARAM)
+def split_hparam_value(row: dict[str, Any], hparam: str) -> Any | None:
+    value = row.get(hparam)
     if not is_plot_value(value):
         return None
     return normalize_value(value)
 
 
-def add_beta1_split_to_plot_group(plot_group: str, value: Any | None) -> str:
+def add_split_to_plot_group(plot_group: str, hparam: str, value: Any | None) -> str:
     if value is None:
         return plot_group
-    return f"{plot_group}__{BETA1_SPLIT_HPARAM}={format_value(value)}"
+    return f"{plot_group}__{hparam}={format_value(value)}"
 
 
 def plot_group_base_name(name: str) -> str:
     return name.split("__", 1)[0]
 
 
-def plot_group_option_sort_key(name: str) -> tuple[int, ...]:
-    option_values: dict[str, int] = {}
+def plot_group_option_sort_key(name: str) -> tuple[float, ...]:
+    option_values: dict[str, float] = {}
     for part in name.split("__")[1:]:
         if "=" not in part:
             continue
         key, value = part.split("=", 1)
-        if key in ADAM2_OPTION_KEYS:
-            option_values[key] = int(value)
-    return tuple(option_values.get(key, -1) for key in ADAM2_OPTION_KEYS)
+        if key in PLOT_OPTION_KEYS:
+            option_values[key] = parse_plot_option(key, value)
+    return tuple(option_values.get(key, -1.0) for key in PLOT_OPTION_KEYS)
 
 
-def plot_group_sort_key(name: str) -> tuple[int, int, tuple[int, ...], str]:
+def plot_group_sort_key(name: str) -> tuple[int, int, tuple[float, ...], str]:
     base_name = plot_group_base_name(name)
     base_optimizer = base_name
     h_norm_index = -1
@@ -309,12 +328,16 @@ def plot_group_sort_key(name: str) -> tuple[int, int, tuple[int, ...], str]:
 
 
 def build_plot_groups(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    return grouped_rows(
-        rows,
-        lambda row: add_beta1_split_to_plot_group(
-            plot_group_name(row), beta1_split_value(row)
-        ),
-    )
+    return grouped_rows(rows, plot_group_for_row)
+
+
+def plot_group_for_row(row: dict[str, Any]) -> str:
+    plot_group = plot_group_name(row)
+    for hparam in SPLIT_HPARAMS:
+        plot_group = add_split_to_plot_group(
+            plot_group, hparam, split_hparam_value(row, hparam)
+        )
+    return plot_group
 
 
 def hparams_for_optimizer(rows: list[dict[str, Any]]) -> list[str]:
@@ -770,7 +793,12 @@ def write_summary(
         handle.write("=============================\n\n")
         handle.write(f"Input log: {log_path}\n")
         handle.write(f"Rows: {len(rows)}\n")
-        handle.write(f"Split hparam: {BETA1_SPLIT_HPARAM}\n")
+        active_splits = [
+            hparam
+            for hparam in SPLIT_HPARAMS
+            if any(split_hparam_value(row, hparam) is not None for row in rows)
+        ]
+        handle.write(f"Split hparams: {', '.join(active_splits)}\n")
         handle.write(
             "Plot groups: "
             + ", ".join(sorted(plot_groups, key=plot_group_sort_key))
