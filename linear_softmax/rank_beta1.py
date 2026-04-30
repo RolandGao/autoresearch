@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "log_path",
         nargs="?",
-        default=Path(__file__).with_name("scalar_optimizers_logging4.log"),
+        default=Path(__file__).with_name("scalar_optimizers_logging5.log"),
         type=Path,
         help="Path to scalar optimizer log file.",
     )
@@ -82,8 +82,7 @@ def format_beta1(beta1: float) -> str:
 def print_table(title: str, header: list[str], rows: list[list[str]]) -> None:
     print(f"\n{title}")
     widths = [
-        max(len(str(row[i])) for row in [header, *rows])
-        for i in range(len(header))
+        max(len(str(row[i])) for row in [header, *rows]) for i in range(len(header))
     ]
     print("  ".join(str(value).rjust(widths[i]) for i, value in enumerate(header)))
     print("  ".join("-" * width for width in widths))
@@ -127,7 +126,9 @@ def main() -> None:
                     beta1: best_sse[(variant, batch_size, num_samples, beta1)]
                     for beta1 in beta1_values
                 }
-                situation_ranks[(batch_size, num_samples)] = dense_ranks_by_score(scores)
+                situation_ranks[(batch_size, num_samples)] = dense_ranks_by_score(
+                    scores
+                )
 
         ranks_by_beta1 = defaultdict(list)
         ranks_by_batch_beta1 = defaultdict(list)

@@ -27,7 +27,7 @@ BATCH_SIZES = (8, 16, 32, 64, 128, 256, 512)
 BETA1_MOMENTUM_VALUES = (0.0, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95)
 ADAM_BETA2 = 0.95
 ADAM_EPS = 1e-10
-ADAM_LR_GRID = tuple(2.0**exponent for exponent in range(-7, 11))
+ADAM_LR_GRID = tuple(2.0**exponent for exponent in range(-10, 5))
 LR_DECAY = 4.0
 LR_POWER = 1.0
 
@@ -191,7 +191,7 @@ def build_problem(config: Config, device: torch.device) -> dict[str, ToyDataset]
 
 def option_specs_for_optimizer(optimizer: str) -> tuple[dict[str, bool], ...]:
     if optimizer == "AdamW":
-        return ({},)
+        return ({"flush_last": False}, {"flush_last": True})
     raise ValueError(f"unknown optimizer: {optimizer}")
 
 
@@ -326,7 +326,7 @@ def setting_key(hparams: dict[str, Any]) -> str:
         f"optimizer={hparams['optimizer']}",
         f"h_norm={hparams['h_norm']}",
     ]
-    for key in ("nesterov", "disable_bias1", "adaptive_norm"):
+    for key in ("nesterov", "disable_bias1", "adaptive_norm", "flush_last"):
         if key in hparams:
             parts.append(f"{key}={hparams[key]}")
     parts.extend(
@@ -434,6 +434,7 @@ def adamw_step(
     wd: float,
     bias1: float | None = None,
     bias2: float | None = None,
+    update_scale: float = 1.0,
 ) -> None:
     if wd:
         log_scalars.mul_(1 - lr * wd)
@@ -444,7 +445,7 @@ def adamw_step(
     if bias2 is None:
         bias2 = 1 - beta2**step_count
     denom = (exp_avg_sq / bias2).sqrt().add_(eps)
-    log_scalars.addcdiv_(exp_avg / bias1, denom, value=-lr)
+    log_scalars.addcdiv_(exp_avg / bias1, denom, value=-lr * update_scale)
 
 
 def adamw_graph_step(
@@ -460,6 +461,7 @@ def adamw_graph_step(
     bias2: torch.Tensor,
     eps: torch.Tensor,
     wd: torch.Tensor,
+    update_scale: torch.Tensor,
 ) -> torch.Tensor:
     loss, grad = scalar_batch_sse_loss_and_grad(
         log_scalars, fixed_logits_batch, target_probs
@@ -468,7 +470,7 @@ def adamw_graph_step(
     exp_avg.copy_(exp_avg * beta1 + grad * (1 - beta1))
     exp_avg_sq.copy_(exp_avg_sq * beta2 + grad.square() * (1 - beta2))
     update = (exp_avg / bias1) / ((exp_avg_sq / bias2).sqrt() + eps)
-    log_scalars.copy_(log_scalars - lr * update)
+    log_scalars.copy_(log_scalars - lr * update * update_scale)
     return loss
 
 
@@ -515,6 +517,15 @@ def adamw_bias_corrections(
     return beta1, beta2, bias1_values, bias2_values
 
 
+def adamw_update_scales(
+    hparams: dict[str, Any], steps: int, beta1: float
+) -> list[float]:
+    update_scales = [1.0 for _ in range(steps)]
+    if bool(hparams["flush_last"]):
+        update_scales[-1] = 1.0 / (1.0 - beta1)
+    return update_scales
+
+
 def replay_cuda_graph_training(
     hparams: dict[str, Any],
     dataset: ToyDataset,
@@ -549,8 +560,11 @@ def replay_cuda_graph_training(
     static_bias1 = torch.empty(1, device=device)
     static_bias2 = torch.empty(1, device=device)
     static_eps = torch.tensor([float(hparams["eps"])], device=device)
+    static_update_scale = torch.empty(1, device=device)
     static_bias1.fill_(bias1_values[0])
     static_bias2.fill_(bias2_values[0])
+    update_scale_values = adamw_update_scales(hparams, prepared.steps, beta1)
+    static_update_scale.fill_(update_scale_values[0])
 
     def replayed_step() -> torch.Tensor:
         return adamw_graph_step(
@@ -566,6 +580,7 @@ def replay_cuda_graph_training(
             static_bias2,
             static_eps,
             static_wd,
+            static_update_scale,
         )
 
     last_loss_tensor: torch.Tensor | None = None
@@ -593,6 +608,7 @@ def replay_cuda_graph_training(
         static_lr.fill_(prepared.step_lrs[step])
         static_bias1.fill_(bias1_values[step])
         static_bias2.fill_(bias2_values[step])
+        static_update_scale.fill_(update_scale_values[step])
         graph.replay()
     torch.cuda.synchronize(device)
     return (
@@ -620,6 +636,7 @@ def eager_training(
     beta1, beta2, bias1_values, bias2_values = adamw_bias_corrections(
         hparams, prepared.steps
     )
+    update_scale_values = adamw_update_scales(hparams, prepared.steps, beta1)
 
     last_loss_tensor: torch.Tensor | None = None
     training_start_time = time.time()
@@ -649,6 +666,7 @@ def eager_training(
             float(hparams["wd"]),
             bias1_values[step],
             bias2_values[step],
+            update_scale_values[step],
         )
 
         last_loss_tensor = loss.detach()
@@ -793,6 +811,7 @@ def main() -> None:
                 "beta1_momentum_values": BETA1_MOMENTUM_VALUES,
                 "adam_beta2": ADAM_BETA2,
                 "adam_eps": ADAM_EPS,
+                "adam_flush_last_values": (False, True),
                 "h_norms": H_NORMS,
                 "wd": 0.0,
                 "compile": config.compile,

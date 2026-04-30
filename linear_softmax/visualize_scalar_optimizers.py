@@ -20,11 +20,12 @@ from matplotlib.ticker import FixedFormatter, FixedLocator
 import numpy as np
 
 
-DEFAULT_LOG_NAME = "scalar_optimizers_logging4.log"
-DEFAULT_OUT_DIR = Path(__file__).with_name("scalar_optimizers_logging4_dir")
+DEFAULT_LOG_NAME = "scalar_optimizers_logging5.log"
+DEFAULT_OUT_DIR = Path(__file__).with_name("scalar_optimizers_logging5_dir")
 SSE_KEY = "clean_train_sse"
 SUMMARY_FILENAME = "optimizer_hparam_summary.txt"
 TOP_K = 3
+BETA1_SPLIT_HPARAM = "beta1"
 PREFERRED_OPTIMIZER_ORDER = (
     "AdamW",
     "Adam2",
@@ -97,7 +98,7 @@ NON_SEARCH_KEYS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            f"Create one figure per optimizer variant from {DEFAULT_LOG_NAME}. "
+            f"Create one figure per optimizer variant and beta1 from {DEFAULT_LOG_NAME}. "
             "Each hparam row plots the three best observed hparam values across "
             "batch sizes and sample counts."
         )
@@ -265,6 +266,19 @@ def plot_group_name(row: dict[str, Any]) -> str:
     return base_name
 
 
+def beta1_split_value(row: dict[str, Any]) -> Any | None:
+    value = row.get(BETA1_SPLIT_HPARAM)
+    if not is_plot_value(value):
+        return None
+    return normalize_value(value)
+
+
+def add_beta1_split_to_plot_group(plot_group: str, value: Any | None) -> str:
+    if value is None:
+        return plot_group
+    return f"{plot_group}__{BETA1_SPLIT_HPARAM}={format_value(value)}"
+
+
 def plot_group_base_name(name: str) -> str:
     return name.split("__", 1)[0]
 
@@ -295,7 +309,12 @@ def plot_group_sort_key(name: str) -> tuple[int, int, tuple[int, ...], str]:
 
 
 def build_plot_groups(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    return grouped_rows(rows, plot_group_name)
+    return grouped_rows(
+        rows,
+        lambda row: add_beta1_split_to_plot_group(
+            plot_group_name(row), beta1_split_value(row)
+        ),
+    )
 
 
 def hparams_for_optimizer(rows: list[dict[str, Any]]) -> list[str]:
@@ -751,6 +770,7 @@ def write_summary(
         handle.write("=============================\n\n")
         handle.write(f"Input log: {log_path}\n")
         handle.write(f"Rows: {len(rows)}\n")
+        handle.write(f"Split hparam: {BETA1_SPLIT_HPARAM}\n")
         handle.write(
             "Plot groups: "
             + ", ".join(sorted(plot_groups, key=plot_group_sort_key))

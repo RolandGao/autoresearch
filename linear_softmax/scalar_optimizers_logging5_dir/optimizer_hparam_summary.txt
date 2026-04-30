@@ -1,0 +1,675 @@
+Optimizer hparam plot summary
+=============================
+
+Input log: /workspace/neural_networks_optimization/autoresearch/linear_softmax/scalar_optimizers_logging5.log
+Rows: 2425
+Split hparam: beta1
+Plot groups: AdamW_row__beta1=0, AdamW_row__beta1=0.5, AdamW_row__beta1=0.6, AdamW_row__beta1=0.7, AdamW_row__beta1=0.8, AdamW_row__beta1=0.9, AdamW_row__beta1=0.95
+
+AdamW_row__beta1=0
+------------------
+Figure: optimizer_AdamW_row__beta1_0.png
+Rows: 387
+Num samples: 2048, 4096, 8192, 16384, 32768
+Batch sizes: 8, 16, 32, 64, 128, 256, 512
+Hparams: lr
+
+lr
+  num_samples=2048
+    batch_size=8: top1=0.0625 (sse=3.197498542e-08); top2=0.125 (sse=3.602020764e-08); top3=0.25 (sse=4.792905687e-08)
+    batch_size=16: top1=0.125 (sse=3.274648013e-08); top2=0.25 (sse=4.122184673e-08); top3=0.5 (sse=5.706184196e-08)
+    batch_size=32: top1=0.25 (sse=3.665707979e-08); top2=0.125 (sse=3.93421645e-08); top3=0.5 (sse=4.709410829e-08)
+    batch_size=64: top1=0.25 (sse=3.476205893e-08); top2=0.5 (sse=4.096011659e-08); top3=1 (sse=1.82467848e-07)
+    batch_size=128: top1=0.5 (sse=3.81100951e-08); top2=1 (sse=1.636614602e-07); top3=0.25 (sse=5.646482299e-07)
+    batch_size=256: top1=1 (sse=1.115440899e-07); top2=0.5 (sse=1.73025005e-07); top3=0.25 (sse=3.619441926e-06)
+    batch_size=512: top1=1 (sse=5.519895688e-08); top2=2 (sse=9.926196799e-07); top3=0.5 (sse=2.340497108e-06)
+  num_samples=4096
+    batch_size=8: top1=0.03125 (sse=1.747464748e-08); top2=0.0625 (sse=1.810287172e-08); top3=0.125 (sse=2.412078356e-08)
+    batch_size=16: top1=0.0625 (sse=1.660546203e-08); top2=0.125 (sse=2.060197706e-08); top3=0.25 (sse=2.930035113e-08)
+    batch_size=32: top1=0.125 (sse=1.830246179e-08); top2=0.25 (sse=2.426053719e-08); top3=0.0625 (sse=2.504735407e-08)
+    batch_size=64: top1=0.125 (sse=1.844352913e-08); top2=0.25 (sse=2.072297204e-08); top3=0.5 (sse=2.80202052e-08)
+    batch_size=128: top1=0.25 (sse=1.840809368e-08); top2=0.5 (sse=2.294932131e-08); top3=1 (sse=1.128489788e-07)
+    batch_size=256: top1=0.5 (sse=2.027347574e-08); top2=1 (sse=1.225534448e-07); top3=0.25 (sse=4.857669963e-07)
+    batch_size=512: top1=1 (sse=8.89894276e-08); top2=0.5 (sse=1.40391569e-07); top3=0.25 (sse=3.585188778e-06)
+  num_samples=8192
+    batch_size=8: top1=0.03125 (sse=1.013426767e-08); top2=0.015625 (sse=1.099523683e-08); top3=0.0625 (sse=1.318200232e-08)
+    batch_size=16: top1=0.03125 (sse=9.335374943e-09); top2=0.0625 (sse=1.136015089e-08); top3=0.125 (sse=1.552548277e-08)
+    batch_size=32: top1=0.0625 (sse=1.007460971e-08); top2=0.125 (sse=1.311868611e-08); top3=0.25 (sse=1.882352197e-08)
+    batch_size=64: top1=0.0625 (sse=1.122536942e-08); top2=0.125 (sse=1.136730634e-08); top3=0.25 (sse=1.547824965e-08)
+    batch_size=128: top1=0.125 (sse=1.034236257e-08); top2=0.25 (sse=1.295000267e-08); top3=0.5 (sse=1.7710988e-08)
+    batch_size=256: top1=0.25 (sse=1.079518004e-08); top2=0.5 (sse=1.420693308e-08); top3=1 (sse=6.939359234e-08)
+    batch_size=512: top1=0.5 (sse=1.190105295e-08); top2=1 (sse=8.740162975e-08); top3=0.25 (sse=4.461663625e-07)
+  num_samples=16384
+    batch_size=8: top1=0.015625 (sse=6.313209875e-09); top2=0.03125 (sse=7.828298976e-09); top3=0.0078125 (sse=8.133774175e-09)
+    batch_size=16: top1=0.015625 (sse=6.04607607e-09); top2=0.03125 (sse=6.899565043e-09); top3=0.0625 (sse=9.052147175e-09)
+    batch_size=32: top1=0.03125 (sse=6.272094727e-09); top2=0.0625 (sse=7.761756084e-09); top3=0.125 (sse=1.079582125e-08)
+    batch_size=64: top1=0.0625 (sse=6.87042002e-09); top2=0.03125 (sse=7.947562608e-09); top3=0.125 (sse=9.025382807e-09)
+    batch_size=128: top1=0.0625 (sse=6.723383603e-09); top2=0.125 (sse=7.742932007e-09); top3=0.25 (sse=1.071590189e-08)
+    batch_size=256: top1=0.125 (sse=6.74584525e-09); top2=0.25 (sse=8.736848523e-09); top3=0.5 (sse=1.21971351e-08)
+    batch_size=512: top1=0.25 (sse=6.981085304e-09); top2=0.5 (sse=9.30501069e-09); top3=1 (sse=4.072915835e-08)
+  num_samples=32768
+    batch_size=8: top1=0.0078125 (sse=4.353390121e-09); top2=0.015625 (sse=5.021386289e-09); top3=0.03125 (sse=6.427214915e-09)
+    batch_size=16: top1=0.0078125 (sse=4.326454825e-09); top2=0.015625 (sse=4.562877511e-09); top3=0.03125 (sse=5.550384935e-09)
+    batch_size=32: top1=0.015625 (sse=4.264027264e-09); top2=0.03125 (sse=4.924987305e-09); top3=0.0625 (sse=6.349208411e-09)
+    batch_size=64: top1=0.03125 (sse=4.519952768e-09); top2=0.0625 (sse=5.503784575e-09); top3=0.015625 (sse=6.196400591e-09)
+    batch_size=128: top1=0.03125 (sse=4.702553758e-09); top2=0.0625 (sse=4.910828765e-09); top3=0.125 (sse=6.346629486e-09)
+    batch_size=256: top1=0.0625 (sse=4.606931376e-09); top2=0.125 (sse=5.465299834e-09); top3=0.25 (sse=7.468097503e-09)
+    batch_size=512: top1=0.125 (sse=4.705418326e-09); top2=0.25 (sse=6.07045146e-09); top3=0.5 (sse=8.352893231e-09)
+
+AdamW_row__beta1=0.5
+--------------------
+Figure: optimizer_AdamW_row__beta1_0.5.png
+Rows: 356
+Num samples: 2048, 4096, 8192, 16384, 32768
+Batch sizes: 8, 16, 32, 64, 128, 256, 512
+Hparams: lr
+
+lr
+  num_samples=2048
+    batch_size=8: top1=0.0625 (sse=3.175041635e-08); top2=0.125 (sse=3.626286283e-08); top3=0.25 (sse=4.828499429e-08)
+    batch_size=16: top1=0.125 (sse=3.307509736e-08); top2=0.25 (sse=4.186807222e-08); top3=0.5 (sse=5.843250941e-08)
+    batch_size=32: top1=0.125 (sse=3.602868783e-08); top2=0.25 (sse=3.779321232e-08); top3=0.5 (sse=4.920047525e-08)
+    batch_size=64: top1=0.25 (sse=3.442387824e-08); top2=0.5 (sse=4.396271073e-08); top3=1 (sse=1.386668725e-07)
+    batch_size=128: top1=0.5 (sse=4.488664499e-08); top2=1 (sse=1.799322477e-07); top3=0.25 (sse=5.647072733e-07)
+    batch_size=256: top1=1 (sse=1.081339816e-07); top2=0.5 (sse=1.458548726e-07); top3=0.25 (sse=3.697362073e-06)
+    batch_size=512: top1=1 (sse=1.64842933e-07); top2=2 (sse=3.186423686e-07); top3=0.5 (sse=2.415167994e-06)
+  num_samples=4096
+    batch_size=8: top1=0.03125 (sse=1.733528743e-08); top2=0.0625 (sse=1.819683436e-08); top3=0.125 (sse=2.426169804e-08)
+    batch_size=16: top1=0.0625 (sse=1.666630327e-08); top2=0.125 (sse=2.075649997e-08); top3=0.25 (sse=2.952069356e-08)
+    batch_size=32: top1=0.125 (sse=1.854676417e-08); top2=0.0625 (sse=2.318768755e-08); top3=0.25 (sse=2.462220248e-08)
+    batch_size=64: top1=0.125 (sse=1.766974389e-08); top2=0.25 (sse=2.128040915e-08); top3=0.5 (sse=2.925400656e-08)
+    batch_size=128: top1=0.25 (sse=1.892424213e-08); top2=0.5 (sse=2.432953112e-08); top3=1 (sse=6.955689072e-08)
+    batch_size=256: top1=0.5 (sse=2.569858495e-08); top2=1 (sse=1.212340748e-07); top3=0.25 (sse=4.950598687e-07)
+    batch_size=512: top1=1 (sse=9.314299641e-08); top2=0.5 (sse=1.238616972e-07); top3=0.25 (sse=3.668943959e-06)
+  num_samples=8192
+    batch_size=8: top1=0.03125 (sse=1.014167713e-08); top2=0.015625 (sse=1.086935445e-08); top3=0.0625 (sse=1.319560984e-08)
+    batch_size=16: top1=0.03125 (sse=9.317018635e-09); top2=0.0625 (sse=1.138165665e-08); top3=0.125 (sse=1.554625655e-08)
+    batch_size=32: top1=0.0625 (sse=1.011887255e-08); top2=0.125 (sse=1.318339437e-08); top3=0.03125 (sse=1.817716372e-08)
+    batch_size=64: top1=0.0625 (sse=1.066127023e-08); top2=0.125 (sse=1.150472939e-08); top3=0.25 (sse=1.566833048e-08)
+    batch_size=128: top1=0.125 (sse=1.013311136e-08); top2=0.25 (sse=1.331372916e-08); top3=0.5 (sse=1.846152128e-08)
+    batch_size=256: top1=0.25 (sse=1.126329903e-08); top2=0.5 (sse=1.509860279e-08); top3=1 (sse=2.769280391e-08)
+    batch_size=512: top1=0.5 (sse=1.573132457e-08); top2=1 (sse=8.395934844e-08); top3=0.25 (sse=4.611861208e-07)
+  num_samples=16384
+    batch_size=8: top1=0.015625 (sse=6.325860007e-09); top2=0.03125 (sse=7.843867176e-09); top3=0.0078125 (sse=8.043745614e-09)
+    batch_size=16: top1=0.015625 (sse=6.03572582e-09); top2=0.03125 (sse=6.911384404e-09); top3=0.0625 (sse=9.068042921e-09)
+    batch_size=32: top1=0.03125 (sse=6.285743151e-09); top2=0.0625 (sse=7.776536889e-09); top3=0.125 (sse=1.080434694e-08)
+    batch_size=64: top1=0.0625 (sse=6.889440139e-09); top2=0.03125 (sse=7.644517177e-09); top3=0.125 (sse=9.036112291e-09)
+    batch_size=128: top1=0.0625 (sse=6.549190258e-09); top2=0.125 (sse=7.782540403e-09); top3=0.25 (sse=1.073701561e-08)
+    batch_size=256: top1=0.125 (sse=6.696244373e-09); top2=0.25 (sse=8.857745926e-09); top3=0.5 (sse=1.254641596e-08)
+    batch_size=512: top1=0.25 (sse=7.273140651e-09); top2=0.5 (sse=9.591281613e-09); top3=1 (sse=1.285125522e-08)
+  num_samples=32768
+    batch_size=8: top1=0.0078125 (sse=4.352051455e-09); top2=0.015625 (sse=5.025650914e-09); top3=0.03125 (sse=6.441661844e-09)
+    batch_size=16: top1=0.0078125 (sse=4.316051521e-09); top2=0.015625 (sse=4.568297838e-09); top3=0.03125 (sse=5.561602332e-09)
+    batch_size=32: top1=0.015625 (sse=4.267454081e-09); top2=0.03125 (sse=4.931369805e-09); top3=0.0625 (sse=6.355437912e-09)
+    batch_size=64: top1=0.03125 (sse=4.527970653e-09); top2=0.0625 (sse=5.511756725e-09); top3=0.015625 (sse=6.031327704e-09)
+    batch_size=128: top1=0.03125 (sse=4.61626286e-09); top2=0.0625 (sse=4.927111911e-09); top3=0.125 (sse=6.357482956e-09)
+    batch_size=256: top1=0.0625 (sse=4.563778729e-09); top2=0.125 (sse=5.505372337e-09); top3=0.25 (sse=7.491854164e-09)
+    batch_size=512: top1=0.125 (sse=4.703763284e-09); top2=0.25 (sse=6.144769983e-09); top3=0.5 (sse=8.556447635e-09)
+
+AdamW_row__beta1=0.6
+--------------------
+Figure: optimizer_AdamW_row__beta1_0.6.png
+Rows: 354
+Num samples: 2048, 4096, 8192, 16384, 32768
+Batch sizes: 8, 16, 32, 64, 128, 256, 512
+Hparams: lr
+
+lr
+  num_samples=2048
+    batch_size=8: top1=0.0625 (sse=3.167512538e-08); top2=0.125 (sse=3.642171699e-08); top3=0.25 (sse=4.851759146e-08)
+    batch_size=16: top1=0.125 (sse=3.329276184e-08); top2=0.25 (sse=4.223504096e-08); top3=0.5 (sse=5.896806148e-08)
+    batch_size=32: top1=0.125 (sse=3.475609616e-08); top2=0.25 (sse=3.841763543e-08); top3=0.5 (sse=5.03041428e-08)
+    batch_size=64: top1=0.25 (sse=3.454923108e-08); top2=0.5 (sse=4.554317766e-08); top3=1 (sse=1.810028756e-07)
+    batch_size=128: top1=0.5 (sse=4.757247716e-08); top2=1 (sse=2.539383083e-07); top3=0.25 (sse=5.614009957e-07)
+    batch_size=256: top1=1 (sse=1.087425416e-07); top2=0.5 (sse=1.446293866e-07); top3=0.25 (sse=3.712770455e-06)
+    batch_size=512: top1=1 (sse=2.378004271e-07); top2=2 (sse=2.897899668e-07); top3=0.5 (sse=2.4269369e-06)
+  num_samples=4096
+    batch_size=8: top1=0.03125 (sse=1.727121213e-08); top2=0.0625 (sse=1.824220659e-08); top3=0.125 (sse=2.432720797e-08)
+    batch_size=16: top1=0.0625 (sse=1.670417355e-08); top2=0.125 (sse=2.084149537e-08); top3=0.25 (sse=2.964889169e-08)
+    batch_size=32: top1=0.125 (sse=1.867762921e-08); top2=0.0625 (sse=2.236149088e-08); top3=0.25 (sse=2.480233814e-08)
+    batch_size=64: top1=0.125 (sse=1.742734942e-08); top2=0.25 (sse=2.156758455e-08); top3=0.5 (sse=2.968771738e-08)
+    batch_size=128: top1=0.25 (sse=1.95051501e-08); top2=0.5 (sse=2.485328556e-08); top3=1 (sse=9.111384e-08)
+    batch_size=256: top1=0.5 (sse=3.055015065e-08); top2=1 (sse=1.87631226e-07); top3=0.25 (sse=4.938720861e-07)
+    batch_size=512: top1=1 (sse=9.950797218e-08); top2=0.5 (sse=1.251093173e-07); top3=0.25 (sse=3.685520698e-06)
+  num_samples=8192
+    batch_size=8: top1=0.03125 (sse=1.014880656e-08); top2=0.015625 (sse=1.080965881e-08); top3=0.0625 (sse=1.321095572e-08)
+    batch_size=16: top1=0.03125 (sse=9.313105284e-09); top2=0.0625 (sse=1.14018884e-08); top3=0.125 (sse=1.557799851e-08)
+    batch_size=32: top1=0.0625 (sse=1.015262265e-08); top2=0.125 (sse=1.324134593e-08); top3=0.03125 (sse=1.767111494e-08)
+    batch_size=64: top1=0.0625 (sse=1.04219778e-08); top2=0.125 (sse=1.159324559e-08); top3=0.25 (sse=1.581451805e-08)
+    batch_size=128: top1=0.125 (sse=1.011293039e-08); top2=0.25 (sse=1.349792313e-08); top3=0.5 (sse=1.874743266e-08)
+    batch_size=256: top1=0.25 (sse=1.18758741e-08); top2=0.5 (sse=1.536517264e-08); top3=1 (sse=3.612058896e-08)
+    batch_size=512: top1=0.5 (sse=2.150985509e-08); top2=1 (sse=1.44718236e-07); top3=0.25 (sse=4.612504131e-07)
+  num_samples=16384
+    batch_size=8: top1=0.015625 (sse=6.330335426e-09); top2=0.03125 (sse=7.850249366e-09); top3=0.0078125 (sse=8.000050229e-09)
+    batch_size=16: top1=0.015625 (sse=6.032072649e-09); top2=0.03125 (sse=6.917997075e-09); top3=0.0625 (sse=9.077068989e-09)
+    batch_size=32: top1=0.03125 (sse=6.292688515e-09); top2=0.0625 (sse=7.784604585e-09); top3=0.125 (sse=1.081498295e-08)
+    batch_size=64: top1=0.0625 (sse=6.903608945e-09); top2=0.03125 (sse=7.503651386e-09); top3=0.125 (sse=9.054880919e-09)
+    batch_size=128: top1=0.0625 (sse=6.485701761e-09); top2=0.125 (sse=7.818944421e-09); top3=0.25 (sse=1.079322506e-08)
+    batch_size=256: top1=0.125 (sse=6.736655799e-09); top2=0.25 (sse=8.927585304e-09); top3=0.5 (sse=1.265992126e-08)
+    batch_size=512: top1=0.25 (sse=7.753412721e-09); top2=0.5 (sse=9.676631187e-09); top3=1 (sse=1.595116331e-08)
+  num_samples=32768
+    batch_size=8: top1=0.0078125 (sse=4.351800578e-09); top2=0.015625 (sse=5.027136604e-09); top3=0.03125 (sse=6.446470593e-09)
+    batch_size=16: top1=0.0078125 (sse=4.311446852e-09); top2=0.015625 (sse=4.570258769e-09); top3=0.03125 (sse=5.564539015e-09)
+    batch_size=32: top1=0.015625 (sse=4.269234375e-09); top2=0.03125 (sse=4.935078929e-09); top3=0.0625 (sse=6.360383281e-09)
+    batch_size=64: top1=0.03125 (sse=4.533951873e-09); top2=0.0625 (sse=5.519979777e-09); top3=0.015625 (sse=5.952474904e-09)
+    batch_size=128: top1=0.03125 (sse=4.578907177e-09); top2=0.0625 (sse=4.939618009e-09); top3=0.125 (sse=6.375456815e-09)
+    batch_size=256: top1=0.0625 (sse=4.554774637e-09); top2=0.125 (sse=5.532677445e-09); top3=0.25 (sse=7.531850542e-09)
+    batch_size=512: top1=0.125 (sse=4.737831121e-09); top2=0.25 (sse=6.178367444e-09); top3=0.5 (sse=8.605059482e-09)
+
+AdamW_row__beta1=0.7
+--------------------
+Figure: optimizer_AdamW_row__beta1_0.7.png
+Rows: 352
+Num samples: 2048, 4096, 8192, 16384, 32768
+Batch sizes: 8, 16, 32, 64, 128, 256, 512
+Hparams: lr
+
+lr
+  num_samples=2048
+    batch_size=8: top1=0.0625 (sse=3.157521763e-08); top2=0.125 (sse=3.670528477e-08); top3=0.25 (sse=4.893019723e-08)
+    batch_size=16: top1=0.125 (sse=3.370248484e-08); top2=0.25 (sse=4.287312931e-08); top3=0.5 (sse=5.99493178e-08)
+    batch_size=32: top1=0.125 (sse=3.30125009e-08); top2=0.25 (sse=3.957191296e-08); top3=0.5 (sse=5.226590056e-08)
+    batch_size=64: top1=0.25 (sse=3.451628033e-08); top2=0.5 (sse=5.040324668e-08); top3=1 (sse=2.937400546e-07)
+    batch_size=128: top1=0.5 (sse=4.651048154e-08); top2=1 (sse=4.129889547e-07); top3=0.25 (sse=5.569572061e-07)
+    batch_size=256: top1=1 (sse=9.609283419e-08); top2=0.5 (sse=1.492430361e-07); top3=0.25 (sse=3.728104782e-06)
+    batch_size=512: top1=2 (sse=2.850859712e-07); top2=1 (sse=3.266539716e-07); top3=0.5 (sse=2.437956734e-06)
+  num_samples=4096
+    batch_size=8: top1=0.03125 (sse=1.71694306e-08); top2=0.0625 (sse=1.831638759e-08); top3=0.125 (sse=2.443360593e-08)
+    batch_size=16: top1=0.0625 (sse=1.677392249e-08); top2=0.125 (sse=2.098294584e-08); top3=0.25 (sse=2.985821147e-08)
+    batch_size=32: top1=0.125 (sse=1.890619825e-08); top2=0.0625 (sse=2.109165825e-08); top3=0.25 (sse=2.511047836e-08)
+    batch_size=64: top1=0.125 (sse=1.714082252e-08); top2=0.25 (sse=2.203635095e-08); top3=0.5 (sse=3.034677623e-08)
+    batch_size=128: top1=0.25 (sse=2.050088897e-08); top2=0.5 (sse=2.566043771e-08); top3=1 (sse=1.586710702e-07)
+    batch_size=256: top1=0.5 (sse=3.422182908e-08); top2=1 (sse=3.376529933e-07); top3=0.25 (sse=4.918077412e-07)
+    batch_size=512: top1=1 (sse=9.004634655e-08); top2=0.5 (sse=1.327542886e-07); top3=0.25 (sse=3.70199134e-06)
+  num_samples=8192
+    batch_size=8: top1=0.03125 (sse=1.016231434e-08); top2=0.015625 (sse=1.071402897e-08); top3=0.0625 (sse=1.323949235e-08)
+    batch_size=16: top1=0.03125 (sse=9.311478895e-09); top2=0.0625 (sse=1.144256483e-08); top3=0.125 (sse=1.564542208e-08)
+    batch_size=32: top1=0.0625 (sse=1.021471647e-08); top2=0.125 (sse=1.334795006e-08); top3=0.03125 (sse=1.686244241e-08)
+    batch_size=64: top1=0.0625 (sse=1.006589015e-08); top2=0.125 (sse=1.174170376e-08); top3=0.25 (sse=1.606350235e-08)
+    batch_size=128: top1=0.125 (sse=1.017908462e-08); top2=0.25 (sse=1.379015615e-08); top3=0.5 (sse=1.921692547e-08)
+    batch_size=256: top1=0.25 (sse=1.356042347e-08); top2=0.5 (sse=1.539801982e-08); top3=1 (sse=6.964460845e-08)
+    batch_size=512: top1=0.5 (sse=2.960002348e-08); top2=1 (sse=2.929394194e-07); top3=0.25 (sse=4.605124506e-07)
+  num_samples=16384
+    batch_size=8: top1=0.015625 (sse=6.337075797e-09); top2=0.03125 (sse=7.860002552e-09); top3=0.0078125 (sse=7.930030627e-09)
+    batch_size=16: top1=0.015625 (sse=6.027165068e-09); top2=0.03125 (sse=6.929093062e-09); top3=0.0625 (sse=9.091872244e-09)
+    batch_size=32: top1=0.03125 (sse=6.304903726e-09); top2=0.0625 (sse=7.799645664e-09); top3=0.125 (sse=1.083777098e-08)
+    batch_size=64: top1=0.0625 (sse=6.930335144e-09); top2=0.03125 (sse=7.281073764e-09); top3=0.125 (sse=9.092721515e-09)
+    batch_size=128: top1=0.0625 (sse=6.407244746e-09); top2=0.125 (sse=7.88602055e-09); top3=0.25 (sse=1.090503287e-08)
+    batch_size=256: top1=0.125 (sse=6.902243763e-09); top2=0.25 (sse=9.034263204e-09); top3=0.5 (sse=1.282500219e-08)
+    batch_size=512: top1=0.25 (sse=9.517825909e-09); top2=0.5 (sse=9.99412733e-09); top3=1 (sse=3.218531001e-08)
+  num_samples=32768
+    batch_size=8: top1=0.0078125 (sse=4.351465122e-09); top2=0.015625 (sse=5.028912256e-09); top3=0.03125 (sse=6.452431361e-09)
+    batch_size=16: top1=0.0078125 (sse=4.304332299e-09); top2=0.015625 (sse=4.573538592e-09); top3=0.03125 (sse=5.569114137e-09)
+    batch_size=32: top1=0.015625 (sse=4.272837418e-09); top2=0.03125 (sse=4.942522924e-09); top3=0.0625 (sse=6.371146143e-09)
+    batch_size=64: top1=0.03125 (sse=4.544996947e-09); top2=0.0625 (sse=5.535893327e-09); top3=0.015625 (sse=5.825077043e-09)
+    batch_size=128: top1=0.03125 (sse=4.523075957e-09); top2=0.0625 (sse=4.962139587e-09); top3=0.125 (sse=6.410165141e-09)
+    batch_size=256: top1=0.0625 (sse=4.554069941e-09); top2=0.125 (sse=5.577230589e-09); top3=0.25 (sse=7.60337551e-09)
+    batch_size=512: top1=0.125 (sse=4.852727723e-09); top2=0.25 (sse=6.217633631e-09); top3=0.5 (sse=8.680966857e-09)
+
+AdamW_row__beta1=0.8
+--------------------
+Figure: optimizer_AdamW_row__beta1_0.8.png
+Rows: 335
+Num samples: 2048, 4096, 8192, 16384, 32768
+Batch sizes: 8, 16, 32, 64, 128, 256, 512
+Hparams: lr
+
+lr
+  num_samples=2048
+    batch_size=8: top1=0.0625 (sse=3.143969583e-08); top2=0.125 (sse=3.730136286e-08); top3=0.25 (sse=4.979718939e-08)
+    batch_size=16: top1=0.125 (sse=3.470086843e-08); top2=0.25 (sse=4.420731772e-08); top3=0.0625 (sse=5.918355691e-08)
+    batch_size=32: top1=0.125 (sse=3.087034729e-08); top2=0.25 (sse=4.288804457e-08); top3=0.5 (sse=5.767288803e-08)
+    batch_size=64: top1=0.25 (sse=3.449489353e-08); top2=0.5 (sse=7.850510283e-08); top3=1 (sse=6.33422166e-07)
+    batch_size=128: top1=0.5 (sse=4.152979272e-08); top2=0.25 (sse=5.531569264e-07); top3=1 (sse=7.265254719e-07)
+    batch_size=256: top1=1 (sse=7.479071974e-08); top2=0.5 (sse=1.620258407e-07); top3=0.25 (sse=3.743239849e-06)
+    batch_size=512: top1=2 (sse=3.06471508e-07); top2=1 (sse=4.282933291e-07); top3=0.5 (sse=2.448278266e-06)
+  num_samples=4096
+    batch_size=8: top1=0.03125 (sse=1.698368699e-08); top2=0.0625 (sse=1.846186872e-08); top3=0.125 (sse=2.46403489e-08)
+    batch_size=16: top1=0.0625 (sse=1.693823287e-08); top2=0.125 (sse=2.126856845e-08); top3=0.25 (sse=3.027809162e-08)
+    batch_size=32: top1=0.0625 (sse=1.890709676e-08); top2=0.125 (sse=1.939954814e-08); top3=0.25 (sse=2.575434476e-08)
+    batch_size=64: top1=0.125 (sse=1.675518539e-08); top2=0.25 (sse=2.284219881e-08); top3=0.5 (sse=3.181508794e-08)
+    batch_size=128: top1=0.25 (sse=2.037020137e-08); top2=0.5 (sse=3.155588735e-08); top3=1 (sse=4.021947469e-07)
+    batch_size=256: top1=0.5 (sse=2.728995723e-08); top2=0.25 (sse=4.909952423e-07); top3=1 (sse=6.556394607e-07)
+    batch_size=512: top1=1 (sse=6.402622863e-08); top2=0.5 (sse=1.494037067e-07); top3=0.25 (sse=3.718206605e-06)
+  num_samples=8192
+    batch_size=8: top1=0.03125 (sse=1.019433154e-08); top2=0.015625 (sse=1.053669337e-08); top3=0.0625 (sse=1.330522578e-08)
+    batch_size=16: top1=0.03125 (sse=9.320817981e-09); top2=0.0625 (sse=1.153557627e-08); top3=0.125 (sse=1.580365354e-08)
+    batch_size=32: top1=0.0625 (sse=1.034682797e-08); top2=0.125 (sse=1.356725606e-08); top3=0.03125 (sse=1.535212676e-08)
+    batch_size=64: top1=0.0625 (sse=9.485255221e-09); top2=0.125 (sse=1.202699088e-08); top3=0.25 (sse=1.656231907e-08)
+    batch_size=128: top1=0.125 (sse=1.056588044e-08); top2=0.25 (sse=1.420080021e-08); top3=0.5 (sse=2.011816925e-08)
+    batch_size=256: top1=0.5 (sse=1.469663575e-08); top2=0.25 (sse=1.645889415e-08); top3=1 (sse=2.511779802e-07)
+    batch_size=512: top1=0.5 (sse=2.599371761e-08); top2=0.25 (sse=4.614098565e-07); top3=1 (sse=6.224908808e-07)
+  num_samples=16384
+    batch_size=8: top1=0.015625 (sse=6.349085917e-09); top2=0.0078125 (sse=7.800022498e-09); top3=0.03125 (sse=7.877338991e-09)
+    batch_size=16: top1=0.015625 (sse=6.019664935e-09); top2=0.03125 (sse=6.950992694e-09); top3=0.0625 (sse=9.121607991e-09)
+    batch_size=32: top1=0.03125 (sse=6.332061889e-09); top2=0.0625 (sse=7.834523429e-09); top3=0.125 (sse=1.089509031e-08)
+    batch_size=64: top1=0.03125 (sse=6.876766292e-09); top2=0.0625 (sse=6.99059652e-09); top3=0.125 (sse=9.18165365e-09)
+    batch_size=128: top1=0.0625 (sse=6.34755639e-09); top2=0.125 (sse=8.027603652e-09); top3=0.25 (sse=1.114177306e-08)
+    batch_size=256: top1=0.125 (sse=7.742507538e-09); top2=0.25 (sse=9.408977477e-09); top3=0.5 (sse=1.314998738e-08)
+    batch_size=512: top1=0.5 (sse=8.535186112e-09); top2=0.25 (sse=1.49831191e-08); top3=1 (sse=1.496287849e-07)
+  num_samples=32768
+    batch_size=8: top1=0.0078125 (sse=4.351063618e-09); top2=0.015625 (sse=5.031492007e-09); top3=0.03125 (sse=6.461150383e-09)
+    batch_size=16: top1=0.0078125 (sse=4.291490529e-09); top2=0.015625 (sse=4.58079954e-09); top3=0.03125 (sse=5.579810477e-09)
+    batch_size=32: top1=0.015625 (sse=4.281377672e-09); top2=0.03125 (sse=4.959548725e-09); top3=0.0625 (sse=6.396938526e-09)
+    batch_size=64: top1=0.03125 (sse=4.56912378e-09); top2=0.0625 (sse=5.571934056e-09); top3=0.015625 (sse=5.583866133e-09)
+    batch_size=128: top1=0.03125 (sse=4.432774161e-09); top2=0.0625 (sse=5.007479065e-09); top3=0.125 (sse=6.481127321e-09)
+    batch_size=256: top1=0.0625 (sse=4.612216018e-09); top2=0.125 (sse=5.662347197e-09); top3=0.25 (sse=7.745910572e-09)
+    batch_size=512: top1=0.125 (sse=5.532381582e-09); top2=0.25 (sse=6.375973521e-09); top3=0.5 (sse=8.812229513e-09)
+
+AdamW_row__beta1=0.9
+--------------------
+Figure: optimizer_AdamW_row__beta1_0.9.png
+Rows: 328
+Num samples: 2048, 4096, 8192, 16384, 32768
+Batch sizes: 8, 16, 32, 64, 128, 256, 512
+Hparams: lr
+
+lr
+  num_samples=2048
+    batch_size=8: top1=0.0625 (sse=3.144036509e-08); top2=0.125 (sse=3.919584936e-08); top3=0.25 (sse=5.256682022e-08)
+    batch_size=16: top1=0.125 (sse=3.980284606e-08); top2=0.0625 (sse=4.227093305e-08); top3=0.25 (sse=4.843679195e-08)
+    batch_size=32: top1=0.125 (sse=3.957769483e-08); top2=0.25 (sse=7.467203977e-08); top3=0.5 (sse=1.05455942e-07)
+    batch_size=64: top1=0.25 (sse=6.825689476e-08); top2=0.5 (sse=2.603845057e-07); top3=0.125 (sse=1.01638445e-06)
+    batch_size=128: top1=0.5 (sse=8.15815593e-08); top2=0.25 (sse=5.544042186e-07); top3=1 (sse=1.242595552e-06)
+    batch_size=256: top1=1 (sse=6.87504859e-08); top2=0.5 (sse=1.84284051e-07); top3=0.25 (sse=3.758001234e-06)
+    batch_size=512: top1=2 (sse=3.563035073e-07); top2=1 (sse=5.392047683e-07); top3=0.5 (sse=2.457937668e-06)
+  num_samples=4096
+    batch_size=8: top1=0.03125 (sse=1.656245616e-08); top2=0.0625 (sse=1.889229015e-08); top3=0.125 (sse=2.525000212e-08)
+    batch_size=16: top1=0.0625 (sse=1.764409126e-08); top2=0.125 (sse=2.21863295e-08); top3=0.25 (sse=3.168354142e-08)
+    batch_size=32: top1=0.0625 (sse=1.521244752e-08); top2=0.125 (sse=2.136409909e-08); top3=0.25 (sse=2.807430998e-08)
+    batch_size=64: top1=0.125 (sse=1.834702786e-08); top2=0.25 (sse=3.033043674e-08); top3=0.5 (sse=4.527335647e-08)
+    batch_size=128: top1=0.25 (sse=2.627153575e-08); top2=0.5 (sse=1.402839835e-07); top3=0.125 (sse=8.568228552e-07)
+    batch_size=256: top1=0.5 (sse=3.618182221e-08); top2=0.25 (sse=4.965736958e-07); top3=1 (sse=1.217868693e-06)
+    batch_size=512: top1=1 (sse=4.171244949e-08); top2=0.5 (sse=1.764517415e-07); top3=0.25 (sse=3.733968514e-06)
+  num_samples=8192
+    batch_size=8: top1=0.015625 (sse=1.009776224e-08); top2=0.03125 (sse=1.031087905e-08); top3=0.0625 (sse=1.35291515e-08)
+    batch_size=16: top1=0.03125 (sse=9.407594947e-09); top2=0.0625 (sse=1.182332458e-08); top3=0.125 (sse=1.628180057e-08)
+    batch_size=32: top1=0.0625 (sse=1.075976634e-08); top2=0.03125 (sse=1.156851119e-08); top3=0.125 (sse=1.421646261e-08)
+    batch_size=64: top1=0.0625 (sse=8.306021997e-09); top2=0.125 (sse=1.245948199e-08); top3=0.25 (sse=1.795851811e-08)
+    batch_size=128: top1=0.125 (sse=9.604142482e-09); top2=0.25 (sse=1.372610156e-08); top3=0.5 (sse=2.623219607e-08)
+    batch_size=256: top1=0.25 (sse=1.152030178e-08); top2=0.5 (sse=6.570912064e-08); top3=0.125 (sse=7.765299616e-07)
+    batch_size=512: top1=0.5 (sse=1.966894224e-08); top2=0.25 (sse=4.699097277e-07); top3=1 (sse=1.215331079e-06)
+  num_samples=16384
+    batch_size=8: top1=0.015625 (sse=6.379895854e-09); top2=0.0078125 (sse=7.470820954e-09); top3=0.03125 (sse=7.922936629e-09)
+    batch_size=16: top1=0.015625 (sse=6.007606862e-09); top2=0.03125 (sse=7.014654026e-09); top3=0.0625 (sse=9.21391567e-09)
+    batch_size=32: top1=0.03125 (sse=6.430273243e-09); top2=0.0625 (sse=7.96116351e-09); top3=0.125 (sse=1.111641794e-08)
+    batch_size=64: top1=0.03125 (sse=5.932897087e-09); top2=0.0625 (sse=7.189022161e-09); top3=0.125 (sse=9.478018819e-09)
+    batch_size=128: top1=0.0625 (sse=6.809943701e-09); top2=0.125 (sse=8.526572545e-09); top3=0.25 (sse=1.195831082e-08)
+    batch_size=256: top1=0.25 (sse=8.096771724e-09); top2=0.125 (sse=1.077753751e-08); top3=0.5 (sse=1.53145281e-08)
+    batch_size=512: top1=0.25 (sse=9.913452247e-09); top2=0.5 (sse=2.781754923e-08); top3=0.125 (sse=7.373615915e-07)
+  num_samples=32768
+    batch_size=8: top1=0.0078125 (sse=4.352707943e-09); top2=0.015625 (sse=5.041778581e-09); top3=0.03125 (sse=6.487696601e-09)
+    batch_size=16: top1=0.0078125 (sse=4.259996998e-09); top2=0.015625 (sse=4.604525202e-09); top3=0.03125 (sse=5.618467852e-09)
+    batch_size=32: top1=0.015625 (sse=4.311207348e-09); top2=0.03125 (sse=5.014808229e-09); top3=0.0625 (sse=6.485672043e-09)
+    batch_size=64: top1=0.03125 (sse=4.641421663e-09); top2=0.015625 (sse=4.950782719e-09); top3=0.0625 (sse=5.677969576e-09)
+    batch_size=128: top1=0.03125 (sse=4.337928241e-09); top2=0.0625 (sse=5.143254907e-09); top3=0.125 (sse=6.675570254e-09)
+    batch_size=256: top1=0.0625 (sse=5.677250677e-09); top2=0.125 (sse=6.158869398e-09); top3=0.25 (sse=8.166400198e-09)
+    batch_size=512: top1=0.25 (sse=4.998751812e-09); top2=0.5 (sse=9.47022163e-09); top3=0.125 (sse=1.195661871e-08)
+
+AdamW_row__beta1=0.95
+---------------------
+Figure: optimizer_AdamW_row__beta1_0.95.png
+Rows: 313
+Num samples: 2048, 4096, 8192, 16384, 32768
+Batch sizes: 8, 16, 32, 64, 128, 256, 512
+Hparams: lr
+
+lr
+  num_samples=2048
+    batch_size=8: top1=0.0625 (sse=3.297232045e-08); top2=0.125 (sse=4.328814697e-08); top3=0.25 (sse=5.870367556e-08)
+    batch_size=16: top1=0.0625 (sse=3.495613964e-08); top2=0.125 (sse=6.328546109e-08); top3=0.25 (sse=6.469908246e-08)
+    batch_size=32: top1=0.125 (sse=1.09367347e-07); top2=0.25 (sse=1.964953701e-07); top3=0.5 (sse=3.391512878e-07)
+    batch_size=64: top1=0.25 (sse=1.836851465e-07); top2=0.5 (sse=5.13117318e-07); top3=0.125 (sse=1.018182978e-06)
+    batch_size=128: top1=0.5 (sse=1.667033272e-07); top2=0.25 (sse=5.588497477e-07); top3=1 (sse=1.552859627e-06)
+    batch_size=256: top1=1 (sse=8.388282143e-08); top2=0.5 (sse=1.989400892e-07); top3=0.25 (sse=3.765185515e-06)
+    batch_size=512: top1=2 (sse=3.92567945e-07); top2=1 (sse=5.970579218e-07); top3=0.5 (sse=2.462532168e-06)
+  num_samples=4096
+    batch_size=8: top1=0.03125 (sse=1.619579528e-08); top2=0.0625 (sse=1.976102167e-08); top3=0.125 (sse=2.653124954e-08)
+    batch_size=16: top1=0.0625 (sse=2.062091611e-08); top2=0.125 (sse=2.42314848e-08); top3=0.03125 (sse=2.890261497e-08)
+    batch_size=32: top1=0.0625 (sse=2.546059313e-08); top2=0.25 (sse=3.577908713e-08); top3=0.125 (sse=3.710914079e-08)
+    batch_size=64: top1=0.125 (sse=6.381698792e-08); top2=0.25 (sse=1.27996494e-07); top3=0.5 (sse=1.319475292e-07)
+    batch_size=128: top1=0.25 (sse=1.004109804e-07); top2=0.5 (sse=3.959457569e-07); top3=0.125 (sse=8.600450247e-07)
+    batch_size=256: top1=0.5 (sse=9.134834424e-08); top2=0.25 (sse=5.039439619e-07); top3=1 (sse=1.571892706e-06)
+    batch_size=512: top1=1 (sse=4.417668309e-08); top2=0.5 (sse=1.93787125e-07); top3=0.25 (sse=3.741617245e-06)
+  num_samples=8192
+    batch_size=8: top1=0.015625 (sse=9.484579808e-09); top2=0.03125 (sse=1.055533695e-08); top3=0.0625 (sse=1.394905101e-08)
+    batch_size=16: top1=0.03125 (sse=9.792117028e-09); top2=0.0625 (sse=1.23804132e-08); top3=0.125 (sse=1.717081927e-08)
+    batch_size=32: top1=0.03125 (sse=7.512190632e-09); top2=0.0625 (sse=1.182180441e-08); top3=0.125 (sse=1.564814393e-08)
+    batch_size=64: top1=0.0625 (sse=1.038152319e-08); top2=0.125 (sse=1.495850076e-08); top3=0.25 (sse=2.608762979e-08)
+    batch_size=128: top1=0.125 (sse=2.398261466e-08); top2=0.5 (sse=5.868301917e-08); top3=0.25 (sse=6.058030388e-08)
+    batch_size=256: top1=0.25 (sse=5.529371617e-08); top2=0.5 (sse=2.755608919e-07); top3=0.125 (sse=7.815900744e-07)
+    batch_size=512: top1=0.5 (sse=5.736373751e-08); top2=0.25 (sse=4.795228859e-07); top3=1 (sse=1.59331203e-06)
+  num_samples=16384
+    batch_size=8: top1=0.015625 (sse=6.436248388e-09); top2=0.0078125 (sse=6.981503634e-09); top3=0.03125 (sse=8.008062582e-09)
+    batch_size=16: top1=0.015625 (sse=6.029065268e-09); top2=0.03125 (sse=7.142341853e-09); top3=0.0625 (sse=9.412025004e-09)
+    batch_size=32: top1=0.03125 (sse=6.660859791e-09); top2=0.0625 (sse=8.236281186e-09); top3=0.015625 (sse=8.42640646e-09)
+    batch_size=64: top1=0.03125 (sse=4.655648051e-09); top2=0.0625 (sse=7.32047616e-09); top3=0.125 (sse=1.008426221e-08)
+    batch_size=128: top1=0.0625 (sse=5.646635301e-09); top2=0.125 (sse=7.650063814e-09); top3=0.25 (sse=1.373212546e-08)
+    batch_size=256: top1=0.125 (sse=9.493423795e-09); top2=0.25 (sse=2.147211835e-08); top3=0.5 (sse=4.423276963e-08)
+    batch_size=512: top1=0.25 (sse=3.613875864e-08); top2=0.5 (sse=1.964918957e-07); top3=0.125 (sse=7.439046569e-07)
+  num_samples=32768
+    batch_size=8: top1=0.0078125 (sse=4.36279898e-09); top2=0.015625 (sse=5.069744028e-09); top3=0.03125 (sse=6.547171923e-09)
+    batch_size=16: top1=0.0078125 (sse=4.218996378e-09); top2=0.015625 (sse=4.650628019e-09); top3=0.03125 (sse=5.697257586e-09)
+    batch_size=32: top1=0.015625 (sse=4.375492002e-09); top2=0.03125 (sse=5.113766489e-09); top3=0.0625 (sse=6.649856975e-09)
+    batch_size=64: top1=0.015625 (sse=3.99904441e-09); top2=0.03125 (sse=4.768974998e-09); top3=0.0625 (sse=5.859560561e-09)
+    batch_size=128: top1=0.03125 (sse=4.980706315e-09); top2=0.0625 (sse=5.596072041e-09); top3=0.125 (sse=7.144862123e-09)
+    batch_size=256: top1=0.125 (sse=4.597921115e-09); top2=0.25 (sse=8.54659545e-09); top3=0.0625 (sse=9.903400716e-09)
+    batch_size=512: top1=0.125 (sse=8.322691489e-09); top2=0.25 (sse=9.507267744e-09); top3=0.5 (sse=4.035553781e-08)
+
+SSE comparison by batch size x num_samples
+==========================================
+
+batch_size=8, num_samples=2048
+  AdamW_row__beta1=0.8: best_sse=3.143969583e-08
+  AdamW_row__beta1=0.9: best_sse=3.144036509e-08
+  AdamW_row__beta1=0.7: best_sse=3.157521763e-08
+  AdamW_row__beta1=0.6: best_sse=3.167512538e-08
+  AdamW_row__beta1=0.5: best_sse=3.175041635e-08
+  AdamW_row__beta1=0: best_sse=3.197498542e-08
+  AdamW_row__beta1=0.95: best_sse=3.297232045e-08
+
+batch_size=8, num_samples=4096
+  AdamW_row__beta1=0.95: best_sse=1.619579528e-08
+  AdamW_row__beta1=0.9: best_sse=1.656245616e-08
+  AdamW_row__beta1=0.8: best_sse=1.698368699e-08
+  AdamW_row__beta1=0.7: best_sse=1.71694306e-08
+  AdamW_row__beta1=0.6: best_sse=1.727121213e-08
+  AdamW_row__beta1=0.5: best_sse=1.733528743e-08
+  AdamW_row__beta1=0: best_sse=1.747464748e-08
+
+batch_size=8, num_samples=8192
+  AdamW_row__beta1=0.95: best_sse=9.484579808e-09
+  AdamW_row__beta1=0.9: best_sse=1.009776224e-08
+  AdamW_row__beta1=0: best_sse=1.013426767e-08
+  AdamW_row__beta1=0.5: best_sse=1.014167713e-08
+  AdamW_row__beta1=0.6: best_sse=1.014880656e-08
+  AdamW_row__beta1=0.7: best_sse=1.016231434e-08
+  AdamW_row__beta1=0.8: best_sse=1.019433154e-08
+
+batch_size=8, num_samples=16384
+  AdamW_row__beta1=0: best_sse=6.313209875e-09
+  AdamW_row__beta1=0.5: best_sse=6.325860007e-09
+  AdamW_row__beta1=0.6: best_sse=6.330335426e-09
+  AdamW_row__beta1=0.7: best_sse=6.337075797e-09
+  AdamW_row__beta1=0.8: best_sse=6.349085917e-09
+  AdamW_row__beta1=0.9: best_sse=6.379895854e-09
+  AdamW_row__beta1=0.95: best_sse=6.436248388e-09
+
+batch_size=8, num_samples=32768
+  AdamW_row__beta1=0.8: best_sse=4.351063618e-09
+  AdamW_row__beta1=0.7: best_sse=4.351465122e-09
+  AdamW_row__beta1=0.6: best_sse=4.351800578e-09
+  AdamW_row__beta1=0.5: best_sse=4.352051455e-09
+  AdamW_row__beta1=0.9: best_sse=4.352707943e-09
+  AdamW_row__beta1=0: best_sse=4.353390121e-09
+  AdamW_row__beta1=0.95: best_sse=4.36279898e-09
+
+batch_size=16, num_samples=2048
+  AdamW_row__beta1=0: best_sse=3.274648013e-08
+  AdamW_row__beta1=0.5: best_sse=3.307509736e-08
+  AdamW_row__beta1=0.6: best_sse=3.329276184e-08
+  AdamW_row__beta1=0.7: best_sse=3.370248484e-08
+  AdamW_row__beta1=0.8: best_sse=3.470086843e-08
+  AdamW_row__beta1=0.95: best_sse=3.495613964e-08
+  AdamW_row__beta1=0.9: best_sse=3.980284606e-08
+
+batch_size=16, num_samples=4096
+  AdamW_row__beta1=0: best_sse=1.660546203e-08
+  AdamW_row__beta1=0.5: best_sse=1.666630327e-08
+  AdamW_row__beta1=0.6: best_sse=1.670417355e-08
+  AdamW_row__beta1=0.7: best_sse=1.677392249e-08
+  AdamW_row__beta1=0.8: best_sse=1.693823287e-08
+  AdamW_row__beta1=0.9: best_sse=1.764409126e-08
+  AdamW_row__beta1=0.95: best_sse=2.062091611e-08
+
+batch_size=16, num_samples=8192
+  AdamW_row__beta1=0.7: best_sse=9.311478895e-09
+  AdamW_row__beta1=0.6: best_sse=9.313105284e-09
+  AdamW_row__beta1=0.5: best_sse=9.317018635e-09
+  AdamW_row__beta1=0.8: best_sse=9.320817981e-09
+  AdamW_row__beta1=0: best_sse=9.335374943e-09
+  AdamW_row__beta1=0.9: best_sse=9.407594947e-09
+  AdamW_row__beta1=0.95: best_sse=9.792117028e-09
+
+batch_size=16, num_samples=16384
+  AdamW_row__beta1=0.9: best_sse=6.007606862e-09
+  AdamW_row__beta1=0.8: best_sse=6.019664935e-09
+  AdamW_row__beta1=0.7: best_sse=6.027165068e-09
+  AdamW_row__beta1=0.95: best_sse=6.029065268e-09
+  AdamW_row__beta1=0.6: best_sse=6.032072649e-09
+  AdamW_row__beta1=0.5: best_sse=6.03572582e-09
+  AdamW_row__beta1=0: best_sse=6.04607607e-09
+
+batch_size=16, num_samples=32768
+  AdamW_row__beta1=0.95: best_sse=4.218996378e-09
+  AdamW_row__beta1=0.9: best_sse=4.259996998e-09
+  AdamW_row__beta1=0.8: best_sse=4.291490529e-09
+  AdamW_row__beta1=0.7: best_sse=4.304332299e-09
+  AdamW_row__beta1=0.6: best_sse=4.311446852e-09
+  AdamW_row__beta1=0.5: best_sse=4.316051521e-09
+  AdamW_row__beta1=0: best_sse=4.326454825e-09
+
+batch_size=32, num_samples=2048
+  AdamW_row__beta1=0.8: best_sse=3.087034729e-08
+  AdamW_row__beta1=0.7: best_sse=3.30125009e-08
+  AdamW_row__beta1=0.6: best_sse=3.475609616e-08
+  AdamW_row__beta1=0.5: best_sse=3.602868783e-08
+  AdamW_row__beta1=0: best_sse=3.665707979e-08
+  AdamW_row__beta1=0.9: best_sse=3.957769483e-08
+  AdamW_row__beta1=0.95: best_sse=1.09367347e-07
+
+batch_size=32, num_samples=4096
+  AdamW_row__beta1=0.9: best_sse=1.521244752e-08
+  AdamW_row__beta1=0: best_sse=1.830246179e-08
+  AdamW_row__beta1=0.5: best_sse=1.854676417e-08
+  AdamW_row__beta1=0.6: best_sse=1.867762921e-08
+  AdamW_row__beta1=0.7: best_sse=1.890619825e-08
+  AdamW_row__beta1=0.8: best_sse=1.890709676e-08
+  AdamW_row__beta1=0.95: best_sse=2.546059313e-08
+
+batch_size=32, num_samples=8192
+  AdamW_row__beta1=0.95: best_sse=7.512190632e-09
+  AdamW_row__beta1=0: best_sse=1.007460971e-08
+  AdamW_row__beta1=0.5: best_sse=1.011887255e-08
+  AdamW_row__beta1=0.6: best_sse=1.015262265e-08
+  AdamW_row__beta1=0.7: best_sse=1.021471647e-08
+  AdamW_row__beta1=0.8: best_sse=1.034682797e-08
+  AdamW_row__beta1=0.9: best_sse=1.075976634e-08
+
+batch_size=32, num_samples=16384
+  AdamW_row__beta1=0: best_sse=6.272094727e-09
+  AdamW_row__beta1=0.5: best_sse=6.285743151e-09
+  AdamW_row__beta1=0.6: best_sse=6.292688515e-09
+  AdamW_row__beta1=0.7: best_sse=6.304903726e-09
+  AdamW_row__beta1=0.8: best_sse=6.332061889e-09
+  AdamW_row__beta1=0.9: best_sse=6.430273243e-09
+  AdamW_row__beta1=0.95: best_sse=6.660859791e-09
+
+batch_size=32, num_samples=32768
+  AdamW_row__beta1=0: best_sse=4.264027264e-09
+  AdamW_row__beta1=0.5: best_sse=4.267454081e-09
+  AdamW_row__beta1=0.6: best_sse=4.269234375e-09
+  AdamW_row__beta1=0.7: best_sse=4.272837418e-09
+  AdamW_row__beta1=0.8: best_sse=4.281377672e-09
+  AdamW_row__beta1=0.9: best_sse=4.311207348e-09
+  AdamW_row__beta1=0.95: best_sse=4.375492002e-09
+
+batch_size=64, num_samples=2048
+  AdamW_row__beta1=0.5: best_sse=3.442387824e-08
+  AdamW_row__beta1=0.8: best_sse=3.449489353e-08
+  AdamW_row__beta1=0.7: best_sse=3.451628033e-08
+  AdamW_row__beta1=0.6: best_sse=3.454923108e-08
+  AdamW_row__beta1=0: best_sse=3.476205893e-08
+  AdamW_row__beta1=0.9: best_sse=6.825689476e-08
+  AdamW_row__beta1=0.95: best_sse=1.836851465e-07
+
+batch_size=64, num_samples=4096
+  AdamW_row__beta1=0.8: best_sse=1.675518539e-08
+  AdamW_row__beta1=0.7: best_sse=1.714082252e-08
+  AdamW_row__beta1=0.6: best_sse=1.742734942e-08
+  AdamW_row__beta1=0.5: best_sse=1.766974389e-08
+  AdamW_row__beta1=0.9: best_sse=1.834702786e-08
+  AdamW_row__beta1=0: best_sse=1.844352913e-08
+  AdamW_row__beta1=0.95: best_sse=6.381698792e-08
+
+batch_size=64, num_samples=8192
+  AdamW_row__beta1=0.9: best_sse=8.306021997e-09
+  AdamW_row__beta1=0.8: best_sse=9.485255221e-09
+  AdamW_row__beta1=0.7: best_sse=1.006589015e-08
+  AdamW_row__beta1=0.95: best_sse=1.038152319e-08
+  AdamW_row__beta1=0.6: best_sse=1.04219778e-08
+  AdamW_row__beta1=0.5: best_sse=1.066127023e-08
+  AdamW_row__beta1=0: best_sse=1.122536942e-08
+
+batch_size=64, num_samples=16384
+  AdamW_row__beta1=0.95: best_sse=4.655648051e-09
+  AdamW_row__beta1=0.9: best_sse=5.932897087e-09
+  AdamW_row__beta1=0: best_sse=6.87042002e-09
+  AdamW_row__beta1=0.8: best_sse=6.876766292e-09
+  AdamW_row__beta1=0.5: best_sse=6.889440139e-09
+  AdamW_row__beta1=0.6: best_sse=6.903608945e-09
+  AdamW_row__beta1=0.7: best_sse=6.930335144e-09
+
+batch_size=64, num_samples=32768
+  AdamW_row__beta1=0.95: best_sse=3.99904441e-09
+  AdamW_row__beta1=0: best_sse=4.519952768e-09
+  AdamW_row__beta1=0.5: best_sse=4.527970653e-09
+  AdamW_row__beta1=0.6: best_sse=4.533951873e-09
+  AdamW_row__beta1=0.7: best_sse=4.544996947e-09
+  AdamW_row__beta1=0.8: best_sse=4.56912378e-09
+  AdamW_row__beta1=0.9: best_sse=4.641421663e-09
+
+batch_size=128, num_samples=2048
+  AdamW_row__beta1=0: best_sse=3.81100951e-08
+  AdamW_row__beta1=0.8: best_sse=4.152979272e-08
+  AdamW_row__beta1=0.5: best_sse=4.488664499e-08
+  AdamW_row__beta1=0.7: best_sse=4.651048154e-08
+  AdamW_row__beta1=0.6: best_sse=4.757247716e-08
+  AdamW_row__beta1=0.9: best_sse=8.15815593e-08
+  AdamW_row__beta1=0.95: best_sse=1.667033272e-07
+
+batch_size=128, num_samples=4096
+  AdamW_row__beta1=0: best_sse=1.840809368e-08
+  AdamW_row__beta1=0.5: best_sse=1.892424213e-08
+  AdamW_row__beta1=0.6: best_sse=1.95051501e-08
+  AdamW_row__beta1=0.8: best_sse=2.037020137e-08
+  AdamW_row__beta1=0.7: best_sse=2.050088897e-08
+  AdamW_row__beta1=0.9: best_sse=2.627153575e-08
+  AdamW_row__beta1=0.95: best_sse=1.004109804e-07
+
+batch_size=128, num_samples=8192
+  AdamW_row__beta1=0.9: best_sse=9.604142482e-09
+  AdamW_row__beta1=0.6: best_sse=1.011293039e-08
+  AdamW_row__beta1=0.5: best_sse=1.013311136e-08
+  AdamW_row__beta1=0.7: best_sse=1.017908462e-08
+  AdamW_row__beta1=0: best_sse=1.034236257e-08
+  AdamW_row__beta1=0.8: best_sse=1.056588044e-08
+  AdamW_row__beta1=0.95: best_sse=2.398261466e-08
+
+batch_size=128, num_samples=16384
+  AdamW_row__beta1=0.95: best_sse=5.646635301e-09
+  AdamW_row__beta1=0.8: best_sse=6.34755639e-09
+  AdamW_row__beta1=0.7: best_sse=6.407244746e-09
+  AdamW_row__beta1=0.6: best_sse=6.485701761e-09
+  AdamW_row__beta1=0.5: best_sse=6.549190258e-09
+  AdamW_row__beta1=0: best_sse=6.723383603e-09
+  AdamW_row__beta1=0.9: best_sse=6.809943701e-09
+
+batch_size=128, num_samples=32768
+  AdamW_row__beta1=0.9: best_sse=4.337928241e-09
+  AdamW_row__beta1=0.8: best_sse=4.432774161e-09
+  AdamW_row__beta1=0.7: best_sse=4.523075957e-09
+  AdamW_row__beta1=0.6: best_sse=4.578907177e-09
+  AdamW_row__beta1=0.5: best_sse=4.61626286e-09
+  AdamW_row__beta1=0: best_sse=4.702553758e-09
+  AdamW_row__beta1=0.95: best_sse=4.980706315e-09
+
+batch_size=256, num_samples=2048
+  AdamW_row__beta1=0.9: best_sse=6.87504859e-08
+  AdamW_row__beta1=0.8: best_sse=7.479071974e-08
+  AdamW_row__beta1=0.95: best_sse=8.388282143e-08
+  AdamW_row__beta1=0.7: best_sse=9.609283419e-08
+  AdamW_row__beta1=0.5: best_sse=1.081339816e-07
+  AdamW_row__beta1=0.6: best_sse=1.087425416e-07
+  AdamW_row__beta1=0: best_sse=1.115440899e-07
+
+batch_size=256, num_samples=4096
+  AdamW_row__beta1=0: best_sse=2.027347574e-08
+  AdamW_row__beta1=0.5: best_sse=2.569858495e-08
+  AdamW_row__beta1=0.8: best_sse=2.728995723e-08
+  AdamW_row__beta1=0.6: best_sse=3.055015065e-08
+  AdamW_row__beta1=0.7: best_sse=3.422182908e-08
+  AdamW_row__beta1=0.9: best_sse=3.618182221e-08
+  AdamW_row__beta1=0.95: best_sse=9.134834424e-08
+
+batch_size=256, num_samples=8192
+  AdamW_row__beta1=0: best_sse=1.079518004e-08
+  AdamW_row__beta1=0.5: best_sse=1.126329903e-08
+  AdamW_row__beta1=0.9: best_sse=1.152030178e-08
+  AdamW_row__beta1=0.6: best_sse=1.18758741e-08
+  AdamW_row__beta1=0.7: best_sse=1.356042347e-08
+  AdamW_row__beta1=0.8: best_sse=1.469663575e-08
+  AdamW_row__beta1=0.95: best_sse=5.529371617e-08
+
+batch_size=256, num_samples=16384
+  AdamW_row__beta1=0.5: best_sse=6.696244373e-09
+  AdamW_row__beta1=0.6: best_sse=6.736655799e-09
+  AdamW_row__beta1=0: best_sse=6.74584525e-09
+  AdamW_row__beta1=0.7: best_sse=6.902243763e-09
+  AdamW_row__beta1=0.8: best_sse=7.742507538e-09
+  AdamW_row__beta1=0.9: best_sse=8.096771724e-09
+  AdamW_row__beta1=0.95: best_sse=9.493423795e-09
+
+batch_size=256, num_samples=32768
+  AdamW_row__beta1=0.7: best_sse=4.554069941e-09
+  AdamW_row__beta1=0.6: best_sse=4.554774637e-09
+  AdamW_row__beta1=0.5: best_sse=4.563778729e-09
+  AdamW_row__beta1=0.95: best_sse=4.597921115e-09
+  AdamW_row__beta1=0: best_sse=4.606931376e-09
+  AdamW_row__beta1=0.8: best_sse=4.612216018e-09
+  AdamW_row__beta1=0.9: best_sse=5.677250677e-09
+
+batch_size=512, num_samples=2048
+  AdamW_row__beta1=0: best_sse=5.519895688e-08
+  AdamW_row__beta1=0.5: best_sse=1.64842933e-07
+  AdamW_row__beta1=0.6: best_sse=2.378004271e-07
+  AdamW_row__beta1=0.7: best_sse=2.850859712e-07
+  AdamW_row__beta1=0.8: best_sse=3.06471508e-07
+  AdamW_row__beta1=0.9: best_sse=3.563035073e-07
+  AdamW_row__beta1=0.95: best_sse=3.92567945e-07
+
+batch_size=512, num_samples=4096
+  AdamW_row__beta1=0.9: best_sse=4.171244949e-08
+  AdamW_row__beta1=0.95: best_sse=4.417668309e-08
+  AdamW_row__beta1=0.8: best_sse=6.402622863e-08
+  AdamW_row__beta1=0: best_sse=8.89894276e-08
+  AdamW_row__beta1=0.7: best_sse=9.004634655e-08
+  AdamW_row__beta1=0.5: best_sse=9.314299641e-08
+  AdamW_row__beta1=0.6: best_sse=9.950797218e-08
+
+batch_size=512, num_samples=8192
+  AdamW_row__beta1=0: best_sse=1.190105295e-08
+  AdamW_row__beta1=0.5: best_sse=1.573132457e-08
+  AdamW_row__beta1=0.9: best_sse=1.966894224e-08
+  AdamW_row__beta1=0.6: best_sse=2.150985509e-08
+  AdamW_row__beta1=0.8: best_sse=2.599371761e-08
+  AdamW_row__beta1=0.7: best_sse=2.960002348e-08
+  AdamW_row__beta1=0.95: best_sse=5.736373751e-08
+
+batch_size=512, num_samples=16384
+  AdamW_row__beta1=0: best_sse=6.981085304e-09
+  AdamW_row__beta1=0.5: best_sse=7.273140651e-09
+  AdamW_row__beta1=0.6: best_sse=7.753412721e-09
+  AdamW_row__beta1=0.8: best_sse=8.535186112e-09
+  AdamW_row__beta1=0.7: best_sse=9.517825909e-09
+  AdamW_row__beta1=0.9: best_sse=9.913452247e-09
+  AdamW_row__beta1=0.95: best_sse=3.613875864e-08
+
+batch_size=512, num_samples=32768
+  AdamW_row__beta1=0.5: best_sse=4.703763284e-09
+  AdamW_row__beta1=0: best_sse=4.705418326e-09
+  AdamW_row__beta1=0.6: best_sse=4.737831121e-09
+  AdamW_row__beta1=0.7: best_sse=4.852727723e-09
+  AdamW_row__beta1=0.9: best_sse=4.998751812e-09
+  AdamW_row__beta1=0.8: best_sse=5.532381582e-09
+  AdamW_row__beta1=0.95: best_sse=8.322691489e-09
