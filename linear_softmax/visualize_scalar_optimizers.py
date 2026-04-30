@@ -20,13 +20,11 @@ from matplotlib.ticker import FixedFormatter, FixedLocator
 import numpy as np
 
 
-DEFAULT_LOG_NAME = "scalar_optimizers_logging3.log"
-DEFAULT_OUT_DIR = Path(__file__).with_name("scalar_optimizers_logging3_dir")
+DEFAULT_LOG_NAME = "scalar_optimizers_logging4.log"
+DEFAULT_OUT_DIR = Path(__file__).with_name("scalar_optimizers_logging4_dir")
 SSE_KEY = "clean_train_sse"
 SUMMARY_FILENAME = "optimizer_hparam_summary.txt"
-DEFAULT_BOOTSTRAP_SAMPLES = 10_000
-BOOTSTRAP_QUANTILES = (2.5, 50.0, 97.5)
-BOOTSTRAP_SAMPLE_FRACTION = 0.25
+TOP_K = 3
 PREFERRED_OPTIMIZER_ORDER = (
     "AdamW",
     "Adam2",
@@ -59,6 +57,7 @@ NON_SEARCH_KEYS = {
     "duration_sec",
     "elapsed_sec",
     "final_train_loss",
+    "grid_idx",
     "h_norm",
     "lr_schedule",
     "log_scalar_max",
@@ -99,7 +98,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             f"Create one figure per optimizer variant from {DEFAULT_LOG_NAME}. "
-            "Each hparam row contains bootstrap hparam-CI trend plots across "
+            "Each hparam row plots the three best observed hparam values across "
             "batch sizes and sample counts."
         )
     )
@@ -115,13 +114,6 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_OUT_DIR,
         help="Directory where optimizer PNG figures are written.",
     )
-    parser.add_argument(
-        "--bootstrap-samples",
-        type=int,
-        default=DEFAULT_BOOTSTRAP_SAMPLES,
-        help="Bootstrap resamples used for empirical 95%% hparam intervals.",
-    )
-    parser.add_argument("--seed", type=int, default=0, help="Random seed.")
     parser.add_argument("--dpi", type=int, default=160, help="Output image DPI.")
     return parser.parse_args()
 
@@ -407,6 +399,17 @@ def build_search_space(search_plan: dict[str, Any]) -> dict[str, Any]:
             numeric_values = [float(value) for value in values]
             global_bounds[hparam] = (min(numeric_values), max(numeric_values))
 
+    for plan_key, hparam in (("adam_beta2", "beta2"), ("adam_eps", "eps")):
+        value = search_plan.get(plan_key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            global_bounds[hparam] = (float(value), float(value))
+
+    lr_grid = search_plan.get("adam_lr_grid")
+    if isinstance(lr_grid, list) and lr_grid:
+        numeric_values = [float(value) for value in lr_grid]
+        if all(math.isfinite(value) for value in numeric_values):
+            global_bounds["lr"] = (min(numeric_values), max(numeric_values))
+
     lr_range = numeric_pair(search_plan.get("lr_range"))
     if lr_range is not None:
         global_bounds["lr"] = lr_range
@@ -490,99 +493,47 @@ def finite_positive(values: list[float] | np.ndarray) -> bool:
     return bool(np.all(np.isfinite(arr)) and np.all(arr > 0.0))
 
 
-def bootstrap_best_hparam_values(
-    rows: list[dict[str, Any]],
-    hparam: str,
-    rng: np.random.Generator,
-    num_samples: int,
-) -> np.ndarray:
-    if num_samples <= 0:
-        return np.array([], dtype=object)
-    sses = np.array([float(row[SSE_KEY]) for row in rows], dtype=float)
-    values = np.array([normalize_value(row[hparam]) for row in rows], dtype=object)
-    sample_size = max(1, round(len(rows) * BOOTSTRAP_SAMPLE_FRACTION))
-    sampled_idx = rng.integers(0, len(rows), size=(num_samples, sample_size))
-    sampled_sses = sses[sampled_idx]
-    best_positions = np.argmin(sampled_sses, axis=1)
-    best_idx = sampled_idx[np.arange(num_samples), best_positions]
-    return values[best_idx]
+def top_rows(rows: list[dict[str, Any]], count: int = TOP_K) -> list[dict[str, Any]]:
+    return sorted(rows, key=lambda row: float(row[SSE_KEY]))[:count]
 
 
-def summarize_hparam(
-    rows: list[dict[str, Any]],
-    hparam: str,
-    rng: np.random.Generator,
-    bootstrap_samples: int,
-) -> dict[str, Any]:
+def summarize_hparam(rows: list[dict[str, Any]], hparam: str) -> dict[str, Any]:
     values = [normalize_value(row[hparam]) for row in rows]
-    sses = np.array([float(row[SSE_KEY]) for row in rows], dtype=float)
-    observed_best = best_row(rows)
-    boot_values = bootstrap_best_hparam_values(rows, hparam, rng, bootstrap_samples)
+    best_rows = top_rows(rows)
+    top_values = [normalize_value(row[hparam]) for row in best_rows]
+    top_sses = [float(row[SSE_KEY]) for row in best_rows]
 
     if all(
         isinstance(value, (int, float)) and not isinstance(value, bool)
         for value in values
     ):
-        observed_value = float(observed_best[hparam])
-        if len(boot_values):
-            lo, median, hi = np.percentile(
-                np.array(boot_values, dtype=float), BOOTSTRAP_QUANTILES
-            )
-        else:
-            lo = median = hi = observed_value
         return {
             "kind": "numeric",
-            "values": np.array(values, dtype=float),
-            "sses": sses,
-            "observed_best_value": observed_value,
-            "observed_best_sse": float(observed_best[SSE_KEY]),
-            "boot_lo": float(lo),
-            "boot_median": float(median),
-            "boot_hi": float(hi),
+            "top_values": [float(value) for value in top_values],
+            "top_sses": top_sses,
+            "observed_best_value": float(top_values[0]),
+            "observed_best_sse": top_sses[0],
         }
 
     categories = sorted(set(values), key=category_sort_key)
-    positions = {value: idx for idx, value in enumerate(categories)}
-    encoded_values = np.array([positions[value] for value in values], dtype=float)
-    observed_value = normalize_value(observed_best[hparam])
-    if len(boot_values):
-        boot_encoded = np.array(
-            [positions[value] for value in boot_values], dtype=float
-        )
-        lo, median, hi = np.percentile(boot_encoded, BOOTSTRAP_QUANTILES)
-    else:
-        lo = median = hi = float(positions[observed_value])
     return {
         "kind": "categorical",
-        "values": encoded_values,
-        "sses": sses,
         "categories": categories,
-        "positions": positions,
-        "observed_best_value": observed_value,
-        "observed_best_sse": float(observed_best[SSE_KEY]),
-        "boot_lo": float(lo),
-        "boot_median": float(median),
-        "boot_hi": float(hi),
+        "top_values": top_values,
+        "top_sses": top_sses,
+        "observed_best_value": top_values[0],
+        "observed_best_sse": top_sses[0],
     }
 
 
-def format_ci(summary: dict[str, Any]) -> str:
-    if summary["kind"] == "numeric":
-        return (
-            f"median={format_value(summary['boot_median'])}, "
-            f"95% CI=[{format_value(summary['boot_lo'])}, "
-            f"{format_value(summary['boot_hi'])}]"
-        )
-    categories = summary["categories"]
-    lo = categories[int(np.clip(round(summary["boot_lo"]), 0, len(categories) - 1))]
-    median = categories[
-        int(np.clip(round(summary["boot_median"]), 0, len(categories) - 1))
-    ]
-    hi = categories[int(np.clip(round(summary["boot_hi"]), 0, len(categories) - 1))]
-    return (
-        f"median={format_value(median)}, "
-        f"95% CI=[{format_value(lo)}, {format_value(hi)}]"
-    )
+def format_top_values(summary: dict[str, Any]) -> str:
+    parts = []
+    for idx, (value, sse) in enumerate(
+        zip(summary["top_values"], summary["top_sses"], strict=False),
+        start=1,
+    ):
+        parts.append(f"top{idx}={format_value(value)} (sse={format_value(float(sse))})")
+    return "; ".join(parts)
 
 
 def draw_bound_lines(
@@ -620,25 +571,33 @@ def draw_hparam_trend_subplot(
 ) -> None:
     xs = sorted(summaries_by_x)
     first = summaries_by_x[xs[0]]
+    rank_styles = (
+        ("#b83232", "o", "rank 1"),
+        ("#2f6f9f", "s", "rank 2"),
+        ("#6f8f2f", "^", "rank 3"),
+    )
 
     if first["kind"] == "numeric":
-        x_values = np.array(xs, dtype=float)
-        medians = np.array(
-            [float(summaries_by_x[x]["boot_median"]) for x in xs], dtype=float
-        )
-        lo = np.array([float(summaries_by_x[x]["boot_lo"]) for x in xs], dtype=float)
-        hi = np.array([float(summaries_by_x[x]["boot_hi"]) for x in xs], dtype=float)
         draw_bound_lines(ax, bounds_by_x)
-        ax.fill_between(x_values, lo, hi, color="#b83232", alpha=0.14, linewidth=0)
-        ax.plot(
-            x_values,
-            medians,
-            color="#b83232",
-            marker="o",
-            markersize=3.8,
-            linewidth=1.4,
-        )
-        finite_values = [*medians, *lo, *hi]
+        finite_values: list[float] = []
+        for rank, (color, marker, label) in enumerate(rank_styles):
+            rank_xs = [x for x in xs if rank < len(summaries_by_x[x]["top_values"])]
+            rank_values = [
+                float(summaries_by_x[x]["top_values"][rank]) for x in rank_xs
+            ]
+            finite_values.extend(rank_values)
+            if rank_xs:
+                ax.plot(
+                    rank_xs,
+                    rank_values,
+                    color=color,
+                    marker=marker,
+                    markersize=3.8,
+                    linewidth=1.2,
+                    alpha=0.9,
+                    label=label,
+                    zorder=3,
+                )
         for bounds in bounds_by_x.values():
             if bounds is not None:
                 finite_values.extend(bounds)
@@ -654,22 +613,24 @@ def draw_hparam_trend_subplot(
             },
             key=category_sort_key,
         )
-        x_values = np.array(xs, dtype=float)
-        medians = np.array(
-            [float(summaries_by_x[x]["boot_median"]) for x in xs], dtype=float
-        )
-        lo = np.array([float(summaries_by_x[x]["boot_lo"]) for x in xs], dtype=float)
-        hi = np.array([float(summaries_by_x[x]["boot_hi"]) for x in xs], dtype=float)
-        draw_bound_lines(ax, bounds_by_x)
-        ax.fill_between(x_values, lo, hi, color="#b83232", alpha=0.14, linewidth=0)
-        ax.plot(
-            x_values,
-            medians,
-            color="#b83232",
-            marker="o",
-            markersize=3.8,
-            linewidth=1.4,
-        )
+        positions = {value: idx for idx, value in enumerate(category_union)}
+        for rank, (color, marker, label) in enumerate(rank_styles):
+            rank_xs = [x for x in xs if rank < len(summaries_by_x[x]["top_values"])]
+            rank_values = [
+                positions[summaries_by_x[x]["top_values"][rank]] for x in rank_xs
+            ]
+            if rank_xs:
+                ax.plot(
+                    rank_xs,
+                    rank_values,
+                    color=color,
+                    marker=marker,
+                    markersize=3.8,
+                    linewidth=1.2,
+                    alpha=0.9,
+                    label=label,
+                    zorder=3,
+                )
         ax.set_yticks(range(len(category_union)))
         ax.set_yticklabels([format_value(value) for value in category_union])
         ax.set_ylabel(hparam)
@@ -681,14 +642,13 @@ def draw_hparam_trend_subplot(
     ax.set_xlabel(x_label)
     ax.set_title(title, fontsize=8)
     ax.grid(True, which="both", alpha=0.22)
+    ax.legend(loc="best", fontsize=6, frameon=False)
 
 
 def plot_optimizer_figure(
     plot_group: str,
     plot_rows: list[dict[str, Any]],
     out_dir: Path,
-    rng: np.random.Generator,
-    bootstrap_samples: int,
     dpi: int,
     search_space: dict[str, Any],
 ) -> tuple[Path, list[str], dict[tuple[int, int, str], dict[str, Any]]]:
@@ -710,10 +670,7 @@ def plot_optimizer_figure(
             for hparam in hparams:
                 hparam_rows = [row for row in cell_rows if hparam in row]
                 summaries[(batch_size, num_samples, hparam)] = summarize_hparam(
-                    hparam_rows,
-                    hparam,
-                    rng,
-                    bootstrap_samples,
+                    hparam_rows, hparam
                 )
                 bounds[(batch_size, num_samples, hparam)] = search_space_bounds(
                     hparam_rows,
@@ -834,8 +791,8 @@ def write_summary(
                     for batch_size in batch_sizes:
                         summary = summaries[(batch_size, num_samples, hparam)]
                         handle.write(
-                            f"    batch_size={batch_size}: {format_ci(summary)}; "
-                            f"best_sse={format_value(summary['observed_best_sse'])}\n"
+                            f"    batch_size={batch_size}: "
+                            f"{format_top_values(summary)}\n"
                         )
             handle.write("\n")
 
@@ -874,7 +831,6 @@ def main() -> None:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     clean_output_dir(args.out_dir)
-    rng = np.random.default_rng(args.seed)
 
     plot_groups = build_plot_groups(rows)
     outputs: list[Path] = []
@@ -886,8 +842,6 @@ def main() -> None:
             plot_group,
             plot_groups[plot_group],
             args.out_dir,
-            rng,
-            args.bootstrap_samples,
             args.dpi,
             search_space,
         )

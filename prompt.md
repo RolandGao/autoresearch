@@ -781,3 +781,34 @@ nesterov momentum. disable_bias1 option.
 if adaptive_norm = True, beta2 EMA becomes EMA of abs(grad) and no sqrt when dividing by the beta2 EMA. 
 
 2D heatmap to understand the connection between two hparams. 
+
+idea: gradient normalized SGD but no weight norm for lm_head. 
+
+num_input_dim scaling. 
+
+batch_size=8
+rank  beta1  avg_rank
+1     0.8    2.0000
+2     0.7    3.0000
+3     0.5    3.2500
+4     0.9    3.5000
+5     0      4.5000
+6     0.95   4.7500
+
+batch_size=64
+rank  beta1  avg_rank
+1     0.7    2.7500
+2     0.8    2.7500
+3     0.9    3.0000
+4     0.5    3.7500
+5     0.95   3.7500
+6     0      5.0000
+
+batch_size=512
+rank  beta1  avg_rank
+1     0.7    1.5000
+2     0      2.7500
+3     0.8    3.0000
+4     0.5    3.2500
+5     0.9    4.0000
+6     0.95   5.0000
