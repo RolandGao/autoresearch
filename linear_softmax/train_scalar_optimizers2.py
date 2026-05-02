@@ -27,7 +27,8 @@ BATCH_SIZES = (8, 16, 32, 64, 128, 256, 512)
 BETA1_MOMENTUM_VALUES = (0.0, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95)
 ADAM_BETA2 = 0.95
 ADAM_EPS = 1e-10
-ADAM_LR_GRID = tuple(2.0**exponent for exponent in range(-10, 5))
+ADAM_PREDICTED_LR_BASE = 0.15
+ADAM_LR_WINDOW_RADIUS = 4
 LR_DECAY = 4.0
 LR_POWER = 1.0
 
@@ -191,12 +192,47 @@ def build_problem(config: Config, device: torch.device) -> dict[str, ToyDataset]
 
 def option_specs_for_optimizer(optimizer: str) -> tuple[dict[str, bool], ...]:
     if optimizer == "AdamW":
-        return ({"flush_last": False}, {"flush_last": True})
+        return tuple(
+            {
+                "flush_last": flush_last,
+                "disable_bias1": disable_bias1,
+                "adaptive_norm": adaptive_norm,
+                "lr_in_momentum": lr_in_momentum,
+            }
+            for flush_last in (False, True)
+            for disable_bias1 in (False, True)
+            for adaptive_norm in (False, True)
+            for lr_in_momentum in (False, True)
+        )
     raise ValueError(f"unknown optimizer: {optimizer}")
 
 
 def integer_step_size(num_samples: int, batch_size: int) -> int:
     return max(1, int(round(num_samples / batch_size)))
+
+
+def predicted_adam_lr(batch_size: int, num_samples: int) -> float:
+    return (
+        ADAM_PREDICTED_LR_BASE
+        * (batch_size / 128.0) ** 0.75
+        * (num_samples / 8192.0) ** -0.75
+    )
+
+
+def adam_lr_grid(
+    batch_size: int, num_samples: int
+) -> tuple[int, float, tuple[float, ...]]:
+    predicted_lr = predicted_adam_lr(batch_size, num_samples)
+    center_exponent = round(math.log2(predicted_lr))
+    clipped_lr = 2.0**center_exponent
+    lr_values = tuple(
+        2.0**exponent
+        for exponent in range(
+            center_exponent - ADAM_LR_WINDOW_RADIUS,
+            center_exponent + ADAM_LR_WINDOW_RADIUS + 1,
+        )
+    )
+    return center_exponent, clipped_lr, lr_values
 
 
 def lr_schedule_factor(step: int, steps: int, hparams: dict[str, Any]) -> float:
@@ -285,9 +321,12 @@ def build_search_hparams(config: Config) -> list[dict[str, Any]]:
             for num_samples in NUM_SAMPLE_OPTIONS:
                 for batch_size in BATCH_SIZES:
                     steps = integer_step_size(num_samples, batch_size)
+                    predicted_lr_exponent, clipped_predicted_lr, lr_values = (
+                        adam_lr_grid(batch_size, num_samples)
+                    )
                     for option_spec in option_specs:
                         grid_idx = 0
-                        for lr in ADAM_LR_GRID:
+                        for lr in lr_values:
                             for beta1 in BETA1_MOMENTUM_VALUES:
                                 hparams: dict[str, Any] = {
                                     "optimizer": optimizer,
@@ -301,9 +340,11 @@ def build_search_hparams(config: Config) -> list[dict[str, Any]]:
                                     "lr_schedule": "exp_power",
                                     "lr_power": LR_POWER,
                                     "lr_decay": LR_DECAY,
-                                    "predicted_lr": math.sqrt(
-                                        ADAM_LR_GRID[0] * ADAM_LR_GRID[-1]
+                                    "raw_predicted_lr": predicted_adam_lr(
+                                        batch_size, num_samples
                                     ),
+                                    "predicted_lr": clipped_predicted_lr,
+                                    "predicted_lr_exponent": predicted_lr_exponent,
                                     "lr": lr,
                                     "beta1": beta1,
                                     "beta2": ADAM_BETA2,
@@ -326,7 +367,13 @@ def setting_key(hparams: dict[str, Any]) -> str:
         f"optimizer={hparams['optimizer']}",
         f"h_norm={hparams['h_norm']}",
     ]
-    for key in ("nesterov", "disable_bias1", "adaptive_norm", "flush_last"):
+    for key in (
+        "nesterov",
+        "disable_bias1",
+        "adaptive_norm",
+        "lr_in_momentum",
+        "flush_last",
+    ):
         if key in hparams:
             parts.append(f"{key}={hparams[key]}")
     parts.extend(
@@ -435,17 +482,25 @@ def adamw_step(
     bias1: float | None = None,
     bias2: float | None = None,
     update_scale: float = 1.0,
+    adaptive_norm: bool = False,
+    lr_in_momentum: bool = False,
 ) -> None:
     if wd:
         log_scalars.mul_(1 - lr * wd)
-    exp_avg.lerp_(grad, 1 - beta1)
-    exp_avg_sq.lerp_(grad.square(), 1 - beta2)
+    momentum_grad = lr * grad if lr_in_momentum else grad
+    exp_avg.lerp_(momentum_grad, 1 - beta1)
+    norm_grad = grad.abs() if adaptive_norm else grad.square()
+    exp_avg_sq.lerp_(norm_grad, 1 - beta2)
     if bias1 is None:
         bias1 = 1 - beta1**step_count
     if bias2 is None:
         bias2 = 1 - beta2**step_count
-    denom = (exp_avg_sq / bias2).sqrt().add_(eps)
-    log_scalars.addcdiv_(exp_avg / bias1, denom, value=-lr * update_scale)
+    denom = exp_avg_sq / bias2
+    if not adaptive_norm:
+        denom = denom.sqrt()
+    denom = denom.add_(eps)
+    step_lr = 1.0 if lr_in_momentum else lr
+    log_scalars.addcdiv_(exp_avg / bias1, denom, value=-step_lr * update_scale)
 
 
 def adamw_graph_step(
@@ -462,15 +517,25 @@ def adamw_graph_step(
     eps: torch.Tensor,
     wd: torch.Tensor,
     update_scale: torch.Tensor,
+    adaptive_norm: bool,
+    lr_in_momentum: bool,
 ) -> torch.Tensor:
     loss, grad = scalar_batch_sse_loss_and_grad(
         log_scalars, fixed_logits_batch, target_probs
     )
     log_scalars.copy_(log_scalars * (1 - lr * wd))
-    exp_avg.copy_(exp_avg * beta1 + grad * (1 - beta1))
-    exp_avg_sq.copy_(exp_avg_sq * beta2 + grad.square() * (1 - beta2))
-    update = (exp_avg / bias1) / ((exp_avg_sq / bias2).sqrt() + eps)
-    log_scalars.copy_(log_scalars - lr * update * update_scale)
+    momentum_grad = lr * grad if lr_in_momentum else grad
+    exp_avg.copy_(exp_avg * beta1 + momentum_grad * (1 - beta1))
+    norm_grad = grad.abs() if adaptive_norm else grad.square()
+    exp_avg_sq.copy_(exp_avg_sq * beta2 + norm_grad * (1 - beta2))
+    denom = exp_avg_sq / bias2
+    if not adaptive_norm:
+        denom = denom.sqrt()
+    update = (exp_avg / bias1) / (denom + eps)
+    if lr_in_momentum:
+        log_scalars.copy_(log_scalars - update * update_scale)
+    else:
+        log_scalars.copy_(log_scalars - lr * update * update_scale)
     return loss
 
 
@@ -512,7 +577,10 @@ def adamw_bias_corrections(
 ) -> tuple[float, float, list[float], list[float]]:
     beta1 = float(hparams["beta1"])
     beta2 = float(hparams["beta2"])
-    bias1_values = [1 - beta1 ** (step + 1) for step in range(steps)]
+    if bool(hparams["disable_bias1"]):
+        bias1_values = [1.0 for _ in range(steps)]
+    else:
+        bias1_values = [1 - beta1 ** (step + 1) for step in range(steps)]
     bias2_values = [1 - beta2 ** (step + 1) for step in range(steps)]
     return beta1, beta2, bias1_values, bias2_values
 
@@ -550,6 +618,8 @@ def replay_cuda_graph_training(
 
     if optimizer != "AdamW":
         raise ValueError(f"unknown optimizer: {optimizer}")
+    adaptive_norm = bool(hparams["adaptive_norm"])
+    lr_in_momentum = bool(hparams["lr_in_momentum"])
     beta1, beta2, bias1_values, bias2_values = adamw_bias_corrections(
         hparams, prepared.steps
     )
@@ -581,6 +651,8 @@ def replay_cuda_graph_training(
             static_eps,
             static_wd,
             static_update_scale,
+            adaptive_norm,
+            lr_in_momentum,
         )
 
     last_loss_tensor: torch.Tensor | None = None
@@ -631,6 +703,8 @@ def eager_training(
     optimizer = str(hparams["optimizer"])
     if optimizer != "AdamW":
         raise ValueError(f"unknown optimizer: {optimizer}")
+    adaptive_norm = bool(hparams["adaptive_norm"])
+    lr_in_momentum = bool(hparams["lr_in_momentum"])
     exp_avg = torch.zeros_like(log_scalars)
     exp_avg_sq = torch.zeros_like(log_scalars)
     beta1, beta2, bias1_values, bias2_values = adamw_bias_corrections(
@@ -667,6 +741,8 @@ def eager_training(
             bias1_values[step],
             bias2_values[step],
             update_scale_values[step],
+            adaptive_norm,
+            lr_in_momentum,
         )
 
         last_loss_tensor = loss.detach()
@@ -805,13 +881,23 @@ def main() -> None:
                 "search_mode": "grid",
                 "dataset_size": DATASET_SIZE,
                 "num_samples": NUM_SAMPLE_OPTIONS,
-                "adam_lr_grid": ADAM_LR_GRID,
+                "adam_predicted_lr_base": ADAM_PREDICTED_LR_BASE,
+                "adam_predicted_lr_formula": (
+                    "0.15 * (batch_size / 128)^0.75 "
+                    "* (num_samples / 8192)^-0.75"
+                ),
+                "adam_lr_center": "nearest_power_of_two(predicted_lr)",
+                "adam_lr_window_radius": ADAM_LR_WINDOW_RADIUS,
+                "adam_lr_count": 2 * ADAM_LR_WINDOW_RADIUS + 1,
                 "lr_decay": LR_DECAY,
                 "lr_power": LR_POWER,
                 "beta1_momentum_values": BETA1_MOMENTUM_VALUES,
                 "adam_beta2": ADAM_BETA2,
                 "adam_eps": ADAM_EPS,
                 "adam_flush_last_values": (False, True),
+                "adam_disable_bias1_values": (False, True),
+                "adam_adaptive_norm_values": (False, True),
+                "adam_lr_in_momentum_values": (False, True),
                 "h_norms": H_NORMS,
                 "wd": 0.0,
                 "compile": config.compile,

@@ -806,3 +806,90 @@ a larger momentum is usually not harmful, so the chosen momentum would be the ma
 idea: try varying the flush_last lr by 2 and see if the flush_last constant is truly the best. 
 idea: revisit some old ideas under the new infra
 TODO: study beta1_rank.log more closely. i think there's more knowledge in that file. 
+
+i want the algorithm to look at the gradient norm history. if the gradient norm is monotonically going down, beta should be 0 cuz the past norms are out of date. if the norm history is like a wave with a wavelength of 10 steps, then beta should be 0.9. if the norm history is like a wave but with a drift downward, i want the current step's normalization be at the bottom tip of the drifting curve instead of the middle as a regular EWA would. 
+
+# Hyperparameters
+beta_up = 0.9      # For upward spikes and extreme low noise
+beta_down = 0.0    # For legitimate, gradual drops
+trust_ratio = 0.5  # Ignore drops that are smaller than 50% of the running norm
+
+curr_norm = norm(g)
+
+if curr_norm < running_norm:
+    # It dropped. But is it a legitimate drop or an anomalous crash?
+    if curr_norm < (running_norm * trust_ratio):
+        # The drop was too extreme. This is low-side noise. Ignore/smooth it.
+        beta_t = beta_up 
+    else:
+        # Legitimate drop. Snap to the new bottom.
+        beta_t = beta_down
+else:
+    # Upward wave/spike. Smooth it.
+    beta_t = beta_up
+
+# Apply EMA
+running_norm = beta_t * running_norm + (1 - beta_t) * curr_norm
+
+TODO: interaction between MOE and beta2. 
+
+when bs large: disable_bias1=1__adaptive_norm=0__lr_in_momentum=0 is good, and the fewer the samples the smaller the beta. 
+
+adaptive norm cares more about small norms than adaptive variance. 1 vs 10 and 1 vs 100. 
+
+beta1 is kind of luck based. final accuracy depends on whether the momentum overshot or not. also depends on the spacing of lr tuning. 
+
+AdamW_row__disable_bias1=True__adaptive_norm=False__lr_in_momentum=False__flush_last=True
+
+
+batch  batch_rank  beta1  avg_rank  situations      ranks
+-----  ----------  -----  --------  ----------  ---------
+    8           1   0.95    3.4000           5  1,1,2,7,6
+    8           2    0.9    3.6000           5  2,2,7,6,1
+    8           3    0.8    3.8000           5  3,3,6,5,2
+    8           4    0.7    4.0000           5  4,4,5,4,3
+    8           5    0.6    4.2000           5  5,5,4,3,4
+    8           6    0.5    4.4000           5  6,6,3,2,5
+    8           7      0    4.6000           5  7,7,1,1,7
+   16           1   0.95    3.2000           5  7,1,6,1,1
+   16           2    0.8    3.6000           5  5,6,1,3,3
+   16           3    0.9    3.8000           5  6,7,2,2,2
+   16           4    0.7    4.0000           5  4,5,3,4,4
+   16           5    0.6    4.2000           5  3,4,4,5,5
+   16           6    0.5    4.4000           5  2,3,5,6,6
+   16           7      0    4.8000           5  1,2,7,7,7
+
+
+idea: try bs = 1 as the ultimate beta1 test. 
+
+hessian curvature requires using per sample gradients to know the variance across samples, but using bs>1 destroys the variance in between samples. 
+gg^t for matrix might actually be extracting per sample gradients. 
+
+
+
+gradient norm 
+m1 = beta1 * m1 + (1-beta1) * g
+m2 = beta2 * m2 + (1-beta2) * |g|
+m2 = m2 / (1-beta2**step)
+w = w - lr * m1 / m2 * |w|
+
+
+gradient norm x weight norm
+m1 = beta1 * m1 + (1-beta1) * g
+m2 = beta2 * m2 + (1-beta2) * |g|
+m2 = m2 / (1-beta2**step)
+w = w - lr * m1 / m2 * |w|
+w = w / |w|
+
+
+
+if the norm of the weight matters, maybe gradient norm is enough.
+but if the output is followed by activation normalization, weight norm can help. 
+
+the input to the lm_head has activation norm, so one would think that the weight norm of previous layers don't matter, but it does matter, because the output of the first layer has activation norm. the weight norm of the middle layers decide the proportion it takes in the input to the final layer, so they actually have an incentive to not grow out of control.
+if we initialize the weights to very small, weight norm is still good, cuz we still haven't figured out how to properly "weight norm" the scalar/norm. 
+
+momentum scheduler. 
+
+disable_bias1 is just a modifier on the learning rate. 
+flush_last is also just a modifier on the lr, but the lr goes up for the last step

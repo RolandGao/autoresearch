@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "log_path",
         nargs="?",
-        default=Path(__file__).with_name("scalar_optimizers_logging6.log"),
+        default=Path(__file__).with_name("scalar_optimizers_logging7.log"),
         type=Path,
         help="Path to scalar optimizer log file.",
     )
@@ -75,7 +75,13 @@ def optimizer_variant(row: dict) -> str:
         else:
             parts = [f"{row['optimizer']}_{h_norm}"]
 
-    for key in ("nesterov", "disable_bias1", "adaptive_norm", "flush_last"):
+    for key in (
+        "nesterov",
+        "disable_bias1",
+        "adaptive_norm",
+        "lr_in_momentum",
+        "flush_last",
+    ):
         if key in row:
             parts.append(f"{key}={bool(row[key])}")
     return "__".join(parts)
@@ -131,20 +137,23 @@ def main() -> None:
             best_lr[key] = float(row["lr"])
 
     optimizer_variants = sorted({key[0] for key in best_sse})
-    batch_sizes = sorted({key[1] for key in best_sse})
-    num_samples_values = sorted({key[2] for key in best_sse})
-    beta1_values = sorted({key[3] for key in best_sse})
 
     for variant in optimizer_variants:
         print(f"\n{'=' * 100}\n{variant}\n{'=' * 100}")
 
+        variant_keys = [key for key in best_sse if key[0] == variant]
+        batch_sizes = sorted({key[1] for key in variant_keys})
+        beta1_values = sorted({key[3] for key in variant_keys})
+        situations = sorted({(key[1], key[2]) for key in variant_keys})
+
         situation_ranks = {}
-        for batch_size in batch_sizes:
-            for num_samples in num_samples_values:
-                scores = {
-                    beta1: best_sse[(variant, batch_size, num_samples, beta1)]
-                    for beta1 in beta1_values
-                }
+        for batch_size, num_samples in situations:
+            scores = {
+                beta1: best_sse[(variant, batch_size, num_samples, beta1)]
+                for beta1 in beta1_values
+                if (variant, batch_size, num_samples, beta1) in best_sse
+            }
+            if scores:
                 situation_ranks[(batch_size, num_samples)] = dense_ranks_by_score(
                     scores
                 )
@@ -161,13 +170,18 @@ def main() -> None:
         for beta1, ranks in ranks_by_beta1.items():
             avg_rank = sum(ranks) / len(ranks)
             global_rows.append(
-                [format_beta1(beta1), f"{avg_rank:.4f}", ",".join(map(str, ranks))]
+                [
+                    format_beta1(beta1),
+                    f"{avg_rank:.4f}",
+                    str(len(ranks)),
+                    ",".join(map(str, ranks)),
+                ]
             )
         global_rows.sort(key=lambda row: (float(row[1]), float(row[0])))
 
         print_table(
             "Global Beta1 Ranking By Average Rank",
-            ["global_rank", "beta1", "avg_rank", "ranks"],
+            ["global_rank", "beta1", "avg_rank", "situations", "ranks"],
             rank_rows_by_average(global_rows, avg_rank_index=1),
         )
 
@@ -175,10 +189,17 @@ def main() -> None:
         for batch_size in batch_sizes:
             batch_rows = []
             for beta1 in beta1_values:
-                ranks = ranks_by_batch_beta1[(batch_size, beta1)]
+                ranks = ranks_by_batch_beta1.get((batch_size, beta1), [])
+                if not ranks:
+                    continue
                 avg_rank = sum(ranks) / len(ranks)
                 batch_rows.append(
-                    [format_beta1(beta1), f"{avg_rank:.4f}", ",".join(map(str, ranks))]
+                    [
+                        format_beta1(beta1),
+                        f"{avg_rank:.4f}",
+                        str(len(ranks)),
+                        ",".join(map(str, ranks)),
+                    ]
                 )
             batch_rows.sort(key=lambda row: (float(row[1]), float(row[0])))
             for row in rank_rows_by_average(batch_rows, avg_rank_index=1):
@@ -186,7 +207,7 @@ def main() -> None:
 
         print_table(
             "Per-Batch Beta1 Ranking By Average Rank",
-            ["batch", "batch_rank", "beta1", "avg_rank", "ranks"],
+            ["batch", "batch_rank", "beta1", "avg_rank", "situations", "ranks"],
             per_batch_rows,
         )
 
