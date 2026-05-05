@@ -346,39 +346,6 @@ python train2.py > hyperball.log 2>&1
 0.0006
 0.06
 
-ideas for the discrepancy: zero init, cautious wd. 
-zero init is the most likely: loss curve was worse from the beginning.
-try using hyperball for most weights but fallback on some weights to debug, such as the zero init weights. 
-the ratio between cautious wd vector and the update vector is a problem
-
-
-
-
-python train.py > hyperball_baseline2.log 2>&1
-python train2.py > hyperball_better_scheduler2.log 2>&1
-python train3.py > ablation.log 2>&1
-
-ratio of activations
-
-
-attn.c_proj 1.04517236479753
-attn.ve_gate 1.0402585179821096
-k 1.040956598836486
-lm_head 1.042297123275748
-mlp.c_fc 1.0398597169480592
-mlp.c_proj 1.040865771345476
-q 1.0396111926645204
-v 1.0411021275055712
-ve 1.0390418701725663
-wte 1.0412029697902851
-
-
-x = x + self.attn(
-    norm(x), ve, cos_sin, window_size, activation_norms, prefix
-)
-x = x + self.mlp(norm(x), activation_norms, prefix)
-
-for each of the two lines, calculate the norm of x and the norm of the output of the attn or mlp and divide by the sum of the norm so they sum to 1. this is to understand how much the residual path contributes to the final output. add the logging to both train files and also update visualize.py
 
 
 
@@ -893,3 +860,85 @@ momentum scheduler.
 
 disable_bias1 is just a modifier on the learning rate. 
 flush_last is also just a modifier on the lr, but the lr goes up for the last step
+
+to circumvent the problem of zero-init weights, we can try the following
+normalized w and a scalar s that's very small, like 0.0000001. 
+w rotates like normal, and s follows the scalar lr. 
+in this way, the scalar lr will be different from the normalized weight lr, unfortunately.
+but it's ok, cuz the scalar s will eventually make its way to the optimal point. 
+try a toy problem where s is initialized to 0.000000001. 
+then we can excel at LLM training!!!
+
+the condition number + LN is still a problem that causes the gradient norm to be untrustworthy. : (
+
+
+
+
+ideas for the discrepancy: zero init, cautious wd. 
+zero init is the most likely: loss curve was worse from the beginning.
+try using hyperball for most weights but fallback on some weights to debug, such as the zero init weights. 
+the ratio between cautious wd vector and the update vector is a problem
+
+
+
+
+python train.py > hyperball_baseline2.log 2>&1
+python train2.py > hyperball_better_scheduler2.log 2>&1
+python train3.py > ablation.log 2>&1
+
+python train_baseline.py > hyperball_baseline3.log 2>&1
+
+ratio of activations
+
+
+attn.c_proj 1.04517236479753
+attn.ve_gate 1.0402585179821096
+k 1.040956598836486
+lm_head 1.042297123275748
+mlp.c_fc 1.0398597169480592
+mlp.c_proj 1.040865771345476
+q 1.0396111926645204
+v 1.0411021275055712
+ve 1.0390418701725663
+wte 1.0412029697902851
+
+major
+attn.c_proj
+lm_head
+
+minor
+mlp.c_fc
+mlp.c_proj
+wte
+
+x = x + self.attn(
+    norm(x), ve, cos_sin, window_size, activation_norms, prefix
+)
+x = x + self.mlp(norm(x), activation_norms, prefix)
+
+for each of the two lines, calculate the norm of x and the norm of the output of the attn or mlp and divide by the sum of the norm so they sum to 1. this is to understand how much the residual path contributes to the final output. add the logging to both train files and also update visualize.py
+
+modify only autoresearch/hyperball/train_baseline.py and train_hyperball.py. log floating points with at most 5 sig figs. 
+for the logging of update norms, decouple into a update vector rotation and a positive scalar multiplier. the rotation is the angle between w_{t+1} and w_{t}, expressed in radian. scalar = norm(w_{t+1}) / norm(w_{t}). for scalar weights, only log the update scalar multiplier as rotation does not make sense. 
+
+
+
+modify only autoresearch/hyperball/train_hyperball2.py 
+
+use fallback optimizers and initializations for the following layers. train_baseline.py contains the fallback method. for the other layers, use matrix norm instead of per_smaller_vector norm. keep the momentum and lr schedulers as if it's 1350 steps but only train for 30 steps. 
+
+attn.c_proj
+lm_head
+mlp.c_fc
+mlp.c_proj
+wte
+
+modify only autoresearch/hyperball/train_hyperball2.py 
+
+for the following layers, try initing them to frobenius norm 1, but have a scalar multiplier after the matrix. the scalar multiplier is parameterized is exp(w), and is optimized with adamw with (0, 0.95) betas and wd = 0. for the matrix, use the angular_variant of muon or adamw. the angular variant removes the wd, and makes sure that the angle between w_{t+1} and w_{t} is lr radians. This is already similar to the hyperball optimizers we have implemented but also handles the case where the angle is closer or over pi/2 radians, cuz hyperball just use retraction and can't handle large angles. the lr for the matrix follows the lr for other hyperball matrices. the lr for the scalar needs to searched: try 2^k for twenty differnt integer k. for initialization, initialize the scalar exp(w) such that it is as close to the fallback initialization as possible. for zero_init projection matrices, use a small exp(w). 
+
+attn.c_proj
+lm_head
+mlp.c_fc
+mlp.c_proj
+wte

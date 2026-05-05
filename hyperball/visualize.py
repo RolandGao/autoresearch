@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot norm traces from hyperball training logs."""
+"""Plot norm and update-geometry traces from hyperball training logs."""
 
 from __future__ import annotations
 
@@ -7,17 +7,27 @@ import argparse
 import json
 import math
 import re
+from collections.abc import Iterable
 from collections import defaultdict
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 
-DEFAULT_LOG = Path(__file__).with_name("more_logging.log")
+DEFAULT_LOG = Path(__file__).with_name("hyperball_baseline4.log")
 GRADIENT_LAMBDA_SMOOTHING = 0.9
+LAYER_COLORMAP = "turbo"
+LAYER_COLOR_MIN = 0.05
+LAYER_COLOR_MAX = 0.95
+NON_LAYER_COLOR = "#4c4c4c"
+LINESTYLES = (
+    "-",
+    (0, (5, 5)),
+)
 
 
 def parse_norm_records(log_path: Path) -> tuple[list[dict], int]:
@@ -29,7 +39,7 @@ def parse_norm_records(log_path: Path) -> tuple[list[dict], int]:
             idx = line.find(marker)
             if idx < 0:
                 continue
-            payload = line[idx + len(marker):].strip()
+            payload = line[idx + len(marker) :].strip()
             if not payload.startswith("{"):
                 skipped += 1
                 continue
@@ -44,7 +54,9 @@ def parse_norm_records(log_path: Path) -> tuple[list[dict], int]:
     return records, skipped
 
 
-def collect_series(records: list[dict], section: str) -> dict[str, tuple[list[int], list[float]]]:
+def collect_series(
+    records: list[dict], section: str
+) -> dict[str, tuple[list[int], list[float]]]:
     series = defaultdict(lambda: ([], []))
     for record in records:
         step = record["step"]
@@ -73,7 +85,11 @@ def collect_ratio_series(
                 continue
             numerator = float(numerator)
             denominator = float(denominator)
-            if denominator == 0 or not math.isfinite(numerator) or not math.isfinite(denominator):
+            if (
+                denominator == 0
+                or not math.isfinite(numerator)
+                or not math.isfinite(denominator)
+            ):
                 continue
             steps, values = series[name]
             steps.append(step)
@@ -111,8 +127,41 @@ def strip_layer(name: str) -> str:
     return re.sub(r"^h\.\d+\.", "", name)
 
 
+def component_name(name: str) -> str:
+    match = re.match(r"^h\.\d+(?:\.(.+))?$", name)
+    if match:
+        return match.group(1) or "block"
+    return name
+
+
+def layer_colors(names: Iterable[str]) -> dict[int, tuple[float, float, float, float]]:
+    layers = sorted({layer_index(name) for name in names if layer_index(name) >= 0})
+    if not layers:
+        return {}
+
+    colormap = plt.get_cmap(LAYER_COLORMAP)
+    if len(layers) == 1:
+        return {layers[0]: colormap(LAYER_COLOR_MIN)}
+
+    color_span = LAYER_COLOR_MAX - LAYER_COLOR_MIN
+    return {
+        layer: colormap(LAYER_COLOR_MIN + color_span * rank / (len(layers) - 1))
+        for rank, layer in enumerate(layers)
+    }
+
+
+def component_linestyles(names: Iterable[str]) -> dict[str, object]:
+    components = sorted({component_name(name) for name in names}, key=natural_key)
+    return {
+        component: LINESTYLES[min(idx, len(LINESTYLES) - 1)]
+        for idx, component in enumerate(components)
+    }
+
+
 def natural_key(name: str) -> tuple:
-    return tuple(int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name))
+    return tuple(
+        int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)
+    )
 
 
 def residual_path_series_key(name: str) -> tuple:
@@ -126,7 +175,9 @@ def residual_path_series_key(name: str) -> tuple:
     return (layer_index(name), term_order.get(suffix, 99), natural_key(name))
 
 
-def group_series(series: dict[str, tuple[list[int], list[float]]]) -> list[tuple[str, list[str]]]:
+def group_series(
+    series: dict[str, tuple[list[int], list[float]]],
+) -> list[tuple[str, list[str]]]:
     groups = [
         ("Embeddings And Head", []),
         ("Attention QKV", []),
@@ -238,7 +289,7 @@ def series_key(name: str) -> tuple:
 
 
 def split_long_group(names: list[str], max_lines: int) -> list[list[str]]:
-    return [names[i:i + max_lines] for i in range(0, len(names), max_lines)]
+    return [names[i : i + max_lines] for i in range(0, len(names), max_lines)]
 
 
 def positive_range(values: list[float]) -> tuple[float, float] | None:
@@ -262,7 +313,9 @@ def smooth_values(values: list[float], beta: float) -> list[float]:
     return smoothed
 
 
-def set_norm_scale(ax, names: list[str], series: dict[str, tuple[list[int], list[float]]]) -> None:
+def set_norm_scale(
+    ax, names: list[str], series: dict[str, tuple[list[int], list[float]]]
+) -> None:
     values = []
     for name in names:
         values.extend(series[name][1])
@@ -284,13 +337,23 @@ def plot_series_page(
     y_scale: str | None = None,
     smoothing_beta: float | None = None,
     y_limits: tuple[float, float] | None = None,
+    style_reference_names: list[str] | None = None,
 ) -> None:
     fig, ax = plt.subplots(figsize=(13, 7.5), constrained_layout=True)
+    colors_by_layer = layer_colors(series)
+    linestyles_by_component = component_linestyles(style_reference_names or names)
     for name in names:
         steps, values = series[name]
         if smoothing_beta is not None:
             values = smooth_values(values, smoothing_beta)
-        ax.plot(steps, values, linewidth=1.25, label=name)
+        ax.plot(
+            steps,
+            values,
+            color=colors_by_layer.get(layer_index(name), NON_LAYER_COLOR),
+            linestyle=linestyles_by_component.get(component_name(name), "-"),
+            linewidth=1.25,
+            label=name,
+        )
     if y_scale is not None:
         ax.set_yscale(y_scale)
     elif not force_linear_y:
@@ -324,7 +387,10 @@ def plot_section(
             group_force_linear_y = True
         if section_title == "Update Norms" and group_title == "Lambda Scalars":
             group_force_linear_y = True
-        if section_title == "Update Norms (Step >= 20)" and group_title == "Lambda Scalars":
+        if (
+            section_title == "Update Norms (Step >= 20)"
+            and group_title == "Lambda Scalars"
+        ):
             smoothing_beta = GRADIENT_LAMBDA_SMOOTHING
             group_force_linear_y = True
         chunks = split_long_group(names, max_lines_per_page)
@@ -339,6 +405,7 @@ def plot_section(
                 force_linear_y=group_force_linear_y,
                 y_scale=y_scale,
                 smoothing_beta=smoothing_beta,
+                style_reference_names=names,
             )
             pages += 1
     return pages
@@ -364,6 +431,7 @@ def plot_residual_mix_fractions(
             "fraction of residual mix L2 norm",
             force_linear_y=True,
             y_limits=(0, 1),
+            style_reference_names=names,
         )
         pages += 1
     return pages
@@ -389,6 +457,7 @@ def plot_residual_path_fractions(
                 "fraction of residual-add L2 norm",
                 force_linear_y=True,
                 y_limits=(0, 1),
+                style_reference_names=names,
             )
             pages += 1
     return pages
@@ -412,6 +481,7 @@ def plot_activations(
                 chunk,
                 series,
                 "activation L2 norm",
+                style_reference_names=names,
             )
             pages += 1
     return pages
@@ -421,7 +491,13 @@ def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) ->
     weight_series = collect_series(records, "weight_norms")
     grad_series = collect_series(records, "grad_norms")
     update_series = collect_series(records, "update_norms")
-    update_lambda_late_series = filter_series(select_group(update_series, "Lambda Scalars"), min_step=20)
+    update_rotation_series = collect_series(records, "update_rotations_rad")
+    update_scalar_multiplier_series = collect_series(
+        records, "update_scalar_multipliers"
+    )
+    update_lambda_late_series = filter_series(
+        select_group(update_series, "Lambda Scalars"), min_step=20
+    )
     effective_lr_series = collect_ratio_series(records, "update_norms", "weight_norms")
     effective_lr_log_series = filter_series(effective_lr_series, positive_only=True)
     effective_lr_linear_series = filter_series(effective_lr_series, min_step=20)
@@ -442,6 +518,20 @@ def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) ->
         pages += plot_section(pdf, "Weight Norms", weight_series, max_lines_per_page)
         pages += plot_section(pdf, "Gradient Norms", grad_series, max_lines_per_page)
         pages += plot_section(pdf, "Update Norms", update_series, max_lines_per_page)
+        pages += plot_section(
+            pdf,
+            "Update Rotations (Radians)",
+            update_rotation_series,
+            max_lines_per_page,
+            force_linear_y=True,
+        )
+        pages += plot_section(
+            pdf,
+            "Update Scalar Multipliers",
+            update_scalar_multiplier_series,
+            max_lines_per_page,
+            force_linear_y=True,
+        )
         pages += plot_section(
             pdf,
             "Update Norms (Step >= 20)",
@@ -467,8 +557,12 @@ def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) ->
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot NORM_LOG traces from a hyperball train log.")
-    parser.add_argument("log", nargs="?", default=DEFAULT_LOG, type=Path, help="Training log to parse.")
+    parser = argparse.ArgumentParser(
+        description="Plot NORM_LOG traces from a hyperball train log."
+    )
+    parser.add_argument(
+        "log", nargs="?", default=DEFAULT_LOG, type=Path, help="Training log to parse."
+    )
     parser.add_argument(
         "-o",
         "--output",

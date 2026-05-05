@@ -342,7 +342,7 @@ class GPT(nn.Module):
         )
         # Scale LR ∝ 1/√dmodel (tuned at 768 dim)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
-        print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
+        print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.5g}")
         param_groups = [
             dict(
                 kind="adamw",
@@ -487,6 +487,7 @@ polar_express_coeffs = [
 def adamw_step_fused(
     p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t
 ):
+    decay_update = p * (lr_t * wd_t)
     p.mul_(1 - lr_t * wd_t)
     exp_avg.lerp_(grad, 1 - beta1_t)
     exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
@@ -496,7 +497,7 @@ def adamw_step_fused(
     step_size = lr_t / bias1
     update = exp_avg / denom * step_size
     p.add_(update, alpha=-1)
-    return update
+    return decay_update + update
 
 
 @torch.compile(dynamic=False, fullgraph=True)
@@ -550,7 +551,9 @@ def muon_step_fused(
     wd = wd_t.to(g.dtype)
     mask = (g * stacked_params) >= 0
     update = lr * g
-    stacked_params.sub_(update + lr * wd * stacked_params * mask)
+    decay_update = lr * wd * stacked_params * mask
+    update = update + decay_update
+    stacked_params.sub_(update)
     return update
 
 
@@ -742,7 +745,7 @@ for key, value in param_counts.items():
     print(f"  {key:24s}: {value:,}")
 num_params = param_counts["total"]
 num_flops_per_token = model.estimate_flops()
-print(f"Estimated FLOPs per token: {num_flops_per_token:e}")
+print(f"Estimated FLOPs per token: {num_flops_per_token:.4e}")
 
 tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN
 assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
@@ -800,6 +803,38 @@ def scalar_abs(t):
     return t.detach().float().abs()
 
 
+def log_float(value):
+    value = float(value)
+    if value == 0.0 or not math.isfinite(value):
+        return value
+    digits = 5 - 1 - math.floor(math.log10(abs(value)))
+    rounded = round(value, digits)
+    return 0.0 if rounded == 0 else rounded
+
+
+def tensor_log_float(t):
+    return log_float(t.item())
+
+
+def vector_angle_rad(prev, current):
+    prev = prev.detach().float().flatten()
+    current = current.detach().float().flatten()
+    prev_norm = prev.norm()
+    current_norm = current.norm()
+    if prev_norm == 0 or current_norm == 0:
+        return None
+    cosine = (prev.dot(current) / (prev_norm * current_norm)).clamp(-1, 1)
+    return torch.acos(cosine)
+
+
+def norm_multiplier(prev, current):
+    prev_norm = prev.detach().float().norm()
+    current_norm = current.detach().float().norm()
+    if prev_norm == 0:
+        return None
+    return current_norm / prev_norm
+
+
 @torch.no_grad()
 def add_norm_pair(record, name, p, scalar_index=None):
     if scalar_index is None:
@@ -808,18 +843,39 @@ def add_norm_pair(record, name, p, scalar_index=None):
     else:
         weight_norm = scalar_abs(p[scalar_index])
         grad_norm = scalar_abs(p.grad[scalar_index]) if p.grad is not None else None
-    record["weight_norms"][name] = float(weight_norm.item())
-    record["grad_norms"][name] = None if grad_norm is None else float(grad_norm.item())
+    record["weight_norms"][name] = tensor_log_float(weight_norm)
+    record["grad_norms"][name] = (
+        None if grad_norm is None else tensor_log_float(grad_norm)
+    )
 
 
 @torch.no_grad()
 def add_update_norm_pair(record, name, p, scalar_index=None):
+    if p.grad is None:
+        record["update_norms"][name] = None
+        record["update_scalar_multipliers"][name] = None
+        if scalar_index is None:
+            record["update_rotations_rad"][name] = None
+        return
     if scalar_index is None:
-        update_norm = matrix_scaled_norm(p.grad) if p.grad is not None else None
+        current = p.detach().float()
+        update = p.grad.detach().float()
+        prev = current + update
+        update_norm = matrix_scaled_norm(update)
+        rotation = vector_angle_rad(prev, current)
+        scalar = norm_multiplier(prev, current)
+        record["update_rotations_rad"][name] = (
+            None if rotation is None else tensor_log_float(rotation)
+        )
     else:
-        update_norm = scalar_abs(p.grad[scalar_index]) if p.grad is not None else None
-    record["update_norms"][name] = (
-        None if update_norm is None else float(update_norm.item())
+        current = p[scalar_index].detach().float()
+        update = p.grad[scalar_index].detach().float()
+        prev = current + update
+        update_norm = scalar_abs(update)
+        scalar = norm_multiplier(prev, current)
+    record["update_norms"][name] = tensor_log_float(update_norm)
+    record["update_scalar_multipliers"][name] = (
+        None if scalar is None else tensor_log_float(scalar)
     )
 
 
@@ -837,6 +893,8 @@ def build_norm_log(
         "weight_norms": {},
         "grad_norms": {},
         "update_norms": {},
+        "update_rotations_rad": {},
+        "update_scalar_multipliers": {},
         "activation_l2_norms": {},
         "residual_mix_l2_fractions": {},
         "residual_path_l2_fractions": {},
@@ -866,13 +924,13 @@ def build_norm_log(
                 for i, activation_norm in enumerate(activation_norms)
             )
         for name, activation_norm in activation_items:
-            record["activation_l2_norms"][name] = float(activation_norm.item())
+            record["activation_l2_norms"][name] = tensor_log_float(activation_norm)
     if residual_mix_l2_fractions is not None:
         for name, fraction in residual_mix_l2_fractions.items():
-            record["residual_mix_l2_fractions"][name] = float(fraction.item())
+            record["residual_mix_l2_fractions"][name] = tensor_log_float(fraction)
     if residual_path_l2_fractions is not None:
         for name, fraction in residual_path_l2_fractions.items():
-            record["residual_path_l2_fractions"][name] = float(fraction.item())
+            record["residual_path_l2_fractions"][name] = tensor_log_float(fraction)
     return record
 
 
@@ -942,17 +1000,16 @@ while True:
         if group["kind"] == "muon":
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-    norm_log_record = (
-        build_norm_log(
+    if should_log_norms:
+        norm_log_record = build_norm_log(
             uncompiled_model,
             activation_norms,
             residual_mix_l2_fractions,
             residual_path_l2_fractions,
             step,
         )
-        if should_log_norms
-        else None
-    )
+    else:
+        norm_log_record = None
     optimizer.step(collect_update_norms=should_log_norms)
     if should_log_norms:
         add_update_norms(norm_log_record, uncompiled_model)
@@ -983,7 +1040,7 @@ while True:
     remaining_steps = max(0, MAX_STEPS - step - 1)
 
     print(
-        f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
+        f"\rstep {step:05d} ({pct_done:.5g}%) | loss: {debiased_smooth_loss:.5g} | lrm: {lrm:.5g} | dt: {dt * 1000:.5g}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.5g}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
         end="",
         flush=True,
     )
@@ -1026,12 +1083,12 @@ steady_state_mfu = (
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")
-print(f"val_bpb:          {val_bpb:.6f}")
-print(f"training_seconds: {total_training_time:.1f}")
-print(f"total_seconds:    {t_end - t_start:.1f}")
-print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
-print(f"mfu_percent:      {steady_state_mfu:.2f}")
-print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
+print(f"val_bpb:          {val_bpb:.5g}")
+print(f"training_seconds: {total_training_time:.5g}")
+print(f"total_seconds:    {t_end - t_start:.5g}")
+print(f"peak_vram_mb:     {peak_vram_mb:.5g}")
+print(f"mfu_percent:      {steady_state_mfu:.5g}")
+print(f"total_tokens_M:   {total_tokens / 1e6:.5g}")
 print(f"num_steps:        {step}")
-print(f"num_params_M:     {num_params / 1e6:.1f}")
+print(f"num_params_M:     {num_params / 1e6:.5g}")
 print(f"depth:            {DEPTH}")
