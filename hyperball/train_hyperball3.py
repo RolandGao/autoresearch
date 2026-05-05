@@ -337,7 +337,7 @@ class GPT(nn.Module):
         def init_scaled_zero(module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
             module.weight.div_(module.weight.norm().clamp_min(1e-12))
-            module.log_scale.fill_(math.log(1e-6))
+            module.log_scale.fill_(math.log(1.0))
 
         init_scaled_from_fallback(
             self.transformer.wte,
@@ -1279,7 +1279,7 @@ SCHEDULE_STEPS = 1350  # scheduler horizon for LR, momentum, and weight decay
 TOTAL_BATCH_SIZE = 2**17  # ~524K tokens per optimizer step
 SCALAR_LR = 0.75  # learning rate for per-layer scalars (Adam)
 TARGET_MATRIX_WEIGHT_KINDS = ("attn.c_proj", "lm_head", "mlp.c_fc", "mlp.c_proj", "wte")
-HPARAM_SEARCH_RUNS = 100
+HPARAM_SEARCH_RUNS = 1
 HPARAM_SEARCH_SEED = 42
 SCALE_LR_RANGE = (2**-4, 1.0)
 TARGET_MATRIX_INITIAL_LR_RANGE = (0.05, 2.0)
@@ -1410,7 +1410,32 @@ def sample_hparam_configs(num_runs, seed):
     return configs
 
 
-HPARAM_CONFIGS = sample_hparam_configs(HPARAM_SEARCH_RUNS, HPARAM_SEARCH_SEED)
+HPARAM_CONFIGS = [
+    {
+        "run_idx": 0,
+        "scale_lrs": {
+            "attn.c_proj": 0.2113472384929465,
+            "lm_head": 0.2662756003345412,
+            "mlp.c_fc": 0.09705758893465401,
+            "mlp.c_proj": 0.1757270180935928,
+            "wte": 0.13693606011620174,
+        },
+        "matrix_initial_lrs": {
+            "attn.c_proj": 0.0558109,
+            "lm_head": 0.0627555,
+            "mlp.c_fc": 0.0659059,
+            "mlp.c_proj": 0.0540803,
+            "wte": 0.0742992,
+        },
+        "matrix_end_lrs": {
+            "attn.c_proj": 0.0558109,
+            "lm_head": 0.0627555,
+            "mlp.c_fc": 0.0659059,
+            "mlp.c_proj": 0.0540803,
+            "wte": 0.0742992,
+        },
+    }
+]
 
 
 def get_lr_multiplier_old_train(progress):
