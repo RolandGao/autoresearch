@@ -254,152 +254,45 @@ class GPT(nn.Module):
 
     @torch.no_grad()
     def init_weights(self):
-        weight_norm = {
-            "h.0.attn.c_proj": 4.08,
-            "h.0.k": 3.97,
-            "h.0.mlp.c_fc": 3.75,
-            "h.0.mlp.c_proj": 2.33,
-            "h.0.q": 4.28,
-            "h.0.v": 4.19,
-            "h.1.attn.c_proj": 4.6,
-            "h.1.attn.ve_gate": 0.341,
-            "h.1.k": 4.17,
-            "h.1.mlp.c_fc": 3.86,
-            "h.1.mlp.c_proj": 2.37,
-            "h.1.q": 4.31,
-            "h.1.v": 5.21,
-            "h.1.ve": 231.0,
-            "h.2.attn.c_proj": 4.41,
-            "h.2.k": 4.01,
-            "h.2.mlp.c_fc": 3.75,
-            "h.2.mlp.c_proj": 2.4,
-            "h.2.q": 4.09,
-            "h.2.v": 4.51,
-            "h.3.attn.c_proj": 5.13,
-            "h.3.attn.ve_gate": 0.635,
-            "h.3.k": 3.74,
-            "h.3.mlp.c_fc": 3.69,
-            "h.3.mlp.c_proj": 2.31,
-            "h.3.q": 3.62,
-            "h.3.v": 5.2,
-            "h.3.ve": 231.0,
-            "h.4.attn.c_proj": 4.77,
-            "h.4.k": 4.2,
-            "h.4.mlp.c_fc": 3.88,
-            "h.4.mlp.c_proj": 2.49,
-            "h.4.q": 4.21,
-            "h.4.v": 5.13,
-            "h.5.attn.c_proj": 4.64,
-            "h.5.attn.ve_gate": 0.83,
-            "h.5.k": 4.44,
-            "h.5.mlp.c_fc": 3.93,
-            "h.5.mlp.c_proj": 2.57,
-            "h.5.q": 4.41,
-            "h.5.v": 5.35,
-            "h.5.ve": 236.0,
-            "h.6.attn.c_proj": 4.75,
-            "h.6.k": 4.13,
-            "h.6.mlp.c_fc": 3.91,
-            "h.6.mlp.c_proj": 2.56,
-            "h.6.q": 4.12,
-            "h.6.v": 5.2,
-            "h.7.attn.c_proj": 5.33,
-            "h.7.attn.ve_gate": 1.68,
-            "h.7.k": 3.96,
-            "h.7.mlp.c_fc": 3.67,
-            "h.7.mlp.c_proj": 2.52,
-            "h.7.q": 3.93,
-            "h.7.v": 4.79,
-            "h.7.ve": 242.0,
-            "lm_head": 3.57,
-            "wte": 406.0,
+        target_norm_by_kind = {
+            "attn.ve_gate": 4.93,
+            "k": 100,
+            "q": 100,
+            "v": 111.9491455974542,
+            "ve": 21269.77197809135,
         }
 
-        def actual_frobenius_norm(w, norm_value):
-            return norm_value * (max(w.shape) ** 0.5)
-
-        def apply_target_norm(w, norm_value):
-            if NORM_SCHEME == "matrix":
-                w.div_(w.norm().clamp_min(1e-12)).mul_(norm_value)
-                return
-            output_dim, input_dim = w.shape
-            if NORM_SCHEME == "per_output" or (
-                NORM_SCHEME == "per_smaller_vector" and output_dim >= input_dim
-            ):
-                norm_value = norm_value / (output_dim**0.5)
-                w.div_(w.norm(dim=1, keepdim=True).clamp_min(1e-12)).mul_(norm_value)
-            else:
-                norm_value = norm_value / (input_dim**0.5)
-                w.div_(w.norm(dim=0, keepdim=True).clamp_min(1e-12)).mul_(norm_value)
-
-        def factor_scaled_matrix(module):
+        def init_scaled(module, std=1.0, log_scale=None):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
             norm = module.weight.detach().float().norm().clamp_min(1e-12)
+            scale = float(norm) if log_scale is None else log_scale
             module.weight.div_(norm.to(dtype=module.weight.dtype))
-            module.log_scale.fill_(math.log(float(norm)))
+            module.log_scale.fill_(math.log(scale))
 
-        def init_normal_scaled(module, mean=0.0, std=1.0, target_norm=None):
-            torch.nn.init.normal_(module.weight, mean=mean, std=std)
-            if target_norm is not None:
-                apply_target_norm(module.weight, target_norm)
-            factor_scaled_matrix(module)
+        init_scaled(self.transformer.wte)
+        init_scaled(self.lm_head, std=LM_HEAD_INIT_STD)
 
-        def init_uniform_scaled(module, low, high, target_norm=None):
-            torch.nn.init.uniform_(module.weight, low, high)
-            if target_norm is not None:
-                apply_target_norm(module.weight, target_norm)
-            factor_scaled_matrix(module)
-
-        def init_scaled_projection(module):
-            if PROJECTION_INIT_MODE == "identity":
-                module.weight.zero_()
-                rows, cols = module.weight.shape
-                diag = min(rows, cols)
-                module.weight[:diag, :diag].fill_diagonal_(1.0)
-            else:
-                torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
-            module.weight.div_(module.weight.norm().clamp_min(1e-12))
-            module.log_scale.fill_(math.log(PROJECTION_INIT_SCALE))
-
-        init_normal_scaled(self.transformer.wte, mean=0.0, std=1.0)
-        init_normal_scaled(self.lm_head, mean=0.0, std=LM_HEAD_INIT_STD)
-
-        for layer_idx, block in enumerate(self.transformer.h):
-            prefix = f"h.{layer_idx}"
-            for module, key in (
-                (block.attn.c_q, f"{prefix}.q"),
-                (block.attn.c_k, f"{prefix}.k"),
-                (block.attn.c_v, f"{prefix}.v"),
+        for block in self.transformer.h:
+            for module, kind in (
+                (block.attn.c_q, "q"),
+                (block.attn.c_k, "k"),
+                (block.attn.c_v, "v"),
             ):
-                init_normal_scaled(
-                    module,
-                    mean=0.0,
-                    std=1.0,
-                    target_norm=actual_frobenius_norm(module.weight, weight_norm[key]),
-                )
-            init_scaled_projection(block.attn.c_proj)
-            s = (2 / block.mlp.c_fc.weight.shape[1]) ** 0.5
-            init_uniform_scaled(block.mlp.c_fc, -s, s)
-            init_scaled_projection(block.mlp.c_proj)
+                init_scaled(module, log_scale=target_norm_by_kind[kind])
+            init_scaled(block.attn.c_proj, log_scale=PROJECTION_INIT_SCALE)
+            init_scaled(
+                block.mlp.c_fc,
+                std=(2 / block.mlp.c_fc.weight.shape[1] / 3) ** 0.5,
+            )
+            init_scaled(block.mlp.c_proj, log_scale=PROJECTION_INIT_SCALE)
             if block.attn.ve_gate is not None:
-                key = f"{prefix}.attn.ve_gate"
-                init_normal_scaled(
+                init_scaled(
                     block.attn.ve_gate,
-                    mean=0.0,
-                    std=1.0,
-                    target_norm=actual_frobenius_norm(
-                        block.attn.ve_gate.weight, weight_norm[key]
-                    ),
+                    log_scale=target_norm_by_kind["attn.ve_gate"],
                 )
 
-        for layer_idx, ve in self.value_embeds.items():
-            init_normal_scaled(
-                ve,
-                mean=0.0,
-                std=1.0,
-                target_norm=actual_frobenius_norm(
-                    ve.weight, weight_norm[f"h.{layer_idx}.ve"]
-                ),
-            )
+        for ve in self.value_embeds.values():
+            init_scaled(ve, log_scale=target_norm_by_kind["ve"])
 
         # Per-layer scalars
         self.resid_lambdas.fill_(RESID_LAMBDA_INIT)
@@ -487,12 +380,11 @@ class GPT(nn.Module):
     def setup_optimizer(
         self,
         matrix_lrs=None,
-        matrix_weight_decay=0.0,
         adam_betas=(0.8, 0.95),
         scalar_lr=0.5,
     ):
         if matrix_lrs is None:
-            matrix_lrs = FITTED_EFFECTIVE_LR_BY_WEIGHT_KIND
+            matrix_lrs = INITIAL_EFFECTIVE_LR_BY_WEIGHT_KIND
         angular_muon_param_specs = []
         for block in self.transformer.h:
             angular_muon_param_specs.extend(
@@ -745,63 +637,6 @@ def angular_adamw_step_fused(
 
 
 @torch.compile(dynamic=False, fullgraph=True)
-def muon_step_fused(
-    stacked_grads,
-    stacked_params,
-    momentum_buffer,
-    second_momentum_buffer,
-    momentum_t,
-    lr_t,
-    wd_t,
-    beta2_t,
-    ns_steps,
-    red_dim,
-):
-    # Nesterov momentum
-    momentum = momentum_t.to(stacked_grads.dtype)
-    momentum_buffer.lerp_(stacked_grads, 1 - momentum)
-    g = stacked_grads.lerp_(momentum_buffer, momentum)
-    # Polar express orthogonalization
-    X = g.bfloat16()
-    X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.02 + 1e-6)
-    if g.size(-2) > g.size(-1):
-        for a, b, c in polar_express_coeffs[:ns_steps]:
-            A = X.mT @ X
-            B = b * A + c * (A @ A)
-            X = a * X + X @ B
-    else:
-        for a, b, c in polar_express_coeffs[:ns_steps]:
-            A = X @ X.mT
-            B = b * A + c * (A @ A)
-            X = a * X + B @ X
-    g = X
-    # NorMuon variance reduction
-    # TODO: come back
-    beta2 = beta2_t.to(g.dtype)
-    v_mean = g.float().square().mean(dim=red_dim, keepdim=True)
-    red_dim_size = g.size(red_dim)
-    v_norm_sq = v_mean.sum(dim=(-2, -1), keepdim=True) * red_dim_size
-    v_norm = v_norm_sq.sqrt()
-    second_momentum_buffer.lerp_(
-        v_mean.to(dtype=second_momentum_buffer.dtype), 1 - beta2
-    )
-    step_size = second_momentum_buffer.clamp_min(1e-10).rsqrt()
-    scaled_sq_sum = (v_mean * red_dim_size) * step_size.float().square()
-    v_norm_new = scaled_sq_sum.sum(dim=(-2, -1), keepdim=True).sqrt()
-    final_scale = step_size * (v_norm / v_norm_new.clamp_min(1e-10))
-    g = g * final_scale.to(g.dtype)
-    # Cautious weight decay + parameter update
-    lr = lr_t.to(g.dtype)
-    wd = wd_t.to(g.dtype)
-    mask = (g * stacked_params) >= 0
-    update = lr * g
-    decay_update = lr * wd * stacked_params * mask
-    update = update + decay_update
-    stacked_params.sub_(update)
-    return update
-
-
-@torch.compile(dynamic=False, fullgraph=True)
 def angular_muon_step_fused(
     stacked_grads,
     stacked_params,
@@ -861,7 +696,6 @@ class MuonAdamW(torch.optim.Optimizer):
         self._adamw_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_momentum_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
 
     def _step_adamw(self, group, collect_update_norms=False):
@@ -926,51 +760,6 @@ class MuonAdamW(torch.optim.Optimizer):
             if collect_update_norms:
                 p.grad = update.to(dtype=p.dtype)
 
-    def _step_muon(self, group, collect_update_norms=False):
-        params = group["params"]
-        if not params:
-            return
-        p = params[0]
-        state = self.state[p]
-        num_params = len(params)
-        shape, device, dtype = p.shape, p.device, p.dtype
-        if "momentum_buffer" not in state:
-            state["momentum_buffer"] = torch.zeros(
-                num_params, *shape, dtype=dtype, device=device
-            )
-        if "second_momentum_buffer" not in state:
-            state_shape = (
-                (num_params, shape[-2], 1)
-                if shape[-2] >= shape[-1]
-                else (num_params, 1, shape[-1])
-            )
-            state["second_momentum_buffer"] = torch.zeros(
-                state_shape, dtype=dtype, device=device
-            )
-        red_dim = -1 if shape[-2] >= shape[-1] else -2
-        stacked_grads = torch.stack([p.grad for p in params])
-        stacked_params = torch.stack(params)
-        self._muon_momentum_t.fill_(group["momentum"])
-        self._muon_beta2_t.fill_(group["beta2"] if group["beta2"] is not None else 0.0)
-        self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1]) ** 0.5)
-        self._muon_wd_t.fill_(group["weight_decay"])
-        updates = muon_step_fused(
-            stacked_grads,
-            stacked_params,
-            state["momentum_buffer"],
-            state["second_momentum_buffer"],
-            self._muon_momentum_t,
-            self._muon_lr_t,
-            self._muon_wd_t,
-            self._muon_beta2_t,
-            group["ns_steps"],
-            red_dim,
-        )
-        torch._foreach_copy_(params, list(stacked_params.unbind(0)))
-        if collect_update_norms:
-            for param, update in zip(params, updates.unbind(0)):
-                param.grad = update.to(dtype=param.dtype)
-
     def _step_angular_muon(self, group, collect_update_norms=False):
         params = group["params"]
         if not params:
@@ -1021,8 +810,6 @@ class MuonAdamW(torch.optim.Optimizer):
                 self._step_adamw(group, collect_update_norms)
             elif group["kind"] == "angular_adamw":
                 self._step_angular_adamw(group, collect_update_norms)
-            elif group["kind"] == "muon":
-                self._step_muon(group, collect_update_norms)
             elif group["kind"] == "angular_muon":
                 self._step_angular_muon(group, collect_update_norms)
 
@@ -1048,94 +835,52 @@ WINDOW_SIZES = [  # exact per-layer FA3 left-window sizes
 
 # Optimization
 MAX_STEPS = 30  # exact number of optimizer steps to train
-SCHEDULE_STEPS = 1350  # keep the fitted long-horizon LR schedule for 30-step runs
 TOTAL_BATCH_SIZE = 2**17  # ~524K tokens per optimizer step
-WEIGHT_DECAY = 0.1  # cautious weight decay for Muon
 
-
-def env_float(name, default):
-    return float(os.environ.get(name, default))
-
-
-SCALAR_LR = env_float("HYPERBALL_SCALAR_LR", 0.75)
-ADAM_BETAS = (
-    env_float("HYPERBALL_ADAM_BETA1", 0.8),
-    env_float("HYPERBALL_ADAM_BETA2", 0.95),
-)
-SCALE_ADAM_BETAS = (
-    env_float("HYPERBALL_SCALE_ADAM_BETA1", 0.0),
-    env_float("HYPERBALL_SCALE_ADAM_BETA2", 0.95),
-)
-PROJECTION_INIT_SCALE = env_float("HYPERBALL_PROJECTION_INIT_SCALE", 5.0)
-PROJECTION_INIT_MODE = os.environ.get("HYPERBALL_PROJECTION_INIT_MODE", "normal")
-LM_HEAD_INIT_STD = env_float("HYPERBALL_LM_HEAD_INIT_STD", 0.07)
-RANDOM_SEED = int(os.environ.get("HYPERBALL_RANDOM_SEED", "42"))
-MUON_MOMENTUM_START = env_float("HYPERBALL_MUON_MOMENTUM_START", 0.85)
-MUON_MOMENTUM_END = env_float("HYPERBALL_MUON_MOMENTUM_END", 0.95)
-CONSTANT_NON_SCALAR_LR = bool(
-    int(os.environ.get("HYPERBALL_CONSTANT_NON_SCALAR_LR", "0"))
-)
-EARLY_HIGH_LR_STEPS = int(os.environ.get("HYPERBALL_EARLY_HIGH_LR_STEPS", "3"))
-EARLY_HIGH_LR_KINDS = set(
-    kind
-    for kind in os.environ.get(
-        "HYPERBALL_EARLY_HIGH_LR_KINDS",
-        "lm_head,wte",
-    ).split(",")
-    if kind
-)
-RESID_LAMBDA_INIT = env_float("HYPERBALL_RESID_LAMBDA_INIT", 1.0)
-X0_LAMBDA_INIT = env_float("HYPERBALL_X0_LAMBDA_INIT", 5.0)
+SCALAR_LR = 0.75
+ADAM_BETAS = (0.8, 0.95)
+SCALE_ADAM_BETAS = (0.0, 0.95)
+PROJECTION_INIT_SCALE = 5.0
+LM_HEAD_INIT_STD = 0.07
+RANDOM_SEED = 42
+MUON_MOMENTUM_START = 0.85
+MUON_MOMENTUM_END = 0.95
+EARLY_HIGH_LR_STEPS = 3
+EARLY_HIGH_LR_KINDS = {"lm_head", "wte"}
+RESID_LAMBDA_INIT = 1.0
+X0_LAMBDA_INIT = 5.0
 TRAIN_LOSS_EMA_BETA = 0.9
-LOGIT_SOFTCAP = env_float("HYPERBALL_LOGIT_SOFTCAP", 8.0)
+LOGIT_SOFTCAP = 8.0
 SCALE_LR_BY_WEIGHT_KIND = {
-    "attn.c_proj": env_float("HYPERBALL_SCALE_LR_ATTN_C_PROJ", 0.2),
-    "attn.ve_gate": env_float("HYPERBALL_SCALE_LR_ATTN_VE_GATE", 0.05),
-    "k": env_float("HYPERBALL_SCALE_LR_K", 0.0),
-    "lm_head": env_float("HYPERBALL_SCALE_LR_LM_HEAD", 0.3),
-    "mlp.c_fc": env_float("HYPERBALL_SCALE_LR_MLP_C_FC", 0.1),
-    "mlp.c_proj": env_float("HYPERBALL_SCALE_LR_MLP_C_PROJ", 0.2),
-    "q": env_float("HYPERBALL_SCALE_LR_Q", 0.0),
-    "v": env_float("HYPERBALL_SCALE_LR_V", 0.05),
-    "ve": env_float("HYPERBALL_SCALE_LR_VE", 0.05),
-    "wte": env_float("HYPERBALL_SCALE_LR_WTE", 0.0),
+    "attn.c_proj": 0.2,
+    "attn.ve_gate": 0.05,
+    "k": 0.0,
+    "lm_head": 0.3,
+    "mlp.c_fc": 0.1,
+    "mlp.c_proj": 0.2,
+    "q": 0.0,
+    "v": 0.05,
+    "ve": 0.05,
+    "wte": 0.0,
 }
-DEFAULT_EFFECTIVE_LR_BY_WEIGHT_KIND = {
+INITIAL_EFFECTIVE_LR_BY_WEIGHT_KIND = {
     "attn.c_proj": 0.08,
     "attn.ve_gate": 0.106307,
     "k": 0.0636095,
-    "lm_head": 0.055,
+    "lm_head": 0.32,
     "mlp.c_fc": 0.0659059,
     "mlp.c_proj": 0.08,
     "q": 0.0628415,
     "v": 0.0491089,
     "ve": 0.110348,
+    "wte": 0.25,
+}
+
+EARLY_HIGH_EFFECTIVE_LR_BY_WEIGHT_KIND = {
+    "lm_head": 0.055,
     "wte": 0.047,
 }
-FITTED_EFFECTIVE_LR_BY_WEIGHT_KIND = {
-    "attn.c_proj": env_float(
-        "HYPERBALL_LR_ATTN_C_PROJ",
-        DEFAULT_EFFECTIVE_LR_BY_WEIGHT_KIND["attn.c_proj"],
-    ),
-    "attn.ve_gate": env_float(
-        "HYPERBALL_LR_ATTN_VE_GATE",
-        DEFAULT_EFFECTIVE_LR_BY_WEIGHT_KIND["attn.ve_gate"],
-    ),
-    "k": env_float("HYPERBALL_LR_K", DEFAULT_EFFECTIVE_LR_BY_WEIGHT_KIND["k"]),
-    "lm_head": env_float("HYPERBALL_LR_LM_HEAD", 0.32),
-    "mlp.c_fc": env_float(
-        "HYPERBALL_LR_MLP_C_FC",
-        DEFAULT_EFFECTIVE_LR_BY_WEIGHT_KIND["mlp.c_fc"],
-    ),
-    "mlp.c_proj": env_float(
-        "HYPERBALL_LR_MLP_C_PROJ",
-        DEFAULT_EFFECTIVE_LR_BY_WEIGHT_KIND["mlp.c_proj"],
-    ),
-    "q": env_float("HYPERBALL_LR_Q", DEFAULT_EFFECTIVE_LR_BY_WEIGHT_KIND["q"]),
-    "v": env_float("HYPERBALL_LR_V", DEFAULT_EFFECTIVE_LR_BY_WEIGHT_KIND["v"]),
-    "ve": env_float("HYPERBALL_LR_VE", DEFAULT_EFFECTIVE_LR_BY_WEIGHT_KIND["ve"]),
-    "wte": env_float("HYPERBALL_LR_WTE", 0.25),
-}
+
 EFFECTIVE_LR_LOG_LINEAR_KNOTS = (
     (20, 1.0),
     (200, 0.458328),
@@ -1145,16 +890,6 @@ EFFECTIVE_LR_LOG_LINEAR_KNOTS = (
     (1200, 0.0477203),
     (1349, 0.0118781),
 )
-OLD_TRAIN_WARMUP_RATIO = 0.0
-OLD_TRAIN_WARMDOWN_RATIO = 0.7
-OLD_TRAIN_FINAL_LR_FRAC = 0.05
-NORM_SCHEME = "per_smaller_vector"
-assert NORM_SCHEME in {
-    "matrix",
-    "per_output",
-    "per_input",
-    "per_smaller_vector",
-}
 
 DEVICE_BATCH_SIZE = 64  # per-device batch size (reduce if OOM)
 NORM_LOG_EVERY = 0  # optimizer steps between norm logs; 0 disables norm logs
@@ -1218,32 +953,16 @@ uncompiled_model = model
 model = torch.compile(model, dynamic=False)
 
 optimizer = uncompiled_model.setup_optimizer(
-    matrix_lrs=FITTED_EFFECTIVE_LR_BY_WEIGHT_KIND,
-    matrix_weight_decay=WEIGHT_DECAY,
+    matrix_lrs=INITIAL_EFFECTIVE_LR_BY_WEIGHT_KIND,
     adam_betas=ADAM_BETAS,
     scalar_lr=SCALAR_LR,
 )
 
 print(f"Training steps: {MAX_STEPS}")
-print(f"Schedule steps: {SCHEDULE_STEPS}")
 print(f"Gradient accumulation steps: {grad_accum_steps}")
-
-# Schedules (all based on fixed-step progress)
-
-
-def get_lr_multiplier_old_train(progress):
-    if progress < OLD_TRAIN_WARMUP_RATIO:
-        return progress / OLD_TRAIN_WARMUP_RATIO if OLD_TRAIN_WARMUP_RATIO > 0 else 1.0
-    elif progress < 1.0 - OLD_TRAIN_WARMDOWN_RATIO:
-        return 1.0
-    else:
-        cooldown = (1.0 - progress) / OLD_TRAIN_WARMDOWN_RATIO
-        return cooldown * 1.0 + (1 - cooldown) * OLD_TRAIN_FINAL_LR_FRAC
 
 
 def get_lr_multiplier_non_scalar(steps):
-    if CONSTANT_NON_SCALAR_LR:
-        return 1.0
     knots = EFFECTIVE_LR_LOG_LINEAR_KNOTS
     if steps <= knots[0][0]:
         return knots[0][1]
@@ -1259,10 +978,6 @@ def get_lr_multiplier_non_scalar(steps):
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
     return (1 - frac) * MUON_MOMENTUM_START + frac * MUON_MOMENTUM_END
-
-
-def get_weight_decay(progress):
-    return WEIGHT_DECAY * (1 - progress)
 
 
 def matrix_scaled_norm(t):
@@ -1461,16 +1176,12 @@ while True:
         loss.backward()
         x, y, epoch = next(train_loader)
 
-    # Progress and schedules
-    progress = min(step / max(1, SCHEDULE_STEPS - 1), 1.0)
     lrm_non_scalar = get_lr_multiplier_non_scalar(step)
-    lrm_old_train = get_lr_multiplier_old_train(progress)
     muon_momentum = get_muon_momentum(step)
-    muon_weight_decay = get_weight_decay(progress)
     for group in optimizer.param_groups:
         if group.get("constant_lr", False):
             group["lr"] = group["initial_lr"]
-        elif group["kind"] in {"muon", "angular_muon", "angular_adamw"}:
+        elif group["kind"] in {"angular_muon", "angular_adamw"}:
             weight_kind = group.get("weight_kind")
             if (
                 EARLY_HIGH_LR_STEPS > 0
@@ -1478,19 +1189,16 @@ while True:
                 and weight_kind in EARLY_HIGH_LR_KINDS
             ):
                 group["lr"] = (
-                    DEFAULT_EFFECTIVE_LR_BY_WEIGHT_KIND[weight_kind]
-                    * lrm_non_scalar
+                    EARLY_HIGH_EFFECTIVE_LR_BY_WEIGHT_KIND[weight_kind] * lrm_non_scalar
                 )
             else:
                 group["lr"] = group["initial_lr"] * lrm_non_scalar
         elif group["kind"] == "adamw":
-            group["lr"] = group["initial_lr"] * lrm_old_train
+            group["lr"] = group["initial_lr"]
         else:
             raise NotImplementedError()
-        if group["kind"] in {"muon", "angular_muon"}:
+        if group["kind"] == "angular_muon":
             group["momentum"] = muon_momentum
-            if group["kind"] == "muon":
-                group["weight_decay"] = muon_weight_decay
     if should_log_norms:
         norm_log_record = build_norm_log(
             uncompiled_model,
@@ -1531,7 +1239,7 @@ while True:
     remaining_steps = max(0, MAX_STEPS - step - 1)
 
     print(
-        f"\rstep {step:05d} ({pct_done:.5g}%) | loss: {debiased_smooth_loss:.5g} | lrm_non_scalar: {lrm_non_scalar:.5g} | lrm_old_train: {lrm_old_train:.5g} | dt: {dt * 1000:.5g}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.5g}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
+        f"\rstep {step:05d} ({pct_done:.5g}%) | loss: {debiased_smooth_loss:.5g} | lrm_non_scalar: {lrm_non_scalar:.5g} | dt: {dt * 1000:.5g}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.5g}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
         end="",
         flush=True,
     )
@@ -1560,7 +1268,6 @@ with autocast_ctx:
 
 # Final summary
 t_end = time.time()
-startup_time = t_start_training - t_start
 steady_state_mfu = (
     100
     * num_flops_per_token
