@@ -84,9 +84,7 @@ def log_residual_path_fractions(
     branch_norm = activation_l2_norm(branch_term)
     total_norm = (x_norm + branch_norm).clamp_min(1e-12)
     residual_path_l2_fractions[f"{prefix}.{branch_name}.x"] = x_norm / total_norm
-    residual_path_l2_fractions[f"{prefix}.{branch_name}.out"] = (
-        branch_norm / total_norm
-    )
+    residual_path_l2_fractions[f"{prefix}.{branch_name}.out"] = branch_norm / total_norm
 
 
 def has_ve(layer_idx, n_layer):

@@ -51,7 +51,7 @@ class GPTConfig:
     window_sizes: tuple[int, ...] = ()
 
 
-def rms_norm(x):
+def norm(x):
     return F.rms_norm(x, (x.size(-1),))
 
 
@@ -166,7 +166,7 @@ class CausalSelfAttention(nn.Module):
 
         cos, sin = cos_sin
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
-        q, k = rms_norm(q), rms_norm(k)
+        q, k = norm(q), norm(k)
 
         y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
         y = y.contiguous().view(B, T, -1)
@@ -208,13 +208,13 @@ class Block(nn.Module):
         prefix="",
     ):
         attn_out = self.attn(
-            rms_norm(x), ve, cos_sin, window_size, activation_norms, prefix
+            norm(x), ve, cos_sin, window_size, activation_norms, prefix
         )
         log_residual_path_fractions(
             residual_path_l2_fractions, prefix, "attn", x, attn_out
         )
         x = x + attn_out
-        mlp_out = self.mlp(rms_norm(x), activation_norms, prefix)
+        mlp_out = self.mlp(norm(x), activation_norms, prefix)
         log_residual_path_fractions(
             residual_path_l2_fractions, prefix, "mlp", x, mlp_out
         )
@@ -365,12 +365,11 @@ class GPT(nn.Module):
 
         for layer_idx, block in enumerate(self.transformer.h):
             prefix = f"h.{layer_idx}"
-            matrix_modules = (
+            for module, key in (
                 (block.attn.c_q, f"{prefix}.q"),
                 (block.attn.c_k, f"{prefix}.k"),
                 (block.attn.c_v, f"{prefix}.v"),
-            )
-            for module, key in matrix_modules:
+            ):
                 init_normal_scaled(
                     module,
                     mean=0.0,
@@ -517,12 +516,6 @@ class GPT(nn.Module):
         angular_adamw_param_specs.extend(
             ("ve", ve.weight) for ve in self.value_embeds.values()
         )
-        if USE_ADAMW_FOR_ALL_DIRECTIONS:
-            angular_adamw_param_specs.extend(angular_muon_param_specs)
-            angular_muon_param_specs = []
-        if USE_MUON_FOR_EMBEDDING_DIRECTIONS:
-            angular_muon_param_specs.extend(angular_adamw_param_specs)
-            angular_adamw_param_specs = []
         scaled_log_scale_param_specs = [
             (weight_kind, module.log_scale)
             for _, weight_kind, module in self.scaled_matrix_module_specs()
@@ -547,7 +540,7 @@ class GPT(nn.Module):
             dict(
                 kind="adamw",
                 params=resid_params,
-                lr=scalar_lr * 0.01,  # TODO.
+                lr=scalar_lr * 0.01,
                 betas=adam_betas,
                 eps=1e-10,
                 weight_decay=0.0,
@@ -579,13 +572,12 @@ class GPT(nn.Module):
                     constant_lr=True,
                 )
             )
-        angular_muon_group_keys = sorted(
+        for weight_kind, shape in sorted(
             {
                 (weight_kind, tuple(param.shape))
                 for weight_kind, param in angular_muon_param_specs
             }
-        )
-        for weight_kind, shape in angular_muon_group_keys:
+        ):
             group_params = [
                 param
                 for param_kind, param in angular_muon_param_specs
@@ -593,7 +585,7 @@ class GPT(nn.Module):
             ]
             param_groups.append(
                 dict(
-                    kind="angular_sgd" if USE_ANGULAR_SGD_DIRECTIONS else "angular_muon",
+                    kind="angular_muon",
                     weight_kind=weight_kind,
                     params=group_params,
                     lr=matrix_lrs[weight_kind],
@@ -605,7 +597,7 @@ class GPT(nn.Module):
         for weight_kind, param in angular_adamw_param_specs:
             param_groups.append(
                 dict(
-                    kind="angular_sgd" if USE_ANGULAR_SGD_DIRECTIONS else "angular_adamw",
+                    kind="angular_adamw",
                     weight_kind=weight_kind,
                     params=[param],
                     lr=matrix_lrs[weight_kind],
@@ -629,7 +621,7 @@ class GPT(nn.Module):
         residual_path_l2_fractions = {} if return_activation_norms else None
 
         x = self.transformer.wte(idx)
-        x = rms_norm(x)
+        x = norm(x)
         x0 = x
         for i, block in enumerate(self.transformer.h):
             prefix = f"h.{i}"
@@ -651,7 +643,7 @@ class GPT(nn.Module):
             )
             if return_activation_norms:
                 log_activation_norm(activation_norms, prefix, x)
-        x = rms_norm(x)
+        x = norm(x)
 
         softcap = LOGIT_SOFTCAP
         log_activation_norm(activation_norms, "lm_head_in", x)
@@ -752,55 +744,6 @@ def angular_adamw_step_fused(
     return prev - p
 
 
-def adamh_norm(w):
-    if NORM_SCHEME == "matrix":
-        return w.norm()
-    output_dim, input_dim = w.shape
-    if NORM_SCHEME == "per_output" or (
-        NORM_SCHEME == "per_smaller_vector" and output_dim >= input_dim
-    ):
-        return w.norm(dim=1, keepdim=True)
-    else:
-        return w.norm(dim=0, keepdim=True)
-
-
-@torch.compile(dynamic=False, fullgraph=True)
-def adamh_step_fused(
-    p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t
-):
-    # p.mul_(1 - lr_t * wd_t)
-    prev = p.clone()
-    exp_avg.lerp_(grad, 1 - beta1_t)
-    exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
-    # bias1 = 1 - beta1_t ** step_t
-    bias2 = 1 - beta2_t**step_t
-    # the denom bias ajustment need to account for eps,
-    # but the numerator bias adjustment can be removed
-    denom = (exp_avg_sq / bias2).sqrt() + eps_t
-    # not needed after norm
-    # exp_avg = exp_avg / bias1
-    update = exp_avg / denom
-    update_norm = adamh_norm(update)
-    p_norm = adamh_norm(p)
-    update = update / update_norm.clamp_min(1e-12) * p_norm * lr_t
-    p.add_(update, alpha=-1)
-    p.div_(adamh_norm(p).clamp_min(1e-12)).mul_(p_norm)
-    return prev - p
-
-
-# TODO: this one should be usable for adamh_norm as well.
-def muon_norm(w):
-    if NORM_SCHEME == "matrix":
-        return w.norm(dim=(-2, -1), keepdim=True)
-    output_dim, input_dim = w.shape[-2:]
-    if NORM_SCHEME == "per_output" or (
-        NORM_SCHEME == "per_smaller_vector" and output_dim >= input_dim
-    ):
-        return w.norm(dim=-1, keepdim=True)
-    else:
-        return w.norm(dim=-2, keepdim=True)
-
-
 @torch.compile(dynamic=False, fullgraph=True)
 def muon_step_fused(
     stacked_grads,
@@ -851,17 +794,11 @@ def muon_step_fused(
     lr = lr_t.to(g.dtype)
     wd = wd_t.to(g.dtype)
     mask = (g * stacked_params) >= 0
-    # putting the wd into the update vector cuz cautious wd might be doing more than keeping the weight norm.
-    # update = g + wd * stacked_params * mask
-    prev = stacked_params.clone()
-    update = g
-
-    update_norm = muon_norm(update)
-    p_norm = muon_norm(stacked_params)
-    update = update / update_norm.clamp_min(1e-12) * p_norm * lr
+    update = lr * g
+    decay_update = lr * wd * stacked_params * mask
+    update = update + decay_update
     stacked_params.sub_(update)
-    stacked_params.div_(muon_norm(stacked_params).clamp_min(1e-12)).mul_(p_norm)
-    return prev - stacked_params
+    return update
 
 
 @torch.compile(dynamic=False, fullgraph=True)
@@ -908,62 +845,6 @@ def angular_muon_step_fused(
     prev = stacked_params.clone()
     stacked_params.copy_(angular_move_on_frobenius_sphere(stacked_params, g, lr_t))
     return prev - stacked_params
-
-
-@torch.compile(dynamic=False, fullgraph=True)
-def muon_legacy_step_fused(
-    stacked_grads,
-    stacked_params,
-    momentum_buffer,
-    second_momentum_buffer,
-    momentum_t,
-    lr_t,
-    wd_t,
-    beta2_t,
-    ns_steps,
-    red_dim,
-):
-    # Nesterov momentum
-    momentum = momentum_t.to(stacked_grads.dtype)
-    momentum_buffer.lerp_(stacked_grads, 1 - momentum)
-    g = stacked_grads.lerp_(momentum_buffer, momentum)
-    # Polar express orthogonalization
-    X = g.bfloat16()
-    X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.02 + 1e-6)
-    if g.size(-2) > g.size(-1):
-        for a, b, c in polar_express_coeffs[:ns_steps]:
-            A = X.mT @ X
-            B = b * A + c * (A @ A)
-            X = a * X + X @ B
-    else:
-        for a, b, c in polar_express_coeffs[:ns_steps]:
-            A = X @ X.mT
-            B = b * A + c * (A @ A)
-            X = a * X + B @ X
-    g = X
-    # NorMuon variance reduction
-    beta2 = beta2_t.to(g.dtype)
-    v_mean = g.float().square().mean(dim=red_dim, keepdim=True)
-    red_dim_size = g.size(red_dim)
-    v_norm_sq = v_mean.sum(dim=(-2, -1), keepdim=True) * red_dim_size
-    v_norm = v_norm_sq.sqrt()
-    second_momentum_buffer.lerp_(
-        v_mean.to(dtype=second_momentum_buffer.dtype), 1 - beta2
-    )
-    step_size = second_momentum_buffer.clamp_min(1e-10).rsqrt()
-    scaled_sq_sum = (v_mean * red_dim_size) * step_size.float().square()
-    v_norm_new = scaled_sq_sum.sum(dim=(-2, -1), keepdim=True).sqrt()
-    final_scale = step_size * (v_norm / v_norm_new.clamp_min(1e-10))
-    g = g * final_scale.to(g.dtype)
-    # Cautious weight decay + parameter update
-    lr = lr_t.to(g.dtype)
-    wd = wd_t.to(g.dtype)
-    mask = (g * stacked_params) >= 0
-    update = lr * g
-    decay_update = lr * wd * stacked_params * mask
-    update = update + decay_update
-    stacked_params.sub_(update)
-    return update
 
 
 class MuonAdamW(torch.optim.Optimizer):
@@ -1045,46 +926,6 @@ class MuonAdamW(torch.optim.Optimizer):
             if collect_update_norms:
                 p.grad = update.to(dtype=p.dtype)
 
-    def _step_angular_sgd(self, group, collect_update_norms=False):
-        for p in group["params"]:
-            if p.grad is None:
-                continue
-            lr_t = self._adamw_lr_t.fill_(group["lr"])
-            prev = p.clone()
-            p.copy_(angular_move_on_frobenius_sphere(p, p.grad, lr_t))
-            if collect_update_norms:
-                p.grad = (prev - p).to(dtype=p.dtype)
-
-    def _step_adamh(self, group, collect_update_norms=False):
-        for p in group["params"]:
-            if p.grad is None:
-                continue
-            grad = p.grad
-            state = self.state[p]
-            if not state:
-                state["step"] = 0
-                state["exp_avg"] = torch.zeros_like(p)
-                state["exp_avg_sq"] = torch.zeros_like(p)
-            state["step"] += 1
-            self._adamw_step_t.fill_(state["step"])
-            self._adamw_lr_t.fill_(group["lr"])
-            self._adamw_beta1_t.fill_(group["betas"][0])
-            self._adamw_beta2_t.fill_(group["betas"][1])
-            self._adamw_eps_t.fill_(group["eps"])
-            update = adamh_step_fused(
-                p,
-                grad,
-                state["exp_avg"],
-                state["exp_avg_sq"],
-                self._adamw_step_t,
-                self._adamw_lr_t,
-                self._adamw_beta1_t,
-                self._adamw_beta2_t,
-                self._adamw_eps_t,
-            )
-            if collect_update_norms:
-                p.grad = update.to(dtype=p.dtype)
-
     def _step_muon(self, group, collect_update_norms=False):
         params = group["params"]
         if not params:
@@ -1111,9 +952,7 @@ class MuonAdamW(torch.optim.Optimizer):
         stacked_params = torch.stack(params)
         self._muon_momentum_t.fill_(group["momentum"])
         self._muon_beta2_t.fill_(group["beta2"] if group["beta2"] is not None else 0.0)
-        # this lr scaling is not needed cuz of hyperball
-        # group["lr"] * max(1.0, shape[-2] / shape[-1]) ** 0.5
-        self._muon_lr_t.fill_(group["lr"])
+        self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1]) ** 0.5)
         self._muon_wd_t.fill_(group["weight_decay"])
         updates = muon_step_fused(
             stacked_grads,
@@ -1175,70 +1014,17 @@ class MuonAdamW(torch.optim.Optimizer):
             for param, update in zip(params, updates.unbind(0)):
                 param.grad = update.to(dtype=param.dtype)
 
-    def _step_muon_legacy(self, group, collect_update_norms=False):
-        params = group["params"]
-        if not params:
-            return
-        p = params[0]
-        state = self.state[p]
-        num_params = len(params)
-        shape, device, dtype = p.shape, p.device, p.dtype
-        if "momentum_buffer" not in state:
-            state["momentum_buffer"] = torch.zeros(
-                num_params, *shape, dtype=dtype, device=device
-            )
-        if "second_momentum_buffer" not in state:
-            state_shape = (
-                (num_params, shape[-2], 1)
-                if shape[-2] >= shape[-1]
-                else (num_params, 1, shape[-1])
-            )
-            state["second_momentum_buffer"] = torch.zeros(
-                state_shape, dtype=dtype, device=device
-            )
-        red_dim = -1 if shape[-2] >= shape[-1] else -2
-        stacked_grads = torch.stack([p.grad for p in params])
-        stacked_params = torch.stack(params)
-        self._muon_momentum_t.fill_(group["momentum"])
-        self._muon_beta2_t.fill_(group["beta2"] if group["beta2"] is not None else 0.0)
-        self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1]) ** 0.5)
-        self._muon_wd_t.fill_(group["weight_decay"])
-        updates = muon_legacy_step_fused(
-            stacked_grads,
-            stacked_params,
-            state["momentum_buffer"],
-            state["second_momentum_buffer"],
-            self._muon_momentum_t,
-            self._muon_lr_t,
-            self._muon_wd_t,
-            self._muon_beta2_t,
-            group["ns_steps"],
-            red_dim,
-        )
-        torch._foreach_copy_(params, list(stacked_params.unbind(0)))
-        if collect_update_norms:
-            for param, update in zip(params, updates.unbind(0)):
-                param.grad = update.to(dtype=param.dtype)
-
     @torch.no_grad()
     def step(self, collect_update_norms=False):
-        for inner_step in range(OPTIMIZER_INNER_STEPS):
-            collect_this_step = collect_update_norms and inner_step == OPTIMIZER_INNER_STEPS - 1
-            for group in self.param_groups:
-                if group["kind"] == "adamw":
-                    self._step_adamw(group, collect_this_step)
-                elif group["kind"] == "angular_adamw":
-                    self._step_angular_adamw(group, collect_this_step)
-                elif group["kind"] == "angular_sgd":
-                    self._step_angular_sgd(group, collect_this_step)
-                elif group["kind"] == "adamh":
-                    self._step_adamh(group, collect_this_step)
-                elif group["kind"] == "muon":
-                    self._step_muon(group, collect_this_step)
-                elif group["kind"] == "angular_muon":
-                    self._step_angular_muon(group, collect_this_step)
-                elif group["kind"] == "muon_legacy":
-                    self._step_muon_legacy(group, collect_this_step)
+        for group in self.param_groups:
+            if group["kind"] == "adamw":
+                self._step_adamw(group, collect_update_norms)
+            elif group["kind"] == "angular_adamw":
+                self._step_angular_adamw(group, collect_update_norms)
+            elif group["kind"] == "muon":
+                self._step_muon(group, collect_update_norms)
+            elif group["kind"] == "angular_muon":
+                self._step_angular_muon(group, collect_update_norms)
 
 
 # ---------------------------------------------------------------------------
@@ -1298,28 +1084,10 @@ EARLY_HIGH_LR_KINDS = set(
     ).split(",")
     if kind
 )
-USE_MUON_FOR_EMBEDDING_DIRECTIONS = bool(
-    int(os.environ.get("HYPERBALL_USE_MUON_FOR_EMBEDDING_DIRECTIONS", "0"))
-)
-USE_ANGULAR_SGD_DIRECTIONS = bool(
-    int(os.environ.get("HYPERBALL_USE_ANGULAR_SGD_DIRECTIONS", "0"))
-)
-USE_ADAMW_FOR_ALL_DIRECTIONS = bool(
-    int(os.environ.get("HYPERBALL_USE_ADAMW_FOR_ALL_DIRECTIONS", "0"))
-)
-DATA_DEPENDENT_PROJECTION_INIT = False
-DATA_DEPENDENT_UNIGRAM_INIT = False
-UNIGRAM_INIT_ALPHA = env_float("HYPERBALL_UNIGRAM_INIT_ALPHA", 1.0)
-UNIGRAM_INIT_COMMON = env_float("HYPERBALL_UNIGRAM_INIT_COMMON", 6.0)
-DATA_DEPENDENT_RIDGE_HEAD_INIT = False
-RIDGE_HEAD_LAMBDA = env_float("HYPERBALL_RIDGE_HEAD_LAMBDA", 0.01)
-RIDGE_HEAD_LOGIT_SCALE = env_float("HYPERBALL_RIDGE_HEAD_LOGIT_SCALE", 30.0)
-PROJECTION_WARMSTART_SCALE = env_float("HYPERBALL_PROJECTION_WARMSTART_SCALE", 1.0)
 RESID_LAMBDA_INIT = env_float("HYPERBALL_RESID_LAMBDA_INIT", 1.0)
 X0_LAMBDA_INIT = env_float("HYPERBALL_X0_LAMBDA_INIT", 5.0)
 TRAIN_LOSS_EMA_BETA = 0.9
 LOGIT_SOFTCAP = env_float("HYPERBALL_LOGIT_SOFTCAP", 8.0)
-OPTIMIZER_INNER_STEPS = 1
 SCALE_LR_BY_WEIGHT_KIND = {
     "attn.c_proj": env_float("HYPERBALL_SCALE_LR_ATTN_C_PROJ", 0.2),
     "attn.ve_gate": env_float("HYPERBALL_SCALE_LR_ATTN_VE_GATE", 0.05),
@@ -1391,130 +1159,6 @@ assert NORM_SCHEME in {
 DEVICE_BATCH_SIZE = 64  # per-device batch size (reduce if OOM)
 NORM_LOG_EVERY = 0  # optimizer steps between norm logs; 0 disables norm logs
 
-
-@torch.no_grad()
-def projection_modules(model):
-    for block in model.transformer.h:
-        yield block.attn.c_proj
-        yield block.mlp.c_proj
-
-
-def warmstart_projection_directions(forward_model, param_model, x, y):
-    if not DATA_DEPENDENT_PROJECTION_INIT:
-        return
-    param_model.zero_grad(set_to_none=True)
-    with autocast_ctx:
-        loss = forward_model(x, y)
-    loss.backward()
-    with torch.no_grad():
-        for module in projection_modules(param_model):
-            if module.weight.grad is None:
-                continue
-            direction = -module.weight.grad.detach().float()
-            direction_norm = direction.norm()
-            if direction_norm <= 0:
-                continue
-            module.weight.copy_(
-                (direction / direction_norm).to(dtype=module.weight.dtype)
-            )
-            module.log_scale.fill_(math.log(PROJECTION_WARMSTART_SCALE))
-    param_model.zero_grad(set_to_none=True)
-    print(
-        "Data-dependent projection warmstart: "
-        f"scale={PROJECTION_WARMSTART_SCALE:g}, loss={loss.item():.5g}"
-    )
-
-
-@torch.no_grad()
-def refactor_scaled_weight(module, effective_weight):
-    norm = effective_weight.float().norm().clamp_min(1e-12)
-    module.weight.copy_((effective_weight / norm).to(dtype=module.weight.dtype))
-    module.log_scale.fill_(math.log(float(norm)))
-
-
-@torch.no_grad()
-def forward_hidden(model, idx):
-    B, T = idx.size()
-    cos_sin = model.cos[:, :T], model.sin[:, :T]
-    x = model.transformer.wte(idx)
-    x = rms_norm(x)
-    x0 = x
-    for i, block in enumerate(model.transformer.h):
-        x = model.resid_lambdas[i] * x + model.x0_lambdas[i] * x0
-        ve = model.value_embeds[str(i)](idx) if str(i) in model.value_embeds else None
-        x = block(x, ve, cos_sin, model.window_sizes[i])
-    return rms_norm(x)
-
-
-@torch.no_grad()
-def warmstart_unigram_output_prior(param_model, x, y):
-    if not DATA_DEPENDENT_UNIGRAM_INIT:
-        return
-    labels = y.reshape(-1)
-    labels = labels[labels >= 0]
-    counts = torch.bincount(labels, minlength=param_model.config.vocab_size).float()
-    counts = counts.to(device=param_model.lm_head.weight.device)
-    probs = (counts + UNIGRAM_INIT_ALPHA) / (
-        counts.sum() + UNIGRAM_INIT_ALPHA * counts.numel()
-    )
-    logits = probs.log()
-    logits = logits - logits.mean()
-
-    wte = param_model.transformer.wte
-    current_wte = wte.weight.detach().float() * wte.log_scale.detach().float().exp()
-    common = torch.zeros(param_model.config.n_embd, device=current_wte.device)
-    common[0] = UNIGRAM_INIT_COMMON
-    effective_wte = current_wte + common[None, :]
-    refactor_scaled_weight(wte, effective_wte)
-
-    with autocast_ctx:
-        hidden = forward_hidden(param_model, x)
-    common_dot = hidden[..., 0].float().mean().abs().clamp_min(1e-3)
-    lm_head = param_model.lm_head
-    effective_lm_head = (
-        lm_head.weight.detach().float() * lm_head.log_scale.detach().float().exp()
-    )
-    effective_lm_head[:, 0] += logits / common_dot
-    refactor_scaled_weight(param_model.lm_head, effective_lm_head)
-    print(
-        "Data-dependent unigram output init: "
-        f"alpha={UNIGRAM_INIT_ALPHA:g}, common={UNIGRAM_INIT_COMMON:g}, "
-        f"entropy={float(-(probs * probs.log()).sum()):.5g}"
-    )
-
-
-@torch.no_grad()
-def warmstart_ridge_lm_head(param_model, x, y):
-    if not DATA_DEPENDENT_RIDGE_HEAD_INIT:
-        return
-    with autocast_ctx:
-        hidden = forward_hidden(param_model, x)
-    hidden = hidden.float().reshape(-1, param_model.config.n_embd)
-    labels = y.reshape(-1)
-    valid = labels >= 0
-    hidden = hidden[valid]
-    labels = labels[valid].to(device=hidden.device, dtype=torch.long)
-    hidden = hidden - hidden.mean(dim=0, keepdim=True)
-    n = hidden.size(0)
-    gram = hidden.T @ hidden / n
-    gram.diagonal().add_(RIDGE_HEAD_LAMBDA)
-    rhs = torch.zeros(
-        param_model.config.n_embd,
-        param_model.config.vocab_size,
-        device=hidden.device,
-        dtype=torch.float32,
-    )
-    rhs.index_add_(1, labels, hidden.T)
-    rhs.div_(n)
-    effective_lm_head = torch.linalg.solve(gram, rhs).T.contiguous()
-    effective_lm_head.mul_(RIDGE_HEAD_LOGIT_SCALE)
-    refactor_scaled_weight(param_model.lm_head, effective_lm_head)
-    print(
-        "Data-dependent ridge lm_head init: "
-        f"lambda={RIDGE_HEAD_LAMBDA:g}, logit_scale={RIDGE_HEAD_LOGIT_SCALE:g}"
-    )
-
-
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
 # ---------------------------------------------------------------------------
@@ -1569,11 +1213,9 @@ grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
 
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 x, y, epoch = next(train_loader)  # prefetch first batch
+
 uncompiled_model = model
-warmstart_unigram_output_prior(uncompiled_model, x, y)
-warmstart_ridge_lm_head(uncompiled_model, x, y)
 model = torch.compile(model, dynamic=False)
-warmstart_projection_directions(model, uncompiled_model, x, y)
 
 optimizer = uncompiled_model.setup_optimizer(
     matrix_lrs=FITTED_EFFECTIVE_LR_BY_WEIGHT_KIND,
@@ -1620,10 +1262,6 @@ def get_muon_momentum(step):
 
 
 def get_weight_decay(progress):
-    return WEIGHT_DECAY * (1 - progress)
-
-
-def get_weight_decay_old_train(progress):
     return WEIGHT_DECAY * (1 - progress)
 
 
@@ -1683,16 +1321,6 @@ def add_norm_pair(record, name, p, scalar_index=None):
 
 
 @torch.no_grad()
-def add_log_scale_pair(record, name, log_scale):
-    record["weight_norms"][name] = tensor_log_float(log_scale.detach().float().exp())
-    record["grad_norms"][name] = (
-        None
-        if log_scale.grad is None
-        else tensor_log_float(log_scale.grad.detach().float().abs())
-    )
-
-
-@torch.no_grad()
 def add_update_norm_pair(record, name, p, scalar_index=None):
     if p.grad is None:
         record["update_norms"][name] = None
@@ -1723,17 +1351,6 @@ def add_update_norm_pair(record, name, p, scalar_index=None):
 
 
 @torch.no_grad()
-def add_log_scale_update_pair(record, name, log_scale):
-    if log_scale.grad is None:
-        record["update_norms"][name] = None
-        record["update_scalar_multipliers"][name] = None
-        return
-    update = log_scale.grad.detach().float()
-    record["update_norms"][name] = tensor_log_float(update.abs())
-    record["update_scalar_multipliers"][name] = tensor_log_float((-update).exp())
-
-
-@torch.no_grad()
 def build_norm_log(
     model,
     activation_norms,
@@ -1755,8 +1372,6 @@ def build_norm_log(
     }
     add_norm_pair(record, "wte", model.transformer.wte.weight)
     add_norm_pair(record, "lm_head", model.lm_head.weight)
-    for name, _, module in model.scaled_matrix_module_specs():
-        add_log_scale_pair(record, f"{name}.scale", module.log_scale)
     for i, block in enumerate(model.transformer.h):
         prefix = f"h.{i}"
         add_norm_pair(record, f"{prefix}.q", block.attn.c_q.weight)
@@ -1794,8 +1409,6 @@ def build_norm_log(
 def add_update_norms(record, model):
     add_update_norm_pair(record, "wte", model.transformer.wte.weight)
     add_update_norm_pair(record, "lm_head", model.lm_head.weight)
-    for name, _, module in model.scaled_matrix_module_specs():
-        add_log_scale_update_pair(record, f"{name}.scale", module.log_scale)
     for i, block in enumerate(model.transformer.h):
         prefix = f"h.{i}"
         add_update_norm_pair(record, f"{prefix}.q", block.attn.c_q.weight)
@@ -1832,11 +1445,7 @@ while True:
     activation_norms = None
     residual_mix_l2_fractions = None
     residual_path_l2_fractions = None
-    train_loss_x = None
-    train_loss_y = None
     for micro_step in range(grad_accum_steps):
-        train_loss_x = x
-        train_loss_y = y
         with autocast_ctx:
             if should_log_norms and micro_step == grad_accum_steps - 1:
                 (
@@ -1858,17 +1467,10 @@ while True:
     lrm_old_train = get_lr_multiplier_old_train(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
-    muon_weight_decay_old_train = get_weight_decay_old_train(progress)
     for group in optimizer.param_groups:
         if group.get("constant_lr", False):
             group["lr"] = group["initial_lr"]
-        elif group["kind"] in {
-            "muon",
-            "adamh",
-            "angular_muon",
-            "angular_adamw",
-            "angular_sgd",
-        }:
+        elif group["kind"] in {"muon", "angular_muon", "angular_adamw"}:
             weight_kind = group.get("weight_kind")
             if (
                 EARLY_HIGH_LR_STEPS > 0
@@ -1881,8 +1483,6 @@ while True:
                 )
             else:
                 group["lr"] = group["initial_lr"] * lrm_non_scalar
-        elif group["kind"] == "muon_legacy":
-            group["lr"] = group["initial_lr"] * lrm_old_train
         elif group["kind"] == "adamw":
             group["lr"] = group["initial_lr"] * lrm_old_train
         else:
@@ -1891,9 +1491,6 @@ while True:
             group["momentum"] = muon_momentum
             if group["kind"] == "muon":
                 group["weight_decay"] = muon_weight_decay
-        elif group["kind"] == "muon_legacy":
-            group["momentum"] = muon_momentum
-            group["weight_decay"] = muon_weight_decay_old_train
     if should_log_norms:
         norm_log_record = build_norm_log(
             uncompiled_model,
