@@ -303,34 +303,41 @@ class GPT(nn.Module):
             "attn.c_proj": 5.0,
             "attn.ve_gate": 1.0,
             "k": 100,
-            "lm_head": 264.192,
+            "lm_head": 132.096,
             "mlp.c_fc": 36.95041722813605,
             "mlp.c_proj": 5.0,
             "q": 100,
             "v": 111.9491455974542,
             "ve": 24000.0,
-            "wte": 4096.0,
+            "wte": 2048.0,
             "resid_lambdas": 1.0,
             "x0_lambdas": 5.0,
         }
 
-        def init_scaled(module, target_frobenius_norm):
+        def init_scaled(module, kind):
             torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
             norm = module.weight.detach().float().norm().clamp_min(1e-12)
             module.weight.div_(norm.to(dtype=module.weight.dtype))
-            module.log_scale.fill_(math.log(target_frobenius_norm))
+            module.log_scale.fill_(math.log(target_norm_by_kind[kind]))
 
-        matrix_specs = list(self.scaled_matrix_module_specs())
-        missing_kinds = {
-            weight_kind
-            for _, weight_kind, _ in matrix_specs
-            if weight_kind not in target_norm_by_kind
-        }
-        if missing_kinds:
-            raise KeyError(f"Missing target norms for weight kinds: {missing_kinds}")
+        init_scaled(self.transformer.wte, "wte")
+        init_scaled(self.lm_head, "lm_head")
 
-        for _, weight_kind, module in matrix_specs:
-            init_scaled(module, target_norm_by_kind[weight_kind])
+        for block in self.transformer.h:
+            for module, kind in (
+                (block.attn.c_q, "q"),
+                (block.attn.c_k, "k"),
+                (block.attn.c_v, "v"),
+            ):
+                init_scaled(module, kind)
+            init_scaled(block.attn.c_proj, "attn.c_proj")
+            init_scaled(block.mlp.c_fc, "mlp.c_fc")
+            init_scaled(block.mlp.c_proj, "mlp.c_proj")
+            if block.attn.ve_gate is not None:
+                init_scaled(block.attn.ve_gate, "attn.ve_gate")
+
+        for ve in self.value_embeds.values():
+            init_scaled(ve, "ve")
 
         # Per-layer scalars
         self.resid_lambdas.fill_(target_norm_by_kind["resid_lambdas"])
