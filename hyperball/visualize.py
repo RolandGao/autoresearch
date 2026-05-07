@@ -287,6 +287,19 @@ def select_group(
     return selected
 
 
+def select_groups_before(
+    series: dict[str, tuple[list[int], list[float]]],
+    stop_group_title: str,
+) -> dict[str, tuple[list[int], list[float]]]:
+    selected = {}
+    for group_title, names in group_series(series):
+        if group_title == stop_group_title:
+            break
+        for name in names:
+            selected[name] = series[name]
+    return selected
+
+
 def series_key(name: str) -> tuple:
     return (strip_layer(name), layer_index(name), natural_key(name))
 
@@ -505,12 +518,9 @@ def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) ->
     update_scalar_multiplier_series = collect_series(
         records, "update_scalar_multipliers"
     )
-    update_lambda_late_series = filter_series(
-        select_group(update_series, "Lambda Scalars"), min_step=20
+    update_scalar_multiplier_pre_scale_series = select_groups_before(
+        update_scalar_multiplier_series, "Output Scales"
     )
-    effective_lr_series = collect_ratio_series(records, "update_norms", "weight_norms")
-    effective_lr_log_series = filter_series(effective_lr_series, positive_only=True)
-    effective_lr_linear_series = filter_series(effective_lr_series, min_step=20)
     activation_series = collect_series(records, "activation_l2_norms")
     residual_mix_series = collect_series(records, "residual_mix_l2_fractions")
     residual_path_series = collect_series(records, "residual_path_l2_fractions")
@@ -553,28 +563,7 @@ def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) ->
         pages += plot_section(
             pdf,
             scalar_section_title,
-            update_scalar_multiplier_series,
-            max_lines_per_page,
-            force_linear_y=True,
-        )
-        pages += plot_section(
-            pdf,
-            f"{update_section_title} (Step >= 20)",
-            update_lambda_late_series,
-            max_lines_per_page,
-            force_linear_y=True,
-        )
-        pages += plot_section(
-            pdf,
-            "Effective LR (Log Scale)",
-            effective_lr_log_series,
-            max_lines_per_page,
-            y_scale="log",
-        )
-        pages += plot_section(
-            pdf,
-            "Effective LR (Linear, Step >= 20)",
-            effective_lr_linear_series,
+            update_scalar_multiplier_pre_scale_series,
             max_lines_per_page,
             force_linear_y=True,
         )
