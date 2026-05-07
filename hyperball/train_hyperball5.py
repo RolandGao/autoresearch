@@ -14,11 +14,12 @@ import json
 import math
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import torch
 import torch.nn as nn
@@ -26,14 +27,24 @@ import torch.nn.functional as F
 
 from kernels import get_kernel
 
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = (
-    "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-)
-fa3 = get_kernel(repo).flash_attn_interface
-
 from prepare import MAX_SEQ_LEN, Tokenizer, make_dataloader, evaluate_bpb
+
+fa3 = None
+
+
+def initialize_flash_attention():
+    if not torch.cuda.is_available():
+        raise RuntimeError("train_hyperball5.py requires CUDA.")
+
+    capability = torch.cuda.get_device_capability()
+    # varunneal's FA3 is Hopper only; use kernels-community on non-Hopper GPUs.
+    repo = (
+        "varunneal/flash-attention-3"
+        if capability == (9, 0)
+        else "kernels-community/flash-attn3"
+    )
+    return get_kernel(repo).flash_attn_interface
+
 
 # ---------------------------------------------------------------------------
 # GPT Model
@@ -169,7 +180,10 @@ class CausalSelfAttention(nn.Module):
         residual_path_l2_fractions=None,
         prefix="",
     ):
-        B, T, C = x.size()
+        if fa3 is None:
+            raise RuntimeError("Flash attention must be initialized before training.")
+
+        B, T, _ = x.size()
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
         k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
@@ -286,49 +300,41 @@ class GPT(nn.Module):
     @torch.no_grad()
     def init_weights(self):
         target_norm_by_kind = {
+            "attn.c_proj": 5.0,
             "attn.ve_gate": 1.0,
             "k": 100,
+            "lm_head": 264.192,
+            "mlp.c_fc": 36.95041722813605,
+            "mlp.c_proj": 5.0,
             "q": 100,
             "v": 111.9491455974542,
             "ve": 24000.0,
+            "wte": 4096.0,
+            "resid_lambdas": 1.0,
+            "x0_lambdas": 5.0,
         }
 
-        def init_scaled(module, std=1.0, log_scale=None):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+        def init_scaled(module, target_frobenius_norm):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
             norm = module.weight.detach().float().norm().clamp_min(1e-12)
-            scale = float(norm) if log_scale is None else log_scale
             module.weight.div_(norm.to(dtype=module.weight.dtype))
-            module.log_scale.fill_(math.log(scale))
+            module.log_scale.fill_(math.log(target_frobenius_norm))
 
-        init_scaled(self.transformer.wte)
-        init_scaled(self.lm_head, std=LM_HEAD_INIT_STD)
+        matrix_specs = list(self.scaled_matrix_module_specs())
+        missing_kinds = {
+            weight_kind
+            for _, weight_kind, _ in matrix_specs
+            if weight_kind not in target_norm_by_kind
+        }
+        if missing_kinds:
+            raise KeyError(f"Missing target norms for weight kinds: {missing_kinds}")
 
-        for block in self.transformer.h:
-            for module, kind in (
-                (block.attn.c_q, "q"),
-                (block.attn.c_k, "k"),
-                (block.attn.c_v, "v"),
-            ):
-                init_scaled(module, log_scale=target_norm_by_kind[kind])
-            init_scaled(block.attn.c_proj, log_scale=PROJECTION_INIT_SCALE)
-            init_scaled(
-                block.mlp.c_fc,
-                std=MLP_FC_INIT_STD_SCALE
-                * (2 / block.mlp.c_fc.weight.shape[1] / 3) ** 0.5,
-            )
-            init_scaled(block.mlp.c_proj, log_scale=PROJECTION_INIT_SCALE)
-            if block.attn.ve_gate is not None:
-                init_scaled(
-                    block.attn.ve_gate,
-                    log_scale=target_norm_by_kind["attn.ve_gate"],
-                )
-
-        for ve in self.value_embeds.values():
-            init_scaled(ve, log_scale=target_norm_by_kind["ve"])
+        for _, weight_kind, module in matrix_specs:
+            init_scaled(module, target_norm_by_kind[weight_kind])
 
         # Per-layer scalars
-        self.resid_lambdas.fill_(RESID_LAMBDA_INIT)
-        self.x0_lambdas.fill_(X0_LAMBDA_INIT)
+        self.resid_lambdas.fill_(target_norm_by_kind["resid_lambdas"])
+        self.x0_lambdas.fill_(target_norm_by_kind["x0_lambdas"])
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -409,61 +415,32 @@ class GPT(nn.Module):
             "total": total,
         }
 
-    def setup_optimizer(
-        self,
-        matrix_lrs=None,
-        adam_betas=(0.8, 0.95),
-        scalar_lr=0.5,
-    ):
-        if matrix_lrs is None:
-            matrix_lrs = INITIAL_EFFECTIVE_LR_BY_WEIGHT_KIND
-        angular_muon_param_specs = []
+    def _angular_muon_weight_specs(self):
         for block in self.transformer.h:
-            angular_muon_param_specs.extend(
-                [
-                    ("q", block.attn.c_q.weight),
-                    ("k", block.attn.c_k.weight),
-                    ("v", block.attn.c_v.weight),
-                    ("attn.c_proj", block.attn.c_proj.weight),
-                    ("mlp.c_fc", block.mlp.c_fc.weight),
-                    ("mlp.c_proj", block.mlp.c_proj.weight),
-                ]
-            )
+            yield "q", block.attn.c_q.weight
+            yield "k", block.attn.c_k.weight
+            yield "v", block.attn.c_v.weight
+            yield "attn.c_proj", block.attn.c_proj.weight
+            yield "mlp.c_fc", block.mlp.c_fc.weight
+            yield "mlp.c_proj", block.mlp.c_proj.weight
             if block.attn.ve_gate is not None:
-                angular_muon_param_specs.append(
-                    ("attn.ve_gate", block.attn.ve_gate.weight)
-                )
-        angular_adamw_param_specs = [
-            ("wte", self.transformer.wte.weight),
-            ("lm_head", self.lm_head.weight),
-        ]
-        angular_adamw_param_specs.extend(
-            ("ve", ve.weight) for ve in self.value_embeds.values()
-        )
-        scaled_log_scale_param_specs = [
-            (weight_kind, module.log_scale)
-            for _, weight_kind, module in self.scaled_matrix_module_specs()
-        ]
-        angular_muon_params = [p for _, p in angular_muon_param_specs]
-        angular_adamw_params = [p for _, p in angular_adamw_param_specs]
-        scaled_log_scale_params = [p for _, p in scaled_log_scale_param_specs]
-        resid_params = [self.resid_lambdas]
-        x0_params = [self.x0_lambdas]
-        assert len(list(self.parameters())) == (
-            len(angular_muon_params)
-            + len(angular_adamw_params)
-            + len(scaled_log_scale_params)
-            + len(resid_params)
-            + len(x0_params)
-        )
-        print(
-            "Using fixed-norm angular directions for every 2D matrix "
-            f"with projection_init_scale={PROJECTION_INIT_SCALE:g}"
-        )
-        param_groups = [
+                yield "attn.ve_gate", block.attn.ve_gate.weight
+
+    def _angular_adamw_weight_specs(self):
+        yield "wte", self.transformer.wte.weight
+        yield "lm_head", self.lm_head.weight
+        for ve in self.value_embeds.values():
+            yield "ve", ve.weight
+
+    def _log_scale_param_specs(self):
+        for _, weight_kind, module in self.scaled_matrix_module_specs():
+            yield weight_kind, module.log_scale
+
+    def _scalar_param_groups(self, scalar_lr, adam_betas):
+        return [
             dict(
                 kind="adamw",
-                params=resid_params,
+                params=[self.resid_lambdas],
                 lr=scalar_lr * 0.01,
                 betas=adam_betas,
                 eps=1e-10,
@@ -471,17 +448,20 @@ class GPT(nn.Module):
             ),
             dict(
                 kind="adamw",
-                params=x0_params,
+                params=[self.x0_lambdas],
                 lr=scalar_lr,
                 betas=(0.96, 0.95),
                 eps=1e-10,
                 weight_decay=0.0,
             ),
         ]
-        for weight_kind in sorted({kind for kind, _ in scaled_log_scale_param_specs}):
+
+    def _log_scale_param_groups(self, log_scale_specs):
+        param_groups = []
+        for weight_kind in sorted({kind for kind, _ in log_scale_specs}):
             group_params = [
                 param
-                for param_kind, param in scaled_log_scale_param_specs
+                for param_kind, param in log_scale_specs
                 if param_kind == weight_kind
             ]
             param_groups.append(
@@ -490,21 +470,23 @@ class GPT(nn.Module):
                     weight_kind=f"{weight_kind}.scale",
                     params=group_params,
                     lr=SCALE_LR_BY_WEIGHT_KIND[weight_kind],
-                    betas=SCALE_ADAM_BETAS,
+                    betas=(0.0, 0.95),
                     eps=1e-10,
                     weight_decay=0.0,
                     scale_lr_schedule=True,
                 )
             )
-        for weight_kind, shape in sorted(
-            {
-                (weight_kind, tuple(param.shape))
-                for weight_kind, param in angular_muon_param_specs
-            }
-        ):
+        return param_groups
+
+    def _angular_muon_param_groups(self, muon_specs, matrix_lrs):
+        param_groups = []
+        group_keys = sorted(
+            {(weight_kind, tuple(param.shape)) for weight_kind, param in muon_specs}
+        )
+        for weight_kind, shape in group_keys:
             group_params = [
                 param
-                for param_kind, param in angular_muon_param_specs
+                for param_kind, param in muon_specs
                 if param_kind == weight_kind and tuple(param.shape) == shape
             ]
             param_groups.append(
@@ -518,20 +500,71 @@ class GPT(nn.Module):
                     beta2=0.95,
                 )
             )
-        for weight_kind, param in angular_adamw_param_specs:
-            param_groups.append(
-                dict(
-                    kind="angular_adamw",
-                    weight_kind=weight_kind,
-                    params=[param],
-                    lr=matrix_lrs[weight_kind],
-                    betas=adam_betas,
-                    eps=1e-10,
-                )
+        return param_groups
+
+    def _angular_adamw_param_groups(self, adamw_direction_specs, matrix_lrs, adam_betas):
+        return [
+            dict(
+                kind="angular_adamw",
+                weight_kind=weight_kind,
+                params=[param],
+                lr=matrix_lrs[weight_kind],
+                betas=adam_betas,
+                eps=1e-10,
             )
-        optimizer = MuonAdamW(param_groups)
+            for weight_kind, param in adamw_direction_specs
+        ]
+
+    def _assert_optimizer_covers_model_params(self, param_groups):
+        grouped_params = [
+            param
+            for group in param_groups
+            for param in group["params"]
+        ]
+        model_params = list(self.parameters())
+        if len(grouped_params) != len(model_params):
+            raise ValueError(
+                "Optimizer parameter groups do not cover the model exactly: "
+                f"{len(grouped_params)} grouped params vs {len(model_params)} model params."
+            )
+        if {id(param) for param in grouped_params} != {id(param) for param in model_params}:
+            raise ValueError("Optimizer parameter groups do not match model parameters.")
+
+    def _add_initial_lrs(self, optimizer):
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
+
+    def setup_optimizer(
+        self,
+        matrix_lrs=None,
+        adam_betas=(0.8, 0.95),
+        scalar_lr=0.5,
+    ):
+        if matrix_lrs is None:
+            matrix_lrs = INITIAL_EFFECTIVE_LR_BY_WEIGHT_KIND
+
+        muon_specs = list(self._angular_muon_weight_specs())
+        adamw_direction_specs = list(self._angular_adamw_weight_specs())
+        log_scale_specs = list(self._log_scale_param_specs())
+
+        print(
+            "Using fixed-norm angular directions for every 2D matrix "
+            "with projection_init_scale=5"
+        )
+
+        param_groups = []
+        param_groups.extend(self._scalar_param_groups(scalar_lr, adam_betas))
+        param_groups.extend(self._log_scale_param_groups(log_scale_specs))
+        param_groups.extend(self._angular_muon_param_groups(muon_specs, matrix_lrs))
+        param_groups.extend(
+            self._angular_adamw_param_groups(
+                adamw_direction_specs, matrix_lrs, adam_betas
+            )
+        )
+
+        self._assert_optimizer_covers_model_params(param_groups)
+        optimizer = MuonAdamW(param_groups)
+        self._add_initial_lrs(optimizer)
         return optimizer
 
     def forward(
@@ -569,7 +602,7 @@ class GPT(nn.Module):
                 log_activation_norm(activation_norms, prefix, x)
         x = norm(x)
 
-        softcap = LOGIT_SOFTCAP
+        softcap = 8.0
         log_activation_norm(activation_norms, "lm_head_in", x)
         logits = self.lm_head(x)
         log_activation_norm(activation_norms, "lm_head_out", logits)
@@ -605,7 +638,7 @@ class GPT(nn.Module):
 # Optimizer (MuonAdamW, single GPU only)
 # ---------------------------------------------------------------------------
 
-polar_express_coeffs = [
+POLAR_EXPRESS_COEFFS = [
     (8.156554524902461, -22.48329292557795, 15.878769915207462),
     (4.042929935166739, -2.808917465908714, 0.5000178451051316),
     (3.8916678022926607, -2.772484153217685, 0.5060648178503393),
@@ -686,12 +719,12 @@ def angular_muon_step_fused(
     X = g.bfloat16()
     X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.02 + 1e-6)
     if g.size(-2) > g.size(-1):
-        for a, b, c in polar_express_coeffs[:ns_steps]:
+        for a, b, c in POLAR_EXPRESS_COEFFS[:ns_steps]:
             A = X.mT @ X
             B = b * A + c * (A @ A)
             X = a * X + X @ B
     else:
-        for a, b, c in polar_express_coeffs[:ns_steps]:
+        for a, b, c in POLAR_EXPRESS_COEFFS[:ns_steps]:
             A = X @ X.mT
             B = b * A + c * (A @ A)
             X = a * X + B @ X
@@ -870,14 +903,7 @@ MAX_STEPS = 30  # exact number of optimizer steps to train
 TOTAL_BATCH_SIZE = 2**17  # ~524K tokens per optimizer step
 
 SCALAR_LR = 0.45
-ADAM_BETAS = (0.8, 0.95)
-SCALE_ADAM_BETAS = (0.0, 0.95)
-PROJECTION_INIT_SCALE = 5.0
-MLP_FC_INIT_STD_SCALE = 1.0
-LM_HEAD_INIT_STD = 0.0645
 RANDOM_SEED = 42
-MUON_MOMENTUM_START = 0.85
-MUON_MOMENTUM_END = 0.95
 EARLY_HIGH_LR_STEPS = 3
 EARLY_HIGH_LR_KINDS = {
     "attn.c_proj",
@@ -891,10 +917,6 @@ EARLY_HIGH_LR_KINDS = {
     "ve",
     "wte",
 }
-RESID_LAMBDA_INIT = 1.0
-X0_LAMBDA_INIT = 5.0
-TRAIN_LOSS_EMA_BETA = 0.9
-LOGIT_SOFTCAP = 8.0
 SCALE_LR_BY_WEIGHT_KIND = {
     "attn.c_proj": 0.2,
     "attn.ve_gate": 0.05,
@@ -949,23 +971,13 @@ DEVICE_BATCH_SIZE = 64  # per-device batch size (reduce if OOM)
 NORM_LOG_EVERY = 1  # optimizer steps between norm logs; 0 disables norm logs
 
 # ---------------------------------------------------------------------------
-# Setup: tokenizer, model, optimizer, dataloader
+# Setup helpers
 # ---------------------------------------------------------------------------
 
-t_start = time.time()
-torch.manual_seed(RANDOM_SEED)
-torch.cuda.manual_seed(RANDOM_SEED)
-torch.set_float32_matmul_precision("high")
-device = torch.device("cuda")
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
 H100_BF16_PEAK_FLOPS = 989.5e12
 
-tokenizer = Tokenizer.from_directory()
-vocab_size = tokenizer.get_vocab_size()
-print(f"Vocab size: {vocab_size:,}")
 
-
-def build_model_config(depth):
+def build_model_config(depth, vocab_size):
     base_dim = depth * ASPECT_RATIO
     model_dim = ((base_dim + HEAD_DIM - 1) // HEAD_DIM) * HEAD_DIM
     num_heads = model_dim // HEAD_DIM
@@ -980,71 +992,84 @@ def build_model_config(depth):
     )
 
 
-config = build_model_config(DEPTH)
-print(f"Model config: {asdict(config)}")
-
-with torch.device("meta"):
-    model = GPT(config)
-model.to_empty(device=device)
-model.init_weights()
-
-param_counts = model.num_scaling_params()
-print("Parameter counts:")
-for key, value in param_counts.items():
-    print(f"  {key:24s}: {value:,}")
-num_params = param_counts["total"]
-num_flops_per_token = model.estimate_flops()
-print(f"Estimated FLOPs per token: {num_flops_per_token:.4e}")
-
-tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN
-assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
-grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
-
-train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
-x, y, epoch = next(train_loader)  # prefetch first batch
-
-uncompiled_model = model
-model = torch.compile(model, dynamic=False)
-
-optimizer = uncompiled_model.setup_optimizer(
-    matrix_lrs=INITIAL_EFFECTIVE_LR_BY_WEIGHT_KIND,
-    adam_betas=ADAM_BETAS,
-    scalar_lr=SCALAR_LR,
-)
-
-print(f"Training steps: {MAX_STEPS}")
-print(f"Gradient accumulation steps: {grad_accum_steps}")
+# LR scheduling:
+# - log-scale params use the scale multiplier
+# - angular matrix params use the effective multiplier, with a per-kind override
+#   after EARLY_HIGH_LR_STEPS
+# - scalar AdamW params stay at their initial LR
 
 
-def get_lr_multiplier_non_scalar(steps):
-    knots = EFFECTIVE_LR_LOG_LINEAR_KNOTS
-    if steps <= knots[0][0]:
+def log_linear_interpolate(step, knots):
+    """Piecewise log-linear interpolation for positive schedule multipliers."""
+    if not knots:
+        raise ValueError("Schedule knots must not be empty.")
+
+    if step <= knots[0][0]:
         return knots[0][1]
+
     for (left_step, left_value), (right_step, right_value) in zip(knots, knots[1:]):
-        if steps <= right_step:
-            frac = (steps - left_step) / (right_step - left_step)
+        if step <= right_step:
+            progress = (step - left_step) / (right_step - left_step)
             left_log = math.log(left_value)
             right_log = math.log(right_value)
-            return math.exp(left_log + frac * (right_log - left_log))
+            return math.exp(left_log + progress * (right_log - left_log))
+
     return knots[-1][1]
 
 
-def get_lr_multiplier_scale(steps):
-    knots = SCALE_LR_LOG_LINEAR_KNOTS
-    if steps <= knots[0][0]:
-        return knots[0][1]
-    for (left_step, left_value), (right_step, right_value) in zip(knots, knots[1:]):
-        if steps <= right_step:
-            frac = (steps - left_step) / (right_step - left_step)
-            left_log = math.log(left_value)
-            right_log = math.log(right_value)
-            return math.exp(left_log + frac * (right_log - left_log))
-    return knots[-1][1]
+def get_effective_lr_multiplier(step):
+    return log_linear_interpolate(step, EFFECTIVE_LR_LOG_LINEAR_KNOTS)
+
+
+def get_scale_lr_multiplier(step):
+    return log_linear_interpolate(step, SCALE_LR_LOG_LINEAR_KNOTS)
 
 
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
-    return (1 - frac) * MUON_MOMENTUM_START + frac * MUON_MOMENTUM_END
+    return (1 - frac) * 0.85 + frac * 0.95
+
+
+def should_use_early_effective_lr(step, weight_kind):
+    return (
+        EARLY_HIGH_LR_STEPS > 0
+        and step >= EARLY_HIGH_LR_STEPS
+        and weight_kind in EARLY_HIGH_LR_KINDS
+    )
+
+
+def get_angular_group_lr(group, step, effective_lr_multiplier):
+    weight_kind = group["weight_kind"]
+    if should_use_early_effective_lr(step, weight_kind):
+        base_lr = EARLY_HIGH_EFFECTIVE_LR_BY_WEIGHT_KIND[weight_kind]
+    else:
+        base_lr = group["initial_lr"]
+    return base_lr * effective_lr_multiplier
+
+
+def get_scheduled_group_lr(group, step, effective_lr_multiplier, scale_lr_multiplier):
+    if group.get("scale_lr_schedule", False):
+        return group["initial_lr"] * scale_lr_multiplier
+    if group.get("constant_lr", False) or group["kind"] == "adamw":
+        return group["initial_lr"]
+    if group["kind"] in {"angular_muon", "angular_adamw"}:
+        return get_angular_group_lr(group, step, effective_lr_multiplier)
+    raise NotImplementedError(f"Unknown optimizer group kind: {group['kind']}")
+
+
+def update_optimizer_hyperparams(optimizer, step):
+    effective_lr_multiplier = get_effective_lr_multiplier(step)
+    scale_lr_multiplier = get_scale_lr_multiplier(step)
+    muon_momentum = get_muon_momentum(step)
+
+    for group in optimizer.param_groups:
+        group["lr"] = get_scheduled_group_lr(
+            group, step, effective_lr_multiplier, scale_lr_multiplier
+        )
+        if group["kind"] == "angular_muon":
+            group["momentum"] = muon_momentum
+
+    return effective_lr_multiplier, scale_lr_multiplier
 
 
 def matrix_scaled_norm(t):
@@ -1323,150 +1348,180 @@ def add_update_norms(record, model):
 # Training loop
 # ---------------------------------------------------------------------------
 
-t_start_training = time.time()
-smooth_train_loss = 0
-total_training_time = 0
-step = 0
+def run_training():
+    global fa3
 
-while True:
-    torch.cuda.synchronize()
-    t0 = time.time()
-    should_log_norms = NORM_LOG_EVERY > 0 and step % NORM_LOG_EVERY == 0
-    activation_norms = None
-    residual_mix_l2_fractions = None
-    residual_path_l2_fractions = None
-    for micro_step in range(grad_accum_steps):
-        with autocast_ctx:
-            if should_log_norms and micro_step == grad_accum_steps - 1:
-                (
-                    loss,
-                    activation_norms,
-                    residual_mix_l2_fractions,
-                    residual_path_l2_fractions,
-                ) = model(x, y, return_activation_norms=True)
-            else:
-                loss = model(x, y)
-        train_loss = loss.detach()
-        loss = loss / grad_accum_steps
-        loss.backward()
-        x, y, epoch = next(train_loader)
+    t_start = time.time()
+    fa3 = initialize_flash_attention()
+    torch.manual_seed(RANDOM_SEED)
+    torch.cuda.manual_seed(RANDOM_SEED)
+    torch.set_float32_matmul_precision("high")
 
-    lrm_non_scalar = get_lr_multiplier_non_scalar(step)
-    lrm_scale = get_lr_multiplier_scale(step)
-    muon_momentum = get_muon_momentum(step)
-    for group in optimizer.param_groups:
-        if group.get("scale_lr_schedule", False):
-            group["lr"] = group["initial_lr"] * lrm_scale
-        elif group.get("constant_lr", False):
-            group["lr"] = group["initial_lr"]
-        elif group["kind"] in {"angular_muon", "angular_adamw"}:
-            weight_kind = group.get("weight_kind")
-            if (
-                EARLY_HIGH_LR_STEPS > 0
-                and step >= EARLY_HIGH_LR_STEPS
-                and weight_kind in EARLY_HIGH_LR_KINDS
-            ):
-                group["lr"] = (
-                    EARLY_HIGH_EFFECTIVE_LR_BY_WEIGHT_KIND[weight_kind] * lrm_non_scalar
-                )
-            else:
-                group["lr"] = group["initial_lr"] * lrm_non_scalar
-        elif group["kind"] == "adamw":
-            group["lr"] = group["initial_lr"]
-        else:
-            raise NotImplementedError()
-        if group["kind"] == "angular_muon":
-            group["momentum"] = muon_momentum
-    if should_log_norms:
-        norm_log_record = build_norm_log(
-            uncompiled_model,
-            activation_norms,
-            residual_mix_l2_fractions,
-            residual_path_l2_fractions,
-            step,
+    device = torch.device("cuda")
+    autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+
+    tokenizer = Tokenizer.from_directory()
+    vocab_size = tokenizer.get_vocab_size()
+    print(f"Vocab size: {vocab_size:,}")
+
+    config = build_model_config(DEPTH, vocab_size)
+    print(f"Model config: {asdict(config)}")
+
+    with torch.device("meta"):
+        model = GPT(config)
+    model.to_empty(device=device)
+    model.init_weights()
+
+    param_counts = model.num_scaling_params()
+    print("Parameter counts:")
+    for key, value in param_counts.items():
+        print(f"  {key:24s}: {value:,}")
+    num_params = param_counts["total"]
+    num_flops_per_token = model.estimate_flops()
+    print(f"Estimated FLOPs per token: {num_flops_per_token:.4e}")
+
+    tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN
+    if TOTAL_BATCH_SIZE % tokens_per_fwdbwd != 0:
+        raise ValueError(
+            "TOTAL_BATCH_SIZE must be divisible by DEVICE_BATCH_SIZE * MAX_SEQ_LEN "
+            f"({TOTAL_BATCH_SIZE=} {tokens_per_fwdbwd=})."
         )
-    else:
-        norm_log_record = None
-    optimizer.step(collect_update_norms=should_log_norms)
-    if should_log_norms:
-        add_update_norms(norm_log_record, uncompiled_model)
-        print(f"\nNORM_LOG {json.dumps(norm_log_record, sort_keys=True)}", flush=True)
-    model.zero_grad(set_to_none=True)
+    grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
 
-    train_loss_f = train_loss.item()
+    train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
+    x, y, epoch = next(train_loader)  # prefetch first batch
 
-    # Fast fail: abort if loss is exploding or NaN
-    if math.isnan(train_loss_f) or train_loss_f > 100:
-        print("FAIL")
-        exit(1)
-
-    torch.cuda.synchronize()
-    t1 = time.time()
-    dt = t1 - t0
-
-    if step > 10:
-        total_training_time += dt
-
-    # Logging
-    ema_beta = TRAIN_LOSS_EMA_BETA
-    smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
-    debiased_smooth_loss = smooth_train_loss / (1 - ema_beta ** (step + 1))
-    pct_done = 100 * min((step + 1) / MAX_STEPS, 1.0)
-    tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
-    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
-    remaining_steps = max(0, MAX_STEPS - step - 1)
-
-    print(
-        f"\rstep {step:05d} ({pct_done:.5g}%) | loss: {debiased_smooth_loss:.5g} | lrm_non_scalar: {lrm_non_scalar:.5g} | dt: {dt * 1000:.5g}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.5g}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
-        end="",
-        flush=True,
+    uncompiled_model = model
+    model = torch.compile(model, dynamic=False)
+    optimizer = uncompiled_model.setup_optimizer(
+        matrix_lrs=INITIAL_EFFECTIVE_LR_BY_WEIGHT_KIND,
+        adam_betas=(0.8, 0.95),
+        scalar_lr=SCALAR_LR,
     )
 
-    # GC management (Python's GC causes ~500ms stalls)
-    if step == 0:
-        gc.collect()
-        gc.freeze()
-        gc.disable()
-    elif (step + 1) % 5000 == 0:
-        gc.collect()
+    print(f"Training steps: {MAX_STEPS}")
+    print(f"Gradient accumulation steps: {grad_accum_steps}")
 
-    step += 1
+    smooth_train_loss = 0.0
+    total_training_time = 0.0
+    train_loss_f = float("nan")
+    debiased_smooth_loss = float("nan")
+    step = 0
 
-    if step >= MAX_STEPS:
-        break
+    while step < MAX_STEPS:
+        torch.cuda.synchronize()
+        t0 = time.time()
+        should_log_norms = NORM_LOG_EVERY > 0 and step % NORM_LOG_EVERY == 0
+        activation_norms = None
+        residual_mix_l2_fractions = None
+        residual_path_l2_fractions = None
 
-print()  # newline after \r training log
+        for micro_step in range(grad_accum_steps):
+            with autocast_ctx:
+                if should_log_norms and micro_step == grad_accum_steps - 1:
+                    (
+                        loss,
+                        activation_norms,
+                        residual_mix_l2_fractions,
+                        residual_path_l2_fractions,
+                    ) = model(x, y, return_activation_norms=True)
+                else:
+                    loss = model(x, y)
+            train_loss = loss.detach()
+            (loss / grad_accum_steps).backward()
+            x, y, epoch = next(train_loader)
 
-total_tokens = step * TOTAL_BATCH_SIZE
+        effective_lr_multiplier, _ = update_optimizer_hyperparams(optimizer, step)
+        if should_log_norms:
+            norm_log_record = build_norm_log(
+                uncompiled_model,
+                activation_norms,
+                residual_mix_l2_fractions,
+                residual_path_l2_fractions,
+                step,
+            )
+        else:
+            norm_log_record = None
 
-# Final eval
-model.eval()
-with autocast_ctx:
-    val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+        optimizer.step(collect_update_norms=should_log_norms)
+        if should_log_norms:
+            add_update_norms(norm_log_record, uncompiled_model)
+            print(f"\nNORM_LOG {json.dumps(norm_log_record, sort_keys=True)}", flush=True)
+        model.zero_grad(set_to_none=True)
 
-# Final summary
-t_end = time.time()
-steady_state_mfu = (
-    100
-    * num_flops_per_token
-    * TOTAL_BATCH_SIZE
-    * (step - 10)
-    / total_training_time
-    / H100_BF16_PEAK_FLOPS
-    if total_training_time > 0
-    else 0
-)
-peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+        train_loss_f = train_loss.item()
+        if not math.isfinite(train_loss_f) or train_loss_f > 100:
+            print("FAIL")
+            sys.exit(1)
 
-print("---")
-print(f"val_bpb:          {val_bpb:.5g}")
-print(f"train_loss:       {train_loss_f:.5g}")
-print(f"smooth_train_loss:{debiased_smooth_loss:.5g}")
-print(f"training_seconds: {total_training_time:.5g}")
-print(f"total_seconds:    {t_end - t_start:.5g}")
-print(f"peak_vram_mb:     {peak_vram_mb:.5g}")
-print(f"mfu_percent:      {steady_state_mfu:.5g}")
-print(f"total_tokens_M:   {total_tokens / 1e6:.5g}")
-print(f"num_steps:        {step}")
-print(f"num_params_M:     {num_params / 1e6:.5g}")
-print(f"depth:            {DEPTH}")
+        torch.cuda.synchronize()
+        dt = time.time() - t0
+        if step > 10:
+            total_training_time += dt
+
+        ema_beta = 0.9
+        smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
+        debiased_smooth_loss = smooth_train_loss / (1 - ema_beta ** (step + 1))
+        pct_done = 100 * min((step + 1) / MAX_STEPS, 1.0)
+        tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
+        mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
+        remaining_steps = max(0, MAX_STEPS - step - 1)
+
+        print(
+            f"\rstep {step:05d} ({pct_done:.5g}%) | loss: {debiased_smooth_loss:.5g} | "
+            f"lrm_non_scalar: {effective_lr_multiplier:.5g} | dt: {dt * 1000:.5g}ms | "
+            f"tok/sec: {tok_per_sec:,} | mfu: {mfu:.5g}% | epoch: {epoch} | "
+            f"remaining_steps: {remaining_steps}    ",
+            end="",
+            flush=True,
+        )
+
+        if step == 0:
+            gc.collect()
+            gc.freeze()
+            gc.disable()
+        elif (step + 1) % 5000 == 0:
+            gc.collect()
+
+        step += 1
+
+    print()  # newline after \r training log
+
+    model.eval()
+    with autocast_ctx:
+        val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+
+    total_tokens = step * TOTAL_BATCH_SIZE
+    t_end = time.time()
+    steady_state_mfu = (
+        100
+        * num_flops_per_token
+        * TOTAL_BATCH_SIZE
+        * (step - 10)
+        / total_training_time
+        / H100_BF16_PEAK_FLOPS
+        if total_training_time > 0
+        else 0
+    )
+    peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+
+    print("---")
+    print(f"val_bpb:          {val_bpb:.5g}")
+    print(f"train_loss:       {train_loss_f:.5g}")
+    print(f"smooth_train_loss:{debiased_smooth_loss:.5g}")
+    print(f"training_seconds: {total_training_time:.5g}")
+    print(f"total_seconds:    {t_end - t_start:.5g}")
+    print(f"peak_vram_mb:     {peak_vram_mb:.5g}")
+    print(f"mfu_percent:      {steady_state_mfu:.5g}")
+    print(f"total_tokens_M:   {total_tokens / 1e6:.5g}")
+    print(f"num_steps:        {step}")
+    print(f"num_params_M:     {num_params / 1e6:.5g}")
+    print(f"depth:            {DEPTH}")
+
+
+def main():
+    run_training()
+
+
+if __name__ == "__main__":
+    main()

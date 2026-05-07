@@ -1010,3 +1010,6 @@ Do not stop until the script’s normal printed metric satisfies the goal under 
 
 i think high initial lr for a few steps and the lower lr should work pretty well. 
 ```
+
+make lr_scheduler the same for all rotations, and then make them all the same for scalars. 
+make all weights have the same lr scheduler. 
