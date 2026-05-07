@@ -9,6 +9,7 @@ import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
+import copy
 import gc
 import json
 import math
@@ -27,7 +28,7 @@ import torch.nn.functional as F
 
 from kernels import get_kernel
 
-from prepare import MAX_SEQ_LEN, Tokenizer, make_dataloader, evaluate_bpb
+from prepare import MAX_SEQ_LEN, Tokenizer, make_dataloader
 
 fa3 = None
 
@@ -1006,15 +1007,134 @@ LRS = {
         },
     },
 }
+BASE_LRS = copy.deepcopy(LRS)
 
 DEVICE_BATCH_SIZE = 64  # per-device batch size (reduce if OOM)
-NORM_LOG_EVERY = 1  # optimizer steps between norm logs; 0 disables norm logs
+NORM_LOG_EVERY = 0  # optimizer steps between norm logs; 0 disables norm logs
+
+# 100-run sweep to test whether most parameter groups can share one LR schedule.
+# We keep scalar lambdas and q/k log-scales on their original schedules; everything
+# else uses one shared direction schedule and one shared log-scale schedule.
+NUM_SWEEP_RUNS = 100
+SHARED_DIRECTION_START_LR = 0.12
+SHARED_SCALE_START_LR = 0.14
+SHARED_DIRECTION_PROFILE = ((0, 1.0), (2, 1.0), (3, 0.95), (10, 0.875), (30, 0.18))
+SHARED_SCALE_PROFILE = ((0, 1.0), (3, 0.95), (10, 1.125), (30, 0.3))
+SHARED_DIRECTION_STEP3_MULTIPLIERS = (0.875, 0.925, 0.95, 1.0, 1.05)
+SHARED_DIRECTION_STEP10_MULTIPLIERS = (0.8125, 0.85, 0.875, 0.9, 0.9375)
+SHARED_DIRECTION_STEP30_MULTIPLIERS = (0.15, 0.18)
+SHARED_SCALE_STEP3_MULTIPLIERS = (0.9, 0.925, 0.95, 0.975, 1.0)
+SHARED_SCALE_STEP10_MULTIPLIERS = (1.0625, 1.1, 1.125, 1.15, 1.1875)
+SHARED_SCALE_STEP30_MULTIPLIERS = (0.3, 0.4)
+SHARED_SCALE_EXCEPTIONS = {"q", "k"}
 
 # ---------------------------------------------------------------------------
 # Setup helpers
 # ---------------------------------------------------------------------------
 
 H100_BF16_PEAK_FLOPS = 989.5e12
+
+
+def scaled_schedule(start_lr, profile):
+    return {
+        "interpolation": "log_linear",
+        "knots": tuple((step, start_lr * multiplier) for step, multiplier in profile),
+    }
+
+
+def make_shared_lr_config(
+    direction_start_lr,
+    scale_start_lr,
+    direction_profile,
+    scale_profile,
+):
+    lrs = copy.deepcopy(BASE_LRS)
+    direction_schedule = scaled_schedule(
+        direction_start_lr, direction_profile
+    )
+    scale_schedule = scaled_schedule(scale_start_lr, scale_profile)
+
+    for weight_kind in lrs["weight_matrices"]:
+        lrs["weight_matrices"][weight_kind] = copy.deepcopy(direction_schedule)
+    for weight_kind in lrs["scales"]:
+        if weight_kind not in SHARED_SCALE_EXCEPTIONS:
+            lrs["scales"][weight_kind] = copy.deepcopy(scale_schedule)
+    return lrs
+
+
+def build_direction_profile_variants():
+    profiles = []
+    for step3_multiplier in SHARED_DIRECTION_STEP3_MULTIPLIERS:
+        for step10_multiplier in SHARED_DIRECTION_STEP10_MULTIPLIERS:
+            for step30_multiplier in SHARED_DIRECTION_STEP30_MULTIPLIERS:
+                profiles.append(
+                    (
+                        (0, 1.0),
+                        (2, 1.0),
+                        (3, step3_multiplier),
+                        (10, step10_multiplier),
+                        (30, step30_multiplier),
+                    )
+                )
+    return profiles
+
+
+def build_scale_profile_variants():
+    profiles = []
+    for step3_multiplier in SHARED_SCALE_STEP3_MULTIPLIERS:
+        for step10_multiplier in SHARED_SCALE_STEP10_MULTIPLIERS:
+            for step30_multiplier in SHARED_SCALE_STEP30_MULTIPLIERS:
+                profiles.append(
+                    (
+                        (0, 1.0),
+                        (3, step3_multiplier),
+                        (10, step10_multiplier),
+                        (30, step30_multiplier),
+                    )
+                )
+    return profiles
+
+
+def make_sweep_run(variant_family, variant_idx, direction_profile, scale_profile):
+    return {
+        "variant_family": variant_family,
+        "variant_idx": variant_idx,
+        "direction_start_lr": SHARED_DIRECTION_START_LR,
+        "scale_start_lr": SHARED_SCALE_START_LR,
+        "direction_profile": direction_profile,
+        "scale_profile": scale_profile,
+        "lrs": make_shared_lr_config(
+            SHARED_DIRECTION_START_LR,
+            SHARED_SCALE_START_LR,
+            direction_profile,
+            scale_profile,
+        ),
+    }
+
+
+def build_sweep_runs():
+    runs = []
+    for variant_idx, direction_profile in enumerate(build_direction_profile_variants()):
+        runs.append(
+            make_sweep_run(
+                "direction_profile",
+                variant_idx,
+                direction_profile,
+                SHARED_SCALE_PROFILE,
+            )
+        )
+    for variant_idx, scale_profile in enumerate(build_scale_profile_variants()):
+        runs.append(
+            make_sweep_run(
+                "scale_profile",
+                variant_idx,
+                SHARED_DIRECTION_PROFILE,
+                scale_profile,
+            )
+        )
+    if len(runs) != NUM_SWEEP_RUNS:
+        raise ValueError(f"Expected {NUM_SWEEP_RUNS} sweep runs, got {len(runs)}.")
+    return runs
 
 
 def build_model_config(depth, vocab_size):
@@ -1360,17 +1480,33 @@ def add_update_norms(record, model):
 # Training loop
 # ---------------------------------------------------------------------------
 
-def run_training():
-    global fa3
+def run_training(run_idx=0, num_runs=1, lr_config=None, lr_sweep_config=None):
+    global fa3, LRS
+
+    previous_lrs = LRS
+    if lr_config is not None:
+        LRS = lr_config
 
     t_start = time.time()
-    fa3 = initialize_flash_attention()
+    if fa3 is None:
+        fa3 = initialize_flash_attention()
+    gc.enable()
     torch.manual_seed(RANDOM_SEED)
     torch.cuda.manual_seed(RANDOM_SEED)
+    torch.cuda.reset_peak_memory_stats()
     torch.set_float32_matmul_precision("high")
 
     device = torch.device("cuda")
     autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+
+    if lr_sweep_config is None:
+        lr_sweep_config = {}
+    run_label = {
+        "run_idx": run_idx,
+        "num_runs": num_runs,
+        **lr_sweep_config,
+    }
+    print(f"\nSWEEP_RUN_START {json.dumps(run_label, sort_keys=True)}", flush=True)
 
     tokenizer = Tokenizer.from_directory()
     vocab_size = tokenizer.get_vocab_size()
@@ -1416,6 +1552,8 @@ def run_training():
     total_training_time = 0.0
     train_loss_f = float("nan")
     debiased_smooth_loss = float("nan")
+    step_29_smooth_train_loss = float("nan")
+    failed = False
     step = 0
 
     while step < MAX_STEPS:
@@ -1462,7 +1600,8 @@ def run_training():
         train_loss_f = train_loss.item()
         if not math.isfinite(train_loss_f) or train_loss_f > 100:
             print("FAIL")
-            sys.exit(1)
+            failed = True
+            break
 
         torch.cuda.synchronize()
         dt = time.time() - t0
@@ -1472,6 +1611,8 @@ def run_training():
         ema_beta = 0.9
         smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
         debiased_smooth_loss = smooth_train_loss / (1 - ema_beta ** (step + 1))
+        if step == 29:
+            step_29_smooth_train_loss = debiased_smooth_loss
         pct_done = 100 * min((step + 1) / MAX_STEPS, 1.0)
         tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
         mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
@@ -1488,18 +1629,12 @@ def run_training():
 
         if step == 0:
             gc.collect()
-            gc.freeze()
-            gc.disable()
         elif (step + 1) % 5000 == 0:
             gc.collect()
 
         step += 1
 
     print()  # newline after \r training log
-
-    model.eval()
-    with autocast_ctx:
-        val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
 
     total_tokens = step * TOTAL_BATCH_SIZE
     t_end = time.time()
@@ -1514,11 +1649,37 @@ def run_training():
         else 0
     )
     peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+    step_29_metric = (
+        None
+        if not math.isfinite(step_29_smooth_train_loss)
+        else log_float(step_29_smooth_train_loss)
+    )
+
+    result = {
+        "type": "sweep_result",
+        "run_idx": run_idx,
+        "num_runs": num_runs,
+        "failed": failed,
+        **lr_sweep_config,
+        "step": 29,
+        "smoothed_train_loss": step_29_metric,
+        "step_29_smoothed_train_loss": step_29_metric,
+        "train_loss": (
+            None if not math.isfinite(train_loss_f) else log_float(train_loss_f)
+        ),
+        "training_seconds": log_float(total_training_time),
+        "total_seconds": log_float(t_end - t_start),
+        "peak_vram_mb": log_float(peak_vram_mb),
+        "mfu_percent": log_float(steady_state_mfu),
+        "total_tokens_M": log_float(total_tokens / 1e6),
+        "num_steps": step,
+        "num_params_M": log_float(num_params / 1e6),
+        "depth": DEPTH,
+    }
 
     print("---")
-    print(f"val_bpb:          {val_bpb:.5g}")
     print(f"train_loss:       {train_loss_f:.5g}")
-    print(f"smooth_train_loss:{debiased_smooth_loss:.5g}")
+    print(f"step_29_smooth_train_loss:{step_29_smooth_train_loss:.5g}")
     print(f"training_seconds: {total_training_time:.5g}")
     print(f"total_seconds:    {t_end - t_start:.5g}")
     print(f"peak_vram_mb:     {peak_vram_mb:.5g}")
@@ -1527,10 +1688,59 @@ def run_training():
     print(f"num_steps:        {step}")
     print(f"num_params_M:     {num_params / 1e6:.5g}")
     print(f"depth:            {DEPTH}")
+    print(f"STEP29_RESULT {json.dumps(result, sort_keys=True)}", flush=True)
+
+    del model, uncompiled_model, optimizer, train_loader, x, y
+    gc.collect()
+    torch.cuda.empty_cache()
+    LRS = previous_lrs
+    return result
 
 
 def main():
-    run_training()
+    sweep_runs = build_sweep_runs()
+    results = []
+    for run_idx, sweep_config in enumerate(sweep_runs):
+        lr_config = sweep_config["lrs"]
+        lr_sweep_config = {
+            key: value for key, value in sweep_config.items() if key != "lrs"
+        }
+        try:
+            result = run_training(
+                run_idx=run_idx,
+                num_runs=len(sweep_runs),
+                lr_config=lr_config,
+                lr_sweep_config=lr_sweep_config,
+            )
+        except Exception as exc:
+            result = {
+                "type": "sweep_result",
+                "run_idx": run_idx,
+                "num_runs": len(sweep_runs),
+                "failed": True,
+                **lr_sweep_config,
+                "step": 29,
+                "smoothed_train_loss": None,
+                "step_29_smoothed_train_loss": None,
+                "error": repr(exc),
+            }
+            print(f"\nSTEP29_RESULT {json.dumps(result, sort_keys=True)}", flush=True)
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        results.append(result)
+
+    ranked = sorted(
+        (
+            result
+            for result in results
+            if result.get("step_29_smoothed_train_loss") is not None
+        ),
+        key=lambda result: result["step_29_smoothed_train_loss"],
+    )
+    print("\nSWEEP_SUMMARY")
+    for result in ranked:
+        print(json.dumps(result, sort_keys=True))
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ import json
 import math
 import sys
 import time
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -904,6 +905,10 @@ MAX_STEPS = 30  # exact number of optimizer steps to train
 TOTAL_BATCH_SIZE = 2**17  # ~524K tokens per optimizer step
 
 RANDOM_SEED = 42
+INITIAL_LINE_SEARCH_LR = 1.0
+LINE_SEARCH_DOWN_FACTOR = 0.8
+LINE_SEARCH_UP_FACTOR = 1.2
+MAX_LINE_SEARCH_EXTENSIONS = 50
 LRS = {
     "weight_matrices": {
         "attn.c_proj": {
@@ -1009,6 +1014,7 @@ LRS = {
 
 DEVICE_BATCH_SIZE = 64  # per-device batch size (reduce if OOM)
 NORM_LOG_EVERY = 1  # optimizer steps between norm logs; 0 disables norm logs
+LINE_SEARCH_LOG_EVERY = 1  # optimizer steps between LR search logs; 0 disables logs
 
 # ---------------------------------------------------------------------------
 # Setup helpers
@@ -1073,15 +1079,34 @@ def get_scheduled_group_lr(group, step):
     return get_scheduled_lr(group["lr_schedule"], step)
 
 
-def update_optimizer_hyperparams(optimizer, step):
+def is_weight_matrix_group(group):
+    return group["kind"] in ("angular_muon", "angular_adamw")
+
+
+def is_scale_group(group):
+    return group["kind"] == "adamw" and group.get("weight_kind", "").endswith(".scale")
+
+
+def is_scalar_group(group):
+    return group["kind"] == "adamw" and "weight_kind" not in group
+
+
+def update_optimizer_hyperparams(optimizer, step, matrix_lr, scale_lr):
     muon_momentum = get_muon_momentum(step)
 
     for group in optimizer.param_groups:
-        group["lr"] = get_scheduled_group_lr(group, step)
+        if is_weight_matrix_group(group):
+            group["lr"] = matrix_lr
+        elif is_scale_group(group):
+            group["lr"] = scale_lr
+        elif is_scalar_group(group):
+            group["lr"] = get_scheduled_group_lr(group, step)
+        else:
+            raise ValueError(f"Unknown optimizer group for LR update: {group}")
         if group["kind"] == "angular_muon":
             group["momentum"] = muon_momentum
 
-    return get_scheduled_lr(LRS["weight_matrices"]["q"], step)
+    return matrix_lr, scale_lr
 
 
 def matrix_scaled_norm(t):
@@ -1356,6 +1381,232 @@ def add_update_norms(record, model):
             )
 
 
+def clone_optimizer_state_value(value):
+    if torch.is_tensor(value):
+        return value.detach().clone(memory_format=torch.preserve_format)
+    if isinstance(value, dict):
+        return {key: clone_optimizer_state_value(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [clone_optimizer_state_value(val) for val in value]
+    if isinstance(value, tuple):
+        return tuple(clone_optimizer_state_value(val) for val in value)
+    return deepcopy(value)
+
+
+def snapshot_optimizer_state(optimizer):
+    return {
+        param: clone_optimizer_state_value(state)
+        for param, state in optimizer.state.items()
+    }
+
+
+def restore_optimizer_state(optimizer, snapshot):
+    optimizer.state.clear()
+    for param, state in snapshot.items():
+        optimizer.state[param] = clone_optimizer_state_value(state)
+
+
+@torch.no_grad()
+def snapshot_model_params(model):
+    return [
+        param.detach().clone(memory_format=torch.preserve_format)
+        for param in model.parameters()
+    ]
+
+
+@torch.no_grad()
+def restore_model_params(model, snapshot):
+    for param, saved_param in zip(model.parameters(), snapshot):
+        param.copy_(saved_param)
+
+
+def collect_accumulated_batch(train_loader, grad_accum_steps):
+    batch = []
+    for _ in range(grad_accum_steps):
+        x, y, epoch = next(train_loader)
+        batch.append((x.detach().clone(), y.detach().clone(), epoch))
+    return batch
+
+
+@torch.no_grad()
+def accumulated_batch_loss(model, batch, autocast_ctx):
+    was_training = model.training
+    model.eval()
+    total_loss = 0.0
+    for x, y, _ in batch:
+        with autocast_ctx:
+            loss = model(x, y)
+        total_loss += loss.detach().float().item()
+    if was_training:
+        model.train()
+    return total_loss / len(batch)
+
+
+def set_line_search_lrs(optimizer, step, matrix_lr, scale_lr):
+    update_optimizer_hyperparams(optimizer, step, matrix_lr, scale_lr)
+
+
+def evaluate_trial_lr(
+    model,
+    optimizer,
+    step,
+    val_batch,
+    autocast_ctx,
+    baseline_params,
+    baseline_optimizer_state,
+    matrix_lr,
+    scale_lr,
+):
+    restore_model_params(model, baseline_params)
+    restore_optimizer_state(optimizer, baseline_optimizer_state)
+    set_line_search_lrs(optimizer, step, matrix_lr, scale_lr)
+    optimizer.step()
+    loss = accumulated_batch_loss(model, val_batch, autocast_ctx)
+    restore_model_params(model, baseline_params)
+    restore_optimizer_state(optimizer, baseline_optimizer_state)
+    return loss
+
+
+def line_search_single_lr(
+    model,
+    optimizer,
+    step,
+    val_batch,
+    autocast_ctx,
+    baseline_params,
+    baseline_optimizer_state,
+    center_lr,
+    lr_to_pair,
+):
+    candidates = [
+        center_lr * LINE_SEARCH_DOWN_FACTOR,
+        center_lr,
+        center_lr * LINE_SEARCH_UP_FACTOR,
+    ]
+    evaluated = []
+    for lr in candidates:
+        matrix_lr, scale_lr = lr_to_pair(lr)
+        loss = evaluate_trial_lr(
+            model,
+            optimizer,
+            step,
+            val_batch,
+            autocast_ctx,
+            baseline_params,
+            baseline_optimizer_state,
+            matrix_lr,
+            scale_lr,
+        )
+        evaluated.append((lr, loss))
+
+    best_idx = min(
+        range(len(evaluated)),
+        key=lambda idx: evaluated[idx][1]
+        if math.isfinite(evaluated[idx][1])
+        else float("inf"),
+    )
+    best_lr, best_loss = evaluated[best_idx]
+    search_direction = None
+    if best_idx == 0:
+        search_direction = LINE_SEARCH_DOWN_FACTOR
+    elif best_idx == len(evaluated) - 1:
+        search_direction = LINE_SEARCH_UP_FACTOR
+
+    extensions = 0
+    if search_direction is not None:
+        next_lr = best_lr * search_direction
+        while extensions < MAX_LINE_SEARCH_EXTENSIONS:
+            matrix_lr, scale_lr = lr_to_pair(next_lr)
+            loss = evaluate_trial_lr(
+                model,
+                optimizer,
+                step,
+                val_batch,
+                autocast_ctx,
+                baseline_params,
+                baseline_optimizer_state,
+                matrix_lr,
+                scale_lr,
+            )
+            evaluated.append((next_lr, loss))
+            if not math.isfinite(loss) or loss >= best_loss:
+                break
+            best_lr, best_loss = next_lr, loss
+            next_lr = best_lr * search_direction
+            extensions += 1
+
+    return best_lr, best_loss, evaluated
+
+
+def search_matrix_and_scale_lrs(
+    model,
+    optimizer,
+    step,
+    val_batch,
+    autocast_ctx,
+    matrix_lr_center,
+    scale_lr_center,
+):
+    baseline_params = snapshot_model_params(model)
+    baseline_optimizer_state = snapshot_optimizer_state(optimizer)
+
+    matrix_lr, matrix_val_loss, matrix_trials = line_search_single_lr(
+        model,
+        optimizer,
+        step,
+        val_batch,
+        autocast_ctx,
+        baseline_params,
+        baseline_optimizer_state,
+        matrix_lr_center,
+        lambda lr: (lr, 0.0),
+    )
+    scale_lr, scale_val_loss, scale_trials = line_search_single_lr(
+        model,
+        optimizer,
+        step,
+        val_batch,
+        autocast_ctx,
+        baseline_params,
+        baseline_optimizer_state,
+        scale_lr_center,
+        lambda lr: (0.0, lr),
+    )
+
+    restore_model_params(model, baseline_params)
+    restore_optimizer_state(optimizer, baseline_optimizer_state)
+    return {
+        "matrix_lr": matrix_lr,
+        "scale_lr": scale_lr,
+        "matrix_val_loss": matrix_val_loss,
+        "scale_val_loss": scale_val_loss,
+        "matrix_trials": matrix_trials,
+        "scale_trials": scale_trials,
+    }
+
+
+def build_line_search_log(lr_search_result, step):
+    def format_trials(trials):
+        return [
+            {
+                "lr": log_float(lr),
+                "val_loss": log_float(loss),
+            }
+            for lr, loss in trials
+        ]
+
+    return {
+        "type": "lr_search",
+        "step": step,
+        "matrix_lr": log_float(lr_search_result["matrix_lr"]),
+        "scale_lr": log_float(lr_search_result["scale_lr"]),
+        "matrix_val_loss": log_float(lr_search_result["matrix_val_loss"]),
+        "scale_val_loss": log_float(lr_search_result["scale_val_loss"]),
+        "matrix_trials": format_trials(lr_search_result["matrix_trials"]),
+        "scale_trials": format_trials(lr_search_result["scale_trials"]),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------------------------
@@ -1397,11 +1648,11 @@ def run_training():
         raise ValueError(
             "TOTAL_BATCH_SIZE must be divisible by DEVICE_BATCH_SIZE * MAX_SEQ_LEN "
             f"({TOTAL_BATCH_SIZE=} {tokens_per_fwdbwd=})."
-        )
+    )
     grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
 
     train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
-    x, y, epoch = next(train_loader)  # prefetch first batch
+    train_batch = collect_accumulated_batch(train_loader, grad_accum_steps)
 
     uncompiled_model = model
     model = torch.compile(model, dynamic=False)
@@ -1417,6 +1668,9 @@ def run_training():
     train_loss_f = float("nan")
     debiased_smooth_loss = float("nan")
     step = 0
+    matrix_lr = INITIAL_LINE_SEARCH_LR
+    scale_lr = INITIAL_LINE_SEARCH_LR
+    epoch = train_batch[-1][2]
 
     while step < MAX_STEPS:
         torch.cuda.synchronize()
@@ -1426,7 +1680,7 @@ def run_training():
         residual_mix_l2_fractions = None
         residual_path_l2_fractions = None
 
-        for micro_step in range(grad_accum_steps):
+        for micro_step, (x, y, epoch) in enumerate(train_batch):
             with autocast_ctx:
                 if should_log_norms and micro_step == grad_accum_steps - 1:
                     (
@@ -1439,9 +1693,23 @@ def run_training():
                     loss = model(x, y)
             train_loss = loss.detach()
             (loss / grad_accum_steps).backward()
-            x, y, epoch = next(train_loader)
 
-        q_lr = update_optimizer_hyperparams(optimizer, step)
+        val_batch = collect_accumulated_batch(train_loader, grad_accum_steps)
+        lr_search_result = search_matrix_and_scale_lrs(
+            model,
+            optimizer,
+            step,
+            val_batch,
+            autocast_ctx,
+            matrix_lr,
+            scale_lr,
+        )
+        matrix_lr = lr_search_result["matrix_lr"]
+        scale_lr = lr_search_result["scale_lr"]
+        update_optimizer_hyperparams(optimizer, step, matrix_lr, scale_lr)
+        if LINE_SEARCH_LOG_EVERY > 0 and step % LINE_SEARCH_LOG_EVERY == 0:
+            lr_log_record = build_line_search_log(lr_search_result, step)
+            print(f"\nLR_SEARCH {json.dumps(lr_log_record, sort_keys=True)}", flush=True)
         if should_log_norms:
             norm_log_record = build_norm_log(
                 uncompiled_model,
@@ -1458,6 +1726,7 @@ def run_training():
             add_update_norms(norm_log_record, uncompiled_model)
             print(f"\nNORM_LOG {json.dumps(norm_log_record, sort_keys=True)}", flush=True)
         model.zero_grad(set_to_none=True)
+        train_batch = val_batch
 
         train_loss_f = train_loss.item()
         if not math.isfinite(train_loss_f) or train_loss_f > 100:
@@ -1479,7 +1748,10 @@ def run_training():
 
         print(
             f"\rstep {step:05d} ({pct_done:.5g}%) | loss: {debiased_smooth_loss:.5g} | "
-            f"lr_q: {q_lr:.5g} | dt: {dt * 1000:.5g}ms | "
+            f"lr_matrix: {matrix_lr:.5g} | lr_scale: {scale_lr:.5g} | "
+            f"val_matrix: {lr_search_result['matrix_val_loss']:.5g} | "
+            f"val_scale: {lr_search_result['scale_val_loss']:.5g} | "
+            f"dt: {dt * 1000:.5g}ms | "
             f"tok/sec: {tok_per_sec:,} | mfu: {mfu:.5g}% | epoch: {epoch} | "
             f"remaining_steps: {remaining_steps}    ",
             end="",

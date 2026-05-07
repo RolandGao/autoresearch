@@ -1013,3 +1013,6 @@ i think high initial lr for a few steps and the lower lr should work pretty well
 
 make lr_scheduler the same for all rotations, and then make them all the same for scalars. 
 make all weights have the same lr scheduler. 
+make weight init trivial too. 
+
+idea: line search as cool down
