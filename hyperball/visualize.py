@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 
-DEFAULT_LOG = Path(__file__).with_name("hyperball_baseline4.log")
+DEFAULT_LOG = Path(__file__).with_name("hyperball_exp6.log")
 GRADIENT_LAMBDA_SMOOTHING = 0.9
 LAYER_COLORMAP = "turbo"
 LAYER_COLOR_MIN = 0.05
@@ -184,13 +184,16 @@ def group_series(
         ("Attention And MLP Projections", []),
         ("Lambda Scalars", []),
         ("Value Embeddings And Gates", []),
+        ("Output Scales", []),
         ("Other", []),
     ]
     by_title = {title: names for title, names in groups}
 
     for name in series:
         suffix = strip_layer(name)
-        if not name.startswith("h."):
+        if name.endswith(".scale"):
+            by_title["Output Scales"].append(name)
+        elif not name.startswith("h."):
             by_title["Embeddings And Head"].append(name)
         elif suffix in {"q", "k", "v"}:
             by_title["Attention QKV"].append(name)
@@ -385,10 +388,14 @@ def plot_section(
         if section_title == "Gradient Norms" and group_title == "Lambda Scalars":
             smoothing_beta = GRADIENT_LAMBDA_SMOOTHING
             group_force_linear_y = True
-        if section_title == "Update Norms" and group_title == "Lambda Scalars":
+        if (
+            section_title in {"Update Norms", "Effective Update Norms"}
+            and group_title == "Lambda Scalars"
+        ):
             group_force_linear_y = True
         if (
-            section_title == "Update Norms (Step >= 20)"
+            section_title
+            in {"Update Norms (Step >= 20)", "Effective Update Norms (Step >= 20)"}
             and group_title == "Lambda Scalars"
         ):
             smoothing_beta = GRADIENT_LAMBDA_SMOOTHING
@@ -488,6 +495,9 @@ def plot_activations(
 
 
 def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) -> int:
+    has_effective_scaled_logging = any(
+        record.get("scaled_matrix_logging") == "effective" for record in records
+    )
     weight_series = collect_series(records, "weight_norms")
     grad_series = collect_series(records, "grad_norms")
     update_series = collect_series(records, "update_norms")
@@ -515,9 +525,24 @@ def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) ->
             pdf, residual_path_series, max_lines_per_page
         )
         pages += plot_activations(pdf, activation_series, max_lines_per_page)
-        pages += plot_section(pdf, "Weight Norms", weight_series, max_lines_per_page)
+        weight_section_title = (
+            "Effective Weight Norms" if has_effective_scaled_logging else "Weight Norms"
+        )
+        update_section_title = (
+            "Effective Update Norms" if has_effective_scaled_logging else "Update Norms"
+        )
+        scalar_section_title = (
+            "Effective Update Scalar Multipliers"
+            if has_effective_scaled_logging
+            else "Update Scalar Multipliers"
+        )
+        pages += plot_section(
+            pdf, weight_section_title, weight_series, max_lines_per_page
+        )
         pages += plot_section(pdf, "Gradient Norms", grad_series, max_lines_per_page)
-        pages += plot_section(pdf, "Update Norms", update_series, max_lines_per_page)
+        pages += plot_section(
+            pdf, update_section_title, update_series, max_lines_per_page
+        )
         pages += plot_section(
             pdf,
             "Update Rotations (Radians)",
@@ -527,14 +552,14 @@ def plot_all(records: list[dict], output_path: Path, max_lines_per_page: int) ->
         )
         pages += plot_section(
             pdf,
-            "Update Scalar Multipliers",
+            scalar_section_title,
             update_scalar_multiplier_series,
             max_lines_per_page,
             force_linear_y=True,
         )
         pages += plot_section(
             pdf,
-            "Update Norms (Step >= 20)",
+            f"{update_section_title} (Step >= 20)",
             update_lambda_late_series,
             max_lines_per_page,
             force_linear_y=True,

@@ -945,85 +945,68 @@ wte
 
 
 Here’s a stricter anti-cheat version:
+Absolutely. The main cleanup is to remove conflicting allowances like optimizer changes, log-scale reparameterization, and non-data-dependent tricks, since you now want **only LR schedules and initialization scale** to change.
+
 
 ```text
-Modify only `autoresearch/hyperball/train_hyperball3.py`.
+Modify only `autoresearch/hyperball/train_hyperball4.py`.
 
-Goal: achieve true `smooth_train_loss < 5.5` in exactly 30 optimizer steps, where `smooth_train_loss` is the debiased EMA of the actual pre-update train losses produced during the normal training loop with `ema_beta = 0.9`.
+Goal: achieve true `smooth_train_loss < 5.4` after exactly 30 optimizer steps, where `smooth_train_loss` is the debiased EMA of the actual pre-update training losses from the normal training loop with `TRAIN_LOSS_EMA_BETA = 0.9`.
+
+Only allowed changes:
+1. Learning-rate values and learning-rate schedules.
+2. Random weight initialization scale values.
+
+No other behavior may change.
 
 Metric integrity:
-- Do not change the definition, timing, or reporting of `smooth_train_loss`.
+- Do not change the definition, timing, accumulation, debiasing, or reporting of `smooth_train_loss`.
 - `smooth_train_loss` must be computed from the same scalar `train_loss_f = loss.item()` produced by the normal forward pass before `optimizer.step()`.
 - Do not replace, clamp, min, average, rescale, offset, skip, delay, reset, seed-condition, or post-process train loss or EMA values.
 - Do not report post-update loss as `smooth_train_loss`.
 - Do not exclude early steps from the EMA.
 - Do not change `TRAIN_LOSS_EMA_BETA = 0.9`.
-- Do not print a fake or alternate `smooth_train_loss`.
-- The final printed `smooth_train_loss` must equal the debiased EMA accumulated over all 30 training losses.
+- Do not print a fake, alternate, auxiliary, or renamed metric.
+- The final printed `smooth_train_loss` must equal the debiased EMA accumulated over all 30 actual training losses.
 
 Step integrity:
 - `MAX_STEPS` must remain exactly `30`.
-- Exactly one `optimizer.step()` call per training step.
-- Exactly 30 optimizer steps total.
-- Do not perform hidden warmup, pretraining, inner optimizer substeps, lookahead updates, manual parameter updates, or extra optimizer updates outside the 30 counted steps.
-- Do not update model parameters during validation, logging, initialization-from-data, metric calculation, or evaluation.
-- Do not use gradients or train batches to update parameters before step 0.
+- There must be exactly one `optimizer.step()` call per training step.
+- There must be exactly 30 optimizer steps total.
+- Do not add warmup training, pretraining, inner optimizer substeps, lookahead updates, manual parameter updates, or hidden updates outside the counted 30 steps.
+- Do not update model parameters during validation, logging, initialization, metric calculation, or evaluation.
+- Do not use gradients, train batches, labels, tokens, or losses to update or initialize parameters before step 0.
 
 Data integrity:
 - Do not change the train dataset, tokenizer, dataloader split, data order, sampled examples, sequence length, target labels, loss mask, or target shifting.
 - Do not filter, crop, sort, repeat, cache-select, curriculum-select, or otherwise choose easier train batches.
 - Do not change batch size, total batch size, gradient accumulation semantics, or number of tokens per step.
-- Do not inspect train labels/tokens/batches before training to set model weights, scales, priors, logits, embeddings, optimizer state, schedules, or hyperparameters.
-- No data-dependent initialization, unigram/bigram priors, ridge/logistic closed-form warmstarts, cached statistics, or batch-specific hacks.
+- Do not inspect train/val/test tokens or labels before training to choose weights, scales, schedules, priors, logits, embeddings, optimizer state, or hyperparameters.
 
 Loss integrity:
 - Do not change the loss function except for mathematically equivalent refactoring.
 - Must use `F.cross_entropy` on the true model logits and true targets with the existing `ignore_index=-1`.
-- Do not use label smoothing, target remapping, target leakage, loss weighting, token dropping, vocabulary masking, easier negative sampling, auxiliary loss substitution, or loss denominator changes.
+- Do not use label smoothing, target remapping, target leakage, loss weighting, token dropping, vocabulary masking, easier negative sampling, auxiliary loss substitution, or denominator changes.
 - Do not alter logits only for loss computation or reporting.
-- Do not special-case train/eval mode to make loss smaller without changing the actual model.
+- Do not special-case train/eval mode to reduce the reported loss.
 
-Architecture integrity:
-- Do not change architecture, depth, hidden size, heads, sequence length, vocab size, window sizes, batch shape, or number of layers.
-- Reparameterization is allowed only if it is functionally equivalent to the same effective layers:
-  `effective_weight = exp(log_scale) * fixed_norm_direction`.
-- Do not add new trainable tensors, adapters, caches, memories, lookup tables, output biases, token-frequency priors, shortcuts from input token to output token, or data-dependent buffers.
+Architecture and optimizer integrity:
+- Do not change architecture, depth, hidden size, heads, sequence length, vocab size, window sizes, batch shape, number of layers, parameterization, or trainable parameter set.
+- Do not add, remove, freeze, tie, untie, or reparameterize model parameters.
+- Do not add adapters, caches, memories, lookup tables, output biases, priors, shortcuts, or data-dependent buffers.
+- Do not change optimizer type, optimizer update semantics, gradient computation, gradient clipping behavior, weight decay behavior, or angular/hyperball update rules.
+- For every 2D matrix parameter, preserve the existing angular/hyperball-style optimization behavior exactly, including fixed matrix norm and the existing angular update tolerance behavior.
 
 Initialization:
-- Only random initialization is allowed.
-- Random initialization may change distributions/scales/seeds, but must not depend on train/val/test data content.
-- No loading checkpoints, pretrained weights, cached tensors, generated labels, or external statistics.
-- Do not initialize optimizer state from gradients, batches, labels, or closed-form solutions.
+- Only random initialization scale values may change.
+- Initialization must remain random and data-independent.
+- Do not change initialization to use train/val/test content, cached statistics, checkpoints, pretrained weights, generated labels, unigram/bigram priors, closed-form solutions, or gradient-derived information.
+- Do not initialize optimizer state from gradients, batches, labels, losses, or data statistics.
 
-Optimization constraint:
-Use angular/hyperball-style optimization for every 2D matrix parameter, including:
-`wte`, `value_embeds`, `lm_head`, attention `q/k/v`, attention projections, MLP `c_fc`, MLP projections, and `ve_gate`.
 
-Every 2D matrix must have fixed norm during optimization. The matrix norm itself cannot change.
+Your task is to improve only LR schedules and random initialization scales until the unmodified metric path in the script itself reports true `smooth_train_loss < 5.4` after exactly 30 optimizer steps with `TRAIN_LOSS_EMA_BETA = 0.9`.
 
-You may reparameterize a matrix as:
+Do not stop until the script’s normal printed metric satisfies the goal under all constraints above.
 
-`effective_weight = exp(log_scale) * fixed_norm_direction`
-
-and optimize `log_scale` separately with AdamW. The direction matrix must keep constant norm. For each matrix direction update, the angle between `w_t` and `w_{t+1}` must be exactly that group’s learning rate, using the existing angular update functions/tolerance behavior.
-
-Allowed changes:
-- random initialization details
-- learning rates and schedules
-- optimizer details, with exactly one optimizer update per counted step
-- scalar/log_scale reparameterization and optimization
-- non-data-dependent training tricks that preserve all constraints above
-
-Not allowed:
-- changing `MAX_STEPS = 30`
-- changing `ema_beta = 0.9`
-- changing the metric/reporting semantics
-- changing train data/batches/labels/loss masking
-- data-dependent initialization or pretraining
-- hidden extra update steps
-- architecture shortcuts or added trainable capacity
-
-Use `hyperball_exp3_results.log` as evidence that current best is about `6.05`, and `hyperball_exp1.log` as evidence that around `5.5` is achievable.
-
-Do not stop until the unmodified metric path in the script itself reports true `smooth_train_loss < 5.5` after exactly 30 optimizer steps with `ema_beta = 0.9`, under all constraints above.
+i think high initial lr for a few steps and the lower lr should work pretty well. 
 ```
