@@ -12,6 +12,7 @@ os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 import gc
 import json
 import math
+import subprocess
 import sys
 import time
 from copy import deepcopy
@@ -20,6 +21,258 @@ from dataclasses import dataclass, asdict
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
+
+
+LINE_SEARCH_EXPERIMENTS = [
+    {
+        "name": "one_step_heldout",
+        "description": "one-step global LR search on one held-out batch",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "1",
+            "LINE_SEARCH_HORIZON_STEPS": "1",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "1",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "1",
+            "LINE_SEARCH_SAFE_LOSS_ATOL": "0",
+            "LINE_SEARCH_SAFE_LOSS_RTOL": "0",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1000",
+            "LINE_SEARCH_LOG_LR_EMA": "1",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+    {
+        "name": "rotating_safe",
+        "description": "largest-safe global LR on rotating held-out batches",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "1",
+            "LINE_SEARCH_HORIZON_STEPS": "1",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "8",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1000",
+            "LINE_SEARCH_LOG_LR_EMA": "1",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+    {
+        "name": "rotating_smooth",
+        "description": "one-step rotating held-out search with LR inertia",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "1",
+            "LINE_SEARCH_HORIZON_STEPS": "1",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "8",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1.08",
+            "LINE_SEARCH_LOG_LR_EMA": "0.35",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+    {
+        "name": "next_batch_safe",
+        "description": "one-step largest-safe global LR on future train batches",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "1",
+            "LINE_SEARCH_HORIZON_STEPS": "1",
+            "LINE_SEARCH_VAL_SET_NAME": "next_train_batch",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "1",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1000",
+            "LINE_SEARCH_LOG_LR_EMA": "1",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+    {
+        "name": "rollout2_safe",
+        "description": "2-step rollout with largest-safe global LR",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "4",
+            "LINE_SEARCH_HORIZON_STEPS": "2",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "8",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1000",
+            "LINE_SEARCH_LOG_LR_EMA": "1",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+    {
+        "name": "rollout2_smooth",
+        "description": "2-step rollout with progress score and LR inertia",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "4",
+            "LINE_SEARCH_HORIZON_STEPS": "2",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "8",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0.05",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1.08",
+            "LINE_SEARCH_LOG_LR_EMA": "0.35",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+    {
+        "name": "rollout4_safe",
+        "description": "4-step rollout with largest-safe global LR",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "8",
+            "LINE_SEARCH_HORIZON_STEPS": "4",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "8",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1000",
+            "LINE_SEARCH_LOG_LR_EMA": "1",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+    {
+        "name": "rollout4_smooth",
+        "description": "4-step rollout with progress score and LR inertia",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "8",
+            "LINE_SEARCH_HORIZON_STEPS": "4",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "8",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0.05",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1.08",
+            "LINE_SEARCH_LOG_LR_EMA": "0.35",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+    {
+        "name": "rollout4_smooth_norm",
+        "description": "4-step rollout with progress score, inertia, and update-norm feedback",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "8",
+            "LINE_SEARCH_HORIZON_STEPS": "4",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "8",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0.05",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1.08",
+            "LINE_SEARCH_LOG_LR_EMA": "0.35",
+            "LINE_SEARCH_NORM_FEEDBACK": "1",
+        },
+    },
+    {
+        "name": "rollout4_strict",
+        "description": "4-step rollout with stricter largest-safe tolerance",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "8",
+            "LINE_SEARCH_HORIZON_STEPS": "4",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "8",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_SAFE_LOSS_ATOL": "1e-4",
+            "LINE_SEARCH_SAFE_LOSS_RTOL": "5e-5",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0.05",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1.08",
+            "LINE_SEARCH_LOG_LR_EMA": "0.35",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+    {
+        "name": "rollout4_loose",
+        "description": "4-step rollout with looser largest-safe tolerance",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "8",
+            "LINE_SEARCH_HORIZON_STEPS": "4",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "8",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_SAFE_LOSS_ATOL": "1e-3",
+            "LINE_SEARCH_SAFE_LOSS_RTOL": "3e-4",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0.05",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1.08",
+            "LINE_SEARCH_LOG_LR_EMA": "0.35",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+    {
+        "name": "rollout8_safe",
+        "description": "8-step rollout with largest-safe global LR",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "16",
+            "LINE_SEARCH_HORIZON_STEPS": "8",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "8",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1000",
+            "LINE_SEARCH_LOG_LR_EMA": "1",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+    {
+        "name": "rollout8_smooth",
+        "description": "8-step rollout with progress score and LR inertia",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "16",
+            "LINE_SEARCH_HORIZON_STEPS": "8",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "8",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0.05",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1.08",
+            "LINE_SEARCH_LOG_LR_EMA": "0.35",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+    {
+        "name": "rollout4_wide_grid",
+        "description": "4-step rollout with wider LR-ratio grid",
+        "env": {
+            "LINE_SEARCH_INTERVAL": "8",
+            "LINE_SEARCH_HORIZON_STEPS": "4",
+            "LINE_SEARCH_HELD_OUT_BATCHES": "8",
+            "LINE_SEARCH_VAL_BATCHES_PER_SEARCH": "4",
+            "LINE_SEARCH_LR_RATIO_DEPTH1": "0.75",
+            "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT": "0.05",
+            "LINE_SEARCH_MAX_LOG_MOVE_MULT": "1.08",
+            "LINE_SEARCH_LOG_LR_EMA": "0.35",
+            "LINE_SEARCH_NORM_FEEDBACK": "0",
+        },
+    },
+]
+
+
+def run_line_search_sweep():
+    script_path = os.path.abspath(__file__)
+    script_dir = os.path.dirname(script_path)
+    failures = []
+    print("Launching LR-search sweep:")
+    for experiment in LINE_SEARCH_EXPERIMENTS:
+        print(f"  - {experiment['name']}: {experiment['description']}")
+    for experiment in LINE_SEARCH_EXPERIMENTS:
+        name = experiment["name"]
+        log_path = os.path.join(script_dir, f"baseline_line_search_{name}.log")
+        env = os.environ.copy()
+        env.update(experiment["env"])
+        env["LINE_SEARCH_EXPERIMENT_NAME"] = name
+        env["LINE_SEARCH_EXPERIMENT_DESCRIPTION"] = experiment["description"]
+        print(f"\n=== starting {name}; log: {log_path} ===", flush=True)
+        with open(log_path, "w", encoding="utf-8") as log_file:
+            log_file.write(
+                f"LINE_SEARCH_EXPERIMENT {json.dumps(experiment, sort_keys=True)}\n"
+            )
+            log_file.flush()
+            result = subprocess.run(
+                [sys.executable, script_path],
+                cwd=os.getcwd(),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+        print(f"=== finished {name} with exit code {result.returncode} ===", flush=True)
+        if result.returncode != 0:
+            failures.append((name, result.returncode, log_path))
+    if failures:
+        print("\nSweep finished with failures:")
+        for name, returncode, log_path in failures:
+            print(f"  {name}: exit code {returncode}; log: {log_path}")
+        sys.exit(1)
+    print("\nSweep finished successfully.")
+
+
+if "LINE_SEARCH_EXPERIMENT_NAME" not in os.environ:
+    run_line_search_sweep()
+    sys.exit(0)
 
 import torch
 import torch.nn as nn
@@ -684,8 +937,28 @@ WINDOW_SIZES = [  # exact per-layer FA3 left-window sizes
     2048,
 ]
 
+
+def env_int(name, default):
+    return int(os.environ.get(name, default))
+
+
+def env_float(name, default):
+    return float(os.environ.get(name, default))
+
+
+def env_bool(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return bool(default)
+    return value.lower() not in {"0", "false", "no", "off"}
+
+
+def env_str(name, default):
+    return os.environ.get(name, default)
+
+
 # Optimization
-MAX_STEPS = 1350  # exact number of optimizer steps to train
+MAX_STEPS = env_int("MAX_STEPS", 1350)  # exact number of optimizer steps to train
 TOTAL_BATCH_SIZE = 2**17  # ~524K tokens per optimizer step
 LR_MULT = 1.5
 EMBEDDING_LR = 0.6 * LR_MULT  # learning rate for token embeddings (Adam)
@@ -701,13 +974,18 @@ VALUE_EMBEDDING_WD = 0.003  # AdamW weight decay for value embeddings
 DEVICE_BATCH_SIZE = 64  # per-device batch size (reduce if OOM)
 NORM_LOG_EVERY = 1  # optimizer steps between norm logs
 INITIAL_LINE_SEARCH_LR_MULT = LR_MULT
-LINE_SEARCH_DEPTH = 1
+LINE_SEARCH_EXPERIMENT_NAME = env_str("LINE_SEARCH_EXPERIMENT_NAME", "single")
+LINE_SEARCH_EXPERIMENT_DESCRIPTION = env_str(
+    "LINE_SEARCH_EXPERIMENT_DESCRIPTION",
+    "single LR-search run",
+)
+LINE_SEARCH_DEPTH = env_int("LINE_SEARCH_DEPTH", 1)
 LINE_SEARCH_LR_RATIOS_BY_DEPTH = {
-    1: 0.85,
-    2: 0.85,
+    1: env_float("LINE_SEARCH_LR_RATIO_DEPTH1", 0.85),
+    2: env_float("LINE_SEARCH_LR_RATIO_DEPTH2", 0.85),
 }
-LINE_SEARCH_LR_SUBGROUPS = ("matrix", "embedding", "lm_head", "scalars")
-LINE_SEARCH_VAL_SET_NAME = "held_out_batch"
+LINE_SEARCH_LR_SUBGROUPS = ("all",)
+LINE_SEARCH_VAL_SET_NAME = env_str("LINE_SEARCH_VAL_SET_NAME", "held_out_batch")
 LINE_SEARCH_VAL_SET_DESCRIPTIONS = {
     "next_train_batch": "the next training batch",
     "held_out_batch": "rotating fixed held-out batches that are never trained on",
@@ -718,21 +996,26 @@ LINE_SEARCH_LOG_EVERY = 1  # optimizer steps between LR search logs; 0 disables 
 # Combined LR-search controller. It is intentionally scheduler-agnostic: the only
 # "shape" prior is that LR should move smoothly unless the online rollout strongly
 # prefers a change.
-LINE_SEARCH_INTERVAL = 8
-LINE_SEARCH_HORIZON_STEPS = 4
-LINE_SEARCH_HELD_OUT_BATCHES = 8
-LINE_SEARCH_VAL_BATCHES_PER_SEARCH = 4
-LINE_SEARCH_MAX_ROUNDS = 2
-LINE_SEARCH_SAFE_LOSS_ATOL = 3e-4
-LINE_SEARCH_SAFE_LOSS_RTOL = 1e-4
-LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT = 0.05
-LINE_SEARCH_MIN_IMPROVEMENT = 1e-4
-LINE_SEARCH_MAX_LOG_MOVE = math.log(1.08)
-LINE_SEARCH_LOG_LR_EMA = 0.35
-LINE_SEARCH_NORM_FEEDBACK = True
-LINE_SEARCH_NORM_WARMUP_STEPS = 16
-LINE_SEARCH_NORM_TOLERANCE = 0.35
-LINE_SEARCH_NORM_MAX_LOG_MOVE = math.log(1.05)
+LINE_SEARCH_INTERVAL = env_int("LINE_SEARCH_INTERVAL", 8)
+LINE_SEARCH_HORIZON_STEPS = env_int("LINE_SEARCH_HORIZON_STEPS", 4)
+LINE_SEARCH_HELD_OUT_BATCHES = env_int("LINE_SEARCH_HELD_OUT_BATCHES", 8)
+LINE_SEARCH_VAL_BATCHES_PER_SEARCH = env_int("LINE_SEARCH_VAL_BATCHES_PER_SEARCH", 4)
+LINE_SEARCH_MAX_ROUNDS = env_int("LINE_SEARCH_MAX_ROUNDS", 2)
+LINE_SEARCH_SAFE_LOSS_ATOL = env_float("LINE_SEARCH_SAFE_LOSS_ATOL", 3e-4)
+LINE_SEARCH_SAFE_LOSS_RTOL = env_float("LINE_SEARCH_SAFE_LOSS_RTOL", 1e-4)
+LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT = env_float(
+    "LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT",
+    0.05,
+)
+LINE_SEARCH_MIN_IMPROVEMENT = env_float("LINE_SEARCH_MIN_IMPROVEMENT", 1e-4)
+LINE_SEARCH_MAX_LOG_MOVE = math.log(env_float("LINE_SEARCH_MAX_LOG_MOVE_MULT", 1.08))
+LINE_SEARCH_LOG_LR_EMA = env_float("LINE_SEARCH_LOG_LR_EMA", 0.35)
+LINE_SEARCH_NORM_FEEDBACK = env_bool("LINE_SEARCH_NORM_FEEDBACK", True)
+LINE_SEARCH_NORM_WARMUP_STEPS = env_int("LINE_SEARCH_NORM_WARMUP_STEPS", 16)
+LINE_SEARCH_NORM_TOLERANCE = env_float("LINE_SEARCH_NORM_TOLERANCE", 0.35)
+LINE_SEARCH_NORM_MAX_LOG_MOVE = math.log(
+    env_float("LINE_SEARCH_NORM_MAX_LOG_MOVE_MULT", 1.05)
+)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
@@ -806,11 +1089,15 @@ held_out_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "va
 
 print(f"Training steps: {MAX_STEPS}")
 print(f"Gradient accumulation steps: {grad_accum_steps}")
+print(f"Line-search experiment: {LINE_SEARCH_EXPERIMENT_NAME}")
+print(f"Line-search experiment description: {LINE_SEARCH_EXPERIMENT_DESCRIPTION}")
 print(f"Line-search depth: {LINE_SEARCH_DEPTH}")
 print(f"Line-search subgroups: {LINE_SEARCH_LR_SUBGROUPS}")
 print(f"Line-search interval: {LINE_SEARCH_INTERVAL}")
 print(f"Line-search horizon steps: {LINE_SEARCH_HORIZON_STEPS}")
 print(f"Line-search held-out batches: {LINE_SEARCH_HELD_OUT_BATCHES}")
+print(f"Line-search val batches/search: {LINE_SEARCH_VAL_BATCHES_PER_SEARCH}")
+print(f"Line-search norm feedback: {LINE_SEARCH_NORM_FEEDBACK}")
 print(
     "Line-search validation set: "
     f"{LINE_SEARCH_VAL_SET_DESCRIPTIONS[LINE_SEARCH_VAL_SET_NAME]}"
@@ -1008,16 +1295,7 @@ def lr_dict_to_tuple(lrs):
 
 
 def optimizer_lr_subgroup(group):
-    name = group.get("name", "")
-    if group["kind"] == "muon":
-        return "matrix"
-    if name in {"embedding", "value_embedding"}:
-        return "embedding"
-    if name == "lm_head":
-        return "lm_head"
-    if name in {"resid_lambdas", "x0_lambdas"}:
-        return "scalars"
-    raise ValueError(f"Unknown optimizer group for LR update: {group}")
+    return "all"
 
 
 def update_optimizer_hyperparams(optimizer, step, subgroup_lrs):
@@ -1537,6 +1815,7 @@ def build_line_search_log(
 ):
     record = {
         "type": "lr_search",
+        "experiment": LINE_SEARCH_EXPERIMENT_NAME,
         "step": step,
         "best_lrs": {
             subgroup: log_float(lr_search_result["lrs"][subgroup])
@@ -1653,13 +1932,7 @@ def smooth_line_search_lrs(previous_lrs, proposed_lrs):
 
 
 def norm_log_subgroup(name):
-    if name == "lm_head":
-        return "lm_head"
-    if name == "wte" or name.endswith(".ve"):
-        return "embedding"
-    if name.endswith(".resid_lambdas") or name.endswith(".x0_lambdas"):
-        return "scalars"
-    return "matrix"
+    return "all"
 
 
 def median(values):
@@ -1914,6 +2187,7 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.5g}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.5g}")
 print(f"depth:            {DEPTH}")
+print(f"experiment:       {LINE_SEARCH_EXPERIMENT_NAME}")
 for subgroup in LINE_SEARCH_LR_SUBGROUPS:
     print(f"lr_{subgroup}:        {lr_by_subgroup[subgroup]:.5g}")
 print(f"line_search_depth: {LINE_SEARCH_DEPTH}")
