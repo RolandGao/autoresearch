@@ -901,17 +901,69 @@ TOTAL_BATCH_SIZE = 2**17  # ~524K tokens per optimizer step
 
 RANDOM_SEED = 42
 INITIAL_LINE_SEARCH_LR = 1.0
-LINE_SEARCH_DOWN_FACTOR = 0.8
-LINE_SEARCH_LR_SUBGROUPS = (
+LINE_SEARCH_DEPTH = 2
+LINE_SEARCH_LR_RATIOS_BY_DEPTH = {
+    1: 0.5,
+    2: 0.8,
+}
+LINE_SEARCH_ALL_SUBGROUPS = ("all",)
+LINE_SEARCH_ALL_MATRIX_SUBGROUPS = ("all_matrices",)
+LINE_SEARCH_THREE_MATRIX_SUBGROUPS = (
+    "wte",
+    "lm_head",
+    "other_matrices",
+)
+LINE_SEARCH_FOUR_SUBGROUPS = (
     "wte",
     "lm_head",
     "other_matrices",
     "scale",
 )
+LINE_SEARCH_LR_SUBGROUPS = LINE_SEARCH_FOUR_SUBGROUPS
+LINE_SEARCH_EXPERIMENTS = (
+    {
+        "name": "depth1_all",
+        "line_search_depth": 1,
+        "line_search_subgroups": LINE_SEARCH_ALL_SUBGROUPS,
+    },
+    {
+        "name": "depth1_all_matrices_gt_scales",
+        "line_search_depth": 1,
+        "line_search_subgroups": LINE_SEARCH_ALL_MATRIX_SUBGROUPS,
+    },
+    {
+        "name": "depth1_three_matrices_gt_scales",
+        "line_search_depth": 1,
+        "line_search_subgroups": LINE_SEARCH_THREE_MATRIX_SUBGROUPS,
+    },
+    {
+        "name": "depth1_four",
+        "line_search_depth": 1,
+        "line_search_subgroups": LINE_SEARCH_FOUR_SUBGROUPS,
+    },
+    {
+        "name": "depth2_all",
+        "line_search_depth": 2,
+        "line_search_subgroups": LINE_SEARCH_ALL_SUBGROUPS,
+    },
+    {
+        "name": "depth2_all_matrices_gt_scales",
+        "line_search_depth": 2,
+        "line_search_subgroups": LINE_SEARCH_ALL_MATRIX_SUBGROUPS,
+    },
+    {
+        "name": "depth2_three_matrices_gt_scales",
+        "line_search_depth": 2,
+        "line_search_subgroups": LINE_SEARCH_THREE_MATRIX_SUBGROUPS,
+    },
+    {
+        "name": "depth2_four",
+        "line_search_depth": 2,
+        "line_search_subgroups": LINE_SEARCH_FOUR_SUBGROUPS,
+    },
+)
 LINE_SEARCH_VAL_SET_VARIANTS = (
-    "next_train_batch",
     "held_out_batch",
-    "current_train_batch",
 )
 LINE_SEARCH_VAL_SET_DESCRIPTIONS = {
     "next_train_batch": "the next training batch",
@@ -1119,8 +1171,12 @@ def lr_dict_to_tuple(lrs):
 
 
 def optimizer_lr_subgroup(group):
+    if LINE_SEARCH_LR_SUBGROUPS == LINE_SEARCH_ALL_SUBGROUPS:
+        return "all"
+    if LINE_SEARCH_LR_SUBGROUPS == LINE_SEARCH_ALL_MATRIX_SUBGROUPS:
+        return "all_matrices" if is_weight_matrix_group(group) else None
     if is_scale_group(group):
-        return "scale"
+        return "scale" if "scale" in LINE_SEARCH_LR_SUBGROUPS else None
     if is_weight_matrix_group(group):
         weight_kind = group.get("weight_kind")
         if weight_kind in ("wte", "lm_head"):
@@ -1457,6 +1513,27 @@ def restore_model_params(model, snapshot):
         param.copy_(saved_param)
 
 
+@torch.no_grad()
+def snapshot_model_grads(model):
+    return [
+        None
+        if param.grad is None
+        else param.grad.detach().clone(memory_format=torch.preserve_format)
+        for param in model.parameters()
+    ]
+
+
+@torch.no_grad()
+def restore_model_grads(model, snapshot):
+    for param, saved_grad in zip(model.parameters(), snapshot):
+        if saved_grad is None:
+            param.grad = None
+        elif param.grad is None:
+            param.grad = saved_grad.detach().clone(memory_format=torch.preserve_format)
+        else:
+            param.grad.copy_(saved_grad)
+
+
 def collect_accumulated_batch(train_loader, grad_accum_steps):
     batch = []
     for _ in range(grad_accum_steps):
@@ -1503,6 +1580,18 @@ def accumulated_batch_loss(model, batch, autocast_ctx):
     return total_loss / len(batch)
 
 
+def accumulate_batch_gradients(model, batch, autocast_ctx):
+    was_training = model.training
+    model.train()
+    grad_accum_steps = len(batch)
+    for x, y, _ in batch:
+        with autocast_ctx:
+            loss = model(x, y)
+        (loss / grad_accum_steps).backward()
+    if not was_training:
+        model.eval()
+
+
 def set_line_search_lrs(optimizer, step, lr_tuple):
     update_optimizer_hyperparams(optimizer, step, lr_tuple_to_dict(lr_tuple))
 
@@ -1532,10 +1621,25 @@ def trial_sort_key(trial):
     return loss if math.isfinite(loss) else float("inf")
 
 
-def offset_lr_tuple(center_lr_tuple, offset):
+def line_search_lr_ratio(depth):
+    if depth not in LINE_SEARCH_LR_RATIOS_BY_DEPTH:
+        raise ValueError(f"No LR search ratio configured for depth={depth}.")
+    return LINE_SEARCH_LR_RATIOS_BY_DEPTH[depth]
+
+
+def offset_lr_tuple(center_lr_tuple, offset, lr_ratio):
     return tuple(
-        lr * (LINE_SEARCH_DOWN_FACTOR ** exponent)
+        lr * (lr_ratio ** exponent)
         for lr, exponent in zip(center_lr_tuple, offset)
+    )
+
+
+def lr_tuple_within_max(lr_tuple, max_lr_tuple):
+    if max_lr_tuple is None:
+        return True
+    return all(
+        lr <= max_lr * (1 + 1e-12)
+        for lr, max_lr in zip(lr_tuple, max_lr_tuple)
     )
 
 
@@ -1550,13 +1654,15 @@ def line_search_neighbor_offsets(center_offset):
         yield tuple(up_offset)
 
 
-def search_lrs(
+def search_lrs_single_depth(
     model,
     optimizer,
     step,
     val_batches,
     autocast_ctx,
     lr_center,
+    lr_ratio,
+    max_lr_tuple=None,
 ):
     val_batch = flatten_accumulated_batches(val_batches)
     baseline_params = snapshot_model_params(model)
@@ -1570,7 +1676,9 @@ def search_lrs(
     def evaluate_offset(offset):
         if offset in trial_cache:
             return trial_cache[offset]
-        lr_tuple = offset_lr_tuple(center_lr_tuple, offset)
+        lr_tuple = offset_lr_tuple(center_lr_tuple, offset, lr_ratio)
+        if not lr_tuple_within_max(lr_tuple, max_lr_tuple):
+            return None
         loss = evaluate_trial_lr(
             model,
             optimizer,
@@ -1593,8 +1701,10 @@ def search_lrs(
     while True:
         middle_trial = evaluate_offset(center_offset)
         neighbor_trials = [
-            evaluate_offset(offset)
+            trial
             for offset in line_search_neighbor_offsets(center_offset)
+            for trial in [evaluate_offset(offset)]
+            if trial is not None
         ]
         best_trial = min(
             [middle_trial, *neighbor_trials],
@@ -1619,7 +1729,7 @@ def search_lrs(
 
     restore_model_params(model, baseline_params)
     restore_optimizer_state(optimizer, baseline_optimizer_state)
-    best_lr_tuple = offset_lr_tuple(center_lr_tuple, center_offset)
+    best_lr_tuple = offset_lr_tuple(center_lr_tuple, center_offset, lr_ratio)
     best_lrs = lr_tuple_to_dict(best_lr_tuple)
     return {
         "lrs": best_lrs,
@@ -1631,10 +1741,150 @@ def search_lrs(
     }
 
 
+def search_lrs_depth2(
+    model,
+    optimizer,
+    step,
+    second_train_batch,
+    depth2_val_batches,
+    autocast_ctx,
+    lr_center,
+):
+    baseline_params = snapshot_model_params(model)
+    baseline_optimizer_state = snapshot_optimizer_state(optimizer)
+    baseline_grads = snapshot_model_grads(model)
+    center_lr_tuple = lr_dict_to_tuple(lr_center)
+    center_offset = tuple(0 for _ in LINE_SEARCH_LR_SUBGROUPS)
+    depth1_lr_ratio = line_search_lr_ratio(1)
+    depth2_lr_ratio = line_search_lr_ratio(2)
+    trial_cache = {}
+    evaluated_trials = []
+    search_rounds = []
+
+    def restore_baseline_node():
+        restore_model_params(model, baseline_params)
+        restore_optimizer_state(optimizer, baseline_optimizer_state)
+        restore_model_grads(model, baseline_grads)
+
+    def evaluate_offset(offset):
+        if offset in trial_cache:
+            return trial_cache[offset]
+
+        lr_tuple = offset_lr_tuple(center_lr_tuple, offset, depth1_lr_ratio)
+        try:
+            restore_baseline_node()
+            set_line_search_lrs(optimizer, step, lr_tuple)
+            optimizer.step()
+            model.zero_grad(set_to_none=True)
+            accumulate_batch_gradients(model, second_train_batch, autocast_ctx)
+            depth2_result = search_lrs_single_depth(
+                model,
+                optimizer,
+                step + 1,
+                depth2_val_batches,
+                autocast_ctx,
+                lr_tuple_to_dict(lr_tuple),
+                depth2_lr_ratio,
+                max_lr_tuple=lr_tuple,
+            )
+        finally:
+            restore_baseline_node()
+
+        trial = {
+            "offset": offset,
+            "lrs": lr_tuple_to_dict(lr_tuple),
+            "val_loss": depth2_result["val_loss"],
+            "depth2_result": depth2_result,
+        }
+        trial_cache[offset] = trial
+        evaluated_trials.append(trial)
+        return trial
+
+    while True:
+        middle_trial = evaluate_offset(center_offset)
+        neighbor_trials = [
+            evaluate_offset(offset)
+            for offset in line_search_neighbor_offsets(center_offset)
+        ]
+        best_trial = min(
+            [middle_trial, *neighbor_trials],
+            key=trial_sort_key,
+        )
+        improved = trial_sort_key(best_trial) < trial_sort_key(middle_trial)
+        search_rounds.append(
+            {
+                "middle_offset": center_offset,
+                "middle_lrs": middle_trial["lrs"],
+                "middle_depth2_best_lrs": middle_trial["depth2_result"]["lrs"],
+                "middle_val_loss": middle_trial["val_loss"],
+                "best_offset": best_trial["offset"],
+                "best_lrs": best_trial["lrs"],
+                "best_depth2_lrs": best_trial["depth2_result"]["lrs"],
+                "best_val_loss": best_trial["val_loss"],
+                "improved": improved,
+                "neighbor_offsets": [trial["offset"] for trial in neighbor_trials],
+            }
+        )
+        if not improved:
+            break
+        center_offset = best_trial["offset"]
+
+    restore_baseline_node()
+    best_trial = trial_cache[center_offset]
+    return {
+        "depth": 2,
+        "lrs": best_trial["lrs"],
+        "lr_tuple": lr_dict_to_tuple(best_trial["lrs"]),
+        "val_loss": best_trial["val_loss"],
+        "best_depth2_lrs": best_trial["depth2_result"]["lrs"],
+        "best_depth2_lr_tuple": best_trial["depth2_result"]["lr_tuple"],
+        "trials": evaluated_trials,
+        "search_rounds": search_rounds,
+        "num_evaluated": len(evaluated_trials),
+        "depth2_num_evaluated": sum(
+            trial["depth2_result"]["num_evaluated"]
+            for trial in evaluated_trials
+        ),
+    }
+
+
+def search_lrs(
+    model,
+    optimizer,
+    step,
+    second_train_batch,
+    depth2_val_batches,
+    autocast_ctx,
+    lr_center,
+):
+    if LINE_SEARCH_DEPTH == 1:
+        return search_lrs_single_depth(
+            model,
+            optimizer,
+            step,
+            depth2_val_batches,
+            autocast_ctx,
+            lr_center,
+            line_search_lr_ratio(1),
+        )
+    if LINE_SEARCH_DEPTH == 2:
+        return search_lrs_depth2(
+            model,
+            optimizer,
+            step,
+            second_train_batch,
+            depth2_val_batches,
+            autocast_ctx,
+            lr_center,
+        )
+    raise ValueError(f"Unsupported LINE_SEARCH_DEPTH={LINE_SEARCH_DEPTH}.")
+
+
 def build_line_search_log(
     lr_search_result,
     step,
     val_set_name=None,
+    experiment_name=None,
     num_batches=None,
     description=None,
 ):
@@ -1647,8 +1897,19 @@ def build_line_search_log(
         },
         "best_val_loss": log_float(lr_search_result["val_loss"]),
     }
+    if "depth" in lr_search_result:
+        record["depth"] = lr_search_result["depth"]
+    if "best_depth2_lrs" in lr_search_result:
+        record["best_depth2_lrs"] = {
+            subgroup: log_float(lr_search_result["best_depth2_lrs"][subgroup])
+            for subgroup in LINE_SEARCH_LR_SUBGROUPS
+        }
+    if "depth2_num_evaluated" in lr_search_result:
+        record["depth2_num_evaluated"] = lr_search_result["depth2_num_evaluated"]
     if val_set_name is not None:
         record["val_set"] = val_set_name
+    if experiment_name is not None:
+        record["experiment"] = experiment_name
     if num_batches is not None:
         record["num_batches"] = num_batches
     if description is not None:
@@ -1656,22 +1917,41 @@ def build_line_search_log(
     return record
 
 
+def format_lr_summary(lr_by_subgroup):
+    return ", ".join(
+        f"{subgroup}={lr_by_subgroup[subgroup]:.5g}"
+        for subgroup in LINE_SEARCH_LR_SUBGROUPS
+    )
+
+
 def required_future_train_batch_count(val_set_name, num_steps_taken):
+    if LINE_SEARCH_DEPTH >= 2 and val_set_name == "next_train_batch":
+        return 2
     return 1
 
 
-def select_line_search_val_batches(
+def select_depth2_line_search_batches(
     val_set_name,
     train_batch,
     future_train_batches,
     held_out_batches,
 ):
+    second_train_batch = future_train_batches[0]
+    if LINE_SEARCH_DEPTH == 1:
+        if val_set_name == "next_train_batch":
+            return second_train_batch, future_train_batches[:1]
+        if val_set_name == "held_out_batch":
+            return second_train_batch, held_out_batches
+        if val_set_name == "current_train_batch":
+            return second_train_batch, [train_batch]
+        raise ValueError(f"Unknown line-search validation set: {val_set_name}")
+
     if val_set_name == "next_train_batch":
-        return future_train_batches[:1]
+        return second_train_batch, future_train_batches[1:2]
     if val_set_name == "held_out_batch":
-        return held_out_batches
+        return second_train_batch, held_out_batches
     if val_set_name == "current_train_batch":
-        return [train_batch]
+        return second_train_batch, [second_train_batch]
     raise ValueError(f"Unknown line-search validation set: {val_set_name}")
 
 
@@ -1680,6 +1960,7 @@ def select_line_search_val_batches(
 # ---------------------------------------------------------------------------
 
 def run_training_for_val_set(
+    experiment_name,
     val_set_name,
     tokenizer,
     config,
@@ -1693,7 +1974,9 @@ def run_training_for_val_set(
     torch.cuda.manual_seed(RANDOM_SEED)
     torch.cuda.reset_peak_memory_stats(device)
     print()
-    print(f"=== RUN val_set={val_set_name} ===")
+    print(f"=== RUN experiment={experiment_name} val_set={val_set_name} ===")
+    print(f"Line-search depth: {LINE_SEARCH_DEPTH}")
+    print(f"Line-search subgroups: {LINE_SEARCH_LR_SUBGROUPS}")
     print(f"Validation set: {description}")
 
     with torch.device("meta"):
@@ -1768,7 +2051,7 @@ def run_training_for_val_set(
             grad_accum_steps,
             required_future_count,
         )
-        val_batches = select_line_search_val_batches(
+        second_train_batch, depth2_val_batches = select_depth2_line_search_batches(
             val_set_name,
             train_batch,
             future_train_batches,
@@ -1778,7 +2061,8 @@ def run_training_for_val_set(
             model,
             optimizer,
             step,
-            val_batches,
+            second_train_batch,
+            depth2_val_batches,
             autocast_ctx,
             lr_by_subgroup,
         )
@@ -1789,7 +2073,8 @@ def run_training_for_val_set(
                 lr_search_result,
                 step,
                 val_set_name=val_set_name,
-                num_batches=len(val_batches),
+                experiment_name=experiment_name,
+                num_batches=len(depth2_val_batches),
                 description=description,
             )
             print(f"\nLR_SEARCH {json.dumps(lr_log_record, sort_keys=True)}", flush=True)
@@ -1834,11 +2119,8 @@ def run_training_for_val_set(
             f"\rstep {step:05d} ({pct_done:.5g}%) | "
             f"smoothed_train_loss: {debiased_smooth_loss:.5g} | "
             f"cur_train_loss: {train_loss_f:.5g} | "
-            f"lrs: "
-            f"wte={lr_by_subgroup['wte']:.5g}, "
-            f"lm_head={lr_by_subgroup['lm_head']:.5g}, "
-            f"other_matrices={lr_by_subgroup['other_matrices']:.5g}, "
-            f"scale={lr_by_subgroup['scale']:.5g} | "
+            f"lrs: {format_lr_summary(lr_by_subgroup)} | "
+            f"experiment: {experiment_name} | "
             f"val_set: {val_set_name} | val_loss: {lr_search_result['val_loss']:.5g} | "
             f"dt: {dt * 1000:.5g}ms | "
             f"tok/sec: {tok_per_sec:,} | mfu: {mfu:.5g}% | epoch: {epoch} | "
@@ -1888,7 +2170,10 @@ def run_training_for_val_set(
     print(f"depth:            {DEPTH}")
 
     return {
+        "experiment": experiment_name,
         "val_set": val_set_name,
+        "line_search_depth": LINE_SEARCH_DEPTH,
+        "line_search_subgroups": list(LINE_SEARCH_LR_SUBGROUPS),
         "val_bpb": log_float(val_bpb),
         "train_loss": log_float(train_loss_f),
         "smooth_train_loss": log_float(debiased_smooth_loss),
@@ -1904,7 +2189,7 @@ def run_training_for_val_set(
 
 
 def run_training():
-    global fa3
+    global fa3, LINE_SEARCH_DEPTH, LINE_SEARCH_LR_SUBGROUPS
 
     fa3 = initialize_flash_attention()
     torch.set_float32_matmul_precision("high")
@@ -1928,22 +2213,26 @@ def run_training():
     grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
 
     summaries = []
-    for val_set_name in LINE_SEARCH_VAL_SET_VARIANTS:
-        summaries.append(
-            run_training_for_val_set(
-                val_set_name,
-                tokenizer,
-                config,
-                device,
-                autocast_ctx,
-                grad_accum_steps,
+    for experiment in LINE_SEARCH_EXPERIMENTS:
+        LINE_SEARCH_DEPTH = experiment["line_search_depth"]
+        LINE_SEARCH_LR_SUBGROUPS = experiment["line_search_subgroups"]
+        for val_set_name in LINE_SEARCH_VAL_SET_VARIANTS:
+            summaries.append(
+                run_training_for_val_set(
+                    experiment["name"],
+                    val_set_name,
+                    tokenizer,
+                    config,
+                    device,
+                    autocast_ctx,
+                    grad_accum_steps,
+                )
             )
-        )
-        gc.collect()
-        torch.cuda.empty_cache()
+            gc.collect()
+            torch.cuda.empty_cache()
 
     summary_record = {
-        "type": "line_search_val_set_runs",
+        "type": "line_search_experiment_runs",
         "runs": summaries,
     }
     print(f"RUN_SUMMARY {json.dumps(summary_record, sort_keys=True)}")

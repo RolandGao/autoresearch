@@ -1016,3 +1016,17 @@ make all weights have the same lr scheduler.
 make weight init trivial too. 
 
 idea: line search as cool down
+
+modify only hyperball2/train_hyperball_line_search.py. 
+now, try a few things for the val set
+1. the next batch. the current way.
+2. a batch that we'll never see during training. 
+3. the current batch and all previous batches. aka, the batches the model trained on + the current batch where the current gradient is derived from
+4. the next N batches, where N is the number of training steps taken, including the current step. 
+5. N batches that we'll never see during training, where N is the number of training steps taken, including the current step.
+
+idea: the best lr might deliberately step away from the min to set up a future step. 
+
+now i introduce a new algorithm. depth=2 lr search.
+
+currently, all the lr searches are depth=1. for each of these lr points, update the weight based on this lr point and then get the gradient for the second train batch and do lr search on that, the best loss at depth 2 determines the depth=1 node to take. this is one train step. 
