@@ -14,7 +14,6 @@ import json
 import math
 import sys
 import time
-from copy import deepcopy
 from dataclasses import dataclass, asdict
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -344,7 +343,6 @@ class GPT(nn.Module):
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.5g}")
         param_groups = [
             dict(
-                name="lm_head",
                 kind="adamw",
                 params=lm_head_params,
                 lr=unembedding_lr * dmodel_lr_scale,
@@ -353,7 +351,6 @@ class GPT(nn.Module):
                 weight_decay=lm_head_wd,
             ),
             dict(
-                name="embedding",
                 kind="adamw",
                 params=embedding_params,
                 lr=embedding_lr * dmodel_lr_scale,
@@ -362,7 +359,6 @@ class GPT(nn.Module):
                 weight_decay=embedding_wd,
             ),
             dict(
-                name="value_embedding",
                 kind="adamw",
                 params=value_embeds_params,
                 lr=embedding_lr * dmodel_lr_scale,
@@ -371,7 +367,6 @@ class GPT(nn.Module):
                 weight_decay=value_embedding_wd,
             ),
             dict(
-                name="resid_lambdas",
                 kind="adamw",
                 params=resid_params,
                 lr=scalar_lr * 0.01,
@@ -380,7 +375,6 @@ class GPT(nn.Module):
                 weight_decay=0.0,
             ),
             dict(
-                name="x0_lambdas",
                 kind="adamw",
                 params=x0_params,
                 lr=scalar_lr,
@@ -393,7 +387,6 @@ class GPT(nn.Module):
             group_params = [p for p in matrix_params if p.shape == shape]
             param_groups.append(
                 dict(
-                    name=f"matrix_{tuple(shape)}",
                     kind="muon",
                     params=group_params,
                     lr=matrix_lr,
@@ -694,45 +687,15 @@ MATRIX_LR = 0.04 * LR_MULT  # learning rate for matrix parameters (Muon)
 SCALAR_LR = 0.5 * LR_MULT  # learning rate for per-layer scalars (Adam)
 WEIGHT_DECAY = 0.1  # cautious weight decay for Muon
 ADAM_BETAS = (0.8, 0.95)  # Adam beta1, beta2
+WARMUP_RATIO = 0.0  # fraction of steps for LR warmup
+WARMDOWN_RATIO = 0.7  # fraction of steps for LR warmdown
+FINAL_LR_FRAC = 0.05  # final LR as fraction of initial
 LM_HEAD_WD = 0.01  # AdamW weight decay for lm_head
 EMBEDDING_WD = 0.001  # AdamW weight decay for token embeddings
 VALUE_EMBEDDING_WD = 0.003  # AdamW weight decay for value embeddings
 
 DEVICE_BATCH_SIZE = 64  # per-device batch size (reduce if OOM)
 NORM_LOG_EVERY = 1  # optimizer steps between norm logs
-INITIAL_LINE_SEARCH_LR_MULT = LR_MULT
-LINE_SEARCH_DEPTH = 1
-LINE_SEARCH_LR_RATIOS_BY_DEPTH = {
-    1: 0.85,
-    2: 0.85,
-}
-LINE_SEARCH_LR_SUBGROUPS = ("matrix", "embedding", "lm_head", "scalars")
-LINE_SEARCH_VAL_SET_NAME = "held_out_batch"
-LINE_SEARCH_VAL_SET_DESCRIPTIONS = {
-    "next_train_batch": "the next training batch",
-    "held_out_batch": "rotating fixed held-out batches that are never trained on",
-    "current_train_batch": "the current training batch used for gradients",
-}
-LINE_SEARCH_LOG_EVERY = 1  # optimizer steps between LR search logs; 0 disables logs
-
-# Combined LR-search controller. It is intentionally scheduler-agnostic: the only
-# "shape" prior is that LR should move smoothly unless the online rollout strongly
-# prefers a change.
-LINE_SEARCH_INTERVAL = 8
-LINE_SEARCH_HORIZON_STEPS = 4
-LINE_SEARCH_HELD_OUT_BATCHES = 8
-LINE_SEARCH_VAL_BATCHES_PER_SEARCH = 4
-LINE_SEARCH_MAX_ROUNDS = 2
-LINE_SEARCH_SAFE_LOSS_ATOL = 3e-4
-LINE_SEARCH_SAFE_LOSS_RTOL = 1e-4
-LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT = 0.05
-LINE_SEARCH_MIN_IMPROVEMENT = 1e-4
-LINE_SEARCH_MAX_LOG_MOVE = math.log(1.08)
-LINE_SEARCH_LOG_LR_EMA = 0.35
-LINE_SEARCH_NORM_FEEDBACK = True
-LINE_SEARCH_NORM_WARMUP_STEPS = 16
-LINE_SEARCH_NORM_TOLERANCE = 0.35
-LINE_SEARCH_NORM_MAX_LOG_MOVE = math.log(1.05)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
@@ -802,19 +765,23 @@ uncompiled_model = model
 model = torch.compile(model, dynamic=False)
 
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
-held_out_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "val")
+x, y, epoch = next(train_loader)  # prefetch first batch
 
 print(f"Training steps: {MAX_STEPS}")
 print(f"Gradient accumulation steps: {grad_accum_steps}")
-print(f"Line-search depth: {LINE_SEARCH_DEPTH}")
-print(f"Line-search subgroups: {LINE_SEARCH_LR_SUBGROUPS}")
-print(f"Line-search interval: {LINE_SEARCH_INTERVAL}")
-print(f"Line-search horizon steps: {LINE_SEARCH_HORIZON_STEPS}")
-print(f"Line-search held-out batches: {LINE_SEARCH_HELD_OUT_BATCHES}")
-print(
-    "Line-search validation set: "
-    f"{LINE_SEARCH_VAL_SET_DESCRIPTIONS[LINE_SEARCH_VAL_SET_NAME]}"
-)
+
+# Schedules (all based on fixed-step progress)
+
+
+def get_lr_multiplier(progress):
+    if progress < WARMUP_RATIO:
+        return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
+    elif progress < 1.0 - WARMDOWN_RATIO:
+        return 1.0
+    else:
+        cooldown = (1.0 - progress) / WARMDOWN_RATIO
+        return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
+
 
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
@@ -989,737 +956,6 @@ def add_update_norms(record, model):
             )
 
 
-def initial_line_search_lrs():
-    return {
-        subgroup: INITIAL_LINE_SEARCH_LR_MULT
-        for subgroup in LINE_SEARCH_LR_SUBGROUPS
-    }
-
-
-def lr_tuple_to_dict(lr_tuple):
-    return {
-        subgroup: float(lr)
-        for subgroup, lr in zip(LINE_SEARCH_LR_SUBGROUPS, lr_tuple)
-    }
-
-
-def lr_dict_to_tuple(lrs):
-    return tuple(float(lrs[subgroup]) for subgroup in LINE_SEARCH_LR_SUBGROUPS)
-
-
-def optimizer_lr_subgroup(group):
-    name = group.get("name", "")
-    if group["kind"] == "muon":
-        return "matrix"
-    if name in {"embedding", "value_embedding"}:
-        return "embedding"
-    if name == "lm_head":
-        return "lm_head"
-    if name in {"resid_lambdas", "x0_lambdas"}:
-        return "scalars"
-    raise ValueError(f"Unknown optimizer group for LR update: {group}")
-
-
-def update_optimizer_hyperparams(optimizer, step, subgroup_lrs):
-    progress = min(step / max(1, MAX_STEPS - 1), 1.0)
-    muon_momentum = get_muon_momentum(step)
-    muon_weight_decay = get_weight_decay(progress)
-
-    for group in optimizer.param_groups:
-        subgroup = optimizer_lr_subgroup(group)
-        lr_mult_base_lr = group["initial_lr"] / INITIAL_LINE_SEARCH_LR_MULT
-        group["lr"] = lr_mult_base_lr * subgroup_lrs[subgroup]
-        if group["kind"] == "muon":
-            group["momentum"] = muon_momentum
-            group["weight_decay"] = muon_weight_decay
-
-    return subgroup_lrs
-
-
-def clone_optimizer_state_value(value):
-    if torch.is_tensor(value):
-        return value.detach().clone(memory_format=torch.preserve_format)
-    if isinstance(value, dict):
-        return {key: clone_optimizer_state_value(val) for key, val in value.items()}
-    if isinstance(value, list):
-        return [clone_optimizer_state_value(val) for val in value]
-    if isinstance(value, tuple):
-        return tuple(clone_optimizer_state_value(val) for val in value)
-    return deepcopy(value)
-
-
-def snapshot_optimizer_state(optimizer):
-    return {
-        param: clone_optimizer_state_value(state)
-        for param, state in optimizer.state.items()
-    }
-
-
-def restore_optimizer_state(optimizer, snapshot):
-    optimizer.state.clear()
-    for param, state in snapshot.items():
-        optimizer.state[param] = clone_optimizer_state_value(state)
-
-
-@torch.no_grad()
-def snapshot_model_params(model):
-    return [
-        param.detach().clone(memory_format=torch.preserve_format)
-        for param in model.parameters()
-    ]
-
-
-@torch.no_grad()
-def restore_model_params(model, snapshot):
-    for param, saved_param in zip(model.parameters(), snapshot):
-        param.copy_(saved_param)
-
-
-@torch.no_grad()
-def snapshot_model_grads(model):
-    return [
-        None
-        if param.grad is None
-        else param.grad.detach().clone(memory_format=torch.preserve_format)
-        for param in model.parameters()
-    ]
-
-
-@torch.no_grad()
-def restore_model_grads(model, snapshot):
-    for param, saved_grad in zip(model.parameters(), snapshot):
-        if saved_grad is None:
-            param.grad = None
-        elif param.grad is None:
-            param.grad = saved_grad.detach().clone(memory_format=torch.preserve_format)
-        else:
-            param.grad.copy_(saved_grad)
-
-
-def collect_accumulated_batch(loader, grad_accum_steps):
-    batch = []
-    for _ in range(grad_accum_steps):
-        x, y, epoch = next(loader)
-        batch.append((x.detach().clone(), y.detach().clone(), epoch))
-    return batch
-
-
-def ensure_future_train_batches(
-    future_train_batches, train_loader, grad_accum_steps, count
-):
-    while len(future_train_batches) < count:
-        future_train_batches.append(
-            collect_accumulated_batch(train_loader, grad_accum_steps)
-        )
-
-
-def flatten_accumulated_batches(accumulated_batches):
-    return [
-        micro_batch
-        for accumulated_batch in accumulated_batches
-        for micro_batch in accumulated_batch
-    ]
-
-
-@torch.no_grad()
-def accumulated_batch_loss(model, batch, autocast_ctx):
-    was_training = model.training
-    model.eval()
-    total_loss = 0.0
-    for x, y, _ in batch:
-        with autocast_ctx:
-            loss = model(x, y)
-        total_loss += loss.detach().float().item()
-    if was_training:
-        model.train()
-    return total_loss / len(batch)
-
-
-def accumulate_batch_gradients(model, batch, autocast_ctx):
-    was_training = model.training
-    model.train()
-    grad_accum_steps = len(batch)
-    total_loss = 0.0
-    for x, y, _ in batch:
-        with autocast_ctx:
-            loss = model(x, y)
-        total_loss += loss.detach().float().item()
-        (loss / grad_accum_steps).backward()
-    if not was_training:
-        model.eval()
-    return total_loss / grad_accum_steps
-
-
-def finite_loss(value):
-    return math.isfinite(float(value))
-
-
-def lrs_geomean(lrs):
-    values = [
-        max(float(lrs[subgroup]), 1e-12)
-        for subgroup in LINE_SEARCH_LR_SUBGROUPS
-    ]
-    return math.exp(sum(math.log(value) for value in values) / len(values))
-
-
-def add_trial_score(trial):
-    val_loss = float(trial["val_loss"])
-    if not finite_loss(val_loss):
-        trial["score"] = float("inf")
-        return trial
-    train_loss = trial.get("rollout_train_loss")
-    score = val_loss
-    if train_loss is not None and finite_loss(train_loss):
-        score += LINE_SEARCH_SCORE_TRAIN_LOSS_WEIGHT * float(train_loss)
-    trial["score"] = score
-    return trial
-
-
-def set_line_search_lrs(optimizer, step, lr_tuple):
-    update_optimizer_hyperparams(optimizer, step, lr_tuple_to_dict(lr_tuple))
-
-
-def evaluate_trial_rollout(
-    model,
-    optimizer,
-    step,
-    rollout_train_batches,
-    val_batch,
-    autocast_ctx,
-    baseline_params,
-    baseline_optimizer_state,
-    baseline_grads,
-    lr_tuple,
-):
-    restore_model_params(model, baseline_params)
-    restore_optimizer_state(optimizer, baseline_optimizer_state)
-    restore_model_grads(model, baseline_grads)
-    set_line_search_lrs(optimizer, step, lr_tuple)
-    optimizer.step()
-    train_losses = []
-    horizon_steps = max(1, LINE_SEARCH_HORIZON_STEPS)
-    for horizon_index in range(1, horizon_steps):
-        model.zero_grad(set_to_none=True)
-        train_loss = accumulate_batch_gradients(
-            model,
-            rollout_train_batches[horizon_index - 1],
-            autocast_ctx,
-        )
-        train_losses.append(train_loss)
-        set_line_search_lrs(optimizer, step + horizon_index, lr_tuple)
-        optimizer.step()
-    loss = accumulated_batch_loss(model, val_batch, autocast_ctx)
-    restore_model_params(model, baseline_params)
-    restore_optimizer_state(optimizer, baseline_optimizer_state)
-    restore_model_grads(model, baseline_grads)
-    rollout_train_loss = (
-        sum(train_losses) / len(train_losses)
-        if train_losses
-        else None
-    )
-    return loss, rollout_train_loss
-
-
-def trial_sort_key(trial):
-    score = trial.get("score", trial["val_loss"])
-    return score if math.isfinite(score) else float("inf")
-
-
-def trial_lr_size_key(trial):
-    return lrs_geomean(trial["lrs"])
-
-
-def select_safe_trial(trials):
-    finite_trials = [
-        trial for trial in trials if finite_loss(trial["val_loss"])
-    ]
-    if not finite_trials:
-        return min(trials, key=trial_sort_key)
-
-    best_val_loss = min(float(trial["val_loss"]) for trial in finite_trials)
-    safe_loss = (
-        best_val_loss
-        + LINE_SEARCH_SAFE_LOSS_ATOL
-        + LINE_SEARCH_SAFE_LOSS_RTOL * abs(best_val_loss)
-    )
-    safe_trials = [
-        trial
-        for trial in finite_trials
-        if float(trial["val_loss"]) <= safe_loss
-    ]
-    return max(safe_trials, key=trial_lr_size_key)
-
-
-def line_search_lr_ratio(depth):
-    if depth not in LINE_SEARCH_LR_RATIOS_BY_DEPTH:
-        raise ValueError(f"No LR search ratio configured for depth={depth}.")
-    return LINE_SEARCH_LR_RATIOS_BY_DEPTH[depth]
-
-
-def offset_lr_tuple(center_lr_tuple, offset, lr_ratio):
-    return tuple(
-        lr * (lr_ratio ** exponent)
-        for lr, exponent in zip(center_lr_tuple, offset)
-    )
-
-
-def lr_tuple_within_max(lr_tuple, max_lr_tuple):
-    if max_lr_tuple is None:
-        return True
-    return all(
-        lr <= max_lr * (1 + 1e-12)
-        for lr, max_lr in zip(lr_tuple, max_lr_tuple)
-    )
-
-
-def line_search_neighbor_offsets(center_offset):
-    for index in range(len(LINE_SEARCH_LR_SUBGROUPS)):
-        down_offset = list(center_offset)
-        down_offset[index] += 1
-        yield tuple(down_offset)
-
-        up_offset = list(center_offset)
-        up_offset[index] -= 1
-        yield tuple(up_offset)
-
-
-def search_lrs_single_depth(
-    model,
-    optimizer,
-    step,
-    rollout_train_batches,
-    val_batches,
-    autocast_ctx,
-    lr_center,
-    lr_ratio,
-    max_lr_tuple=None,
-):
-    val_batch = flatten_accumulated_batches(val_batches)
-    baseline_params = snapshot_model_params(model)
-    baseline_optimizer_state = snapshot_optimizer_state(optimizer)
-    baseline_grads = snapshot_model_grads(model)
-    center_lr_tuple = lr_dict_to_tuple(lr_center)
-    center_offset = tuple(0 for _ in LINE_SEARCH_LR_SUBGROUPS)
-    trial_cache = {}
-    evaluated_trials = []
-    search_rounds = []
-
-    def evaluate_offset(offset):
-        if offset in trial_cache:
-            return trial_cache[offset]
-        lr_tuple = offset_lr_tuple(center_lr_tuple, offset, lr_ratio)
-        if not lr_tuple_within_max(lr_tuple, max_lr_tuple):
-            return None
-        loss, rollout_train_loss = evaluate_trial_rollout(
-            model,
-            optimizer,
-            step,
-            rollout_train_batches,
-            val_batch,
-            autocast_ctx,
-            baseline_params,
-            baseline_optimizer_state,
-            baseline_grads,
-            lr_tuple,
-        )
-        trial = {
-            "offset": offset,
-            "lrs": lr_tuple_to_dict(lr_tuple),
-            "val_loss": loss,
-            "rollout_train_loss": rollout_train_loss,
-        }
-        add_trial_score(trial)
-        trial_cache[offset] = trial
-        evaluated_trials.append(trial)
-        return trial
-
-    for _ in range(LINE_SEARCH_MAX_ROUNDS):
-        middle_trial = evaluate_offset(center_offset)
-        neighbor_trials = [
-            trial
-            for offset in line_search_neighbor_offsets(center_offset)
-            for trial in [evaluate_offset(offset)]
-            if trial is not None
-        ]
-        best_trial = select_safe_trial([middle_trial, *neighbor_trials])
-        improvement = trial_sort_key(middle_trial) - trial_sort_key(best_trial)
-        safe_larger_lr = (
-            best_trial["offset"] != center_offset
-            and trial_lr_size_key(best_trial) > trial_lr_size_key(middle_trial)
-            and float(best_trial["val_loss"])
-            <= float(middle_trial["val_loss"])
-            + LINE_SEARCH_SAFE_LOSS_ATOL
-            + LINE_SEARCH_SAFE_LOSS_RTOL * abs(float(middle_trial["val_loss"]))
-        )
-        improved = improvement > LINE_SEARCH_MIN_IMPROVEMENT or safe_larger_lr
-        search_rounds.append(
-            {
-                "middle_offset": center_offset,
-                "middle_lrs": middle_trial["lrs"],
-                "middle_val_loss": middle_trial["val_loss"],
-                "middle_score": middle_trial["score"],
-                "best_offset": best_trial["offset"],
-                "best_lrs": best_trial["lrs"],
-                "best_val_loss": best_trial["val_loss"],
-                "best_score": best_trial["score"],
-                "improved": improved,
-                "neighbor_offsets": [trial["offset"] for trial in neighbor_trials],
-            }
-        )
-        if not improved:
-            break
-        center_offset = best_trial["offset"]
-
-    restore_model_params(model, baseline_params)
-    restore_optimizer_state(optimizer, baseline_optimizer_state)
-    restore_model_grads(model, baseline_grads)
-    best_lr_tuple = offset_lr_tuple(center_lr_tuple, center_offset, lr_ratio)
-    best_lrs = lr_tuple_to_dict(best_lr_tuple)
-    return {
-        "lrs": best_lrs,
-        "lr_tuple": best_lr_tuple,
-        "val_loss": trial_cache[center_offset]["val_loss"],
-        "score": trial_cache[center_offset]["score"],
-        "rollout_train_loss": trial_cache[center_offset]["rollout_train_loss"],
-        "trials": evaluated_trials,
-        "search_rounds": search_rounds,
-        "num_evaluated": len(evaluated_trials),
-    }
-
-
-def search_lrs_depth2(
-    model,
-    optimizer,
-    step,
-    second_train_batch,
-    depth2_val_batches,
-    autocast_ctx,
-    lr_center,
-):
-    baseline_params = snapshot_model_params(model)
-    baseline_optimizer_state = snapshot_optimizer_state(optimizer)
-    baseline_grads = snapshot_model_grads(model)
-    center_lr_tuple = lr_dict_to_tuple(lr_center)
-    center_offset = tuple(0 for _ in LINE_SEARCH_LR_SUBGROUPS)
-    depth1_lr_ratio = line_search_lr_ratio(1)
-    depth2_lr_ratio = line_search_lr_ratio(2)
-    trial_cache = {}
-    evaluated_trials = []
-    search_rounds = []
-
-    def restore_baseline_node():
-        restore_model_params(model, baseline_params)
-        restore_optimizer_state(optimizer, baseline_optimizer_state)
-        restore_model_grads(model, baseline_grads)
-
-    def evaluate_offset(offset):
-        if offset in trial_cache:
-            return trial_cache[offset]
-
-        lr_tuple = offset_lr_tuple(center_lr_tuple, offset, depth1_lr_ratio)
-        try:
-            restore_baseline_node()
-            set_line_search_lrs(optimizer, step, lr_tuple)
-            optimizer.step()
-            model.zero_grad(set_to_none=True)
-            accumulate_batch_gradients(model, second_train_batch, autocast_ctx)
-            depth2_result = search_lrs_single_depth(
-                model,
-                optimizer,
-                step + 1,
-                [second_train_batch],
-                depth2_val_batches,
-                autocast_ctx,
-                lr_tuple_to_dict(lr_tuple),
-                depth2_lr_ratio,
-                max_lr_tuple=lr_tuple,
-            )
-        finally:
-            restore_baseline_node()
-
-        trial = {
-            "offset": offset,
-            "lrs": lr_tuple_to_dict(lr_tuple),
-            "val_loss": depth2_result["val_loss"],
-            "depth2_result": depth2_result,
-        }
-        trial_cache[offset] = trial
-        evaluated_trials.append(trial)
-        return trial
-
-    while True:
-        middle_trial = evaluate_offset(center_offset)
-        neighbor_trials = [
-            evaluate_offset(offset)
-            for offset in line_search_neighbor_offsets(center_offset)
-        ]
-        best_trial = min(
-            [middle_trial, *neighbor_trials],
-            key=trial_sort_key,
-        )
-        improved = trial_sort_key(best_trial) < trial_sort_key(middle_trial)
-        search_rounds.append(
-            {
-                "middle_offset": center_offset,
-                "middle_lrs": middle_trial["lrs"],
-                "middle_depth2_best_lrs": middle_trial["depth2_result"]["lrs"],
-                "middle_val_loss": middle_trial["val_loss"],
-                "best_offset": best_trial["offset"],
-                "best_lrs": best_trial["lrs"],
-                "best_depth2_lrs": best_trial["depth2_result"]["lrs"],
-                "best_val_loss": best_trial["val_loss"],
-                "improved": improved,
-                "neighbor_offsets": [trial["offset"] for trial in neighbor_trials],
-            }
-        )
-        if not improved:
-            break
-        center_offset = best_trial["offset"]
-
-    restore_baseline_node()
-    best_trial = trial_cache[center_offset]
-    return {
-        "depth": 2,
-        "lrs": best_trial["lrs"],
-        "lr_tuple": lr_dict_to_tuple(best_trial["lrs"]),
-        "val_loss": best_trial["val_loss"],
-        "best_depth2_lrs": best_trial["depth2_result"]["lrs"],
-        "best_depth2_lr_tuple": best_trial["depth2_result"]["lr_tuple"],
-        "trials": evaluated_trials,
-        "search_rounds": search_rounds,
-        "num_evaluated": len(evaluated_trials),
-        "depth2_num_evaluated": sum(
-            trial["depth2_result"]["num_evaluated"]
-            for trial in evaluated_trials
-        ),
-    }
-
-
-def search_lrs(
-    model,
-    optimizer,
-    step,
-    rollout_train_batches,
-    depth2_val_batches,
-    autocast_ctx,
-    lr_center,
-):
-    if LINE_SEARCH_DEPTH == 1:
-        return search_lrs_single_depth(
-            model,
-            optimizer,
-            step,
-            rollout_train_batches,
-            depth2_val_batches,
-            autocast_ctx,
-            lr_center,
-            line_search_lr_ratio(1),
-        )
-    if LINE_SEARCH_DEPTH == 2:
-        return search_lrs_depth2(
-            model,
-            optimizer,
-            step,
-            rollout_train_batches[0],
-            depth2_val_batches,
-            autocast_ctx,
-            lr_center,
-        )
-    raise ValueError(f"Unsupported LINE_SEARCH_DEPTH={LINE_SEARCH_DEPTH}.")
-
-
-def build_line_search_log(
-    lr_search_result,
-    step,
-    val_set_name=None,
-    num_batches=None,
-    description=None,
-):
-    record = {
-        "type": "lr_search",
-        "step": step,
-        "best_lrs": {
-            subgroup: log_float(lr_search_result["lrs"][subgroup])
-            for subgroup in LINE_SEARCH_LR_SUBGROUPS
-        },
-        "best_val_loss": log_float(lr_search_result["val_loss"]),
-        "best_score": log_float(lr_search_result.get("score", lr_search_result["val_loss"])),
-        "horizon_steps": LINE_SEARCH_HORIZON_STEPS,
-        "search_interval": LINE_SEARCH_INTERVAL,
-    }
-    if "raw_lrs" in lr_search_result:
-        record["raw_lrs"] = {
-            subgroup: log_float(lr_search_result["raw_lrs"][subgroup])
-            for subgroup in LINE_SEARCH_LR_SUBGROUPS
-        }
-    if "num_evaluated" in lr_search_result:
-        record["num_evaluated"] = lr_search_result["num_evaluated"]
-    if "depth" in lr_search_result:
-        record["depth"] = lr_search_result["depth"]
-    if "best_depth2_lrs" in lr_search_result:
-        record["best_depth2_lrs"] = {
-            subgroup: log_float(lr_search_result["best_depth2_lrs"][subgroup])
-            for subgroup in LINE_SEARCH_LR_SUBGROUPS
-        }
-    if "depth2_num_evaluated" in lr_search_result:
-        record["depth2_num_evaluated"] = lr_search_result["depth2_num_evaluated"]
-    if val_set_name is not None:
-        record["val_set"] = val_set_name
-    if num_batches is not None:
-        record["num_batches"] = num_batches
-    if description is not None:
-        record["description"] = description
-    return record
-
-
-def format_lr_summary(lr_by_subgroup):
-    return ", ".join(
-        f"{subgroup}={lr_by_subgroup[subgroup]:.5g}"
-        for subgroup in LINE_SEARCH_LR_SUBGROUPS
-    )
-
-
-def required_future_train_batch_count(val_set_name):
-    rollout_count = max(1, LINE_SEARCH_HORIZON_STEPS - 1)
-    if val_set_name == "next_train_batch":
-        return rollout_count + LINE_SEARCH_VAL_BATCHES_PER_SEARCH
-    return rollout_count
-
-
-def rotating_held_out_batches(held_out_batches, step):
-    count = min(LINE_SEARCH_VAL_BATCHES_PER_SEARCH, len(held_out_batches))
-    return [
-        held_out_batches[(step + offset) % len(held_out_batches)]
-        for offset in range(count)
-    ]
-
-
-def select_depth2_line_search_batches(
-    val_set_name,
-    train_batch,
-    future_train_batches,
-    held_out_batches,
-    step,
-):
-    rollout_count = max(0, LINE_SEARCH_HORIZON_STEPS - 1)
-    rollout_train_batches = future_train_batches[:rollout_count]
-    second_train_batch = future_train_batches[0]
-    if LINE_SEARCH_DEPTH == 1:
-        if val_set_name == "next_train_batch":
-            return rollout_train_batches, future_train_batches[
-                rollout_count : rollout_count + LINE_SEARCH_VAL_BATCHES_PER_SEARCH
-            ]
-        if val_set_name == "held_out_batch":
-            return rollout_train_batches, rotating_held_out_batches(
-                held_out_batches,
-                step,
-            )
-        if val_set_name == "current_train_batch":
-            return rollout_train_batches, [train_batch]
-        raise ValueError(f"Unknown line-search validation set: {val_set_name}")
-
-    if val_set_name == "next_train_batch":
-        return rollout_train_batches, future_train_batches[
-            rollout_count : rollout_count + LINE_SEARCH_VAL_BATCHES_PER_SEARCH
-        ]
-    if val_set_name == "held_out_batch":
-        return rollout_train_batches, rotating_held_out_batches(
-            held_out_batches,
-            step,
-        )
-    if val_set_name == "current_train_batch":
-        return rollout_train_batches, [second_train_batch]
-    raise ValueError(f"Unknown line-search validation set: {val_set_name}")
-
-
-def smooth_line_search_lrs(previous_lrs, proposed_lrs):
-    smoothed = {}
-    for subgroup in LINE_SEARCH_LR_SUBGROUPS:
-        previous = max(float(previous_lrs[subgroup]), 1e-12)
-        proposed = max(float(proposed_lrs[subgroup]), 1e-12)
-        prev_log = math.log(previous)
-        proposed_log = math.log(proposed)
-        delta = max(
-            -LINE_SEARCH_MAX_LOG_MOVE,
-            min(LINE_SEARCH_MAX_LOG_MOVE, proposed_log - prev_log),
-        )
-        target_log = prev_log + delta
-        smoothed_log = (
-            (1 - LINE_SEARCH_LOG_LR_EMA) * prev_log
-            + LINE_SEARCH_LOG_LR_EMA * target_log
-        )
-        smoothed[subgroup] = math.exp(smoothed_log)
-    return smoothed
-
-
-def norm_log_subgroup(name):
-    if name == "lm_head":
-        return "lm_head"
-    if name == "wte" or name.endswith(".ve"):
-        return "embedding"
-    if name.endswith(".resid_lambdas") or name.endswith(".x0_lambdas"):
-        return "scalars"
-    return "matrix"
-
-
-def median(values):
-    values = sorted(float(value) for value in values if finite_loss(value))
-    if not values:
-        return None
-    midpoint = len(values) // 2
-    if len(values) % 2:
-        return values[midpoint]
-    return 0.5 * (values[midpoint - 1] + values[midpoint])
-
-
-def aggregate_update_norms_by_subgroup(norm_log_record):
-    grouped = {subgroup: [] for subgroup in LINE_SEARCH_LR_SUBGROUPS}
-    if norm_log_record is None:
-        return {subgroup: None for subgroup in LINE_SEARCH_LR_SUBGROUPS}
-    for name, value in norm_log_record["update_norms"].items():
-        subgroup = norm_log_subgroup(name)
-        if subgroup in grouped and value is not None:
-            grouped[subgroup].append(value)
-    return {
-        subgroup: median(values)
-        for subgroup, values in grouped.items()
-    }
-
-
-def update_norm_feedback_reference(reference, update_norms, step):
-    if reference is None:
-        reference = {}
-    for subgroup, value in update_norms.items():
-        if value is None:
-            continue
-        if step < LINE_SEARCH_NORM_WARMUP_STEPS:
-            reference[subgroup] = max(float(value), reference.get(subgroup, 0.0))
-        elif subgroup not in reference:
-            reference[subgroup] = float(value)
-    return reference
-
-
-def apply_norm_feedback(lrs, update_norms, reference):
-    if not LINE_SEARCH_NORM_FEEDBACK or not reference:
-        return lrs
-    adjusted = dict(lrs)
-    for subgroup in LINE_SEARCH_LR_SUBGROUPS:
-        current = update_norms.get(subgroup)
-        target = reference.get(subgroup)
-        if current is None or target is None or current <= 0 or target <= 0:
-            continue
-        ratio = float(current) / float(target)
-        if 1 - LINE_SEARCH_NORM_TOLERANCE <= ratio <= 1 + LINE_SEARCH_NORM_TOLERANCE:
-            continue
-        log_adjust = -0.5 * math.log(max(ratio, 1e-12))
-        log_adjust = max(
-            -LINE_SEARCH_NORM_MAX_LOG_MOVE,
-            min(LINE_SEARCH_NORM_MAX_LOG_MOVE, log_adjust),
-        )
-        adjusted[subgroup] = max(adjusted[subgroup] * math.exp(log_adjust), 1e-12)
-    return adjusted
-
-
 # ---------------------------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------------------------
@@ -1728,25 +964,15 @@ t_start_training = time.time()
 smooth_train_loss = 0
 total_training_time = 0
 step = 0
-train_batch = collect_accumulated_batch(train_loader, grad_accum_steps)
-future_train_batches = []
-held_out_batches = [
-    collect_accumulated_batch(held_out_loader, grad_accum_steps)
-    for _ in range(LINE_SEARCH_HELD_OUT_BATCHES)
-]
-lr_by_subgroup = initial_line_search_lrs()
-norm_feedback_reference = None
-last_lr_search_result = None
-epoch = train_batch[-1][2]
 
-while step < MAX_STEPS:
+while True:
     torch.cuda.synchronize()
     t0 = time.time()
-    should_log_norms = NORM_LOG_EVERY > 0 and step % NORM_LOG_EVERY == 0
+    should_log_norms = step % NORM_LOG_EVERY == 0
     activation_norms = None
     residual_mix_l2_fractions = None
     residual_path_l2_fractions = None
-    for micro_step, (x, y, epoch) in enumerate(train_batch):
+    for micro_step in range(grad_accum_steps):
         with autocast_ctx:
             if should_log_norms and micro_step == grad_accum_steps - 1:
                 (
@@ -1760,58 +986,18 @@ while step < MAX_STEPS:
         train_loss = loss.detach()
         loss = loss / grad_accum_steps
         loss.backward()
+        x, y, epoch = next(train_loader)
 
-    should_search_lrs = step == 0 or step % LINE_SEARCH_INTERVAL == 0
-    required_future_count = (
-        required_future_train_batch_count(LINE_SEARCH_VAL_SET_NAME)
-        if should_search_lrs
-        else 1
-    )
-    ensure_future_train_batches(
-        future_train_batches,
-        train_loader,
-        grad_accum_steps,
-        required_future_count,
-    )
-    lr_search_result = last_lr_search_result
-    if should_search_lrs:
-        rollout_train_batches, depth2_val_batches = select_depth2_line_search_batches(
-            LINE_SEARCH_VAL_SET_NAME,
-            train_batch,
-            future_train_batches,
-            held_out_batches,
-            step,
-        )
-        lr_search_result = search_lrs(
-            model,
-            optimizer,
-            step,
-            rollout_train_batches,
-            depth2_val_batches,
-            autocast_ctx,
-            lr_by_subgroup,
-        )
-        lr_search_result["raw_lrs"] = lr_search_result["lrs"]
-        lr_search_result["lrs"] = smooth_line_search_lrs(
-            lr_by_subgroup,
-            lr_search_result["lrs"],
-        )
-        lr_by_subgroup = lr_search_result["lrs"]
-        last_lr_search_result = lr_search_result
-    update_optimizer_hyperparams(optimizer, step, lr_by_subgroup)
-    if (
-        should_search_lrs
-        and LINE_SEARCH_LOG_EVERY > 0
-        and step % LINE_SEARCH_LOG_EVERY == 0
-    ):
-        lr_log_record = build_line_search_log(
-            lr_search_result,
-            step,
-            val_set_name=LINE_SEARCH_VAL_SET_NAME,
-            num_batches=len(depth2_val_batches),
-            description=LINE_SEARCH_VAL_SET_DESCRIPTIONS[LINE_SEARCH_VAL_SET_NAME],
-        )
-        print(f"\nLR_SEARCH {json.dumps(lr_log_record, sort_keys=True)}", flush=True)
+    # Progress and schedules
+    progress = min(step / max(1, MAX_STEPS - 1), 1.0)
+    lrm = get_lr_multiplier(progress)
+    muon_momentum = get_muon_momentum(step)
+    muon_weight_decay = get_weight_decay(progress)
+    for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * lrm
+        if group["kind"] == "muon":
+            group["momentum"] = muon_momentum
+            group["weight_decay"] = muon_weight_decay
     if should_log_norms:
         norm_log_record = build_norm_log(
             uncompiled_model,
@@ -1825,21 +1011,8 @@ while step < MAX_STEPS:
     optimizer.step(collect_update_norms=should_log_norms)
     if should_log_norms:
         add_update_norms(norm_log_record, uncompiled_model)
-        update_norms_by_subgroup = aggregate_update_norms_by_subgroup(norm_log_record)
-        norm_feedback_reference = update_norm_feedback_reference(
-            norm_feedback_reference,
-            update_norms_by_subgroup,
-            step,
-        )
-        if step >= LINE_SEARCH_NORM_WARMUP_STEPS:
-            lr_by_subgroup = apply_norm_feedback(
-                lr_by_subgroup,
-                update_norms_by_subgroup,
-                norm_feedback_reference,
-            )
         print(f"\nNORM_LOG {json.dumps(norm_log_record, sort_keys=True)}", flush=True)
     model.zero_grad(set_to_none=True)
-    train_batch = future_train_batches.pop(0)
 
     train_loss_f = train_loss.item()
 
@@ -1865,7 +1038,7 @@ while step < MAX_STEPS:
     remaining_steps = max(0, MAX_STEPS - step - 1)
 
     print(
-        f"\rstep {step:05d} ({pct_done:.5g}%) | loss: {debiased_smooth_loss:.5g} | lrs: {format_lr_summary(lr_by_subgroup)} | val_loss: {lr_search_result['val_loss'] if lr_search_result is not None else float('nan'):.5g} | dt: {dt * 1000:.5g}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.5g}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
+        f"\rstep {step:05d} ({pct_done:.5g}%) | loss: {debiased_smooth_loss:.5g} | lrm: {lrm:.5g} | dt: {dt * 1000:.5g}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.5g}% | epoch: {epoch} | remaining_steps: {remaining_steps}    ",
         end="",
         flush=True,
     )
@@ -1879,6 +1052,9 @@ while step < MAX_STEPS:
         gc.collect()
 
     step += 1
+
+    if step >= MAX_STEPS:
+        break
 
 print()  # newline after \r training log
 
@@ -1914,6 +1090,3 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.5g}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.5g}")
 print(f"depth:            {DEPTH}")
-for subgroup in LINE_SEARCH_LR_SUBGROUPS:
-    print(f"lr_{subgroup}:        {lr_by_subgroup[subgroup]:.5g}")
-print(f"line_search_depth: {LINE_SEARCH_DEPTH}")
