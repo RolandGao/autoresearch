@@ -27,3 +27,5 @@ beam_search_checkpoints/
 sgd_ablation/
 softmax_hparam_plots/
 sgdh_ablation2_variant_plots/
+cifar10/
+logs/

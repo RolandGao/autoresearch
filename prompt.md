@@ -1030,3 +1030,5 @@ idea: the best lr might deliberately step away from the min to set up a future s
 now i introduce a new algorithm. depth=2 lr search.
 
 currently, all the lr searches are depth=1. for each of these lr points, update the weight based on this lr point and then get the gradient for the second train batch and do lr search on that, the best loss at depth 2 determines the depth=1 node to take. this is one train step. 
+
+TODO: loss landscape visualization
