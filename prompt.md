@@ -1055,3 +1055,8 @@ lr's neighbours are still *0.8 and /0.8. the core search algorithm stays the sam
 at step 1 (1-indexed), there are 2 hparms: head lr and muon lr. at step 2, there are 4 hparams: head lr, head m1, muon lr, muon m1. at step N, there are 2*N hparams cuz there will be more momentum constants. after step 1, lr is initialized to the past EMA with 0.9; momentum constants are initialized to the best momentum in the last step, and the new momentum constants are initialized to 0.5. 
 
 TODO: full dataset eval for line search seems good. when the full dataset is too large, do sampling. definitely sample the current batch and the few preceding batches that still influence the momentum buffer, the weight for them is 1. for other bathces, sample randomly and scale their weight by len(rest of dataset)/len(sampled). more generally, for samples we know that will be affected by the current update, sample all of them; for the rest that we don't know whether the current update will influence them, sample randomly and weight them. 
+
+TODO: be careful of batch norm when evaluating cuz of running statistics.
+
+
+TODO: really understand whitening. i think whitening is actually not what we want for the gradient matrix. 
