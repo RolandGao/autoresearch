@@ -454,8 +454,10 @@ def main(run, model):
         p for p in model.parameters() if len(p.shape) == 4 and p.requires_grad
     ]
     param_configs = [dict(params=[model.head.weight], lr=head_lr, weight_decay=0)]
-    optimizer1 = torch.optim.SGD(param_configs, momentum=0.8, nesterov=True, fused=True)
-    optimizer2 = Muon(filter_params, lr=0.24, momentum=0.6, nesterov=True)
+    optimizer1 = torch.optim.SGD(
+        param_configs, momentum=0.9, nesterov=False, fused=True
+    )
+    optimizer2 = Muon(filter_params, lr=0.24, momentum=0.7, nesterov=False)
     optimizers = [optimizer1, optimizer2]
     for opt in optimizers:
         for group in opt.param_groups:

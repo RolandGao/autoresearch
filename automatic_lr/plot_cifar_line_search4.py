@@ -538,7 +538,7 @@ def main():
     )
     parser.add_argument(
         "--out-dir",
-        default="line_search_landscape2_plots4",
+        default="line_search_landscape3_plots4",
         help="Directory for generated PNG and summary files.",
     )
     args = parser.parse_args()
