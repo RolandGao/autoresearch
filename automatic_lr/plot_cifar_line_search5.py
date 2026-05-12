@@ -11,6 +11,7 @@ from matplotlib.ticker import MaxNLocator
 
 LOG_PREFIX = "LR_LANDSCAPE "
 GROUPS = ("head", "muon")
+VAL_LOSS_SCALE = 5.0
 
 
 def read_records(path):
@@ -89,6 +90,11 @@ def finite_float(value):
     return value if math.isfinite(value) else float("nan")
 
 
+def val_loss(record, key="val_loss"):
+    value = finite_float(record.get(key, float("nan")))
+    return value / VAL_LOSS_SCALE
+
+
 def batch_losses(record, pre=False):
     key = "pre_batch_train_losses" if pre else "batch_train_losses"
     values = record.get(key)
@@ -151,22 +157,40 @@ def coordinate_records_by_step(records):
 def selected_lr_records(records):
     result = []
     for step, step_records in coordinate_records_by_step(records).items():
-        best_current = min(step_records, key=lambda record: record["train_loss"])
+        best_decision = min(
+            step_records,
+            key=lambda record: record.get("decision_loss", record["train_loss"]),
+        )
         best_mean = min(
             step_records, key=lambda record: mean_loss(batch_losses(record))
+        )
+        best_val = min(
+            step_records,
+            key=lambda record: val_loss(record),
         )
         result.append(
             dict(
                 step=step,
-                current_batch_index=current_batch_index(best_current),
-                lrs=best_current["lrs"],
-                train_loss=best_current["train_loss"],
-                batch_train_losses=batch_losses(best_current),
-                mean_loss=mean_loss(batch_losses(best_current)),
+                current_batch_index=current_batch_index(best_decision),
+                decision_metric=best_decision.get("decision_metric", "current_batch"),
+                lrs=best_decision["lrs"],
+                train_loss=best_decision["train_loss"],
+                val_loss=val_loss(best_decision),
+                decision_loss=best_decision.get(
+                    "decision_loss", best_decision["train_loss"]
+                ),
+                batch_train_losses=batch_losses(best_decision),
+                mean_loss=mean_loss(batch_losses(best_decision)),
                 mean_lrs=best_mean["lrs"],
                 mean_selected_train_loss=best_mean["train_loss"],
                 mean_selected_batch_train_losses=batch_losses(best_mean),
                 mean_selected_mean_loss=mean_loss(batch_losses(best_mean)),
+                mean_selected_val_loss=val_loss(best_mean),
+                val_lrs=best_val["lrs"],
+                val_selected_train_loss=best_val["train_loss"],
+                val_selected_batch_train_losses=batch_losses(best_val),
+                val_selected_mean_loss=mean_loss(batch_losses(best_val)),
+                val_selected_val_loss=val_loss(best_val),
             )
         )
     return result
@@ -186,8 +210,7 @@ def grouped_landscape_records(records):
 
 def component_loss_decrease_records(records):
     grouped_pre_steps = {
-        step_number(record): record
-        for record in pre_step_records(records)
+        step_number(record): record for record in pre_step_records(records)
     }
     grouped = defaultdict(dict)
     for record in records:
@@ -211,11 +234,14 @@ def component_loss_decrease_records(records):
         index = current_batch_index(record)
         pre_losses = batch_losses(pre_step)
         post_losses = batch_losses(record)
+        pre_val_loss = val_loss(pre_step)
+        post_val_loss = val_loss(record)
         grouped[step][component_group] = dict(
             record,
             group=component_group,
             current_loss_decrease=loss_at(pre_step, index) - loss_at(record, index),
             mean_loss_decrease=mean_loss(pre_losses) - mean_loss(post_losses),
+            val_loss_decrease=pre_val_loss - post_val_loss,
         )
     return grouped
 
@@ -231,6 +257,20 @@ def positive_linthresh(records):
     if not positive_xs:
         return 1e-8
     return max(min(positive_xs) * 0.5, 1e-12)
+
+
+def truncate_over_original(xs, ys, original_loss):
+    if not math.isfinite(finite_float(original_loss)):
+        return xs, ys
+
+    truncated_xs = []
+    truncated_ys = []
+    for x, y in zip(xs, ys):
+        if not math.isfinite(y) or y > original_loss:
+            break
+        truncated_xs.append(x)
+        truncated_ys.append(y)
+    return truncated_xs, truncated_ys
 
 
 def plot_loss_over_steps(pre_records, selected_records, out_dir):
@@ -256,6 +296,14 @@ def plot_loss_over_steps(pre_records, selected_records, out_dir):
             alpha=0.45,
             label="mean of tracked batches before step",
         )
+        ax.plot(
+            steps,
+            [val_loss(record) for record in pre_records],
+            marker="o",
+            color="tab:orange",
+            alpha=0.45,
+            label="validation before step",
+        )
     if selected_records:
         steps = [step_label(record["step"]) for record in selected_records]
         ax.plot(
@@ -272,6 +320,14 @@ def plot_loss_over_steps(pre_records, selected_records, out_dir):
             linestyle="--",
             color="tab:green",
             label="mean of tracked batches at selected LR",
+        )
+        ax.plot(
+            steps,
+            [record["val_loss"] for record in selected_records],
+            marker="o",
+            linestyle=":",
+            color="tab:orange",
+            label="validation at selected LR",
         )
 
     ax.set_title("Loss Over Steps")
@@ -290,38 +346,49 @@ def plot_selected_batch_loss_heatmap(selected_records, out_dir):
     if not selected_records:
         return None
 
-    max_batches = max(len(record["batch_train_losses"]) for record in selected_records)
+    heatmaps = (
+        ("decision-selected LR", "batch_train_losses"),
+        ("best 25-batch mean LR", "mean_selected_batch_train_losses"),
+        ("best validation LR", "val_selected_batch_train_losses"),
+    )
+    max_batches = max(
+        len(record[key]) for _, key in heatmaps for record in selected_records
+    )
     if max_batches == 0:
         return None
 
-    matrix = []
-    for record in selected_records:
-        row = [float("nan")] * max_batches
-        for index, loss in enumerate(record["batch_train_losses"]):
-            row[index] = loss
-        matrix.append(row)
-
-    fig, ax = plt.subplots(figsize=(11, 6), constrained_layout=True)
-    image = ax.imshow(matrix, aspect="auto", interpolation="nearest")
+    fig, axes = plt.subplots(1, 3, figsize=(17, 6), constrained_layout=True)
+    axes = axes.reshape(-1)
     steps = [step_label(record["step"]) for record in selected_records]
-    ax.set_title("Selected LR Losses Across Tracked Batches")
-    ax.set_xlabel("tracked batch index")
-    ax.set_ylabel("step")
-    ax.set_xticks(range(max_batches))
-    ax.set_xticklabels(range(max_batches))
-    ax.set_yticks(range(len(steps)))
-    ax.set_yticklabels(steps)
-    ax.scatter(
-        [record["current_batch_index"] for record in selected_records],
-        range(len(selected_records)),
-        marker="s",
-        facecolors="none",
-        edgecolors="white",
-        linewidths=1.4,
-        label="decision batch",
-    )
-    ax.legend(loc="upper right")
-    fig.colorbar(image, ax=ax, label="loss")
+
+    for ax, (title, key) in zip(axes, heatmaps):
+        matrix = []
+        for record in selected_records:
+            row = [float("nan")] * max_batches
+            for index, loss in enumerate(record[key]):
+                row[index] = loss
+            matrix.append(row)
+
+        image = ax.imshow(matrix, aspect="auto", interpolation="nearest")
+        ax.set_title(title)
+        ax.set_xlabel("tracked batch index")
+        ax.set_xticks(range(max_batches))
+        ax.set_xticklabels(range(max_batches))
+        ax.set_yticks(range(len(steps)))
+        ax.set_yticklabels(steps)
+        ax.scatter(
+            [record["current_batch_index"] for record in selected_records],
+            range(len(selected_records)),
+            marker="s",
+            facecolors="none",
+            edgecolors="white",
+            linewidths=1.4,
+            label="decision batch",
+        )
+        ax.legend(loc="upper right")
+        fig.colorbar(image, ax=ax, label="loss")
+    axes[0].set_ylabel("step")
+    fig.suptitle("Batch Losses Across Tracked Batches")
 
     output_path = os.path.join(out_dir, "selected_batch_loss_heatmap.png")
     fig.savefig(output_path, dpi=160)
@@ -342,7 +409,7 @@ def plot_lrs_over_steps(selected_records, out_dir):
             steps,
             [record["lrs"][group] for record in selected_records],
             marker="o",
-            label="selected by current batch",
+            label="selected by decision metric",
         )
         ax.plot(
             steps,
@@ -350,6 +417,13 @@ def plot_lrs_over_steps(selected_records, out_dir):
             marker="o",
             linestyle="--",
             label="best mean tracked loss",
+        )
+        ax.plot(
+            steps,
+            [record["val_lrs"][group] for record in selected_records],
+            marker="o",
+            linestyle=":",
+            label="best validation loss",
         )
         ax.set_title(group)
         ax.set_xlabel("step")
@@ -373,9 +447,7 @@ def plot_component_loss_decreases(grouped, out_dir):
 
     for group in GROUPS:
         valid = [
-            (step, grouped[step][group])
-            for step in steps
-            if group in grouped[step]
+            (step, grouped[step][group]) for step in steps if group in grouped[step]
         ]
         if not valid:
             continue
@@ -392,6 +464,13 @@ def plot_component_loss_decreases(grouped, out_dir):
             marker="o",
             linestyle="--",
             label=f"mean tracked batches {group}",
+        )
+        ax.plot(
+            valid_steps,
+            [record["val_loss_decrease"] for _, record in valid],
+            marker="o",
+            linestyle=":",
+            label=f"validation {group}",
         )
 
     ax.set_title("Isolated Loss Decrease From Optimal Group LR")
@@ -421,50 +500,97 @@ def plot_step(step, groups, out_dir, xscale):
         xs = [record["varied_lr"] for record in records]
         batch_count = max(len(batch_losses(record)) for record in records)
         decision_batch = current_batch_index(records[0])
+        pre_losses = batch_losses(records[0], pre=True)
         for batch_index in range(batch_count):
             ys = [
                 losses[batch_index] if batch_index < len(losses) else float("nan")
                 for losses in (batch_losses(record) for record in records)
             ]
+            original_loss = (
+                pre_losses[batch_index]
+                if batch_index < len(pre_losses)
+                else float("nan")
+            )
+            plot_xs, plot_ys = truncate_over_original(xs, ys, original_loss)
+            if not plot_xs:
+                continue
             if batch_index == decision_batch:
                 ax.plot(
-                    xs,
-                    ys,
+                    plot_xs,
+                    plot_ys,
                     marker="o",
                     color="black",
                     linewidth=2.0,
                     label=f"decision batch {batch_index}",
                 )
             else:
-                ax.plot(xs, ys, color="0.65", linewidth=0.8, alpha=0.35)
+                ax.plot(plot_xs, plot_ys, color="0.65", linewidth=0.8, alpha=0.35)
 
         mean_losses = [mean_loss(batch_losses(record)) for record in records]
+        pre_mean_loss = mean_loss(pre_losses)
+        mean_xs, mean_ys = truncate_over_original(xs, mean_losses, pre_mean_loss)
         ax.plot(
-            xs,
-            mean_losses,
+            mean_xs,
+            mean_ys,
             color="tab:green",
             linestyle="--",
             linewidth=1.6,
             label="mean tracked batches",
         )
+        val_losses = [val_loss(record) for record in records]
+        pre_val_loss = val_loss(records[0], "pre_val_loss")
+        val_xs, val_ys = truncate_over_original(xs, val_losses, pre_val_loss)
+        if any(math.isfinite(loss) for loss in val_losses):
+            ax.plot(
+                val_xs,
+                val_ys,
+                color="tab:orange",
+                linestyle=":",
+                linewidth=1.8,
+                label="validation",
+            )
 
         pre_current_loss = records[0].get("pre_train_loss")
-        pre_losses = batch_losses(records[0], pre=True)
         if pre_current_loss is not None:
             ax.axhline(pre_current_loss, color="black", alpha=0.2)
         if pre_losses:
-            ax.axhline(mean_loss(pre_losses), color="tab:green", alpha=0.2)
+            ax.axhline(pre_mean_loss, color="tab:green", alpha=0.2)
+        if math.isfinite(pre_val_loss):
+            ax.axhline(pre_val_loss, color="tab:orange", alpha=0.2)
 
         for record in records:
             if record.get("point") in {"optimum", "boundary"}:
-                ax.scatter(
-                    [record["varied_lr"]],
-                    [record["train_loss"]],
-                    s=70,
-                    marker="s" if record["point"] == "boundary" else "*",
-                    color="tab:red",
-                    zorder=4,
-                )
+                marker = "s" if record["point"] == "boundary" else "*"
+                record_train_loss = finite_float(record["train_loss"])
+                record_mean_loss = mean_loss(batch_losses(record))
+                record_val_loss = val_loss(record)
+                if record_train_loss <= finite_float(pre_current_loss):
+                    ax.scatter(
+                        [record["varied_lr"]],
+                        [record_train_loss],
+                        s=70,
+                        marker=marker,
+                        color="black",
+                        zorder=4,
+                    )
+                if record_mean_loss <= pre_mean_loss:
+                    ax.scatter(
+                        [record["varied_lr"]],
+                        [record_mean_loss],
+                        s=70,
+                        marker=marker,
+                        color="tab:green",
+                        zorder=4,
+                    )
+                if math.isfinite(record_val_loss) and record_val_loss <= pre_val_loss:
+                    ax.scatter(
+                        [record["varied_lr"]],
+                        [record_val_loss],
+                        s=70,
+                        marker=marker,
+                        color="tab:orange",
+                        zorder=4,
+                    )
 
         ax.set_title(f"{group}, decision batch {decision_batch}")
         ax.set_xlabel("varied learning rate")
@@ -493,7 +619,9 @@ def plot_run(run_name, records, base_out_dir, xscale):
         plot_loss_over_steps(pre_step_records(records), selected_records, out_dir),
         plot_selected_batch_loss_heatmap(selected_records, out_dir),
         plot_lrs_over_steps(selected_records, out_dir),
-        plot_component_loss_decreases(component_loss_decrease_records(records), out_dir),
+        plot_component_loss_decreases(
+            component_loss_decrease_records(records), out_dir
+        ),
     ):
         if output_path is not None:
             outputs.append(output_path)
@@ -515,7 +643,7 @@ def main():
     )
     parser.add_argument(
         "--out-dir",
-        default="line_search_landscape5_plots",
+        default="line_search_landscape5_plots2",
         help="Directory for generated PNG files.",
     )
     parser.add_argument(

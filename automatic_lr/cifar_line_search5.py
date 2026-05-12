@@ -15,6 +15,7 @@ import sys
 with open(sys.argv[0]) as f:
     code = f.read()
 import json
+import math
 import uuid
 from math import ceil
 
@@ -427,6 +428,20 @@ def evaluate(model, loader, tta_level=0):
     return (logits.argmax(1) == loader.labels).float().mean().item()
 
 
+def evaluate_train_batches(model, train_batches):
+    was_training = model.training
+    model.eval()
+    total_correct = 0
+    total_examples = 0
+    with torch.inference_mode():
+        for inputs, labels in train_batches:
+            logits = model(inputs, whiten_bias_grad=False)
+            total_correct += (logits.argmax(1) == labels).sum().item()
+            total_examples += len(labels)
+    model.train(was_training)
+    return total_correct / total_examples
+
+
 ############################################
 #              Line Search                 #
 ############################################
@@ -438,13 +453,18 @@ BOUNDARY_SEARCH_MAX_ITERS = 50
 LEFT_LANDSCAPE_STEPS = 10
 PARAM_GROUP_NAMES = ("head", "muon")
 NUM_TRACKED_TRAIN_BATCHES = 25
-TRAIN_SCHEDULES = (
-    ("first25_once", tuple(range(NUM_TRACKED_TRAIN_BATCHES))),
-    (
-        "first5_repeat5",
-        tuple(batch_index for batch_index in range(5) for _ in range(5)),
-    ),
+TRAIN_BATCH_SCHEDULE = tuple(range(NUM_TRACKED_TRAIN_BATCHES))
+TRAINING_SEED = 0
+DECISION_METRICS = (
+    "current_batch",
+    "mean_25_batches",
+    "validation",
 )
+
+
+def set_training_seed():
+    torch.manual_seed(TRAINING_SEED)
+    torch.cuda.manual_seed_all(TRAINING_SEED)
 
 
 def clone_state(value):
@@ -521,15 +541,60 @@ def compute_loss_item(model, inputs, labels, whiten_bias_grad):
     return finite_loss_item(loss)
 
 
+def compute_val_loss_item_from_state(model, optimizers, state, loader, whiten_bias_grad):
+    restore_training_state(model, optimizers, state)
+    model.train(True)
+    total_loss = 0.0
+    with torch.no_grad():
+        images = loader.normalized_images()
+        input_batches = images.split(loader.batch_size)
+        label_batches = loader.labels.split(loader.batch_size)
+        for inputs, labels in zip(input_batches, label_batches):
+            _, loss = compute_train_loss(model, inputs, labels, whiten_bias_grad)
+            item = finite_loss_item(loss)
+            if not math.isfinite(item):
+                total_loss = float("inf")
+                break
+            total_loss += item
+    restore_training_state(model, optimizers, state)
+    return total_loss
+
+
+def compute_val_loss_item_preserving_state(model, optimizers, loader, whiten_bias_grad):
+    state = capture_training_state(model, optimizers)
+    loss = compute_val_loss_item_from_state(
+        model, optimizers, state, loader, whiten_bias_grad
+    )
+    restore_training_state(model, optimizers, state)
+    return loss
+
+
 def compute_batch_loss_items_from_state(
     model, optimizers, state, train_batches, whiten_bias_grad
 ):
+    restore_training_state(model, optimizers, state)
+    model.train(True)
     losses = []
     for inputs, labels in train_batches:
-        restore_training_state(model, optimizers, state)
         losses.append(compute_loss_item(model, inputs, labels, whiten_bias_grad))
     restore_training_state(model, optimizers, state)
     return losses
+
+
+def mean_loss(losses):
+    if not losses or any(not math.isfinite(loss) for loss in losses):
+        return float("inf")
+    return sum(losses) / len(losses)
+
+
+def decision_loss(batch_train_losses, val_loss, current_batch_index, decision_metric):
+    if decision_metric == "current_batch":
+        return batch_train_losses[current_batch_index]
+    if decision_metric == "mean_25_batches":
+        return mean_loss(batch_train_losses)
+    if decision_metric == "validation":
+        return val_loss
+    raise ValueError(f"Unrecognized decision metric: {decision_metric}")
 
 
 def compute_batch_loss_items_preserving_state(
@@ -572,10 +637,13 @@ def line_search(
     optimizer1,
     optimizer2,
     train_batches,
+    val_loader,
     current_batch_index,
+    decision_metric,
     whiten_bias_grad,
     base_lrs,
     step,
+    run,
 ):
     search_state = capture_training_state(model, optimizers)
     losses = {}
@@ -596,24 +664,39 @@ def line_search(
         batch_train_losses = compute_batch_loss_items_from_state(
             model, optimizers, post_step_state, train_batches, whiten_bias_grad
         )
+        val_loss = compute_val_loss_item_from_state(
+            model, optimizers, post_step_state, val_loader, whiten_bias_grad
+        )
         train_loss = batch_train_losses[current_batch_index]
-        losses[exponents] = train_loss
+        mean_train_loss = mean_loss(batch_train_losses)
+        selected_loss = decision_loss(
+            batch_train_losses, val_loss, current_batch_index, decision_metric
+        )
+        losses[exponents] = selected_loss
         records[exponents] = dict(
             exponents=exponents,
             lrs=lrs,
             train_loss=train_loss,
+            mean_train_loss=mean_train_loss,
+            val_loss=val_loss,
+            decision_loss=selected_loss,
             batch_train_losses=batch_train_losses,
         )
         emit_line_search_log(
+            run=run,
             step=step,
             phase="coordinate_search",
             current_batch_index=current_batch_index,
+            decision_metric=decision_metric,
             exponents=list(exponents),
             lrs=lrs_to_dict(lrs),
             train_loss=train_loss,
+            mean_train_loss=mean_train_loss,
+            val_loss=val_loss,
+            decision_loss=selected_loss,
             batch_train_losses=batch_train_losses,
         )
-        return train_loss
+        return selected_loss
 
     center = (0,) * len(base_lrs)
     for _ in range(LINE_SEARCH_MAX_ITERS):
@@ -633,6 +716,9 @@ def line_search(
             return (
                 best_record["lrs"],
                 best_record["train_loss"],
+                best_record["mean_train_loss"],
+                best_record["val_loss"],
+                best_record["decision_loss"],
                 best_record["batch_train_losses"],
             )
         center = best_exponents
@@ -643,6 +729,9 @@ def line_search(
     return (
         best_record["lrs"],
         best_record["train_loss"],
+        best_record["mean_train_loss"],
+        best_record["val_loss"],
+        best_record["decision_loss"],
         best_record["batch_train_losses"],
     )
 
@@ -654,7 +743,9 @@ def evaluate_lrs_from_state(
     optimizer2,
     search_state,
     train_batches,
+    val_loader,
     current_batch_index,
+    decision_metric,
     whiten_bias_grad,
     lrs,
 ):
@@ -666,8 +757,15 @@ def evaluate_lrs_from_state(
     batch_train_losses = compute_batch_loss_items_from_state(
         model, optimizers, post_step_state, train_batches, whiten_bias_grad
     )
+    val_loss = compute_val_loss_item_from_state(
+        model, optimizers, post_step_state, val_loader, whiten_bias_grad
+    )
     train_loss = batch_train_losses[current_batch_index]
-    return train_loss, batch_train_losses
+    mean_train_loss = mean_loss(batch_train_losses)
+    selected_loss = decision_loss(
+        batch_train_losses, val_loss, current_batch_index, decision_metric
+    )
+    return train_loss, mean_train_loss, val_loss, selected_loss, batch_train_losses
 
 
 def log_line_search_landscape(
@@ -676,108 +774,149 @@ def log_line_search_landscape(
     optimizer1,
     optimizer2,
     train_batches,
+    val_loader,
     current_batch_index,
+    decision_metric,
     whiten_bias_grad,
     best_lrs,
     pre_train_loss,
+    pre_mean_train_loss,
+    pre_val_loss,
+    pre_decision_loss,
     pre_batch_train_losses,
     best_train_loss,
+    best_mean_train_loss,
+    best_val_loss,
+    best_decision_loss,
     best_batch_train_losses,
     step,
+    run,
 ):
     search_state = capture_training_state(model, optimizers)
 
     for dim, group_name in enumerate(PARAM_GROUP_NAMES):
         left_lrs = list(best_lrs)
         left_lrs[dim] = 0.0
-        train_loss, batch_train_losses = evaluate_lrs_from_state(
+        train_loss, mean_train_loss, val_loss, selected_loss, batch_train_losses = evaluate_lrs_from_state(
             model,
             optimizers,
             optimizer1,
             optimizer2,
             search_state,
             train_batches,
+            val_loader,
             current_batch_index,
+            decision_metric,
             whiten_bias_grad,
             tuple(left_lrs),
         )
         emit_line_search_log(
+            run=run,
             step=step,
             phase="landscape",
             current_batch_index=current_batch_index,
+            decision_metric=decision_metric,
             group=group_name,
             point="left_origin",
             varied_lr=0.0,
             lrs=lrs_to_dict(left_lrs),
             train_loss=train_loss,
+            mean_train_loss=mean_train_loss,
+            val_loss=val_loss,
+            decision_loss=selected_loss,
             batch_train_losses=batch_train_losses,
             pre_train_loss=pre_train_loss,
+            pre_mean_train_loss=pre_mean_train_loss,
+            pre_val_loss=pre_val_loss,
+            pre_decision_loss=pre_decision_loss,
             pre_batch_train_losses=pre_batch_train_losses,
         )
         for left_iter in range(LEFT_LANDSCAPE_STEPS, 0, -1):
             left_lrs = list(best_lrs)
             left_lrs[dim] = best_lrs[dim] * (LINE_SEARCH_FACTOR**left_iter)
-            train_loss, batch_train_losses = evaluate_lrs_from_state(
+            train_loss, mean_train_loss, val_loss, selected_loss, batch_train_losses = evaluate_lrs_from_state(
                 model,
                 optimizers,
                 optimizer1,
                 optimizer2,
                 search_state,
                 train_batches,
+                val_loader,
                 current_batch_index,
+                decision_metric,
                 whiten_bias_grad,
                 tuple(left_lrs),
             )
             emit_line_search_log(
+                run=run,
                 step=step,
                 phase="landscape",
                 current_batch_index=current_batch_index,
+                decision_metric=decision_metric,
                 group=group_name,
                 point="left_probe",
                 left_iter=left_iter,
                 varied_lr=float(left_lrs[dim]),
                 lrs=lrs_to_dict(left_lrs),
                 train_loss=train_loss,
+                mean_train_loss=mean_train_loss,
+                val_loss=val_loss,
+                decision_loss=selected_loss,
                 batch_train_losses=batch_train_losses,
                 pre_train_loss=pre_train_loss,
+                pre_mean_train_loss=pre_mean_train_loss,
+                pre_val_loss=pre_val_loss,
+                pre_decision_loss=pre_decision_loss,
                 pre_batch_train_losses=pre_batch_train_losses,
             )
         emit_line_search_log(
+            run=run,
             step=step,
             phase="landscape",
             current_batch_index=current_batch_index,
+            decision_metric=decision_metric,
             group=group_name,
             point="optimum",
             varied_lr=float(best_lrs[dim]),
             lrs=lrs_to_dict(best_lrs),
             train_loss=best_train_loss,
+            mean_train_loss=best_mean_train_loss,
+            val_loss=best_val_loss,
+            decision_loss=best_decision_loss,
             batch_train_losses=best_batch_train_losses,
             pre_train_loss=pre_train_loss,
+            pre_mean_train_loss=pre_mean_train_loss,
+            pre_val_loss=pre_val_loss,
+            pre_decision_loss=pre_decision_loss,
             pre_batch_train_losses=pre_batch_train_losses,
         )
 
         probe_lrs = list(best_lrs)
-        boundary_found = best_train_loss >= pre_train_loss
+        boundary_found = best_decision_loss >= pre_decision_loss
         for boundary_iter in range(BOUNDARY_SEARCH_MAX_ITERS):
             if boundary_found:
                 break
             probe_lrs[dim] = probe_lrs[dim] / LINE_SEARCH_FACTOR
-            train_loss, batch_train_losses = evaluate_lrs_from_state(
+            train_loss, mean_train_loss, val_loss, selected_loss, batch_train_losses = evaluate_lrs_from_state(
                 model,
                 optimizers,
                 optimizer1,
                 optimizer2,
                 search_state,
                 train_batches,
+                val_loader,
                 current_batch_index,
+                decision_metric,
                 whiten_bias_grad,
                 tuple(probe_lrs),
             )
-            boundary_found = train_loss >= pre_train_loss
+            boundary_found = selected_loss >= pre_decision_loss
             emit_line_search_log(
+                run=run,
                 step=step,
                 phase="landscape",
                 current_batch_index=current_batch_index,
+                decision_metric=decision_metric,
                 group=group_name,
                 point="boundary" if boundary_found else "probe",
                 boundary_found=boundary_found,
@@ -785,24 +924,38 @@ def log_line_search_landscape(
                 varied_lr=float(probe_lrs[dim]),
                 lrs=lrs_to_dict(probe_lrs),
                 train_loss=train_loss,
+                mean_train_loss=mean_train_loss,
+                val_loss=val_loss,
+                decision_loss=selected_loss,
                 batch_train_losses=batch_train_losses,
                 pre_train_loss=pre_train_loss,
+                pre_mean_train_loss=pre_mean_train_loss,
+                pre_val_loss=pre_val_loss,
+                pre_decision_loss=pre_decision_loss,
                 pre_batch_train_losses=pre_batch_train_losses,
             )
 
         if not boundary_found:
             emit_line_search_log(
+                run=run,
                 step=step,
                 phase="landscape",
                 current_batch_index=current_batch_index,
+                decision_metric=decision_metric,
                 group=group_name,
                 point="boundary_not_found",
                 boundary_found=False,
                 varied_lr=float(probe_lrs[dim]),
                 lrs=lrs_to_dict(probe_lrs),
                 train_loss=train_loss,
+                mean_train_loss=mean_train_loss,
+                val_loss=val_loss,
+                decision_loss=selected_loss,
                 batch_train_losses=batch_train_losses,
                 pre_train_loss=pre_train_loss,
+                pre_mean_train_loss=pre_mean_train_loss,
+                pre_val_loss=pre_val_loss,
+                pre_decision_loss=pre_decision_loss,
                 pre_batch_train_losses=pre_batch_train_losses,
             )
 
@@ -814,14 +967,14 @@ def log_line_search_landscape(
 ############################################
 
 
-def main(run, model, test_loader, train_batches, train_batch_schedule):
+def main(run, model, test_loader, train_batches, decision_metric):
 
     batch_size = 2000
     head_lr = 0.67
     wd = 2e-6 * batch_size
-    total_train_steps = len(train_batch_schedule)
+    total_train_steps = len(TRAIN_BATCH_SCHEDULE)
 
-    train_inputs, train_labels = train_batches[train_batch_schedule[0]]
+    train_inputs, train_labels = train_batches[TRAIN_BATCH_SCHEDULE[0]]
 
     # Create optimizers and learning rate schedulers
     filter_params = [
@@ -859,6 +1012,7 @@ def main(run, model, test_loader, train_batches, train_batch_schedule):
         nonlocal time_seconds
         time_seconds += 1e-3 * starter.elapsed_time(ender)
 
+    set_training_seed()
     model.reset()
     ema_line_search_lrs = None
 
@@ -867,7 +1021,7 @@ def main(run, model, test_loader, train_batches, train_batch_schedule):
     model.init_whiten(train_inputs)
     stop_timer()
 
-    for step, current_batch_index in enumerate(train_batch_schedule):
+    for step, current_batch_index in enumerate(TRAIN_BATCH_SCHEDULE):
         train_inputs, train_labels = train_batches[current_batch_index]
         start_timer()
         model.train()
@@ -880,6 +1034,16 @@ def main(run, model, test_loader, train_batches, train_batch_schedule):
         pre_batch_train_losses = compute_batch_loss_items_preserving_state(
             model, optimizers, train_batches, whiten_bias_grad
         )
+        pre_mean_train_loss = mean_loss(pre_batch_train_losses)
+        pre_val_loss = compute_val_loss_item_preserving_state(
+            model, optimizers, test_loader, whiten_bias_grad
+        )
+        pre_decision_loss = decision_loss(
+            pre_batch_train_losses,
+            pre_val_loss,
+            current_batch_index,
+            decision_metric,
+        )
         line_search_base_lrs = (
             tuple(group["initial_lr"] for group in optimizer1.param_groups)
             + (optimizer2.param_groups[0]["initial_lr"],)
@@ -887,23 +1051,38 @@ def main(run, model, test_loader, train_batches, train_batch_schedule):
             else ema_line_search_lrs
         )
         emit_line_search_log(
+            run=run,
             step=step,
             phase="pre_step",
             current_batch_index=current_batch_index,
+            decision_metric=decision_metric,
             lrs=lrs_to_dict((0.0,) * len(PARAM_GROUP_NAMES)),
             train_loss=pre_train_loss,
+            mean_train_loss=pre_mean_train_loss,
+            val_loss=pre_val_loss,
+            decision_loss=pre_decision_loss,
             batch_train_losses=pre_batch_train_losses,
         )
-        line_search_lrs, line_search_loss, line_search_batch_train_losses = line_search(
+        (
+            line_search_lrs,
+            line_search_loss,
+            line_search_mean_train_loss,
+            line_search_val_loss,
+            line_search_decision_loss,
+            line_search_batch_train_losses,
+        ) = line_search(
             model,
             optimizers,
             optimizer1,
             optimizer2,
             train_batches,
+            test_loader,
             current_batch_index,
+            decision_metric,
             whiten_bias_grad,
             line_search_base_lrs,
             step,
+            run,
         )
         log_line_search_landscape(
             model,
@@ -911,29 +1090,49 @@ def main(run, model, test_loader, train_batches, train_batch_schedule):
             optimizer1,
             optimizer2,
             train_batches,
+            test_loader,
             current_batch_index,
+            decision_metric,
             whiten_bias_grad,
             line_search_lrs,
             pre_train_loss,
+            pre_mean_train_loss,
+            pre_val_loss,
+            pre_decision_loss,
             pre_batch_train_losses,
             line_search_loss,
+            line_search_mean_train_loss,
+            line_search_val_loss,
+            line_search_decision_loss,
             line_search_batch_train_losses,
             step,
+            run,
         )
         ema_line_search_lrs = update_lr_ema(ema_line_search_lrs, line_search_lrs)
         line_search_head_lr, line_search_optimizer2_lr = line_search_lrs
         print(
             "line_search step=%d "
             "current_batch_index=%d "
+            "decision_metric=%s "
             "line_search_head_lr=%.8g line_search_optimizer2_lr=%.8g "
-            "pre_train_loss=%.6f line_search_loss=%.6f"
+            "pre_train_loss=%.6f pre_mean_train_loss=%.6f pre_val_loss=%.6f "
+            "pre_decision_loss=%.6f line_search_loss=%.6f "
+            "line_search_mean_train_loss=%.6f line_search_val_loss=%.6f "
+            "line_search_decision_loss=%.6f"
             % (
                 step,
                 current_batch_index,
+                decision_metric,
                 line_search_head_lr,
                 line_search_optimizer2_lr,
                 pre_train_loss,
+                pre_mean_train_loss,
+                pre_val_loss,
+                pre_decision_loss,
                 line_search_loss,
+                line_search_mean_train_loss,
+                line_search_val_loss,
+                line_search_decision_loss,
             )
         )
         set_line_search_lrs(optimizer1, optimizer2, line_search_lrs)
@@ -942,7 +1141,7 @@ def main(run, model, test_loader, train_batches, train_batch_schedule):
         model.zero_grad(set_to_none=True)
         stop_timer()
 
-    train_acc = (outputs.detach().argmax(1) == train_labels).float().mean().item()
+    train_acc = evaluate_train_batches(model, train_batches)
     val_acc = evaluate(model, test_loader, tta_level=0)
     epoch = "%dstep" % total_train_steps
     print_training_details(locals(), is_final_entry=False)
@@ -971,14 +1170,15 @@ if __name__ == "__main__":
         "cifar10", train=True, batch_size=2000, aug=dict(flip=True, translate=2)
     )
     train_loader.shuffle = False
+    set_training_seed()
     fixed_train_iter = iter(train_loader)
     train_batches = [next(fixed_train_iter) for _ in range(NUM_TRACKED_TRAIN_BATCHES)]
 
     print_columns(logging_columns_list, is_head=True)
     accs = torch.tensor(
         [
-            main(run, model, test_loader, train_batches, train_batch_schedule)
-            for run, train_batch_schedule in TRAIN_SCHEDULES
+            main(decision_metric, model, test_loader, train_batches, decision_metric)
+            for decision_metric in DECISION_METRICS
         ]
     )
     print("Mean: %.4f    Std: %.4f" % (accs.mean(), accs.std()))
