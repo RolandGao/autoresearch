@@ -11,6 +11,7 @@ Descends from https://github.com/tysam-code/hlb-CIFAR10/blob/main/main.py
 
 import os
 import sys
+
 with open(sys.argv[0]) as f:
     code = f.read()
 import uuid
@@ -21,6 +22,7 @@ from torch import nn
 import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as T
+
 
 def _env_flag(name):
     value = os.getenv(name)
@@ -44,12 +46,15 @@ torch.backends.cudnn.benchmark = USE_CUDNN_BENCHMARK
 torch.backends.cudnn.allow_tf32 = USE_TF32
 torch.backends.cuda.matmul.allow_tf32 = USE_TF32
 
-USE_COMPILED_MUON = bool(_env_flag("CIFAR_SPEEDRUN_COMPILE_MUON")) and IS_AMPERE_OR_NEWER
+USE_COMPILED_MUON = (
+    bool(_env_flag("CIFAR_SPEEDRUN_COMPILE_MUON")) and IS_AMPERE_OR_NEWER
+)
 MUON_DTYPE = torch.bfloat16 if IS_AMPERE_OR_NEWER else torch.float16
 
 #############################################
 #               Muon optimizer              #
 #############################################
+
 
 def zeropower_via_newtonschulz5(G, steps=3, eps=1e-7):
     """
@@ -62,9 +67,9 @@ def zeropower_via_newtonschulz5(G, steps=3, eps=1e-7):
     performance at all relative to UV^T, where USV^T = G is the SVD.
     """
     assert len(G.shape) == 2
-    a, b, c = (3.4445, -4.7750,  2.0315)
+    a, b, c = (3.4445, -4.7750, 2.0315)
     X = G.to(MUON_DTYPE)
-    X /= (X.norm() + eps) # ensure top singular value <= 1
+    X /= X.norm() + eps  # ensure top singular value <= 1
     if G.size(0) > G.size(1):
         X = X.T
     for _ in range(steps):
@@ -78,6 +83,7 @@ def zeropower_via_newtonschulz5(G, steps=3, eps=1e-7):
 
 if USE_COMPILED_MUON:
     zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
+
 
 class Muon(torch.optim.Optimizer):
     def __init__(self, params, lr=1e-3, momentum=0, nesterov=False):
@@ -106,9 +112,12 @@ class Muon(torch.optim.Optimizer):
                 buf.mul_(momentum).add_(g)
                 g = g.add(buf, alpha=momentum) if group["nesterov"] else buf
 
-                p.data.mul_(len(p.data)**0.5 / p.data.norm()) # normalize the weight
-                update = zeropower_via_newtonschulz5(g.reshape(len(g), -1)).view(g.shape) # whiten the update
-                p.data.add_(update, alpha=-lr) # take a step
+                p.data.mul_(len(p.data) ** 0.5 / p.data.norm())  # normalize the weight
+                update = zeropower_via_newtonschulz5(g.reshape(len(g), -1)).view(
+                    g.shape
+                )  # whiten the update
+                p.data.add_(update, alpha=-lr)  # take a step
+
 
 #############################################
 #                DataLoader                 #
@@ -117,37 +126,53 @@ class Muon(torch.optim.Optimizer):
 CIFAR_MEAN = torch.tensor((0.4914, 0.4822, 0.4465))
 CIFAR_STD = torch.tensor((0.2470, 0.2435, 0.2616))
 
+
 def batch_flip_lr(inputs):
     flip_mask = (torch.rand(len(inputs), device=inputs.device) < 0.5).view(-1, 1, 1, 1)
     return torch.where(flip_mask, inputs.flip(-1), inputs)
 
+
 def batch_crop(images, crop_size):
-    r = (images.size(-1) - crop_size)//2
-    shifts = torch.randint(-r, r+1, size=(len(images), 2), device=images.device)
+    r = (images.size(-1) - crop_size) // 2
+    shifts = torch.randint(-r, r + 1, size=(len(images), 2), device=images.device)
     y = torch.arange(crop_size, device=images.device).view(1, crop_size, 1)
     x = torch.arange(crop_size, device=images.device).view(1, 1, crop_size)
     y_idx = y + (r + shifts[:, 0]).view(-1, 1, 1)
     x_idx = x + (r + shifts[:, 1]).view(-1, 1, 1)
-    gathered_rows = images.gather(2, y_idx[:, None, :, :].expand(-1, images.size(1), -1, images.size(-1)))
-    return gathered_rows.gather(3, x_idx[:, None, :, :].expand(-1, images.size(1), crop_size, crop_size))
+    gathered_rows = images.gather(
+        2, y_idx[:, None, :, :].expand(-1, images.size(1), -1, images.size(-1))
+    )
+    return gathered_rows.gather(
+        3, x_idx[:, None, :, :].expand(-1, images.size(1), crop_size, crop_size)
+    )
+
 
 class CifarLoader:
-
     def __init__(self, path, train=True, batch_size=500, aug=None):
         data_path = os.path.join(path, "train.pt" if train else "test.pt")
         if not os.path.exists(data_path):
             dset = torchvision.datasets.CIFAR10(path, download=True, train=train)
             images = torch.tensor(dset.data)
             labels = torch.tensor(dset.targets)
-            torch.save({"images": images, "labels": labels, "classes": dset.classes}, data_path)
+            torch.save(
+                {"images": images, "labels": labels, "classes": dset.classes}, data_path
+            )
 
         data = torch.load(data_path, map_location=torch.device("cuda"))
-        self.images, self.labels, self.classes = data["images"], data["labels"], data["classes"]
+        self.images, self.labels, self.classes = (
+            data["images"],
+            data["labels"],
+            data["classes"],
+        )
         # It's faster to load+process uint8 data than to load preprocessed fp16 data
-        self.images = (self.images.half() / 255).permute(0, 3, 1, 2).to(memory_format=torch.channels_last)
+        self.images = (
+            (self.images.half() / 255)
+            .permute(0, 3, 1, 2)
+            .to(memory_format=torch.channels_last)
+        )
 
         self.normalize = T.Normalize(CIFAR_MEAN, CIFAR_STD)
-        self.proc_images = {} # Saved results of image processing to be done on the first epoch
+        self.proc_images = {}  # Saved results of image processing to be done on the first epoch
         self.epoch = 0
 
         self.aug = aug or {}
@@ -166,14 +191,18 @@ class CifarLoader:
             images = self.proc_images["flip"] = batch_flip_lr(images)
         pad = self.aug.get("translate", 0)
         if pad > 0:
-            self.proc_images["pad"] = F.pad(images, (pad,)*4, "reflect")
+            self.proc_images["pad"] = F.pad(images, (pad,) * 4, "reflect")
 
     def normalized_images(self):
         self._ensure_proc_images()
         return self.proc_images["norm"]
 
     def __len__(self):
-        return len(self.images)//self.batch_size if self.drop_last else ceil(len(self.images)/self.batch_size)
+        return (
+            len(self.images) // self.batch_size
+            if self.drop_last
+            else ceil(len(self.images) / self.batch_size)
+        )
 
     def __iter__(self):
 
@@ -193,36 +222,44 @@ class CifarLoader:
 
         self.epoch += 1
 
-        indices = (torch.randperm if self.shuffle else torch.arange)(len(images), device=images.device)
+        indices = (torch.randperm if self.shuffle else torch.arange)(
+            len(images), device=images.device
+        )
         for i in range(len(self)):
-            idxs = indices[i*self.batch_size:(i+1)*self.batch_size]
+            idxs = indices[i * self.batch_size : (i + 1) * self.batch_size]
             yield (images[idxs], self.labels[idxs])
+
 
 #############################################
 #            Network Definition             #
 #############################################
 
+
 # note the use of low BatchNorm stats momentum
 class BatchNorm(nn.BatchNorm2d):
     def __init__(self, num_features, momentum=0.6, eps=1e-12):
-        super().__init__(num_features, eps=eps, momentum=1-momentum)
+        super().__init__(num_features, eps=eps, momentum=1 - momentum)
         self.weight.requires_grad = False
         self.bias.requires_grad = False
         # Note that PyTorch already initializes the weights to one and bias to zero
 
+
 class Conv(nn.Conv2d):
     def __init__(self, in_channels, out_channels):
-        super().__init__(in_channels, out_channels, kernel_size=3, padding="same", bias=False)
+        super().__init__(
+            in_channels, out_channels, kernel_size=3, padding="same", bias=False
+        )
 
     def reset_parameters(self):
         super().reset_parameters()
         w = self.weight.data
-        torch.nn.init.dirac_(w[:w.size(1)])
+        torch.nn.init.dirac_(w[: w.size(1)])
+
 
 class ConvGroup(nn.Module):
     def __init__(self, channels_in, channels_out):
         super().__init__()
-        self.conv1 = Conv(channels_in,  channels_out)
+        self.conv1 = Conv(channels_in, channels_out)
         self.pool = nn.MaxPool2d(2)
         self.norm1 = BatchNorm(channels_out)
         self.conv2 = Conv(channels_out, channels_out)
@@ -239,18 +276,21 @@ class ConvGroup(nn.Module):
         x = self.activ(x)
         return x
 
+
 class CifarNet(nn.Module):
     def __init__(self):
         super().__init__()
         widths = dict(block1=64, block2=256, block3=256)
         whiten_kernel_size = 2
         whiten_width = 2 * 3 * whiten_kernel_size**2
-        self.whiten = nn.Conv2d(3, whiten_width, whiten_kernel_size, padding=0, bias=True)
+        self.whiten = nn.Conv2d(
+            3, whiten_width, whiten_kernel_size, padding=0, bias=True
+        )
         self.whiten.weight.requires_grad = False
         self.whiten.bias.requires_grad = False
         self.layers = nn.Sequential(
             nn.GELU(),
-            ConvGroup(whiten_width,     widths["block1"]),
+            ConvGroup(whiten_width, widths["block1"]),
             ConvGroup(widths["block1"], widths["block2"]),
             ConvGroup(widths["block2"], widths["block3"]),
             nn.MaxPool2d(3),
@@ -271,12 +311,22 @@ class CifarNet(nn.Module):
 
     def init_whiten(self, train_images, eps=5e-4):
         c, (h, w) = train_images.shape[1], self.whiten.weight.shape[2:]
-        patches = train_images.unfold(2,h,1).unfold(3,w,1).transpose(1,3).reshape(-1,c,h,w).float()
+        patches = (
+            train_images.unfold(2, h, 1)
+            .unfold(3, w, 1)
+            .transpose(1, 3)
+            .reshape(-1, c, h, w)
+            .float()
+        )
         patches_flat = patches.view(len(patches), -1)
         est_patch_covariance = (patches_flat.T @ patches_flat) / len(patches_flat)
         eigenvalues, eigenvectors = torch.linalg.eigh(est_patch_covariance, UPLO="U")
-        eigenvectors_scaled = eigenvectors.T.reshape(-1,c,h,w) / torch.sqrt(eigenvalues.view(-1,1,1,1) + eps)
-        self.whiten.weight.data[:] = torch.cat((eigenvectors_scaled, -eigenvectors_scaled))
+        eigenvectors_scaled = eigenvectors.T.reshape(-1, c, h, w) / torch.sqrt(
+            eigenvalues.view(-1, 1, 1, 1) + eps
+        )
+        self.whiten.weight.data[:] = torch.cat(
+            (eigenvectors_scaled, -eigenvectors_scaled)
+        )
 
     def forward(self, x):
         x = F.conv2d(x, self.whiten.weight, self.whiten.bias)
@@ -284,9 +334,11 @@ class CifarNet(nn.Module):
         x = x.view(len(x), -1)
         return self.head(x) / x.size(-1)
 
+
 ############################################
 #                 Logging                  #
 ############################################
+
 
 def print_columns(columns_list, is_head=False, is_final_entry=False):
     print_string = ""
@@ -294,12 +346,22 @@ def print_columns(columns_list, is_head=False, is_final_entry=False):
         print_string += "|  %s  " % col
     print_string += "|"
     if is_head:
-        print("-"*len(print_string))
+        print("-" * len(print_string))
     print(print_string)
     if is_head or is_final_entry:
-        print("-"*len(print_string))
+        print("-" * len(print_string))
 
-logging_columns_list = ["run   ", "epoch", "train_acc", "val_acc", "tta_val_acc", "time_seconds"]
+
+logging_columns_list = [
+    "run   ",
+    "epoch",
+    "train_acc",
+    "val_acc",
+    "tta_val_acc",
+    "time_seconds",
+]
+
+
 def print_training_details(variables, is_final_entry):
     formatted = []
     for col in logging_columns_list:
@@ -314,9 +376,11 @@ def print_training_details(variables, is_final_entry):
         formatted.append(res.rjust(len(col)))
     print_columns(formatted, is_final_entry=is_final_entry)
 
+
 ############################################
 #               Evaluation                 #
 ############################################
+
 
 def infer(model, loader, tta_level=0):
 
@@ -337,13 +401,15 @@ def infer(model, loader, tta_level=0):
     def infer_mirror_translate(inputs, net):
         logits = infer_mirror(inputs, net)
         pad = 1
-        padded_inputs = F.pad(inputs, (pad,)*4, "reflect")
+        padded_inputs = F.pad(inputs, (pad,) * 4, "reflect")
         inputs_translate_list = [
             padded_inputs[:, :, 0:32, 0:32],
             padded_inputs[:, :, 2:34, 2:34],
         ]
-        logits_translate_list = [infer_mirror(inputs_translate, net)
-                                 for inputs_translate in inputs_translate_list]
+        logits_translate_list = [
+            infer_mirror(inputs_translate, net)
+            for inputs_translate in inputs_translate_list
+        ]
         logits_translate = torch.stack(logits_translate_list).mean(0)
         return 0.5 * logits + 0.5 * logits_translate
 
@@ -351,15 +417,20 @@ def infer(model, loader, tta_level=0):
     test_images = loader.normalized_images()
     infer_fn = [infer_basic, infer_mirror, infer_mirror_translate][tta_level]
     with torch.inference_mode():
-        return torch.cat([infer_fn(inputs, model) for inputs in test_images.split(2000)])
+        return torch.cat(
+            [infer_fn(inputs, model) for inputs in test_images.split(2000)]
+        )
+
 
 def evaluate(model, loader, tta_level=0):
     logits = infer(model, loader, tta_level)
     return (logits.argmax(1) == loader.labels).float().mean().item()
 
+
 ############################################
 #                Training                  #
 ############################################
+
 
 def main(run, model):
 
@@ -368,16 +439,22 @@ def main(run, model):
     wd = 2e-6 * batch_size
 
     test_loader = CifarLoader("cifar10", train=False, batch_size=2000)
-    train_loader = CifarLoader("cifar10", train=True, batch_size=batch_size, aug=dict(flip=True, translate=2))
+    train_loader = CifarLoader(
+        "cifar10", train=True, batch_size=batch_size, aug=dict(flip=True, translate=2)
+    )
     if run == "warmup":
         # The only purpose of the first run is to warmup the compiled model, so we can use dummy data
-        train_loader.labels = torch.randint(0, 10, size=(len(train_loader.labels),), device=train_loader.labels.device)
+        train_loader.labels = torch.randint(
+            0, 10, size=(len(train_loader.labels),), device=train_loader.labels.device
+        )
     total_train_steps = ceil(8 * len(train_loader))
 
     # Create optimizers and learning rate schedulers
-    filter_params = [p for p in model.parameters() if len(p.shape) == 4 and p.requires_grad]
-    param_configs = [dict(params=[model.head.weight], lr=head_lr, weight_decay=wd/head_lr)]
-    optimizer1 = torch.optim.SGD(param_configs, momentum=0.85, nesterov=True, fused=True)
+    filter_params = [
+        p for p in model.parameters() if len(p.shape) == 4 and p.requires_grad
+    ]
+    param_configs = [dict(params=[model.head.weight], lr=head_lr, weight_decay=0)]
+    optimizer1 = torch.optim.SGD(param_configs, momentum=0.8, nesterov=True, fused=True)
     optimizer2 = Muon(filter_params, lr=0.24, momentum=0.6, nesterov=True)
     optimizers = [optimizer1, optimizer2]
     for opt in optimizers:
@@ -388,8 +465,10 @@ def main(run, model):
     starter = torch.cuda.Event(enable_timing=True)
     ender = torch.cuda.Event(enable_timing=True)
     time_seconds = 0.0
+
     def start_timer():
         starter.record()
+
     def stop_timer():
         ender.record()
         torch.cuda.synchronize()
@@ -406,7 +485,6 @@ def main(run, model):
     stop_timer()
 
     for epoch in range(ceil(total_train_steps / len(train_loader))):
-
         ####################
         #     Training     #
         ####################
@@ -415,8 +493,10 @@ def main(run, model):
         model.train()
         for inputs, labels in train_loader:
             outputs = model(inputs)
-            F.cross_entropy(outputs, labels, label_smoothing=0.2, reduction="sum").backward()
-            for group in optimizer1.param_groups+optimizer2.param_groups:
+            F.cross_entropy(
+                outputs, labels, label_smoothing=0.2, reduction="sum"
+            ).backward()
+            for group in optimizer1.param_groups + optimizer2.param_groups:
                 group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
             for opt in optimizers:
                 opt.step()
@@ -434,7 +514,7 @@ def main(run, model):
         train_acc = (outputs.detach().argmax(1) == labels).float().mean().item()
         val_acc = evaluate(model, test_loader, tta_level=0)
         print_training_details(locals(), is_final_entry=False)
-        run = None # Only print the run number once
+        run = None  # Only print the run number once
 
     ####################
     #  TTA Evaluation  #
@@ -448,8 +528,8 @@ def main(run, model):
 
     return tta_val_acc
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     # We re-use the compiled model between runs to save the non-data-dependent compilation time
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
     # model.compile(mode="max-autotune")

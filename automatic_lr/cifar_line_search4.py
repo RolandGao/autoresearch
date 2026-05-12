@@ -353,7 +353,7 @@ def print_columns(columns_list, is_head=False, is_final_entry=False):
 
 
 logging_columns_list = [
-    "run   ",
+    "run          ",
     "epoch",
     "train_acc",
     "val_acc",
@@ -434,9 +434,9 @@ def evaluate(model, loader, tta_level=0):
 LINE_SEARCH_FACTOR = 0.8
 LINE_SEARCH_EMA_BETA = 0.9
 LINE_SEARCH_MAX_ITERS = 50
-BOUNDARY_SEARCH_MAX_ITERS = 50
-LEFT_LANDSCAPE_STEPS = 10
+MOMENTUM_STEP = 0.1
 PARAM_GROUP_NAMES = ("head", "muon")
+LINE_SEARCH_LOG_CONTEXT = {}
 
 
 def clone_state(value):
@@ -495,10 +495,17 @@ def lrs_to_dict(lrs):
     return {name: float(lr) for name, lr in zip(PARAM_GROUP_NAMES, lrs)}
 
 
+def momentums_to_dict(momentums):
+    return {
+        name: [float(momentum) for momentum in momentums[name]]
+        for name in PARAM_GROUP_NAMES
+    }
+
+
 def emit_line_search_log(**payload):
-    payload = dict(payload)
-    payload["event"] = "lr_landscape"
-    print("LR_LANDSCAPE " + json.dumps(payload, sort_keys=True), flush=True)
+    payload = dict(LINE_SEARCH_LOG_CONTEXT, **payload)
+    payload["event"] = "momentum_line_search"
+    print("MOMENTUM_LINE_SEARCH " + json.dumps(payload, sort_keys=True), flush=True)
 
 
 def compute_loss_item(model, inputs, labels, whiten_bias_grad):
@@ -514,13 +521,6 @@ def compute_loss_item_preserving_state(
     loss = compute_loss_item(model, inputs, labels, whiten_bias_grad)
     restore_training_state(model, optimizers, state)
     return loss
-
-
-def lr_tuple_from_exponents(base_lrs, exponents):
-    return tuple(
-        base_lr * (LINE_SEARCH_FACTOR**exponent)
-        for base_lr, exponent in zip(base_lrs, exponents)
-    )
 
 
 def update_lr_ema(ema_lrs, line_search_lrs):
@@ -539,247 +539,167 @@ def set_line_search_lrs(optimizer1, optimizer2, lrs):
         group["lr"] = optimizer2_lr
 
 
+def clone_param_grads(params):
+    return [
+        None if p.grad is None else p.grad.detach().clone(memory_format=torch.preserve_format)
+        for p in params
+    ]
+
+
+def set_param_grads(params, grads):
+    for p, grad in zip(params, grads):
+        p.grad = None if grad is None else grad.clone(memory_format=torch.preserve_format)
+
+
+def compute_velocity(raw_grads, momentums):
+    assert len(raw_grads) == len(momentums) + 1
+    velocity = [None if grad is None else grad.clone() for grad in raw_grads[0]]
+    for momentum, grads in zip(momentums, raw_grads[1:]):
+        next_velocity = []
+        for v, grad in zip(velocity, grads):
+            if grad is None:
+                next_velocity.append(None)
+            elif v is None:
+                next_velocity.append(grad.clone())
+            else:
+                next_velocity.append(v.mul(momentum).add(grad, alpha=1 - momentum))
+        velocity = next_velocity
+    return velocity
+
+
+def hparam_specs(momentum_count, momentum_search_window):
+    specs = [("lr", "head", 0)]
+    if momentum_search_window is None:
+        first_searchable_momentum = 0
+    else:
+        first_searchable_momentum = max(0, momentum_count - momentum_search_window)
+    specs.extend(
+        ("momentum", "head", idx)
+        for idx in range(first_searchable_momentum, momentum_count)
+    )
+    specs.append(("lr", "muon", 1))
+    specs.extend(
+        ("momentum", "muon", idx)
+        for idx in range(first_searchable_momentum, momentum_count)
+    )
+    return specs
+
+
+def hparams_from_offsets(base_lrs, base_momentums, offsets, specs):
+    lrs = list(base_lrs)
+    momentums = {name: list(base_momentums[name]) for name in PARAM_GROUP_NAMES}
+    for offset, spec in zip(offsets, specs):
+        kind, group_name, index = spec
+        if kind == "lr":
+            lrs[index] = base_lrs[index] * (LINE_SEARCH_FACTOR**offset)
+        else:
+            momentum = base_momentums[group_name][index] + MOMENTUM_STEP * offset
+            if momentum < -1e-12 or momentum > 1 + 1e-12:
+                return None
+            momentums[group_name][index] = min(1.0, max(0.0, momentum))
+    return tuple(lrs), {name: tuple(momentums[name]) for name in PARAM_GROUP_NAMES}
+
+
+def apply_velocity_grads(params_by_group, raw_gradient_history, momentums):
+    for group_name in PARAM_GROUP_NAMES:
+        velocity = compute_velocity(raw_gradient_history[group_name], momentums[group_name])
+        set_param_grads(params_by_group[group_name], velocity)
+
+
 def line_search(
     model,
     optimizers,
     optimizer1,
     optimizer2,
+    params_by_group,
+    raw_gradient_history,
     inputs,
     labels,
     eval_inputs,
     eval_labels,
     whiten_bias_grad,
     base_lrs,
+    base_momentums,
+    momentum_search_window,
     step,
 ):
     search_state = capture_training_state(model, optimizers)
+    specs = hparam_specs(len(base_momentums["head"]), momentum_search_window)
     losses = {}
     records = {}
 
     def restore_search_state():
         restore_training_state(model, optimizers, search_state)
 
-    def evaluate_candidate(exponents):
-        if exponents in losses:
-            return losses[exponents]
-        lrs = lr_tuple_from_exponents(base_lrs, exponents)
+    def evaluate_candidate(offsets):
+        if offsets in losses:
+            return losses[offsets]
+        hparams = hparams_from_offsets(base_lrs, base_momentums, offsets, specs)
+        if hparams is None:
+            return float("inf")
+        lrs, momentums = hparams
         restore_search_state()
         set_line_search_lrs(optimizer1, optimizer2, lrs)
+        apply_velocity_grads(params_by_group, raw_gradient_history, momentums)
         for opt in optimizers:
             opt.step()
         post_step_state = capture_training_state(model, optimizers)
         train_loss = compute_loss_item(model, inputs, labels, whiten_bias_grad)
         restore_training_state(model, optimizers, post_step_state)
         eval_loss = compute_loss_item(model, eval_inputs, eval_labels, whiten_bias_grad)
-        losses[exponents] = train_loss
-        records[exponents] = dict(
-            exponents=exponents,
+        losses[offsets] = train_loss
+        records[offsets] = dict(
+            offsets=offsets,
             lrs=lrs,
+            momentums=momentums,
             train_loss=train_loss,
             eval_loss=eval_loss,
         )
         emit_line_search_log(
             step=step,
             phase="coordinate_search",
-            exponents=list(exponents),
+            searchable_hparams=specs,
+            offsets=list(offsets),
             lrs=lrs_to_dict(lrs),
+            momentums=momentums_to_dict(momentums),
             train_loss=train_loss,
             eval_loss=eval_loss,
         )
         return train_loss
 
-    center = (0,) * len(base_lrs)
+    center = (0,) * len(specs)
     for _ in range(LINE_SEARCH_MAX_ITERS):
         candidates = [center]
         for dim in range(len(center)):
             for offset in (-1, 1):
                 candidate = list(center)
                 candidate[dim] += offset
-                candidates.append(tuple(candidate))
+                if hparams_from_offsets(base_lrs, base_momentums, candidate, specs) is not None:
+                    candidates.append(tuple(candidate))
         for candidate in candidates:
             evaluate_candidate(candidate)
 
-        best_exponents = min(candidates, key=lambda candidate: losses[candidate])
-        if best_exponents == center:
+        best_offsets = min(candidates, key=lambda candidate: losses[candidate])
+        if best_offsets == center:
             restore_search_state()
             best_record = records[center]
             return (
                 best_record["lrs"],
+                best_record["momentums"],
                 best_record["train_loss"],
                 best_record["eval_loss"],
             )
-        center = best_exponents
+        center = best_offsets
 
     restore_search_state()
-    best_exponents = min(losses, key=lambda candidate: losses[candidate])
-    best_record = records[best_exponents]
-    return best_record["lrs"], best_record["train_loss"], best_record["eval_loss"]
-
-
-def evaluate_lrs_from_state(
-    model,
-    optimizers,
-    optimizer1,
-    optimizer2,
-    search_state,
-    inputs,
-    labels,
-    eval_inputs,
-    eval_labels,
-    whiten_bias_grad,
-    lrs,
-):
-    restore_training_state(model, optimizers, search_state)
-    set_line_search_lrs(optimizer1, optimizer2, lrs)
-    for opt in optimizers:
-        opt.step()
-    post_step_state = capture_training_state(model, optimizers)
-    train_loss = compute_loss_item(model, inputs, labels, whiten_bias_grad)
-    restore_training_state(model, optimizers, post_step_state)
-    eval_loss = compute_loss_item(model, eval_inputs, eval_labels, whiten_bias_grad)
-    return train_loss, eval_loss
-
-
-def log_line_search_landscape(
-    model,
-    optimizers,
-    optimizer1,
-    optimizer2,
-    inputs,
-    labels,
-    eval_inputs,
-    eval_labels,
-    whiten_bias_grad,
-    best_lrs,
-    pre_train_loss,
-    pre_eval_loss,
-    best_train_loss,
-    best_eval_loss,
-    step,
-):
-    search_state = capture_training_state(model, optimizers)
-
-    for dim, group_name in enumerate(PARAM_GROUP_NAMES):
-        left_lrs = list(best_lrs)
-        left_lrs[dim] = 0.0
-        train_loss, eval_loss = evaluate_lrs_from_state(
-            model,
-            optimizers,
-            optimizer1,
-            optimizer2,
-            search_state,
-            inputs,
-            labels,
-            eval_inputs,
-            eval_labels,
-            whiten_bias_grad,
-            tuple(left_lrs),
-        )
-        emit_line_search_log(
-            step=step,
-            phase="landscape",
-            group=group_name,
-            point="left_origin",
-            varied_lr=0.0,
-            lrs=lrs_to_dict(left_lrs),
-            train_loss=train_loss,
-            eval_loss=eval_loss,
-            pre_train_loss=pre_train_loss,
-            pre_eval_loss=pre_eval_loss,
-        )
-        for left_iter in range(LEFT_LANDSCAPE_STEPS, 0, -1):
-            left_lrs = list(best_lrs)
-            left_lrs[dim] = best_lrs[dim] * (LINE_SEARCH_FACTOR**left_iter)
-            train_loss, eval_loss = evaluate_lrs_from_state(
-                model,
-                optimizers,
-                optimizer1,
-                optimizer2,
-                search_state,
-                inputs,
-                labels,
-                eval_inputs,
-                eval_labels,
-                whiten_bias_grad,
-                tuple(left_lrs),
-            )
-            emit_line_search_log(
-                step=step,
-                phase="landscape",
-                group=group_name,
-                point="left_probe",
-                left_iter=left_iter,
-                varied_lr=float(left_lrs[dim]),
-                lrs=lrs_to_dict(left_lrs),
-                train_loss=train_loss,
-                eval_loss=eval_loss,
-                pre_train_loss=pre_train_loss,
-                pre_eval_loss=pre_eval_loss,
-            )
-        emit_line_search_log(
-            step=step,
-            phase="landscape",
-            group=group_name,
-            point="optimum",
-            varied_lr=float(best_lrs[dim]),
-            lrs=lrs_to_dict(best_lrs),
-            train_loss=best_train_loss,
-            eval_loss=best_eval_loss,
-            pre_train_loss=pre_train_loss,
-            pre_eval_loss=pre_eval_loss,
-        )
-
-        probe_lrs = list(best_lrs)
-        boundary_found = best_train_loss >= pre_train_loss
-        for boundary_iter in range(BOUNDARY_SEARCH_MAX_ITERS):
-            if boundary_found:
-                break
-            probe_lrs[dim] = probe_lrs[dim] / LINE_SEARCH_FACTOR
-            train_loss, eval_loss = evaluate_lrs_from_state(
-                model,
-                optimizers,
-                optimizer1,
-                optimizer2,
-                search_state,
-                inputs,
-                labels,
-                eval_inputs,
-                eval_labels,
-                whiten_bias_grad,
-                tuple(probe_lrs),
-            )
-            boundary_found = train_loss >= pre_train_loss
-            emit_line_search_log(
-                step=step,
-                phase="landscape",
-                group=group_name,
-                point="boundary" if boundary_found else "probe",
-                boundary_found=boundary_found,
-                boundary_iter=boundary_iter + 1,
-                varied_lr=float(probe_lrs[dim]),
-                lrs=lrs_to_dict(probe_lrs),
-                train_loss=train_loss,
-                eval_loss=eval_loss,
-                pre_train_loss=pre_train_loss,
-                pre_eval_loss=pre_eval_loss,
-            )
-
-        if not boundary_found:
-            emit_line_search_log(
-                step=step,
-                phase="landscape",
-                group=group_name,
-                point="boundary_not_found",
-                boundary_found=False,
-                varied_lr=float(probe_lrs[dim]),
-                lrs=lrs_to_dict(probe_lrs),
-                train_loss=train_loss,
-                eval_loss=eval_loss,
-                pre_train_loss=pre_train_loss,
-                pre_eval_loss=pre_eval_loss,
-            )
-
-    restore_training_state(model, optimizers, search_state)
+    best_offsets = min(losses, key=lambda candidate: losses[candidate])
+    best_record = records[best_offsets]
+    return (
+        best_record["lrs"],
+        best_record["momentums"],
+        best_record["train_loss"],
+        best_record["eval_loss"],
+    )
 
 
 ############################################
@@ -787,12 +707,17 @@ def log_line_search_landscape(
 ############################################
 
 
-def main(run, model):
+def main(run, model, momentum_search_window):
+    global LINE_SEARCH_LOG_CONTEXT
 
     batch_size = 2000
     head_lr = 0.67
-    wd = 2e-6 * batch_size
+    wd = 0.0
     total_train_steps = 20
+    LINE_SEARCH_LOG_CONTEXT = dict(
+        run=run,
+        momentum_search_window=momentum_search_window,
+    )
 
     test_loader = CifarLoader("cifar10", train=False, batch_size=2000)
     train_loader = CifarLoader(
@@ -822,9 +747,14 @@ def main(run, model):
         dict(params=[model.head.weight], lr=head_lr, weight_decay=wd / head_lr),
     ]
     optimizer1 = torch.optim.SGD(
-        param_configs, momentum=0.85, nesterov=True, fused=True
+        param_configs,
+        momentum=0.0,
+        nesterov=False,
+        fused=True,
     )
-    optimizer2 = Muon(filter_params, lr=0.24, momentum=0.6, nesterov=True)
+    optimizer2 = Muon(
+        filter_params, lr=0.24, momentum=0.0, nesterov=False
+    )
     optimizers = [optimizer1, optimizer2]
     for opt in optimizers:
         for group in opt.param_groups:
@@ -846,6 +776,12 @@ def main(run, model):
 
     model.reset()
     ema_line_search_lrs = None
+    best_momentums = {name: tuple() for name in PARAM_GROUP_NAMES}
+    raw_gradient_history = {name: [] for name in PARAM_GROUP_NAMES}
+    params_by_group = {
+        "head": [model.head.weight],
+        "muon": filter_params,
+    }
 
     # The first fixed augmented batch is the whole training dataset for this run.
     start_timer()
@@ -860,6 +796,8 @@ def main(run, model):
             model, train_inputs, train_labels, whiten_bias_grad
         )
         train_loss.backward()
+        raw_gradient_history["head"].append(clone_param_grads(params_by_group["head"]))
+        raw_gradient_history["muon"].append(clone_param_grads(params_by_group["muon"]))
         pre_train_loss = finite_loss_item(train_loss)
         pre_eval_loss = compute_loss_item_preserving_state(
             model, optimizers, eval_inputs, eval_labels, whiten_bias_grad
@@ -870,54 +808,58 @@ def main(run, model):
             if ema_line_search_lrs is None
             else ema_line_search_lrs
         )
+        line_search_base_momentums = {
+            name: best_momentums[name] + ((0.5,) if step > 0 else tuple())
+            for name in PARAM_GROUP_NAMES
+        }
         emit_line_search_log(
             step=step,
             phase="pre_step",
             lrs=lrs_to_dict((0.0,) * len(PARAM_GROUP_NAMES)),
+            momentums=momentums_to_dict(line_search_base_momentums),
             train_loss=pre_train_loss,
             eval_loss=pre_eval_loss,
         )
-        line_search_lrs, line_search_loss, line_search_eval_loss = line_search(
+        (
+            line_search_lrs,
+            line_search_momentums,
+            line_search_loss,
+            line_search_eval_loss,
+        ) = line_search(
             model,
             optimizers,
             optimizer1,
             optimizer2,
+            params_by_group,
+            raw_gradient_history,
             train_inputs,
             train_labels,
             eval_inputs,
             eval_labels,
             whiten_bias_grad,
             line_search_base_lrs,
-            step,
-        )
-        log_line_search_landscape(
-            model,
-            optimizers,
-            optimizer1,
-            optimizer2,
-            train_inputs,
-            train_labels,
-            eval_inputs,
-            eval_labels,
-            whiten_bias_grad,
-            line_search_lrs,
-            pre_train_loss,
-            pre_eval_loss,
-            line_search_loss,
-            line_search_eval_loss,
+            line_search_base_momentums,
+            momentum_search_window,
             step,
         )
         ema_line_search_lrs = update_lr_ema(ema_line_search_lrs, line_search_lrs)
+        best_momentums = line_search_momentums
         line_search_head_lr, line_search_optimizer2_lr = line_search_lrs
         print(
             "line_search step=%d "
+            "run=%s momentum_search_window=%s "
             "line_search_head_lr=%.8g line_search_optimizer2_lr=%.8g "
+            "line_search_head_momentums=%s line_search_muon_momentums=%s "
             "pre_train_loss=%.6f pre_eval_loss=%.6f "
             "line_search_loss=%.6f line_search_eval_loss=%.6f"
             % (
                 step,
+                run,
+                momentum_search_window,
                 line_search_head_lr,
                 line_search_optimizer2_lr,
+                list(line_search_momentums["head"]),
+                list(line_search_momentums["muon"]),
                 pre_train_loss,
                 pre_eval_loss,
                 line_search_loss,
@@ -925,6 +867,7 @@ def main(run, model):
             )
         )
         set_line_search_lrs(optimizer1, optimizer2, line_search_lrs)
+        apply_velocity_grads(params_by_group, raw_gradient_history, line_search_momentums)
         for opt in optimizers:
             opt.step()
         model.zero_grad(set_to_none=True)
@@ -956,11 +899,21 @@ if __name__ == "__main__":
 
     print_columns(logging_columns_list, is_head=True)
     # main("warmup", model)
-    accs = torch.tensor([main(run, model) for run in range(1)])
+    run_configs = [
+        ("all_momentum", None),
+        ("recent2_momentum", 2),
+        ("recent3_momentum", 3),
+    ]
+    accs = torch.tensor(
+        [
+            main(run, model, momentum_search_window)
+            for run, momentum_search_window in run_configs
+        ]
+    )
     print("Mean: %.4f    Std: %.4f" % (accs.mean(), accs.std()))
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "log.pt")
-    torch.save(dict(code=code, accs=accs), log_path)
+    torch.save(dict(code=code, accs=accs, run_configs=run_configs), log_path)
     print(os.path.abspath(log_path))

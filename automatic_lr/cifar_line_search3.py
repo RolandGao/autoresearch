@@ -353,7 +353,9 @@ def print_columns(columns_list, is_head=False, is_final_entry=False):
 
 
 logging_columns_list = [
-    "run   ",
+    "run          ",
+    "head_momentum",
+    "muon_momentum",
     "epoch",
     "train_acc",
     "val_acc",
@@ -437,6 +439,8 @@ LINE_SEARCH_MAX_ITERS = 50
 BOUNDARY_SEARCH_MAX_ITERS = 50
 LEFT_LANDSCAPE_STEPS = 10
 PARAM_GROUP_NAMES = ("head", "muon")
+MOMENTUM_VALUES = (0.0, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9)
+LINE_SEARCH_LOG_CONTEXT = {}
 
 
 def clone_state(value):
@@ -496,7 +500,7 @@ def lrs_to_dict(lrs):
 
 
 def emit_line_search_log(**payload):
-    payload = dict(payload)
+    payload = dict(LINE_SEARCH_LOG_CONTEXT, **payload)
     payload["event"] = "lr_landscape"
     print("LR_LANDSCAPE " + json.dumps(payload, sort_keys=True), flush=True)
 
@@ -787,12 +791,18 @@ def log_line_search_landscape(
 ############################################
 
 
-def main(run, model):
+def main(run, model, head_momentum, muon_momentum):
+    global LINE_SEARCH_LOG_CONTEXT
 
     batch_size = 2000
     head_lr = 0.67
     wd = 2e-6 * batch_size
     total_train_steps = 20
+    LINE_SEARCH_LOG_CONTEXT = dict(
+        run=run,
+        head_momentum=float(head_momentum),
+        muon_momentum=float(muon_momentum),
+    )
 
     test_loader = CifarLoader("cifar10", train=False, batch_size=2000)
     train_loader = CifarLoader(
@@ -822,9 +832,14 @@ def main(run, model):
         dict(params=[model.head.weight], lr=head_lr, weight_decay=wd / head_lr),
     ]
     optimizer1 = torch.optim.SGD(
-        param_configs, momentum=0.85, nesterov=True, fused=True
+        param_configs,
+        momentum=head_momentum,
+        nesterov=head_momentum > 0,
+        fused=True,
     )
-    optimizer2 = Muon(filter_params, lr=0.24, momentum=0.6, nesterov=True)
+    optimizer2 = Muon(
+        filter_params, lr=0.24, momentum=muon_momentum, nesterov=muon_momentum > 0
+    )
     optimizers = [optimizer1, optimizer2]
     for opt in optimizers:
         for group in opt.param_groups:
@@ -956,11 +971,28 @@ if __name__ == "__main__":
 
     print_columns(logging_columns_list, is_head=True)
     # main("warmup", model)
-    accs = torch.tensor([main(run, model) for run in range(1)])
+    momentum_configs = [
+        (head_momentum, muon_momentum)
+        for head_momentum in MOMENTUM_VALUES
+        for muon_momentum in MOMENTUM_VALUES
+    ]
+    accs = torch.tensor(
+        [
+            main(
+                f"h{head_momentum:g}_m{muon_momentum:g}",
+                model,
+                head_momentum,
+                muon_momentum,
+            )
+            for head_momentum, muon_momentum in momentum_configs
+        ]
+    )
     print("Mean: %.4f    Std: %.4f" % (accs.mean(), accs.std()))
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "log.pt")
-    torch.save(dict(code=code, accs=accs), log_path)
+    torch.save(
+        dict(code=code, accs=accs, momentum_configs=momentum_configs), log_path
+    )
     print(os.path.abspath(log_path))

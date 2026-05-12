@@ -1033,3 +1033,23 @@ currently, all the lr searches are depth=1. for each of these lr points, update 
 
 TODO: loss landscape visualization
 TODO: be careful of batch normalization when plotting loss function. 
+
+TODO: optimizing a single batch as fast as possible is important
+
+
+
+modify /workspace/neural_networks_optimization/autoresearch/automatic_lr/cifar_line_search4.py
+
+now we want to do line search over the momentum instead of whatever we are doing now. 
+
+save all the past raw gradients. 
+
+v1 = g1
+v2 = m1 * v1 + (1-m1)*g2.
+v3 = m2 * v2 + (1-m2) * g3
+v4 = m3 * v3 + (1-m3)*g4
+etc
+at the n-th step, use v_n. the best m1 can be different for different steps, so at step N (1-indexed), search over m_1,...,m_{N-1}.
+we do this for both head and muon groups, separately. m_i are each initialized to 0.5, and the neighbours are +-0.1, and the boundaries are 0 and 1. 
+lr's neighbours are still *0.8 and /0.8. the core search algorithm stays the same: try all the neighbouring hparam points, and choose the one with the best train loss, and then try all neighbouring points again, until all neighbouring points have worse loss. 
+at step 1 (1-indexed), there are 2 hparms: head lr and muon lr. at step 2, there are 4 hparams: head lr, head m1, muon lr, muon m1. at step N, there are 2*N hparams cuz there will be more momentum constants. after step 1, lr is initialized to the past EMA with 0.9; momentum constants are initialized to the best momentum in the last step, and the new momentum constants are initialized to 0.5. 
