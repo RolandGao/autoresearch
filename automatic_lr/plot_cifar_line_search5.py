@@ -156,10 +156,16 @@ def coordinate_records_by_step(records):
 
 def selected_lr_records(records):
     result = []
+    pre_steps = {step_number(record): record for record in pre_step_records(records)}
     for step, step_records in coordinate_records_by_step(records).items():
+        decision_batch_index = current_batch_index(step_records[0])
         best_decision = min(
             step_records,
             key=lambda record: record.get("decision_loss", record["train_loss"]),
+        )
+        best_current = min(
+            step_records,
+            key=lambda record: loss_at(record, decision_batch_index),
         )
         best_mean = min(
             step_records, key=lambda record: mean_loss(batch_losses(record))
@@ -168,11 +174,24 @@ def selected_lr_records(records):
             step_records,
             key=lambda record: val_loss(record),
         )
+        pre_record = pre_steps.get(step)
+        pre_losses = batch_losses(pre_record) if pre_record is not None else []
+        pre_current_loss = (
+            loss_at(pre_record, decision_batch_index)
+            if pre_record is not None
+            else float("nan")
+        )
         result.append(
             dict(
                 step=step,
-                current_batch_index=current_batch_index(best_decision),
+                current_batch_index=decision_batch_index,
                 decision_metric=best_decision.get("decision_metric", "current_batch"),
+                pre_batch_train_losses=pre_losses,
+                pre_train_loss=pre_current_loss,
+                pre_mean_loss=mean_loss(pre_losses),
+                pre_val_loss=(
+                    val_loss(pre_record) if pre_record is not None else float("nan")
+                ),
                 lrs=best_decision["lrs"],
                 train_loss=best_decision["train_loss"],
                 val_loss=val_loss(best_decision),
@@ -181,6 +200,11 @@ def selected_lr_records(records):
                 ),
                 batch_train_losses=batch_losses(best_decision),
                 mean_loss=mean_loss(batch_losses(best_decision)),
+                current_lrs=best_current["lrs"],
+                current_selected_train_loss=best_current["train_loss"],
+                current_selected_batch_train_losses=batch_losses(best_current),
+                current_selected_mean_loss=mean_loss(batch_losses(best_current)),
+                current_selected_val_loss=val_loss(best_current),
                 mean_lrs=best_mean["lrs"],
                 mean_selected_train_loss=best_mean["train_loss"],
                 mean_selected_batch_train_losses=batch_losses(best_mean),
@@ -342,6 +366,160 @@ def plot_loss_over_steps(pre_records, selected_records, out_dir):
     return output_path
 
 
+def format_number(value):
+    value = finite_float(value)
+    if math.isnan(value):
+        return "nan"
+    return f"{value:.6g}"
+
+
+def lr_value(lrs, group):
+    if not isinstance(lrs, dict):
+        return float("nan")
+    return finite_float(lrs.get(group, float("nan")))
+
+
+def loss_delta(after, before):
+    if math.isfinite(after) and math.isfinite(before):
+        return after - before
+    return float("nan")
+
+
+def write_selected_lr_summary(run_name, selected_records, out_dir):
+    if not selected_records:
+        return None
+
+    output_path = os.path.join(out_dir, "selected_lr_summary.txt")
+    columns = (
+        "step",
+        "decision_metric",
+        "decision_batch",
+        "selection",
+        "head_lr",
+        "muon_lr",
+        "current_batch_loss",
+        "mean_25_batch_loss",
+        "validation_loss",
+        "current_delta",
+        "mean_delta",
+        "validation_delta",
+    )
+    rows = []
+    selections = (
+        (
+            "best_current",
+            "current_lrs",
+            "current_selected_train_loss",
+            "current_selected_mean_loss",
+            "current_selected_val_loss",
+        ),
+        (
+            "best_mean",
+            "mean_lrs",
+            "mean_selected_train_loss",
+            "mean_selected_mean_loss",
+            "mean_selected_val_loss",
+        ),
+        (
+            "best_validation",
+            "val_lrs",
+            "val_selected_train_loss",
+            "val_selected_mean_loss",
+            "val_selected_val_loss",
+        ),
+    )
+    selected_selection_by_metric = {
+        "current_batch": "best_current",
+        "mean_25_batches": "best_mean",
+        "validation": "best_validation",
+    }
+
+    for record in selected_records:
+        selected_selection = selected_selection_by_metric.get(
+            record.get("decision_metric")
+        )
+        for selection, lr_key, train_key, mean_key, val_key in selections:
+            train_loss = finite_float(record.get(train_key, float("nan")))
+            mean_record_loss = finite_float(record.get(mean_key, float("nan")))
+            validation_loss = finite_float(record.get(val_key, float("nan")))
+            lrs = record.get(lr_key, {})
+            selection_label = (
+                f"{selection} (selected)"
+                if selection == selected_selection
+                else selection
+            )
+            rows.append(
+                (
+                    str(step_label(record["step"])),
+                    str(record.get("decision_metric", "")),
+                    str(record.get("current_batch_index", "")),
+                    selection_label,
+                    format_number(lr_value(lrs, "head")),
+                    format_number(lr_value(lrs, "muon")),
+                    format_number(train_loss),
+                    format_number(mean_record_loss),
+                    format_number(validation_loss),
+                    format_number(loss_delta(train_loss, record["pre_train_loss"])),
+                    format_number(
+                        loss_delta(mean_record_loss, record["pre_mean_loss"])
+                    ),
+                    format_number(
+                        loss_delta(validation_loss, record["pre_val_loss"])
+                    ),
+                )
+            )
+
+    widths = [
+        max(len(column), *(len(row[index]) for row in rows))
+        for index, column in enumerate(columns)
+    ]
+
+    def format_row(values):
+        return "  ".join(
+            str(value).rjust(width) for value, width in zip(values, widths)
+        )
+
+    with open(output_path, "w") as stream:
+        stream.write(f"Run: {run_name}\n")
+        stream.write("Validation losses are divided by 5 to match plot scale.\n")
+        stream.write("Deltas are selected loss minus pre-step loss; lower is better.\n")
+        stream.write("\n")
+        stream.write(format_row(columns) + "\n")
+        stream.write(format_row("-" * width for width in widths) + "\n")
+        for row in rows:
+            stream.write(format_row(row) + "\n")
+
+    return output_path
+
+
+def finite_values(matrix):
+    return [
+        value
+        for row in matrix
+        for value in row
+        if math.isfinite(value)
+    ]
+
+
+def selected_batch_loss_matrix(selected_records, key, max_batches, use_pre_delta):
+    matrix = []
+    for record in selected_records:
+        row = [float("nan")] * max_batches
+        pre_losses = record.get("pre_batch_train_losses", [])
+        for index, loss in enumerate(record[key]):
+            if use_pre_delta:
+                if index >= len(pre_losses):
+                    continue
+                pre_loss = pre_losses[index]
+                if not (math.isfinite(loss) and math.isfinite(pre_loss)):
+                    continue
+                row[index] = loss - pre_loss
+            else:
+                row[index] = loss
+        matrix.append(row)
+    return matrix
+
+
 def plot_selected_batch_loss_heatmap(selected_records, out_dir):
     if not selected_records:
         return None
@@ -357,19 +535,46 @@ def plot_selected_batch_loss_heatmap(selected_records, out_dir):
     if max_batches == 0:
         return None
 
+    use_pre_delta = any(
+        record.get("pre_batch_train_losses") for record in selected_records
+    )
+    matrices = [
+        (
+            title,
+            selected_batch_loss_matrix(
+                selected_records, key, max_batches, use_pre_delta
+            ),
+        )
+        for title, key in heatmaps
+    ]
+    all_values = [
+        value
+        for _, matrix in matrices
+        for value in finite_values(matrix)
+    ]
+    if use_pre_delta:
+        vmax = max(abs(value) for value in all_values) if all_values else 1.0
+        if vmax == 0:
+            vmax = 1.0
+        image_kwargs = dict(cmap="coolwarm", vmin=-vmax, vmax=vmax)
+        colorbar_label = "loss change vs pre-step"
+        suptitle = "Batch Loss Changes Across Tracked Batches"
+    else:
+        image_kwargs = {}
+        colorbar_label = "loss"
+        suptitle = "Batch Losses Across Tracked Batches"
+
     fig, axes = plt.subplots(1, 3, figsize=(17, 6), constrained_layout=True)
     axes = axes.reshape(-1)
     steps = [step_label(record["step"]) for record in selected_records]
 
-    for ax, (title, key) in zip(axes, heatmaps):
-        matrix = []
-        for record in selected_records:
-            row = [float("nan")] * max_batches
-            for index, loss in enumerate(record[key]):
-                row[index] = loss
-            matrix.append(row)
-
-        image = ax.imshow(matrix, aspect="auto", interpolation="nearest")
+    for ax, (title, matrix) in zip(axes, matrices):
+        image = ax.imshow(
+            matrix,
+            aspect="auto",
+            interpolation="nearest",
+            **image_kwargs,
+        )
         ax.set_title(title)
         ax.set_xlabel("tracked batch index")
         ax.set_xticks(range(max_batches))
@@ -386,9 +591,9 @@ def plot_selected_batch_loss_heatmap(selected_records, out_dir):
             label="decision batch",
         )
         ax.legend(loc="upper right")
-        fig.colorbar(image, ax=ax, label="loss")
+        fig.colorbar(image, ax=ax, label=colorbar_label)
     axes[0].set_ylabel("step")
-    fig.suptitle("Batch Losses Across Tracked Batches")
+    fig.suptitle(suptitle)
 
     output_path = os.path.join(out_dir, "selected_batch_loss_heatmap.png")
     fig.savefig(output_path, dpi=160)
@@ -403,27 +608,38 @@ def plot_lrs_over_steps(selected_records, out_dir):
     steps = [step_label(record["step"]) for record in selected_records]
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.8), constrained_layout=True)
     axes = axes.reshape(-1)
+    decision_metric = selected_records[0].get("decision_metric")
+    selected_labels = {
+        "current_batch": "best current batch loss",
+        "mean_25_batches": "best 25-batch mean loss",
+        "validation": "best validation loss",
+    }
+
+    def lr_label(base_label):
+        if selected_labels.get(decision_metric) == base_label:
+            return f"{base_label} (selected)"
+        return base_label
 
     for ax, group in zip(axes, GROUPS):
         ax.plot(
             steps,
-            [record["lrs"][group] for record in selected_records],
+            [record["current_lrs"][group] for record in selected_records],
             marker="o",
-            label="selected by decision metric",
+            label=lr_label("best current batch loss"),
         )
         ax.plot(
             steps,
             [record["mean_lrs"][group] for record in selected_records],
             marker="o",
             linestyle="--",
-            label="best mean tracked loss",
+            label=lr_label("best 25-batch mean loss"),
         )
         ax.plot(
             steps,
             [record["val_lrs"][group] for record in selected_records],
             marker="o",
             linestyle=":",
-            label="best validation loss",
+            label=lr_label("best validation loss"),
         )
         ax.set_title(group)
         ax.set_xlabel("step")
@@ -616,6 +832,7 @@ def plot_run(run_name, records, base_out_dir, xscale):
     outputs = []
     selected_records = selected_lr_records(records)
     for output_path in (
+        write_selected_lr_summary(run_name, selected_records, out_dir),
         plot_loss_over_steps(pre_step_records(records), selected_records, out_dir),
         plot_selected_batch_loss_heatmap(selected_records, out_dir),
         plot_lrs_over_steps(selected_records, out_dir),
@@ -644,7 +861,7 @@ def main():
     parser.add_argument(
         "--out-dir",
         default="line_search_landscape5_plots2",
-        help="Directory for generated PNG files.",
+        help="Directory for generated plot and summary files.",
     )
     parser.add_argument(
         "--xscale",

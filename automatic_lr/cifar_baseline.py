@@ -22,12 +22,6 @@ import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as T
 
-def _env_flag(name):
-    value = os.getenv(name)
-    if value is None:
-        return None
-    return value.lower() not in {"0", "false", "no"}
-
 
 def _cuda_capability():
     if not torch.cuda.is_available():
@@ -37,15 +31,22 @@ def _cuda_capability():
 
 CUDA_CAPABILITY = _cuda_capability()
 IS_AMPERE_OR_NEWER = CUDA_CAPABILITY[0] >= 8
-USE_CUDNN_BENCHMARK = bool(_env_flag("CIFAR_SPEEDRUN_CUDNN_BENCHMARK"))
-USE_TF32 = (_env_flag("CIFAR_SPEEDRUN_TF32") is not False) and IS_AMPERE_OR_NEWER
+USE_CUDNN_BENCHMARK = False
+USE_TF32 = IS_AMPERE_OR_NEWER
 
 torch.backends.cudnn.benchmark = USE_CUDNN_BENCHMARK
 torch.backends.cudnn.allow_tf32 = USE_TF32
 torch.backends.cuda.matmul.allow_tf32 = USE_TF32
 
-USE_COMPILED_MUON = bool(_env_flag("CIFAR_SPEEDRUN_COMPILE_MUON")) and IS_AMPERE_OR_NEWER
+USE_COMPILED_MUON = False
 MUON_DTYPE = torch.bfloat16 if IS_AMPERE_OR_NEWER else torch.float16
+TRAINING_SEED = 0
+
+
+def set_training_seed():
+    torch.manual_seed(TRAINING_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(TRAINING_SEED)
 
 #############################################
 #               Muon optimizer              #
@@ -298,7 +299,7 @@ def print_columns(columns_list, is_head=False, is_final_entry=False):
     if is_head or is_final_entry:
         print("-"*len(print_string))
 
-logging_columns_list = ["run   ", "epoch", "train_acc", "val_acc", "tta_val_acc", "time_seconds"]
+logging_columns_list = ["run   ", "epoch", "train_loss", "train_acc", "val_acc", "tta_val_acc", "time_seconds"]
 def print_training_details(variables, is_final_entry):
     formatted = []
     for col in logging_columns_list:
@@ -361,6 +362,7 @@ def evaluate(model, loader, tta_level=0):
 ############################################
 
 def main(run, model):
+    set_training_seed()
 
     batch_size = 2000
     bias_lr = 0.053
@@ -419,7 +421,8 @@ def main(run, model):
         model.train()
         for inputs, labels in train_loader:
             outputs = model(inputs, whiten_bias_grad=(step < whiten_bias_train_steps))
-            F.cross_entropy(outputs, labels, label_smoothing=0.2, reduction="sum").backward()
+            loss = F.cross_entropy(outputs, labels, label_smoothing=0.2, reduction="sum")
+            loss.backward()
             for group in optimizer1.param_groups[:1]:
                 group["lr"] = group["initial_lr"] * (1 - step / whiten_bias_train_steps)
             for group in optimizer1.param_groups[1:]+optimizer2.param_groups:
@@ -437,6 +440,7 @@ def main(run, model):
         ####################
 
         # Save the accuracy and loss from the last training batch of the epoch
+        train_loss = F.cross_entropy(outputs.detach().float(), labels, label_smoothing=0.2).item()
         train_acc = (outputs.detach().argmax(1) == labels).float().mean().item()
         val_acc = evaluate(model, test_loader, tta_level=0)
         print_training_details(locals(), is_final_entry=False)
@@ -452,21 +456,25 @@ def main(run, model):
     epoch = "eval"
     print_training_details(locals(), is_final_entry=True)
 
-    return tta_val_acc
+    return dict(train_loss=train_loss, train_acc=train_acc, val_acc=val_acc, tta_val_acc=tta_val_acc)
 
 if __name__ == "__main__":
 
     # We re-use the compiled model between runs to save the non-data-dependent compilation time
+    set_training_seed()
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
     # model.compile(mode="max-autotune")
 
     print_columns(logging_columns_list, is_head=True)
     # main("warmup", model)
-    accs = torch.tensor([main(run, model) for run in range(1)])
-    print("Mean: %.4f    Std: %.4f" % (accs.mean(), accs.std()))
+    result = main(0, model)
+    print("Train loss: %.4f" % result["train_loss"])
+    print("Train acc:  %.4f" % result["train_acc"])
+    print("Val acc:    %.4f" % result["val_acc"])
+    print("TTA val:    %.4f" % result["tta_val_acc"])
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "log.pt")
-    torch.save(dict(code=code, accs=accs), log_path)
+    torch.save(dict(code=code, result=result), log_path)
     print(os.path.abspath(log_path))
