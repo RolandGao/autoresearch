@@ -434,6 +434,7 @@ def evaluate(model, loader, tta_level=0):
 
 LINE_SEARCH_FACTOR = 0.8
 INITIAL_GROUND_TRUTH_MATRIX_LR = 0.24
+LINE_SEARCH_LEFT_STEPS = 20
 LINE_SEARCH_RIGHT_STEPS = 10
 
 
@@ -535,10 +536,13 @@ def evaluate_matrix_lr_grid(
     return best_matrix_lr, best_loss, losses_by_matrix_lr
 
 
-def initial_ground_truth_matrix_lr_sweep():
+def initial_ground_truth_matrix_lr_sweep(ground_truth_matrix_lr):
     sweep = [0.0, INITIAL_GROUND_TRUTH_MATRIX_LR]
+    for i in range(1, LINE_SEARCH_LEFT_STEPS + 1):
+        sweep.append(lr_from_exponent(INITIAL_GROUND_TRUTH_MATRIX_LR, i))
     for i in range(1, LINE_SEARCH_RIGHT_STEPS + 1):
         sweep.append(lr_from_exponent(INITIAL_GROUND_TRUTH_MATRIX_LR, -i))
+    sweep.append(ground_truth_matrix_lr)
     return sweep
 
 
@@ -631,7 +635,7 @@ def main(run, model):
                     optimizer2,
                     inputs,
                     labels,
-                    initial_ground_truth_matrix_lr_sweep(),
+                    initial_ground_truth_matrix_lr_sweep(ground_truth_matrix_lr),
                 )
             )
             print(

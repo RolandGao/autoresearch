@@ -101,20 +101,52 @@ def largest_matrix_lr_within_loss_gap(row, max_loss_gap):
     return max(candidates)
 
 
-def loss_at_matrix_lr(row, key):
+def estimated_loss_at_matrix_lr(row, key):
     target = row.get(key)
     if not finite(target):
         return float("nan")
-    losses = matrix_lr_losses(row)
+    losses = [
+        (matrix_lr, loss)
+        for matrix_lr, loss in matrix_lr_losses(row)
+        if finite(matrix_lr) and matrix_lr >= 0 and finite(loss)
+    ]
     if not losses:
         return float("nan")
+    losses.sort(key=lambda item: item[0])
 
     matrix_lr, loss = min(
         losses,
         key=lambda item: abs(item[0] - target) / max(abs(target), 1e-30),
     )
     relative_error = abs(matrix_lr - target) / max(abs(target), 1e-30)
-    return loss if relative_error <= 1e-5 else float("nan")
+    if relative_error <= 1e-5:
+        return loss
+
+    if target < 0:
+        return float("nan")
+
+    zero_loss = next((loss for matrix_lr, loss in losses if matrix_lr == 0.0), None)
+    positive_losses = [(matrix_lr, loss) for matrix_lr, loss in losses if matrix_lr > 0]
+    if not positive_losses:
+        return float("nan")
+
+    first_lr, first_loss = positive_losses[0]
+    if target < first_lr:
+        if zero_loss is None:
+            return first_loss
+        weight = target / first_lr
+        return zero_loss + weight * (first_loss - zero_loss)
+
+    for (left_lr, left_loss), (right_lr, right_loss) in zip(
+        positive_losses, positive_losses[1:]
+    ):
+        if left_lr <= target <= right_lr:
+            left_log = math.log(left_lr)
+            right_log = math.log(right_lr)
+            weight = (math.log(target) - left_log) / (right_log - left_log)
+            return left_loss + weight * (right_loss - left_loss)
+
+    return positive_losses[-1][1]
 
 
 def relative_loss_diff(loss, best_loss):
@@ -124,7 +156,7 @@ def relative_loss_diff(loss, best_loss):
 
 
 def ground_truth_relative_loss_diff(row):
-    ground_truth_loss = loss_at_matrix_lr(row, "ground_truth_matrix_lr")
+    ground_truth_loss = estimated_loss_at_matrix_lr(row, "ground_truth_matrix_lr")
     best_loss = best_matrix_lr_loss(row)
     return relative_loss_diff(ground_truth_loss, best_loss)
 
@@ -219,13 +251,13 @@ def plot_landscape(ax, runs):
                 linestyle="--",
                 label=f"ground truth lr{suffix}",
             )
-        if has_any(rows, "line_search_matrix_lr"):
+        if any(matrix_lr_losses(row) for row in rows):
             ax.plot(
                 steps,
-                series(rows, "line_search_matrix_lr"),
-                color="black",
+                [best_matrix_lr(row) for row in rows],
+                color="tab:red",
                 linewidth=1.8,
-                label=f"line search lr{suffix}",
+                label=f"best loss lr{suffix}",
             )
 
     ax.set_ylabel("matrix lr")
@@ -279,9 +311,6 @@ def plot_loss_landscape_grid(runs, output_path, max_subplots=50, show=False):
         ys = [loss for _, loss in losses]
         ax.plot(xs, ys, marker=".", markersize=3.5, linewidth=0.9, color="tab:blue")
 
-        selected_lr = row.get("line_search_matrix_lr")
-        if finite(selected_lr) and selected_lr >= 0:
-            ax.axvline(selected_lr, color="black", linewidth=0.9, alpha=0.8)
         ground_truth_lr = row.get("ground_truth_matrix_lr")
         if finite(ground_truth_lr) and ground_truth_lr >= 0:
             ax.axvline(
@@ -330,7 +359,6 @@ def plot_loss_landscape_grid(runs, output_path, max_subplots=50, show=False):
             linewidth=0.9,
             label="evaluated loss",
         ),
-        plt.Line2D([0], [0], color="black", linewidth=0.9, label="selected lr"),
         plt.Line2D(
             [0],
             [0],
@@ -356,7 +384,7 @@ def plot_loss_landscape_grid(runs, output_path, max_subplots=50, show=False):
     return output_path
 
 
-def plot_threshold_lr_curves(ax, runs, max_rows=None):
+def plot_lr_curves(ax, runs, max_rows=None):
     plotted = False
     plotted_steps = []
     for label, rows in runs:
@@ -368,19 +396,14 @@ def plot_threshold_lr_curves(ax, runs, max_rows=None):
         steps = series(rows, "step")
         plotted_steps.extend(step for step in steps if finite(step))
         suffix = "" if len(runs) == 1 else f" ({Path(label).name})"
-        threshold_specs = [
-            ("ground_truth_matrix_lr", "ground truth lr", "-", 1.8),
-            ("line_search_matrix_lr", "line search lr", "-", 1.8),
-        ]
-        for key, name, linestyle, linewidth in threshold_specs:
-            if has_any(rows, key):
-                ax.plot(
-                    steps,
-                    series(rows, key),
-                    label=f"{name}{suffix}",
-                    linewidth=linewidth,
-                    linestyle=linestyle,
-                )
+        if has_any(rows, "ground_truth_matrix_lr"):
+            ax.plot(
+                steps,
+                series(rows, "ground_truth_matrix_lr"),
+                label=f"ground truth lr{suffix}",
+                linewidth=1.8,
+                linestyle="-",
+            )
         ax.plot(
             steps,
             [best_matrix_lr(row) for row in rows],
@@ -411,55 +434,17 @@ def plot_threshold_lr_curves(ax, runs, max_rows=None):
         ax.set_xlim(left, right)
 
 
-def plot_selected_lr_curves(ax, runs):
-    plotted = False
-    for label, rows in runs:
-        if not rows:
-            continue
-        steps = series(rows, "step")
-        suffix = "" if len(runs) == 1 else f" ({Path(label).name})"
-        specs = [
-            ("ground_truth_matrix_lr", "ground truth lr", "-", 1.8),
-            ("line_search_matrix_lr", "line search lr", "-", 1.8),
-        ]
-        for key, name, linestyle, linewidth in specs:
-            if has_any(rows, key):
-                ax.plot(
-                    steps,
-                    series(rows, key),
-                    label=f"{name}{suffix}",
-                    linewidth=linewidth,
-                    linestyle=linestyle,
-                )
-                plotted = True
-        if any(matrix_lr_losses(row) for row in rows):
-            ax.plot(
-                steps,
-                [best_matrix_lr(row) for row in rows],
-                label=f"best loss lr{suffix}",
-                linewidth=1.4,
-                linestyle="--",
-            )
-            plotted = True
-
-    ax.set_ylabel("matrix lr")
-    ax.grid(True, alpha=0.25)
-    if plotted:
-        ax.legend()
-
-
 def plot_runs(runs, output_path, show=False):
     fig, (
-        selected_lr_ax,
-        threshold_lr_ax,
-        threshold_lr_early_ax,
+        lr_ax,
+        lr_early_ax,
         loss_ax,
         gap_ax,
         landscape_ax,
     ) = plt.subplots(
-        6,
+        5,
         1,
-        figsize=(11, 18),
+        figsize=(11, 15),
         constrained_layout=True,
     )
 
@@ -473,7 +458,6 @@ def plot_runs(runs, output_path, show=False):
         loss_specs = [
             ("pre_update_train_loss", "pre-update train loss"),
             ("train_loss", "train loss"),
-            ("line_search_loss", "line search loss"),
         ]
         for key, name in loss_specs:
             if has_any(rows, key):
@@ -487,13 +471,14 @@ def plot_runs(runs, output_path, show=False):
                 linestyle="--",
             )
             ground_truth_losses = [
-                loss_at_matrix_lr(row, "ground_truth_matrix_lr") for row in rows
+                estimated_loss_at_matrix_lr(row, "ground_truth_matrix_lr")
+                for row in rows
             ]
             if any(finite(loss) for loss in ground_truth_losses):
                 loss_ax.plot(
                     steps,
                     ground_truth_losses,
-                    label=f"ground-truth lr loss{suffix}",
+                    label=f"estimated ground-truth lr loss{suffix}",
                     linewidth=1.4,
                     linestyle=":",
             )
@@ -508,14 +493,11 @@ def plot_runs(runs, output_path, show=False):
     if plotted == 0:
         raise SystemExit("No line_search rows found in the provided input.")
 
-    selected_lr_ax.set_title("Selected Matrix Learning Rates")
-    plot_selected_lr_curves(selected_lr_ax, runs)
+    lr_ax.set_title("Matrix Learning Rates")
+    plot_lr_curves(lr_ax, runs)
 
-    threshold_lr_ax.set_title("LRs Within Best-Loss Tolerances")
-    plot_threshold_lr_curves(threshold_lr_ax, runs)
-
-    threshold_lr_early_ax.set_title("LRs Within Best-Loss Tolerances (First 50 Steps)")
-    plot_threshold_lr_curves(threshold_lr_early_ax, runs, max_rows=50)
+    lr_early_ax.set_title("Matrix Learning Rates (First 50 Steps)")
+    plot_lr_curves(lr_early_ax, runs, max_rows=50)
 
     loss_ax.set_ylabel("loss")
     loss_ax.grid(True, alpha=0.25)
@@ -525,7 +507,7 @@ def plot_runs(runs, output_path, show=False):
     gap_ax.set_ylabel("relative loss diff")
     gap_ax.grid(True, alpha=0.25)
     gap_ax.legend()
-    gap_ax.set_title("Ground-Truth LR Relative Loss Diff")
+    gap_ax.set_title("Estimated Ground-Truth LR Relative Loss Diff")
 
     plot_landscape(landscape_ax, runs)
     landscape_ax.set_xlabel("step")
