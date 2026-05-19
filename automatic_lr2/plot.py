@@ -82,8 +82,20 @@ def best_matrix_lr(row):
     return min(losses, key=lambda item: item[1])[0]
 
 
+def zero_matrix_lr_loss(row):
+    losses = [
+        loss
+        for matrix_lr, loss in matrix_lr_losses(row)
+        if matrix_lr == 0.0 and finite(loss)
+    ]
+    if not losses:
+        return float("nan")
+    return losses[0]
+
+
 def largest_matrix_lr_within_loss_gap(row, max_loss_gap):
     best_loss = best_matrix_lr_loss(row)
+    zero_loss = zero_matrix_lr_loss(row)
     if not finite(best_loss):
         return float("nan")
     candidates = [
@@ -93,7 +105,7 @@ def largest_matrix_lr_within_loss_gap(row, max_loss_gap):
             finite(matrix_lr)
             and matrix_lr >= 0
             and finite(loss)
-            and relative_loss_diff(loss, best_loss) <= max_loss_gap
+            and relative_loss_diff(loss, best_loss, zero_loss) <= max_loss_gap
         )
     ]
     if not candidates:
@@ -149,16 +161,20 @@ def estimated_loss_at_matrix_lr(row, key):
     return positive_losses[-1][1]
 
 
-def relative_loss_diff(loss, best_loss):
-    if not finite(loss) or not finite(best_loss):
+def relative_loss_diff(loss, best_loss, zero_loss):
+    if not finite(loss) or not finite(best_loss) or not finite(zero_loss):
         return float("nan")
-    return (loss - best_loss) / max(abs(best_loss), 1e-30)
+    denominator = zero_loss - best_loss
+    if denominator <= 0:
+        return float("nan")
+    return (loss - best_loss) / denominator
 
 
 def ground_truth_relative_loss_diff(row):
     ground_truth_loss = estimated_loss_at_matrix_lr(row, "ground_truth_matrix_lr")
     best_loss = best_matrix_lr_loss(row)
-    return relative_loss_diff(ground_truth_loss, best_loss)
+    zero_loss = zero_matrix_lr_loss(row)
+    return relative_loss_diff(ground_truth_loss, best_loss, zero_loss)
 
 
 def percentile(values, fraction):
@@ -190,14 +206,18 @@ def plot_landscape(ax, runs):
         deltas = []
         for row in rows:
             best_loss = best_matrix_lr_loss(row)
-            if not finite(best_loss):
+            zero_loss = zero_matrix_lr_loss(row)
+            if not finite(best_loss) or not finite(zero_loss):
                 continue
             for matrix_lr, loss in matrix_lr_losses(row):
                 if not finite(matrix_lr) or matrix_lr < 0 or not finite(loss):
                     continue
+                delta = relative_loss_diff(loss, best_loss, zero_loss)
+                if not finite(delta):
+                    continue
+                delta = max(0.0, delta)
                 xs.append(row["step"])
                 ys.append(matrix_lr)
-                delta = max(0.0, relative_loss_diff(loss, best_loss))
                 deltas.append(delta)
                 all_deltas.append(delta)
         scatter_inputs.append((Path(label).name, xs, ys, deltas))
@@ -311,6 +331,18 @@ def plot_loss_landscape_grid(runs, output_path, max_subplots=50, show=False):
         ys = [loss for _, loss in losses]
         ax.plot(xs, ys, marker=".", markersize=3.5, linewidth=0.9, color="tab:blue")
 
+        pre_update_loss = row.get("pre_update_train_loss")
+        if finite(pre_update_loss):
+            ax.scatter(
+                [0.0],
+                [pre_update_loss],
+                marker="o",
+                s=18,
+                color="red",
+                linewidths=0,
+                zorder=4,
+            )
+
         ground_truth_lr = row.get("ground_truth_matrix_lr")
         if finite(ground_truth_lr) and ground_truth_lr >= 0:
             ax.axvline(
@@ -384,12 +416,16 @@ def plot_loss_landscape_grid(runs, output_path, max_subplots=50, show=False):
     return output_path
 
 
-def plot_lr_curves(ax, runs, max_rows=None):
+def plot_lr_curves(ax, runs, min_step=None, max_step=None):
     plotted = False
     plotted_steps = []
     for label, rows in runs:
-        if max_rows is not None:
-            rows = rows[:max_rows]
+        rows = [
+            row
+            for row in rows
+            if (min_step is None or row["step"] >= min_step)
+            and (max_step is None or row["step"] < max_step)
+        ]
         if not rows or not any(matrix_lr_losses(row) for row in rows):
             continue
 
@@ -411,7 +447,7 @@ def plot_lr_curves(ax, runs, max_rows=None):
             linewidth=1.4,
             linestyle="--",
         )
-        for max_loss_gap in (0.01, 0.02, 0.05):
+        for max_loss_gap in (0.1, 0.2, 0.4):
             ax.plot(
                 steps,
                 [largest_matrix_lr_within_loss_gap(row, max_loss_gap) for row in rows],
@@ -425,7 +461,7 @@ def plot_lr_curves(ax, runs, max_rows=None):
     ax.grid(True, alpha=0.25)
     if plotted:
         ax.legend()
-    if max_rows is not None and plotted_steps:
+    if plotted_steps:
         left = min(plotted_steps)
         right = max(plotted_steps)
         if left == right:
@@ -436,8 +472,8 @@ def plot_lr_curves(ax, runs, max_rows=None):
 
 def plot_runs(runs, output_path, show=False):
     fig, (
-        lr_ax,
-        lr_early_ax,
+        lr_first_ax,
+        lr_rest_ax,
         loss_ax,
         gap_ax,
         landscape_ax,
@@ -461,8 +497,22 @@ def plot_runs(runs, output_path, show=False):
         ]
         for key, name in loss_specs:
             if has_any(rows, key):
-                loss_ax.plot(steps, series(rows, key), label=f"{name}{suffix}", linewidth=1.7)
+                loss_ax.plot(
+                    steps,
+                    series(rows, key),
+                    label=f"{name}{suffix}",
+                    linewidth=1.7,
+                )
         if any(matrix_lr_losses(row) for row in rows):
+            zero_losses = [zero_matrix_lr_loss(row) for row in rows]
+            if any(finite(loss) for loss in zero_losses):
+                loss_ax.plot(
+                    steps,
+                    zero_losses,
+                    label=f"lr = 0 loss{suffix}",
+                    linewidth=1.4,
+                    linestyle="-.",
+                )
             loss_ax.plot(
                 steps,
                 [best_matrix_lr_loss(row) for row in rows],
@@ -493,11 +543,11 @@ def plot_runs(runs, output_path, show=False):
     if plotted == 0:
         raise SystemExit("No line_search rows found in the provided input.")
 
-    lr_ax.set_title("Matrix Learning Rates")
-    plot_lr_curves(lr_ax, runs)
+    lr_first_ax.set_title("Matrix Learning Rates (Steps < 50)")
+    plot_lr_curves(lr_first_ax, runs, max_step=50)
 
-    lr_early_ax.set_title("Matrix Learning Rates (First 50 Steps)")
-    plot_lr_curves(lr_early_ax, runs, max_rows=50)
+    lr_rest_ax.set_title("Matrix Learning Rates (Steps >= 50)")
+    plot_lr_curves(lr_rest_ax, runs, min_step=50)
 
     loss_ax.set_ylabel("loss")
     loss_ax.grid(True, alpha=0.25)

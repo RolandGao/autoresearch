@@ -51,6 +51,13 @@ USE_COMPILED_MUON = (
     bool(_env_flag("CIFAR_SPEEDRUN_COMPILE_MUON")) and IS_AMPERE_OR_NEWER
 )
 MUON_DTYPE = torch.bfloat16 if IS_AMPERE_OR_NEWER else torch.float16
+TRAINING_SEED = 0
+
+
+def set_training_seed():
+    torch.manual_seed(TRAINING_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(TRAINING_SEED)
 
 #############################################
 #               Muon optimizer              #
@@ -241,7 +248,6 @@ class BatchNorm(nn.BatchNorm2d):
     def __init__(self, num_features, momentum=0.6, eps=1e-12):
         super().__init__(num_features, eps=eps, momentum=1 - momentum)
         self.weight.requires_grad = False
-        self.bias.requires_grad = False
         # Note that PyTorch already initializes the weights to one and bias to zero
 
 
@@ -288,7 +294,6 @@ class CifarNet(nn.Module):
             3, whiten_width, whiten_kernel_size, padding=0, bias=True
         )
         self.whiten.weight.requires_grad = False
-        self.whiten.bias.requires_grad = False
         self.layers = nn.Sequential(
             nn.GELU(),
             ConvGroup(whiten_width, widths["block1"]),
@@ -329,8 +334,9 @@ class CifarNet(nn.Module):
             (eigenvectors_scaled, -eigenvectors_scaled)
         )
 
-    def forward(self, x):
-        x = F.conv2d(x, self.whiten.weight, self.whiten.bias)
+    def forward(self, x, whiten_bias_grad=True):
+        b = self.whiten.bias
+        x = F.conv2d(x, self.whiten.weight, b if whiten_bias_grad else b.detach())
         x = self.layers(x)
         x = x.view(len(x), -1)
         return self.head(x) / x.size(-1)
@@ -356,6 +362,7 @@ def print_columns(columns_list, is_head=False, is_final_entry=False):
 logging_columns_list = [
     "run   ",
     "epoch",
+    "train_loss",
     "train_acc",
     "val_acc",
     "tta_val_acc",
@@ -559,8 +566,10 @@ def format_matrix_lr_loss_map(losses_by_matrix_lr):
 
 
 def main(run, model):
+    set_training_seed()
 
     batch_size = 2000
+    bias_lr = 0.053
     head_lr = 0.67
     wd = 2e-6 * batch_size
 
@@ -574,16 +583,20 @@ def main(run, model):
             0, 10, size=(len(train_loader.labels),), device=train_loader.labels.device
         )
     total_train_steps = ceil(8 * len(train_loader))
+    whiten_bias_train_steps = ceil(3 * len(train_loader))
 
     # Create optimizers and learning rate schedulers
     filter_params = [
         p for p in model.parameters() if len(p.shape) == 4 and p.requires_grad
     ]
-    param_configs = [dict(params=[model.head.weight], lr=head_lr, weight_decay=0)]
-    optimizer1 = torch.optim.SGD(
-        param_configs, momentum=0.9, nesterov=False, fused=True
-    )
-    optimizer2 = Muon(filter_params, lr=0.24, momentum=0.7, nesterov=False)
+    norm_biases = [p for n, p in model.named_parameters() if "norm" in n and p.requires_grad]
+    param_configs = [
+        dict(params=[model.whiten.bias], lr=bias_lr, weight_decay=wd / bias_lr),
+        dict(params=norm_biases, lr=bias_lr, weight_decay=wd / bias_lr),
+        dict(params=[model.head.weight], lr=head_lr, weight_decay=wd / head_lr),
+    ]
+    optimizer1 = torch.optim.SGD(param_configs, momentum=0.85, nesterov=True, fused=True)
+    optimizer2 = Muon(filter_params, lr=0.24, momentum=0.6, nesterov=True)
     optimizers = [optimizer1, optimizer2]
     for opt in optimizers:
         for group in opt.param_groups:
@@ -620,12 +633,14 @@ def main(run, model):
         start_timer()
         model.train()
         for inputs, labels in train_loader:
-            outputs = model(inputs)
+            outputs = model(inputs, whiten_bias_grad=(step < whiten_bias_train_steps))
             train_loss = F.cross_entropy(
                 outputs.float(), labels, label_smoothing=0.2, reduction="sum"
             )
             train_loss.backward()
-            for group in optimizer1.param_groups + optimizer2.param_groups:
+            for group in optimizer1.param_groups[:1]:
+                group["lr"] = group["initial_lr"] * (1 - step / whiten_bias_train_steps)
+            for group in optimizer1.param_groups[1:] + optimizer2.param_groups:
                 group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
             ground_truth_matrix_lr = optimizer2.param_groups[0]["lr"]
             line_search_matrix_lr, line_search_loss, matrix_lr_train_losses = (
@@ -666,6 +681,9 @@ def main(run, model):
         ####################
 
         # Save the accuracy and loss from the last training batch of the epoch
+        train_loss = F.cross_entropy(
+            outputs.detach().float(), labels, label_smoothing=0.2
+        ).item()
         train_acc = (outputs.detach().argmax(1) == labels).float().mean().item()
         val_acc = evaluate(model, test_loader, tta_level=0)
         print_training_details(locals(), is_final_entry=False)
@@ -686,6 +704,7 @@ def main(run, model):
 
 if __name__ == "__main__":
     # We re-use the compiled model between runs to save the non-data-dependent compilation time
+    set_training_seed()
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
     # model.compile(mode="max-autotune")
 
