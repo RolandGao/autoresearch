@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import re
+from collections import Counter
 from pathlib import Path
 
 import matplotlib
@@ -19,16 +20,6 @@ LINE_SEARCH_VAL_SETS = [
         losses_field="current_batch_matrix_lr_train_losses",
         fallback_losses_field="matrix_lr_train_losses",
     ),
-    dict(
-        key="next_batch",
-        title="Next Batch",
-        losses_field="next_batch_matrix_lr_train_losses",
-    ),
-    dict(
-        key="first_25_batches",
-        title="First 25 Train Batches",
-        losses_field="first_25_batches_matrix_lr_train_losses",
-    ),
 ]
 MATRIX_LR_LOSSES_FIELDS = [
     "matrix_lr_train_losses",
@@ -41,6 +32,70 @@ JSON_FIELDS = [
     *MATRIX_LR_LOSSES_FIELDS,
     *SAMPLE_BEST_LRS_FIELDS,
 ]
+SAMPLE_LR_BASE = 0.24
+SAMPLE_LR_FACTOR = 0.8
+SAMPLE_LR_LEFT_STEPS = 30
+SAMPLE_LR_RIGHT_STEPS = 20
+SAMPLE_LR_GRID = [
+    0.0,
+    *[
+        float("%.8g" % (SAMPLE_LR_BASE * (SAMPLE_LR_FACTOR**exponent)))
+        for exponent in range(SAMPLE_LR_LEFT_STEPS, -SAMPLE_LR_RIGHT_STEPS - 1, -1)
+    ],
+]
+SAMPLE_LR_POSITION_BY_VALUE = {lr: index for index, lr in enumerate(SAMPLE_LR_GRID)}
+
+
+def sample_lr_grid_position(lr):
+    lr = float("%.8g" % lr)
+    if lr in SAMPLE_LR_POSITION_BY_VALUE:
+        return SAMPLE_LR_POSITION_BY_VALUE[lr]
+    if lr <= 0:
+        return 0.0
+
+    positive_grid = SAMPLE_LR_GRID[1:]
+    if lr <= positive_grid[0]:
+        return 1.0
+    if lr >= positive_grid[-1]:
+        return float(len(SAMPLE_LR_GRID) - 1)
+    for left_pos in range(1, len(SAMPLE_LR_GRID) - 1):
+        left_lr = SAMPLE_LR_GRID[left_pos]
+        right_lr = SAMPLE_LR_GRID[left_pos + 1]
+        if left_lr <= lr <= right_lr:
+            weight = (math.log(lr) - math.log(left_lr)) / (
+                math.log(right_lr) - math.log(left_lr)
+            )
+            return left_pos + weight
+    return float(len(SAMPLE_LR_GRID) - 1)
+
+
+def nearest_sample_lr_grid_value(lr):
+    lr = float("%.8g" % lr)
+    if lr in SAMPLE_LR_POSITION_BY_VALUE:
+        return lr
+    if lr <= 0:
+        return 0.0
+    return min(
+        SAMPLE_LR_GRID[1:],
+        key=lambda grid_lr: abs(math.log(lr) - math.log(grid_lr)),
+    )
+
+
+def sample_lr_tick_positions():
+    positions = [0, 1, *range(6, len(SAMPLE_LR_GRID), 5)]
+    if positions[-1] != len(SAMPLE_LR_GRID) - 1:
+        positions.append(len(SAMPLE_LR_GRID) - 1)
+    return positions
+
+
+def median(values):
+    values = sorted(values)
+    if not values:
+        return float("nan")
+    middle = len(values) // 2
+    if len(values) % 2:
+        return values[middle]
+    return 0.5 * (values[middle - 1] + values[middle])
 
 
 def parse_line_search_rows(text):
@@ -501,13 +556,6 @@ def plot_sample_best_lr_histogram_grid(
     if not selected_rows:
         return None
 
-    all_lrs = [
-        lr
-        for _, row in selected_rows
-        for lr in sample_best_matrix_lrs(row)
-        if lr > 0
-    ]
-    linthresh = max(min(all_lrs) * 0.5, 1e-12) if all_lrs else 1e-12
     ncols = 10
     nrows = math.ceil(len(selected_rows) / ncols)
     fig, axes = plt.subplots(
@@ -525,24 +573,38 @@ def plot_sample_best_lr_histogram_grid(
             ax.set_visible(False)
             continue
 
-        unique_lrs = sorted(set(lrs))
-        bins = min(30, max(1, len(unique_lrs)))
-        ax.hist(lrs, bins=bins, color="tab:blue", alpha=0.82)
+        binned_lrs = [nearest_sample_lr_grid_value(lr) for lr in lrs]
+        counts_by_lr = Counter(binned_lrs)
+        unique_lrs = sorted(counts_by_lr)
+        counts = [counts_by_lr[lr] for lr in unique_lrs]
+        lr_positions = [sample_lr_grid_position(lr) for lr in unique_lrs]
+        ax.vlines(lr_positions, 0, counts, color="tab:blue", linewidth=1.2, alpha=0.85)
+        ax.scatter(lr_positions, counts, color="tab:blue", s=10, linewidths=0, zorder=3)
 
-        min_lr = min(lrs)
-        max_lr = max(lrs)
+        min_lr = min(binned_lrs)
+        max_lr = max(binned_lrs)
         mid_lr = min_lr + (max_lr - min_lr) / 2
+        mean_lr = sum(binned_lrs) / len(binned_lrs)
+        median_lr = median(binned_lrs)
         line_specs = [
             (min_lr, "min", "tab:green", "--"),
             (mid_lr, "min+(max-min)/2", "tab:purple", ":"),
             (max_lr, "max", "tab:red", "--"),
+            (median_lr, "median", "tab:brown", "-"),
+            (mean_lr, "mean", "tab:pink", "-"),
         ]
+        ground_truth_lr = row.get("ground_truth_matrix_lr")
+        if finite(ground_truth_lr) and ground_truth_lr >= 0:
+            line_specs.append((ground_truth_lr, "gt", "tab:orange", "-."))
         ymax = ax.get_ylim()[1]
         for x, name, color, linestyle in line_specs:
-            ax.axvline(x, color=color, linestyle=linestyle, linewidth=0.9, alpha=0.9)
+            x_pos = sample_lr_grid_position(x)
+            ax.axvline(
+                x_pos, color=color, linestyle=linestyle, linewidth=0.9, alpha=0.9
+            )
             ax.annotate(
                 f"{name}\n{x:.3g}",
-                xy=(x, ymax),
+                xy=(x_pos, ymax),
                 xytext=(0, -3),
                 textcoords="offset points",
                 rotation=90,
@@ -556,8 +618,17 @@ def plot_sample_best_lr_histogram_grid(
         if multiple_runs:
             title = f"{Path(label).name}\n{title}"
         ax.set_title(title, fontsize=7)
-        ax.set_xscale("symlog", linthresh=linthresh)
+        tick_positions = sample_lr_tick_positions()
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(
+            [f"{SAMPLE_LR_GRID[position]:.3g}" for position in tick_positions],
+            rotation=45,
+            ha="right",
+        )
+        ax.set_xticks(range(len(SAMPLE_LR_GRID)), minor=True)
+        ax.set_xlim(-1.4, len(SAMPLE_LR_GRID) + 0.4)
         ax.tick_params(axis="both", labelsize=5.5)
+        ax.tick_params(axis="x", which="minor", length=1.5)
         ax.grid(True, alpha=0.18)
 
     for ax in axes[len(selected_rows) :]:
@@ -758,15 +829,13 @@ def main():
             runs, sample_best_lr_histograms_output
         ):
             print(f"wrote {sample_best_lr_histograms_output.resolve()}")
-        for val_set in LINE_SEARCH_VAL_SETS:
-            output_path = output_dir / f"{val_set['key']}_lrs.png"
-            loss_landscape_output = (
-                output_dir / f"{val_set['key']}_loss_landscapes.png"
-            )
-            plot_runs(runs, output_path, val_set)
-            print(f"wrote {output_path.resolve()}")
-            if plot_loss_landscape_grid(runs, loss_landscape_output, val_set):
-                print(f"wrote {loss_landscape_output.resolve()}")
+        val_set = LINE_SEARCH_VAL_SETS[0]
+        output_path = output_dir / f"{val_set['key']}_lrs.png"
+        loss_landscape_output = output_dir / f"{val_set['key']}_loss_landscapes.png"
+        plot_runs(runs, output_path, val_set)
+        print(f"wrote {output_path.resolve()}")
+        if plot_loss_landscape_grid(runs, loss_landscape_output, val_set):
+            print(f"wrote {loss_landscape_output.resolve()}")
 
 
 if __name__ == "__main__":

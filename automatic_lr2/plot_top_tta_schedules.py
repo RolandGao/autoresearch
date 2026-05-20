@@ -43,11 +43,43 @@ def lr_multiplier(result, x):
     raise ValueError("Unknown schedule shape: %s" % shape)
 
 
+def piecewise_segment_lr(segment, step):
+    span = max(segment["end_step"] - segment["start_step"], 1)
+    x = min(max((step - segment["start_step"]) / span, 0.0), 1.0)
+    start_lr = segment["start_lr"]
+    end_lr = segment["end_lr"]
+    if segment["shape"] == "linear":
+        return start_lr + (end_lr - start_lr) * x
+    if segment["shape"] == "power":
+        return end_lr + (start_lr - end_lr) * ((1 - x) ** segment["power"])
+    if segment["shape"] == "exp":
+        safe_start = max(start_lr, 1e-5)
+        safe_end = max(end_lr, 1e-5)
+        return safe_start * ((safe_end / safe_start) ** x)
+    raise ValueError("Unknown segment shape: %s" % segment["shape"])
+
+
+def piecewise_lr(result, x):
+    step = x * 200
+    for segment in result["segments"]:
+        if segment["start_step"] <= step < segment["end_step"]:
+            return piecewise_segment_lr(segment, step)
+    return piecewise_segment_lr(result["segments"][-1], step)
+
+
 def schedule_lr(result, x):
+    if "segments" in result:
+        return piecewise_lr(result, x)
     return result["initial_lr"] * lr_multiplier(result, x)
 
 
 def label_for(result):
+    if "segments" in result:
+        return "%s run=%s tta=%.4f" % (
+            result.get("shape_pattern", "piecewise"),
+            result.get("index", "?"),
+            result["tta_val_acc"],
+        )
     parameter = "" if result["parameter"] is None else " param=%.4g" % result["parameter"]
     return "%s lr=%.4g%s tta=%.4f" % (
         result["shape"],

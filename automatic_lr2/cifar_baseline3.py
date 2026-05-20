@@ -17,9 +17,8 @@ os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 with open(sys.argv[0]) as f:
     code = f.read()
-from itertools import product
 import uuid
-from math import ceil, exp
+from math import ceil
 
 import torch
 from torch import nn
@@ -371,102 +370,22 @@ def evaluate(model, loader, tta_level=0):
 
 PIECEWISE_SCHEDULE_COUNT = 200
 PIECEWISE_BOUNDARIES = (0, 5, 25, 175, 200)
-PIECEWISE_SHAPES = ("linear", "power", "exp")
-SEGMENT_POWER_CHOICES = (0.65, 0.80, 1.00, 1.25, 1.50, 1.85)
-MIN_EXP_LR = 1e-5
+LINEAR_ENDPOINT_RANGES = (
+    ((0.22606439, 0.44535854), (0.22383163, 0.43233505)),
+    ((0.22211325, 0.43770902), (0.19531117, 0.37758388)),
+    ((0.19485276, 0.36258634), (0.01880287, 0.04326520)),
+    ((0.01488104, 0.04454351), (0.00000000, 0.01623172)),
+)
 
 
-def one_piece_lr(shape, initial_lr, parameter, step, total_train_steps=200):
-    x = min(max(step / total_train_steps, 0.0), 1.0)
-    if shape == "linear":
-        multiplier = 1 - x
-    elif shape == "power":
-        multiplier = (1 - x) ** parameter
-    elif shape == "exp":
-        multiplier = exp(-parameter * x)
-    else:
-        raise ValueError("Unknown shape: %s" % shape)
-    return initial_lr * multiplier
-
-
-def boundary_profile(name, shape, initial_lr, parameter=None):
+def make_segment(start_lr, end_lr, start_step, end_step):
     return dict(
-        name=name,
-        boundaries=[
-            one_piece_lr(shape, initial_lr, parameter, step)
-            for step in PIECEWISE_BOUNDARIES
-        ],
-        preferred_shape=shape,
-    )
-
-
-def base_piecewise_profiles():
-    return [
-        boundary_profile("linear_0.31", "linear", 0.31),
-        boundary_profile("linear_0.30", "linear", 0.30),
-        boundary_profile("linear_0.27", "linear", 0.27),
-        boundary_profile("linear_0.24", "linear", 0.24),
-        boundary_profile("power_0.38_p1.25", "power", 0.38, 1.25),
-        boundary_profile("power_0.16_p0.80", "power", 0.16, 0.80),
-        boundary_profile("power_0.28_p1.25", "power", 0.28, 1.25),
-        boundary_profile("power_0.42_p1.25", "power", 0.42, 1.25),
-        boundary_profile("exp_0.45_a3.60", "exp", 0.45, 3.60),
-        boundary_profile("exp_0.40_a3.30", "exp", 0.40, 3.30),
-    ]
-
-
-def clamp_lr(lr):
-    return min(max(lr, 0.0), 0.70)
-
-
-def jitter_lr(rng, base_lr, scale):
-    if base_lr <= 0.002:
-        return rng.choice((0.0, 0.001, 0.0025, 0.005, 0.008, 0.012))
-    return clamp_lr(base_lr * rng.uniform(1 - scale, 1 + scale) + rng.uniform(-0.006, 0.006))
-
-
-def make_segment(shape, start_lr, end_lr, rng, start_step, end_step):
-    segment = dict(
-        shape=shape,
+        shape="linear",
         start_lr=round(start_lr, 8),
         end_lr=round(end_lr, 8),
         start_step=start_step,
         end_step=end_step,
     )
-    if shape == "power":
-        segment["power"] = rng.choice(SEGMENT_POWER_CHOICES)
-    return segment
-
-
-def continuous_piecewise_schedule(profile):
-    segments = []
-    for segment_index, shape in enumerate([profile["preferred_shape"]] * 4):
-        start_step = PIECEWISE_BOUNDARIES[segment_index]
-        end_step = PIECEWISE_BOUNDARIES[segment_index + 1]
-        start_lr = profile["boundaries"][segment_index]
-        end_lr = profile["boundaries"][segment_index + 1]
-        segment = dict(
-            shape=shape,
-            start_lr=round(start_lr, 8),
-            end_lr=round(end_lr, 8),
-            start_step=start_step,
-            end_step=end_step,
-        )
-        if shape == "power":
-            segment["power"] = 1.25 if "p1.25" in profile["name"] else 0.80
-        segments.append(segment)
-    return dict(profile=profile["name"], segments=segments)
-
-
-def make_random_piecewise_schedule(rng, profile, shape_pattern, jitter_scale):
-    segments = []
-    for segment_index, shape in enumerate(shape_pattern):
-        start_step = PIECEWISE_BOUNDARIES[segment_index]
-        end_step = PIECEWISE_BOUNDARIES[segment_index + 1]
-        start_lr = jitter_lr(rng, profile["boundaries"][segment_index], jitter_scale)
-        end_lr = jitter_lr(rng, profile["boundaries"][segment_index + 1], jitter_scale)
-        segments.append(make_segment(shape, start_lr, end_lr, rng, start_step, end_step))
-    return dict(profile=profile["name"], segments=segments)
 
 
 def shape_pattern(schedule):
@@ -474,18 +393,7 @@ def shape_pattern(schedule):
 
 
 def format_segment(segment):
-    if segment["shape"] == "power":
-        return "%s %.4g->%.4g p=%.3g" % (
-            segment["shape"][0],
-            segment["start_lr"],
-            segment["end_lr"],
-            segment["power"],
-        )
-    return "%s %.4g->%.4g" % (
-        segment["shape"][0],
-        segment["start_lr"],
-        segment["end_lr"],
-    )
+    return "l %.4g->%.4g" % (segment["start_lr"], segment["end_lr"])
 
 
 def format_muon_schedule(schedule):
@@ -496,18 +404,17 @@ def format_muon_schedule(schedule):
 
 
 def make_muon_schedules():
-    rng = random.Random(20260519)
-    profiles = base_piecewise_profiles()
-    schedules = [continuous_piecewise_schedule(profile) for profile in profiles]
-    patterns = list(product(PIECEWISE_SHAPES, repeat=4))
-    pattern_offset = 17
-    while len(schedules) < PIECEWISE_SCHEDULE_COUNT:
-        i = len(schedules) - len(profiles)
-        profile = profiles[(i * 7) % len(profiles)]
-        pattern = patterns[(i * 37 + pattern_offset) % len(patterns)]
-        jitter_scale = 0.05 + 0.02 * ((i // len(patterns)) % 4)
-        schedules.append(make_random_piecewise_schedule(rng, profile, pattern, jitter_scale))
-
+    rng = random.Random(20260520)
+    schedules = []
+    for _ in range(PIECEWISE_SCHEDULE_COUNT):
+        segments = []
+        for segment_index, (start_range, end_range) in enumerate(LINEAR_ENDPOINT_RANGES):
+            start_step = PIECEWISE_BOUNDARIES[segment_index]
+            end_step = PIECEWISE_BOUNDARIES[segment_index + 1]
+            start_lr = rng.uniform(*start_range)
+            end_lr = rng.uniform(*end_range)
+            segments.append(make_segment(start_lr, end_lr, start_step, end_step))
+        schedules.append(dict(profile="linear_uniform_tta_ge_0.94_ranges", segments=segments))
     assert len(schedules) == PIECEWISE_SCHEDULE_COUNT
     for index, schedule in enumerate(schedules, start=1):
         schedule["index"] = index
@@ -523,15 +430,7 @@ def segment_lr_at_step(segment, step):
     x = min(max((step - segment["start_step"]) / span, 0.0), 1.0)
     start_lr = segment["start_lr"]
     end_lr = segment["end_lr"]
-    if segment["shape"] == "linear":
-        return start_lr + (end_lr - start_lr) * x
-    if segment["shape"] == "power":
-        return end_lr + (start_lr - end_lr) * ((1 - x) ** segment["power"])
-    if segment["shape"] == "exp":
-        safe_start = max(start_lr, MIN_EXP_LR)
-        safe_end = max(end_lr, MIN_EXP_LR)
-        return safe_start * ((safe_end / safe_start) ** x)
-    raise ValueError("Unknown segment shape: %s" % segment["shape"])
+    return start_lr + (end_lr - start_lr) * x
 
 
 def muon_lr_at_step(schedule, step, total_train_steps):
