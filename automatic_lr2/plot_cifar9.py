@@ -98,6 +98,14 @@ def median(values):
     return 0.5 * (values[middle - 1] + values[middle])
 
 
+def percentile_value(values, fraction):
+    values = sorted(values)
+    if not values:
+        return float("nan")
+    index = min(len(values) - 1, max(0, math.ceil(len(values) * fraction) - 1))
+    return values[index]
+
+
 def parse_line_search_rows(text):
     rows = []
     for line in text.splitlines():
@@ -582,14 +590,14 @@ def plot_sample_best_lr_histogram_grid(
         ax.scatter(lr_positions, counts, color="tab:blue", s=10, linewidths=0, zorder=3)
 
         min_lr = min(binned_lrs)
-        max_lr = max(binned_lrs)
-        mid_lr = min_lr + (max_lr - min_lr) / 2
         mean_lr = sum(binned_lrs) / len(binned_lrs)
         median_lr = median(binned_lrs)
+        p95_lr = percentile_value(binned_lrs, 0.95)
+        p98_lr = percentile_value(binned_lrs, 0.98)
         line_specs = [
             (min_lr, "min", "tab:green", "--"),
-            (mid_lr, "min+(max-min)/2", "tab:purple", ":"),
-            (max_lr, "max", "tab:red", "--"),
+            (p95_lr, "p95", "tab:purple", ":"),
+            (p98_lr, "p98", "tab:red", "--"),
             (median_lr, "median", "tab:brown", "-"),
             (mean_lr, "mean", "tab:pink", "-"),
         ]
