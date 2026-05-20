@@ -502,20 +502,42 @@ def set_matrix_lr(optimizer, matrix_lr):
         group["lr"] = matrix_lr
 
 
-def compute_line_search_loss(model, batches):
-    loss = None
+def compute_line_search_losses(model, batches):
+    losses = []
     model.train()
     for inputs, labels in batches:
         outputs = model(inputs)
-        batch_loss = F.cross_entropy(
-            outputs.float(), labels, label_smoothing=0.2, reduction="sum"
+        batch_losses = F.cross_entropy(
+            outputs.float(), labels, label_smoothing=0.2, reduction="none"
         )
-        loss = batch_loss if loss is None else loss + batch_loss
-    return loss
+        losses.append(batch_losses)
+    return torch.cat(losses)
 
 
 def finite_loss_item(loss):
     return loss.item() if torch.isfinite(loss) else float("inf")
+
+
+def finite_loss_sum_item(losses):
+    return finite_loss_item(losses.sum())
+
+
+def best_sample_matrix_lrs(sample_losses_by_matrix_lr):
+    matrix_lrs = sorted(sample_losses_by_matrix_lr)
+    if not matrix_lrs:
+        return []
+    losses = torch.stack(
+        [
+            torch.where(
+                torch.isfinite(sample_losses_by_matrix_lr[matrix_lr]),
+                sample_losses_by_matrix_lr[matrix_lr],
+                torch.full_like(sample_losses_by_matrix_lr[matrix_lr], float("inf")),
+            )
+            for matrix_lr in matrix_lrs
+        ]
+    )
+    best_indices = losses.argmin(dim=0).detach().cpu().tolist()
+    return [matrix_lrs[index] for index in best_indices]
 
 
 def evaluate_matrix_lr_grid(
@@ -527,6 +549,7 @@ def evaluate_matrix_lr_grid(
 ):
     search_state = capture_training_state(model, optimizers)
     losses_by_name = {name: {} for name, _ in validation_sets}
+    sample_losses_by_name = {name: {} for name, _ in validation_sets}
 
     def restore_search_state():
         restore_training_state(model, optimizers, search_state)
@@ -542,8 +565,10 @@ def evaluate_matrix_lr_grid(
             for opt in optimizers:
                 opt.step()
             with torch.no_grad():
-                loss = compute_line_search_loss(model, batches)
-            losses_by_name[name][matrix_lr] = finite_loss_item(loss)
+                losses = compute_line_search_losses(model, batches)
+            losses_by_name[name][matrix_lr] = finite_loss_sum_item(losses)
+            if name == "current_batch":
+                sample_losses_by_name[name][matrix_lr] = losses.detach()
 
     restore_search_state()
     return {
@@ -551,6 +576,9 @@ def evaluate_matrix_lr_grid(
             best_matrix_lr=min(losses.items(), key=lambda item: item[1])[0],
             best_loss=min(losses.values()),
             losses_by_matrix_lr=losses,
+            sample_best_matrix_lrs=best_sample_matrix_lrs(
+                sample_losses_by_name.get(name, {})
+            ),
         )
         for name, losses in losses_by_name.items()
     }
@@ -571,6 +599,10 @@ def format_matrix_lr_loss_map(losses_by_matrix_lr):
         "%.8g" % matrix_lr: loss
         for matrix_lr, loss in sorted(losses_by_matrix_lr.items())
     }
+
+
+def format_matrix_lrs(matrix_lrs):
+    return [float("%.8g" % matrix_lr) for matrix_lr in matrix_lrs]
 
 
 def line_search_validation_sets(epoch_batches, batch_index):
@@ -695,7 +727,8 @@ def main(run, model):
                 "matrix_lr_train_losses=%s "
                 "current_batch_matrix_lr_train_losses=%s "
                 "next_batch_matrix_lr_train_losses=%s "
-                "first_25_batches_matrix_lr_train_losses=%s"
+                "first_25_batches_matrix_lr_train_losses=%s "
+                "current_batch_sample_best_matrix_lrs=%s"
                 % (
                     step,
                     current_batch_results["best_matrix_lr"],
@@ -726,6 +759,11 @@ def main(run, model):
                     json.dumps(
                         format_matrix_lr_loss_map(
                             first_25_batches_results["losses_by_matrix_lr"]
+                        )
+                    ),
+                    json.dumps(
+                        format_matrix_lrs(
+                            current_batch_results["sample_best_matrix_lrs"]
                         )
                     ),
                 ),
