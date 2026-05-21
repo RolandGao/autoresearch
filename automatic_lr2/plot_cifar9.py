@@ -1,6 +1,8 @@
 import argparse
+import concurrent.futures
 import json
 import math
+import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -9,10 +11,12 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 from matplotlib.colors import PowerNorm
 
 
 FIELD_RE = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>[^\s]+)")
+JSON_DECODER = json.JSONDecoder()
 LINE_SEARCH_VAL_SETS = [
     dict(
         key="current_batch",
@@ -28,9 +32,17 @@ MATRIX_LR_LOSSES_FIELDS = [
 SAMPLE_BEST_LRS_FIELDS = [
     "current_batch_sample_best_matrix_lrs",
 ]
+SAMPLE_MATRIX_LR_LOSSES_FIELDS = [
+    "current_batch_sample_matrix_lr_train_losses",
+]
+SAMPLE_LR_LOSS_CURVES_FIELDS = [
+    "current_batch_sample_lr_loss_curves",
+]
 JSON_FIELDS = [
     *MATRIX_LR_LOSSES_FIELDS,
     *SAMPLE_BEST_LRS_FIELDS,
+    *SAMPLE_MATRIX_LR_LOSSES_FIELDS,
+    *SAMPLE_LR_LOSS_CURVES_FIELDS,
 ]
 SAMPLE_LR_BASE = 0.24
 SAMPLE_LR_FACTOR = 0.8
@@ -44,6 +56,10 @@ SAMPLE_LR_GRID = [
     ],
 ]
 SAMPLE_LR_POSITION_BY_VALUE = {lr: index for index, lr in enumerate(SAMPLE_LR_GRID)}
+SAMPLE_LOSS_CURVE_DETAIL_STEPS = (0, 10, 50, 190)
+SAMPLE_LOSS_CURVE_MAX_STEP = 200
+SAMPLE_BEST_LR_HISTOGRAM_MAX_SUBPLOTS = 200
+PLOT_DPI = 180
 
 
 def sample_lr_grid_position(lr):
@@ -106,59 +122,106 @@ def percentile_value(values, fraction):
     return values[index]
 
 
+def float_or_nan(value):
+    return float(value) if isinstance(value, (int, float)) else float("nan")
+
+
+def normalize_sample_lr_loss_curves(payload):
+    if not isinstance(payload, dict):
+        return dict(lrs=[], optimal_lr_counts={}, curves=[])
+    lrs = [float_or_nan(lr) for lr in payload.get("lrs", [])]
+    optimal_lr_counts = {
+        float(lr): int(count)
+        for lr, count in payload.get("optimal_lr_counts", {}).items()
+        if count
+    }
+    curves = []
+    for curve in payload.get("curves", []):
+        if not isinstance(curve, dict):
+            continue
+        losses = curve.get("losses", [])
+        if not isinstance(losses, list):
+            continue
+        sample_index = curve.get("sample_index")
+        if not isinstance(sample_index, int):
+            sample_index = len(curves)
+        curves.append(
+            dict(
+                sample_index=sample_index,
+                optimal_lr=float_or_nan(curve.get("optimal_lr")),
+                losses=[float_or_nan(loss) for loss in losses],
+            )
+        )
+    return dict(lrs=lrs, optimal_lr_counts=optimal_lr_counts, curves=curves)
+
+
+def parse_json_field(row, field, value):
+    if field in MATRIX_LR_LOSSES_FIELDS:
+        row[field] = sorted(
+            (float(matrix_lr), float(loss)) for matrix_lr, loss in value.items()
+        )
+    elif field in SAMPLE_BEST_LRS_FIELDS:
+        row[field] = [float(lr) for lr in value]
+    elif field in SAMPLE_MATRIX_LR_LOSSES_FIELDS:
+        row[field] = sorted(
+            (
+                float(matrix_lr),
+                [
+                    float(loss)
+                    for loss in sample_losses
+                    if isinstance(loss, (int, float))
+                ],
+            )
+            for matrix_lr, sample_losses in value.items()
+            if isinstance(sample_losses, list)
+        )
+    elif field in SAMPLE_LR_LOSS_CURVES_FIELDS:
+        row[field] = normalize_sample_lr_loss_curves(value)
+
+
+def parse_line_search_row(line):
+    line = line.strip()
+    if not line.startswith("line_search "):
+        return None
+    json_field_positions = sorted(
+        (line.find(f" {field}="), field, f" {field}=")
+        for field in JSON_FIELDS
+        if line.find(f" {field}=") >= 0
+    )
+    first_json_field = json_field_positions[0][0] if json_field_positions else len(line)
+    row = {}
+    for match in FIELD_RE.finditer(line[:first_json_field]):
+        key = match.group("key")
+        value = match.group("value")
+        row[key] = int(value) if key == "step" else float(value)
+    for field_start, field, field_marker in json_field_positions:
+        try:
+            value, _ = JSON_DECODER.raw_decode(line[field_start + len(field_marker) :])
+        except json.JSONDecodeError:
+            value = {} if field not in SAMPLE_BEST_LRS_FIELDS else []
+        parse_json_field(row, field, value)
+    return row if "step" in row else None
+
+
 def parse_line_search_rows(text):
     rows = []
     for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith("line_search "):
-            continue
-        json_field_positions = [
-            line.find(f" {field}=")
-            for field in JSON_FIELDS
-            if line.find(f" {field}=") >= 0
-        ]
-        first_json_field = (
-            min(json_field_positions) if json_field_positions else len(line)
-        )
-        scalar_text = line[:first_json_field]
-        row = {}
-        for match in FIELD_RE.finditer(scalar_text):
-            key = match.group("key")
-            value = match.group("value")
-            row[key] = int(value) if key == "step" else float(value)
-        for field in MATRIX_LR_LOSSES_FIELDS:
-            field_marker = f" {field}="
-            field_start = line.find(field_marker)
-            if field_start < 0:
-                continue
-            matrix_loss_text = line[field_start + len(field_marker) :]
-            try:
-                matrix_lr_losses, _ = json.JSONDecoder().raw_decode(matrix_loss_text)
-            except json.JSONDecodeError:
-                matrix_lr_losses = {}
-            row[field] = sorted(
-                (float(matrix_lr), float(loss))
-                for matrix_lr, loss in matrix_lr_losses.items()
-            )
-        for field in SAMPLE_BEST_LRS_FIELDS:
-            field_marker = f" {field}="
-            field_start = line.find(field_marker)
-            if field_start < 0:
-                continue
-            lrs_text = line[field_start + len(field_marker) :]
-            try:
-                lrs, _ = json.JSONDecoder().raw_decode(lrs_text)
-            except json.JSONDecodeError:
-                lrs = []
-            row[field] = [float(lr) for lr in lrs]
-        if "step" in row:
+        row = parse_line_search_row(line)
+        if row is not None:
             rows.append(row)
     rows.sort(key=lambda row: row["step"])
     return rows
 
 
-def read_inputs(paths):
-    return [(str(path), Path(path).read_text()) for path in paths]
+def parse_line_search_file(path):
+    rows = []
+    with Path(path).open() as handle:
+        for line in handle:
+            row = parse_line_search_row(line)
+            if row is not None:
+                rows.append(row)
+    rows.sort(key=lambda row: row["step"])
+    return rows
 
 
 def series(rows, key, fallback=None):
@@ -171,6 +234,17 @@ def finite(value):
 
 def has_any(rows, key):
     return any(key in row for row in rows)
+
+
+def configure_small_multiple_axis(ax, axis_index, ncols, total_axes, labelsize=5.5):
+    ax.tick_params(axis="both", labelsize=labelsize)
+
+
+def save_fast_figure(fig, output_path, show=False, dpi=PLOT_DPI):
+    fig.savefig(output_path, dpi=dpi)
+    if show:
+        plt.show()
+    plt.close(fig)
 
 
 def matrix_lr_losses(row, val_set=None):
@@ -325,6 +399,99 @@ def sample_best_matrix_lrs(row):
     ]
 
 
+def sample_lr_loss_curve_payload(row):
+    return row.get(
+        "current_batch_sample_lr_loss_curves",
+        dict(lrs=[], optimal_lr_counts={}, curves=[]),
+    )
+
+
+def sample_best_matrix_lr_counts(row):
+    payload_counts = sample_lr_loss_curve_payload(row).get("optimal_lr_counts", {})
+    if payload_counts:
+        counts = Counter()
+        for lr, count in payload_counts.items():
+            if finite(lr) and lr >= 0 and count > 0:
+                counts[nearest_sample_lr_grid_value(lr)] += count
+        return counts
+    return Counter(nearest_sample_lr_grid_value(lr) for lr in sample_best_matrix_lrs(row))
+
+
+def weighted_percentile_value(counts_by_value, fraction):
+    total = sum(counts_by_value.values())
+    if total <= 0:
+        return float("nan")
+    target = min(total - 1, max(0, math.ceil(total * fraction) - 1))
+    seen = 0
+    for value, count in sorted(counts_by_value.items()):
+        seen += count
+        if seen > target:
+            return value
+    return max(counts_by_value)
+
+
+def weighted_mean_value(counts_by_value):
+    total = sum(counts_by_value.values())
+    if total <= 0:
+        return float("nan")
+    return sum(value * count for value, count in counts_by_value.items()) / total
+
+
+def sample_matrix_lr_train_losses(row):
+    return [
+        (matrix_lr, sample_losses)
+        for matrix_lr, sample_losses in row.get(
+            "current_batch_sample_matrix_lr_train_losses", []
+        )
+        if finite(matrix_lr)
+        and matrix_lr >= 0
+        and any(finite(loss) for loss in sample_losses)
+    ]
+
+
+def sample_loss_curve_data(row):
+    payload = sample_lr_loss_curve_payload(row)
+    lrs = [lr for lr in payload.get("lrs", []) if finite(lr) and lr >= 0]
+    curves = [
+        curve
+        for curve in payload.get("curves", [])
+        if len(curve.get("losses", [])) == len(lrs)
+    ]
+    if lrs and curves:
+        return lrs, curves
+
+    sample_losses_by_lr = sample_matrix_lr_train_losses(row)
+    if not sample_losses_by_lr:
+        return [], []
+    sample_losses_by_lr.sort(key=lambda item: item[0])
+    lrs = [matrix_lr for matrix_lr, _ in sample_losses_by_lr]
+    sample_count = min(len(sample_losses) for _, sample_losses in sample_losses_by_lr)
+    best_sample_by_lr = {}
+    for sample_index in range(sample_count):
+        losses = [
+            sample_losses[sample_index]
+            if finite(sample_losses[sample_index])
+            else float("inf")
+            for _, sample_losses in sample_losses_by_lr
+        ]
+        best_lr = lrs[min(range(len(lrs)), key=lambda index: losses[index])]
+        best_sample_by_lr.setdefault(best_lr, sample_index)
+    curves = [
+        dict(
+            sample_index=sample_index,
+            optimal_lr=optimal_lr,
+            losses=[
+                sample_losses[sample_index]
+                if finite(sample_losses[sample_index])
+                else float("nan")
+                for _, sample_losses in sample_losses_by_lr
+            ],
+        )
+        for optimal_lr, sample_index in sorted(best_sample_by_lr.items())
+    ]
+    return lrs, curves
+
+
 def plot_landscape(ax, runs, val_set=None):
     all_deltas = []
     scatter_inputs = []
@@ -444,9 +611,11 @@ def plot_loss_landscape_grid(
         nrows,
         ncols,
         figsize=(18, 24),
-        constrained_layout=True,
     )
     axes = axes.reshape(-1)
+    fig.subplots_adjust(
+        left=0.045, right=0.99, bottom=0.055, top=0.93, wspace=0.22, hspace=0.45
+    )
     linthresh = positive_linthresh([row for _, row in selected_rows], val_set)
     multiple_runs = len(runs) > 1
 
@@ -539,10 +708,274 @@ def plot_loss_landscape_grid(
         ),
     ]
     fig.legend(handles=handles, loc="upper right")
-    fig.savefig(output_path, dpi=180)
-    if show:
-        plt.show()
-    plt.close(fig)
+    save_fast_figure(fig, output_path, show)
+    return output_path
+
+
+def first_sample_loss_curve_rows(runs, max_step):
+    rows = []
+    for label, run_rows in runs:
+        for row in run_rows:
+            if row["step"] >= max_step:
+                continue
+            _, curves = sample_loss_curve_data(row)
+            if curves:
+                rows.append((label, row))
+    rows.sort(key=lambda item: item[1]["step"])
+    return rows
+
+
+def plot_sample_loss_curve_grid(
+    runs,
+    output_path,
+    max_step=SAMPLE_LOSS_CURVE_MAX_STEP,
+    show=False,
+):
+    selected_rows = first_sample_loss_curve_rows(runs, max_step)
+    if not selected_rows:
+        return None
+
+    ncols = 5
+    nrows = math.ceil(len(selected_rows) / ncols)
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(18, max(2.7 * nrows, 6.0)),
+    )
+    axes = axes.reshape(-1)
+    fig.subplots_adjust(
+        left=0.04, right=0.995, bottom=0.04, top=0.94, wspace=0.18, hspace=0.42
+    )
+    linthresh = positive_linthresh(
+        [row for _, row in selected_rows], LINE_SEARCH_VAL_SETS[0]
+    )
+    multiple_runs = len(runs) > 1
+
+    for axis_index, (ax, (label, row)) in enumerate(zip(axes, selected_rows)):
+        xs, curves = sample_loss_curve_data(row)
+        segments = [
+            [
+                (x, loss if finite(loss) else float("nan"))
+                for x, loss in zip(xs, curve["losses"])
+            ]
+            for curve in curves
+        ]
+        if segments:
+            ax.add_collection(
+                LineCollection(
+                    segments,
+                    colors="tab:blue",
+                    linewidths=0.45,
+                    alpha=0.18,
+                )
+            )
+            ax.autoscale_view()
+
+        mean_losses = []
+        for lr_losses in zip(*(curve["losses"] for curve in curves)):
+            finite_losses = [loss for loss in lr_losses if finite(loss)]
+            mean_losses.append(
+                sum(finite_losses) / len(finite_losses)
+                if finite_losses
+                else float("nan")
+            )
+        ax.plot(xs, mean_losses, color="black", linewidth=1.0, alpha=0.85)
+
+        ground_truth_lr = row.get("ground_truth_matrix_lr")
+        if finite(ground_truth_lr) and ground_truth_lr >= 0:
+            ax.axvline(
+                ground_truth_lr,
+                color="tab:orange",
+                linewidth=0.9,
+                linestyle="--",
+                alpha=0.85,
+            )
+        best_lr = best_matrix_lr(row, LINE_SEARCH_VAL_SETS[0])
+        if finite(best_lr) and best_lr >= 0:
+            ax.axvline(
+                best_lr,
+                color="tab:red",
+                linewidth=0.9,
+                linestyle=":",
+                alpha=0.9,
+            )
+
+        title = f"step {row['step']}"
+        if multiple_runs:
+            title = f"{Path(label).name}\n{title}"
+        ax.set_title(title, fontsize=7)
+        ax.set_xscale("symlog", linthresh=linthresh)
+        if xs:
+            ax.set_xlim(left=0.0, right=max(xs))
+        configure_small_multiple_axis(
+            ax, axis_index, ncols, len(selected_rows), labelsize=5.5
+        )
+        ax.grid(True, alpha=0.18)
+
+    for ax in axes[len(selected_rows) :]:
+        ax.set_visible(False)
+
+    fig.supxlabel("matrix lr")
+    fig.supylabel("sample loss")
+    fig.suptitle(
+        "Current Batch Sample Loss Curves "
+        f"(one curve per optimal lr, steps < {max_step})",
+        fontsize=14,
+    )
+    handles = [
+        plt.Line2D(
+            [0],
+            [0],
+            color="tab:blue",
+            linewidth=0.8,
+            alpha=0.45,
+            label="sample loss curve",
+        ),
+        plt.Line2D([0], [0], color="black", linewidth=1.0, label="mean sample loss"),
+        plt.Line2D(
+            [0],
+            [0],
+            color="tab:orange",
+            linewidth=0.9,
+            linestyle="--",
+            label="ground-truth lr",
+        ),
+        plt.Line2D(
+            [0],
+            [0],
+            color="tab:red",
+            linewidth=0.9,
+            linestyle=":",
+            label="best total loss lr",
+        ),
+    ]
+    fig.legend(handles=handles, loc="upper right")
+    save_fast_figure(fig, output_path, show)
+    return output_path
+
+
+def first_row_for_step(runs, target_step):
+    for label, run_rows in runs:
+        for row in run_rows:
+            if row["step"] != target_step:
+                continue
+            xs, curves = sample_loss_curve_data(row)
+            if curves:
+                return label, row, xs, curves
+    return None
+
+
+def plot_sample_loss_curve_step_grid(runs, output_path, target_step, show=False):
+    selected = first_row_for_step(runs, target_step)
+    if selected is None:
+        return None
+
+    label, row, xs, curves = selected
+    curves = sorted(
+        curves,
+        key=lambda curve: (
+            curve.get("optimal_lr")
+            if finite(curve.get("optimal_lr"))
+            else float("inf"),
+            curve.get("sample_index")
+            if isinstance(curve.get("sample_index"), int)
+            else float("inf"),
+        ),
+    )
+    ncols = min(5, max(1, math.ceil(math.sqrt(len(curves)))))
+    nrows = math.ceil(len(curves) / ncols)
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(3.8 * ncols, max(2.8 * nrows, 4.0)),
+    )
+    axes = axes.reshape(-1) if hasattr(axes, "reshape") else [axes]
+    fig.subplots_adjust(
+        left=0.055, right=0.995, bottom=0.04, top=0.94, wspace=0.2, hspace=0.45
+    )
+    linthresh = positive_linthresh([row], LINE_SEARCH_VAL_SETS[0])
+    multiple_runs = len(runs) > 1
+
+    ground_truth_lr = row.get("ground_truth_matrix_lr")
+    best_lr = best_matrix_lr(row, LINE_SEARCH_VAL_SETS[0])
+    for axis_index, (ax, curve) in enumerate(zip(axes, curves)):
+        ys = [loss if finite(loss) else float("nan") for loss in curve["losses"]]
+        ax.plot(xs, ys, color="tab:blue", linewidth=0.9, alpha=0.9)
+
+        optimal_lr = curve.get("optimal_lr")
+        if finite(optimal_lr) and optimal_lr >= 0:
+            ax.axvline(
+                optimal_lr,
+                color="tab:green",
+                linewidth=0.9,
+                linestyle="-",
+                alpha=0.9,
+            )
+        if finite(ground_truth_lr) and ground_truth_lr >= 0:
+            ax.axvline(
+                ground_truth_lr,
+                color="tab:orange",
+                linewidth=0.9,
+                linestyle="--",
+                alpha=0.85,
+            )
+        if finite(best_lr) and best_lr >= 0:
+            ax.axvline(
+                best_lr,
+                color="tab:red",
+                linewidth=0.9,
+                linestyle=":",
+                alpha=0.9,
+            )
+
+        title = f"optimal lr {optimal_lr:.3g}"
+        sample_index = curve.get("sample_index")
+        if isinstance(sample_index, int):
+            title = f"{title}\nsample {sample_index}"
+        ax.set_title(title, fontsize=7)
+        ax.set_xscale("symlog", linthresh=linthresh)
+        if xs:
+            ax.set_xlim(left=0.0, right=max(xs))
+        configure_small_multiple_axis(ax, axis_index, ncols, len(curves), labelsize=5.5)
+        ax.grid(True, alpha=0.18)
+
+    for ax in axes[len(curves) :]:
+        ax.set_visible(False)
+
+    title = f"Current Batch Sample Loss Curves at Step {target_step}"
+    if multiple_runs:
+        title = f"{Path(label).name} {title}"
+    fig.supxlabel("matrix lr")
+    fig.supylabel("sample loss")
+    fig.suptitle(title, fontsize=14)
+    handles = [
+        plt.Line2D([0], [0], color="tab:blue", linewidth=0.9, label="sample curve"),
+        plt.Line2D(
+            [0],
+            [0],
+            color="tab:green",
+            linewidth=0.9,
+            label="sample optimal lr",
+        ),
+        plt.Line2D(
+            [0],
+            [0],
+            color="tab:orange",
+            linewidth=0.9,
+            linestyle="--",
+            label="ground-truth lr",
+        ),
+        plt.Line2D(
+            [0],
+            [0],
+            color="tab:red",
+            linewidth=0.9,
+            linestyle=":",
+            label="best total loss lr",
+        ),
+    ]
+    fig.legend(handles=handles, loc="upper right")
+    save_fast_figure(fig, output_path, show)
     return output_path
 
 
@@ -550,7 +983,7 @@ def first_sample_best_lr_rows(runs, limit):
     rows = []
     for label, run_rows in runs:
         for row in run_rows:
-            if sample_best_matrix_lrs(row):
+            if sample_best_matrix_lr_counts(row):
                 rows.append((label, row))
                 if len(rows) == limit:
                     return rows
@@ -558,7 +991,10 @@ def first_sample_best_lr_rows(runs, limit):
 
 
 def plot_sample_best_lr_histogram_grid(
-    runs, output_path, max_subplots=200, show=False
+    runs,
+    output_path,
+    max_subplots=SAMPLE_BEST_LR_HISTOGRAM_MAX_SUBPLOTS,
+    show=False,
 ):
     selected_rows = first_sample_best_lr_rows(runs, max_subplots)
     if not selected_rows:
@@ -570,30 +1006,30 @@ def plot_sample_best_lr_histogram_grid(
         nrows,
         ncols,
         figsize=(24, max(3.0 * nrows, 6.0)),
-        constrained_layout=True,
     )
     axes = axes.reshape(-1)
+    fig.subplots_adjust(
+        left=0.035, right=0.995, bottom=0.04, top=0.96, wspace=0.16, hspace=0.48
+    )
     multiple_runs = len(runs) > 1
 
-    for ax, (label, row) in zip(axes, selected_rows):
-        lrs = sample_best_matrix_lrs(row)
-        if not lrs:
+    for axis_index, (ax, (label, row)) in enumerate(zip(axes, selected_rows)):
+        counts_by_lr = sample_best_matrix_lr_counts(row)
+        if not counts_by_lr:
             ax.set_visible(False)
             continue
 
-        binned_lrs = [nearest_sample_lr_grid_value(lr) for lr in lrs]
-        counts_by_lr = Counter(binned_lrs)
         unique_lrs = sorted(counts_by_lr)
         counts = [counts_by_lr[lr] for lr in unique_lrs]
         lr_positions = [sample_lr_grid_position(lr) for lr in unique_lrs]
         ax.vlines(lr_positions, 0, counts, color="tab:blue", linewidth=1.2, alpha=0.85)
         ax.scatter(lr_positions, counts, color="tab:blue", s=10, linewidths=0, zorder=3)
 
-        min_lr = min(binned_lrs)
-        mean_lr = sum(binned_lrs) / len(binned_lrs)
-        median_lr = median(binned_lrs)
-        p95_lr = percentile_value(binned_lrs, 0.95)
-        p98_lr = percentile_value(binned_lrs, 0.98)
+        min_lr = min(unique_lrs)
+        mean_lr = weighted_mean_value(counts_by_lr)
+        median_lr = weighted_percentile_value(counts_by_lr, 0.5)
+        p95_lr = weighted_percentile_value(counts_by_lr, 0.95)
+        p98_lr = weighted_percentile_value(counts_by_lr, 0.98)
         line_specs = [
             (min_lr, "min", "tab:green", "--"),
             (p95_lr, "p95", "tab:purple", ":"),
@@ -635,7 +1071,9 @@ def plot_sample_best_lr_histogram_grid(
         )
         ax.set_xticks(range(len(SAMPLE_LR_GRID)), minor=True)
         ax.set_xlim(-1.4, len(SAMPLE_LR_GRID) + 0.4)
-        ax.tick_params(axis="both", labelsize=5.5)
+        configure_small_multiple_axis(
+            ax, axis_index, ncols, len(selected_rows), labelsize=5.5
+        )
         ax.tick_params(axis="x", which="minor", length=1.5)
         ax.grid(True, alpha=0.18)
 
@@ -648,10 +1086,7 @@ def plot_sample_best_lr_histogram_grid(
         f"Current Batch Per-Sample Best LR Histograms ({len(selected_rows)} steps)",
         fontsize=14,
     )
-    fig.savefig(output_path, dpi=180)
-    if show:
-        plt.show()
-    plt.close(fig)
+    save_fast_figure(fig, output_path, show)
     return output_path
 
 
@@ -793,10 +1228,7 @@ def plot_runs(runs, output_path, val_set, show=False):
     plot_landscape(landscape_ax, runs, val_set)
     landscape_ax.set_xlabel("step")
 
-    fig.savefig(output_path, dpi=180)
-    if show:
-        plt.show()
-    plt.close(fig)
+    save_fast_figure(fig, output_path, show)
 
 
 def output_dir_for_log(log_path, output_dir=None):
@@ -809,6 +1241,37 @@ def output_dir_for_log(log_path, output_dir=None):
 
     plot_dir.mkdir(parents=True, exist_ok=True)
     return plot_dir
+
+
+def plot_log_job(job):
+    label, output_dir, kind, step = job
+    output_dir = Path(output_dir)
+    rows = parse_line_search_file(label)
+    runs = [(label, rows)]
+    if kind == "sample_best_lr_histograms":
+        output_path = output_dir / "current_batch_sample_best_lr_histograms.png"
+        result = plot_sample_best_lr_histogram_grid(runs, output_path)
+    elif kind == "sample_loss_curves":
+        output_path = (
+            output_dir
+            / f"current_batch_sample_loss_curves_first{SAMPLE_LOSS_CURVE_MAX_STEP}.png"
+        )
+        result = plot_sample_loss_curve_grid(runs, output_path)
+    elif kind == "sample_loss_curve_step":
+        output_path = output_dir / f"current_batch_sample_loss_curves_step{step:03d}.png"
+        result = plot_sample_loss_curve_step_grid(runs, output_path, step)
+    elif kind == "lrs":
+        val_set = LINE_SEARCH_VAL_SETS[0]
+        output_path = output_dir / f"{val_set['key']}_lrs.png"
+        plot_runs(runs, output_path, val_set)
+        result = output_path
+    elif kind == "loss_landscapes":
+        val_set = LINE_SEARCH_VAL_SETS[0]
+        output_path = output_dir / f"{val_set['key']}_loss_landscapes.png"
+        result = plot_loss_landscape_grid(runs, output_path, val_set)
+    else:
+        raise ValueError(f"unknown plot job kind: {kind}")
+    return str(result.resolve()) if result else None
 
 
 def main():
@@ -827,23 +1290,23 @@ def main():
     )
     args = parser.parse_args()
 
-    for label, text in read_inputs(args.logs):
-        runs = [(label, parse_line_search_rows(text))]
+    for label in args.logs:
         output_dir = output_dir_for_log(label, args.output_dir)
-        sample_best_lr_histograms_output = (
-            output_dir / "current_batch_sample_best_lr_histograms.png"
-        )
-        if plot_sample_best_lr_histogram_grid(
-            runs, sample_best_lr_histograms_output
-        ):
-            print(f"wrote {sample_best_lr_histograms_output.resolve()}")
-        val_set = LINE_SEARCH_VAL_SETS[0]
-        output_path = output_dir / f"{val_set['key']}_lrs.png"
-        loss_landscape_output = output_dir / f"{val_set['key']}_loss_landscapes.png"
-        plot_runs(runs, output_path, val_set)
-        print(f"wrote {output_path.resolve()}")
-        if plot_loss_landscape_grid(runs, loss_landscape_output, val_set):
-            print(f"wrote {loss_landscape_output.resolve()}")
+        jobs = [
+            (label, str(output_dir), "sample_best_lr_histograms", None),
+            (label, str(output_dir), "sample_loss_curves", None),
+            *[
+                (label, str(output_dir), "sample_loss_curve_step", step)
+                for step in SAMPLE_LOSS_CURVE_DETAIL_STEPS
+            ],
+            (label, str(output_dir), "lrs", None),
+            (label, str(output_dir), "loss_landscapes", None),
+        ]
+        max_workers = min(len(jobs), os.cpu_count() or 1, 4)
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+            for output_path in executor.map(plot_log_job, jobs):
+                if output_path:
+                    print(f"wrote {output_path}")
 
 
 if __name__ == "__main__":

@@ -14,9 +14,10 @@ import sys
 
 with open(sys.argv[0]) as f:
     code = f.read()
+from collections import Counter
 import json
 import uuid
-from math import ceil
+from math import ceil, isfinite
 
 import torch
 from torch import nn
@@ -348,20 +349,8 @@ class CifarNet(nn.Module):
 ############################################
 
 
-def print_columns(columns_list, is_head=False, is_final_entry=False):
-    print_string = ""
-    for col in columns_list:
-        print_string += "|  %s  " % col
-    print_string += "|"
-    if is_head:
-        print("-" * len(print_string))
-    print(print_string)
-    if is_head or is_final_entry:
-        print("-" * len(print_string))
-
-
 logging_columns_list = [
-    "run   ",
+    "run",
     "epoch",
     "train_loss",
     "train_acc",
@@ -372,18 +361,16 @@ logging_columns_list = [
 
 
 def print_training_details(variables, is_final_entry):
-    formatted = []
+    fields = []
     for col in logging_columns_list:
-        var = variables.get(col.strip(), None)
+        var = variables.get(col, None)
         if type(var) in (int, str):
-            res = str(var)
+            fields.append(f"{col}={var}")
         elif type(var) is float:
-            res = "{:0.4f}".format(var)
+            fields.append(f"{col}={var:0.4f}")
         else:
             assert var is None
-            res = ""
-        formatted.append(res.rjust(len(col)))
-    print_columns(formatted, is_final_entry=is_final_entry)
+    print("epoch_summary " + " ".join(fields), flush=True)
 
 
 ############################################
@@ -444,8 +431,6 @@ LINE_SEARCH_FACTOR = 0.8
 INITIAL_GROUND_TRUTH_MATRIX_LR = 0.24
 LINE_SEARCH_LEFT_STEPS = 30
 LINE_SEARCH_RIGHT_STEPS = 20
-
-
 def clone_state(value):
     if torch.is_tensor(value):
         return value.detach().clone(memory_format=torch.preserve_format)
@@ -521,10 +506,15 @@ def finite_loss_sum_item(losses):
     return finite_loss_item(losses.sum())
 
 
-def best_sample_matrix_lrs(sample_losses_by_matrix_lr):
+def finite_float_or_none(value):
+    value = float(value)
+    return value if isfinite(value) else None
+
+
+def sample_lr_loss_curve_payload(sample_losses_by_matrix_lr):
     matrix_lrs = sorted(sample_losses_by_matrix_lr)
     if not matrix_lrs:
-        return []
+        return dict(lrs=[], optimal_lr_counts={}, curves=[])
     losses = torch.stack(
         [
             torch.where(
@@ -536,7 +526,36 @@ def best_sample_matrix_lrs(sample_losses_by_matrix_lr):
         ]
     )
     best_indices = losses.argmin(dim=0).detach().cpu().tolist()
-    return [matrix_lrs[index] for index in best_indices]
+    best_lrs = [matrix_lrs[index] for index in best_indices]
+    optimal_lr_counts = Counter(best_lrs)
+
+    selected_indices = []
+    seen_best_indices = set()
+    for sample_index, best_index in enumerate(best_indices):
+        if best_index in seen_best_indices:
+            continue
+        selected_indices.append(sample_index)
+        seen_best_indices.add(best_index)
+
+    losses = losses.detach().cpu()
+    return dict(
+        lrs=format_matrix_lrs(matrix_lrs),
+        optimal_lr_counts={
+            "%.8g" % matrix_lr: count
+            for matrix_lr, count in sorted(optimal_lr_counts.items())
+        },
+        curves=[
+            dict(
+                sample_index=sample_index,
+                optimal_lr=float("%.8g" % best_lrs[sample_index]),
+                losses=[
+                    finite_float_or_none(losses[lr_index, sample_index].item())
+                    for lr_index in range(len(matrix_lrs))
+                ],
+            )
+            for sample_index in selected_indices
+        ],
+    )
 
 
 def evaluate_matrix_lr_grid(
@@ -570,17 +589,19 @@ def evaluate_matrix_lr_grid(
                 sample_losses_by_name[name][matrix_lr] = losses.detach()
 
     restore_search_state()
-    return {
-        name: dict(
+    results = {}
+    for name, losses in losses_by_name.items():
+        results[name] = dict(
             best_matrix_lr=min(losses.items(), key=lambda item: item[1])[0],
             best_loss=min(losses.values()),
             losses_by_matrix_lr=losses,
-            sample_best_matrix_lrs=best_sample_matrix_lrs(
-                sample_losses_by_name.get(name, {})
-            ),
         )
-        for name, losses in losses_by_name.items()
-    }
+        sample_losses = sample_losses_by_name.get(name, {})
+        if sample_losses:
+            results[name]["sample_lr_loss_curves"] = sample_lr_loss_curve_payload(
+                sample_losses
+            )
+    return results
 
 
 def initial_ground_truth_matrix_lr_sweep(ground_truth_matrix_lr):
@@ -650,7 +671,7 @@ def main(run, model):
     optimizer1 = torch.optim.SGD(
         param_configs, momentum=0.85, nesterov=True, fused=True
     )
-    optimizer2 = Muon(filter_params, lr=0.06, momentum=0.6, nesterov=True)
+    optimizer2 = Muon(filter_params, lr=0.24, momentum=0.6, nesterov=True)
     optimizers = [optimizer1, optimizer2]
     for opt in optimizers:
         for group in opt.param_groups:
@@ -712,9 +733,8 @@ def main(run, model):
                 "pre_update_train_loss=%.6f line_search_loss=%.6f "
                 "current_batch_line_search_matrix_lr=%.8g "
                 "current_batch_line_search_loss=%.6f "
-                "matrix_lr_train_losses=%s "
                 "current_batch_matrix_lr_train_losses=%s "
-                "current_batch_sample_best_matrix_lrs=%s"
+                "current_batch_sample_lr_loss_curves=%s"
                 % (
                     step,
                     current_batch_results["best_matrix_lr"],
@@ -726,17 +746,14 @@ def main(run, model):
                     json.dumps(
                         format_matrix_lr_loss_map(
                             current_batch_results["losses_by_matrix_lr"]
-                        )
+                        ),
+                        separators=(",", ":"),
+                        allow_nan=False,
                     ),
                     json.dumps(
-                        format_matrix_lr_loss_map(
-                            current_batch_results["losses_by_matrix_lr"]
-                        )
-                    ),
-                    json.dumps(
-                        format_matrix_lrs(
-                            current_batch_results["sample_best_matrix_lrs"]
-                        )
+                        current_batch_results["sample_lr_loss_curves"],
+                        separators=(",", ":"),
+                        allow_nan=False,
                     ),
                 ),
                 flush=True,
@@ -760,7 +777,6 @@ def main(run, model):
         train_acc = (outputs.detach().argmax(1) == labels).float().mean().item()
         val_acc = evaluate(model, test_loader, tta_level=0)
         print_training_details(locals(), is_final_entry=False)
-        run = None  # Only print the run number once
 
     ####################
     #  TTA Evaluation  #
@@ -781,7 +797,6 @@ if __name__ == "__main__":
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
     # model.compile(mode="max-autotune")
 
-    print_columns(logging_columns_list, is_head=True)
     # main("warmup", model)
     accs = torch.tensor([main(run, model) for run in range(1)])
     print("Mean: %.4f    Std: %.4f" % (accs.mean(), accs.std()))
