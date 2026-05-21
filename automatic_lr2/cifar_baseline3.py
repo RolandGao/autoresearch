@@ -45,6 +45,8 @@ torch.backends.cuda.matmul.allow_tf32 = USE_TF32
 torch.use_deterministic_algorithms(True)
 
 USE_COMPILED_MUON = False
+USE_CUDA_GRAPHS = True
+CUDA_GRAPH_BATCH_SIZES = {125, 500, 2000}
 MUON_DTYPE = torch.bfloat16 if IS_AMPERE_OR_NEWER else torch.float16
 TRAINING_SEED = 0
 
@@ -89,7 +91,7 @@ if USE_COMPILED_MUON:
 
 class Muon(torch.optim.Optimizer):
     def __init__(self, params, lr=1e-3, momentum=0, nesterov=False):
-        if lr < 0.0:
+        if not torch.is_tensor(lr) and lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
         if momentum < 0.0:
             raise ValueError(f"Invalid momentum value: {momentum}")
@@ -116,7 +118,143 @@ class Muon(torch.optim.Optimizer):
 
                 p.data.mul_(len(p.data)**0.5 / p.data.norm()) # normalize the weight
                 update = zeropower_via_newtonschulz5(g.reshape(len(g), -1)).view(g.shape) # whiten the update
-                p.data.add_(update, alpha=-lr) # take a step
+                if torch.is_tensor(lr):
+                    p.data.addcmul_(update, lr, value=-1) # take a step
+                else:
+                    p.data.add_(update, alpha=-lr) # take a step
+
+
+class CUDAGraphTrainer:
+    def __init__(self, model, batch_size, sgd_groups, muon_params):
+        self.model = model
+        self.batch_size = batch_size
+        self.static_inputs = torch.empty(
+            batch_size, 3, 32, 32, device="cuda", dtype=torch.float16
+        ).to(memory_format=torch.channels_last)
+        self.static_labels = torch.empty(batch_size, device="cuda", dtype=torch.long)
+        self.static_inputs.zero_()
+        self.static_labels.zero_()
+        self.sgd_lr_tensors = [
+            torch.zeros((), device="cuda", dtype=torch.float32)
+            for _ in sgd_groups
+        ]
+        self.muon_lr_tensor = torch.zeros((), device="cuda", dtype=torch.float32)
+        whiten_param_config = [
+            dict(
+                params=sgd_groups[0]["params"],
+                lr=self.sgd_lr_tensors[0],
+                weight_decay=sgd_groups[0]["weight_decay"],
+            )
+        ]
+        main_param_configs = [
+            dict(
+                params=group["params"],
+                lr=self.sgd_lr_tensors[group_index],
+                weight_decay=group["weight_decay"],
+            )
+            for group_index, group in enumerate(sgd_groups[1:], start=1)
+        ]
+        self.optimizer_whiten = torch.optim.SGD(
+            whiten_param_config, momentum=0.85, nesterov=True, fused=True
+        )
+        self.optimizer_main = torch.optim.SGD(
+            main_param_configs, momentum=0.85, nesterov=True, fused=True
+        )
+        self.optimizer2 = Muon(muon_params, lr=self.muon_lr_tensor, momentum=0.6, nesterov=True)
+        self.optimizers = [self.optimizer_whiten, self.optimizer_main, self.optimizer2]
+        self.graphs = {}
+        self.outputs = {}
+        self._initialize_optimizer_state()
+        self._capture_graphs()
+
+    def _model_tensors(self):
+        tensors = []
+        tensors.extend(param.data for param in self.model.parameters())
+        tensors.extend(buffer.data for buffer in self.model.buffers())
+        return tensors
+
+    def _optimizer_state_tensors(self):
+        tensors = []
+        for opt in self.optimizers:
+            for state in opt.state.values():
+                for value in state.values():
+                    if torch.is_tensor(value):
+                        tensors.append(value)
+        return tensors
+
+    def _state_tensors(self):
+        return self._model_tensors() + self._optimizer_state_tensors()
+
+    def _snapshot_state(self):
+        return [tensor.detach().clone() for tensor in self._state_tensors()]
+
+    def _restore_state(self, snapshot):
+        for tensor, value in zip(self._state_tensors(), snapshot):
+            tensor.copy_(value)
+        self._zero_grads()
+
+    def reset_optimizer_state(self):
+        for tensor in self._optimizer_state_tensors():
+            tensor.zero_()
+        self._zero_grads()
+
+    def _zero_grads(self):
+        for opt in self.optimizers:
+            opt.zero_grad(set_to_none=False)
+
+    def _fill_lrs(self, sgd_lrs, muon_lr):
+        for lr_tensor, lr in zip(self.sgd_lr_tensors, sgd_lrs):
+            lr_tensor.fill_(lr)
+        self.muon_lr_tensor.fill_(muon_lr)
+
+    def _run_step(self, whiten_bias_grad):
+        outputs = self.model(self.static_inputs, whiten_bias_grad=whiten_bias_grad)
+        loss = F.cross_entropy(outputs, self.static_labels, label_smoothing=0.2, reduction="sum")
+        loss.backward()
+        if whiten_bias_grad:
+            self.optimizer_whiten.step()
+        self.optimizer_main.step()
+        self.optimizer2.step()
+        self._zero_grads()
+        return outputs
+
+    def _initialize_optimizer_state(self):
+        model_snapshot = [tensor.detach().clone() for tensor in self._model_tensors()]
+        self._fill_lrs((0.0, 0.0, 0.0), 0.0)
+        self.model.train()
+        self._run_step(True)
+        self._run_step(False)
+        for tensor, value in zip(self._model_tensors(), model_snapshot):
+            tensor.copy_(value)
+        self.reset_optimizer_state()
+
+    def _capture_one_graph(self, whiten_bias_grad, snapshot):
+        self._restore_state(snapshot)
+        side_stream = torch.cuda.Stream()
+        side_stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side_stream):
+            for _ in range(3):
+                self._run_step(whiten_bias_grad)
+        torch.cuda.current_stream().wait_stream(side_stream)
+
+        self._restore_state(snapshot)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            self.outputs[whiten_bias_grad] = self._run_step(whiten_bias_grad)
+        self.graphs[whiten_bias_grad] = graph
+        self._restore_state(snapshot)
+
+    def _capture_graphs(self):
+        snapshot = self._snapshot_state()
+        self._capture_one_graph(True, snapshot)
+        self._capture_one_graph(False, snapshot)
+
+    def step(self, inputs, labels, sgd_lrs, muon_lr, whiten_bias_grad):
+        self.static_inputs.copy_(inputs)
+        self.static_labels.copy_(labels)
+        self._fill_lrs(sgd_lrs, muon_lr)
+        self.graphs[whiten_bias_grad].replay()
+        return self.outputs[whiten_bias_grad]
 
 #############################################
 #                DataLoader                 #
@@ -416,26 +554,31 @@ def make_train_eval_batches():
 #                Training                  #
 ############################################
 
-MUON_LR_VALUES = [round(lr / 100, 2) for lr in range(2, 91, 4)]
-BATCH_SIZE_VALUES = (128, 512, 2048)
-BN_CAL_BATCH_SIZE = 2048
+MUON_LR_VALUES = [0.3 * 0.8**k for k in range(16)]
+BATCH_SIZE_VALUES = (125, 500, 2000)
+BN_CAL_BATCH_SIZE = 2000
 BN_CAL_BATCHES = 25
 
 
 def make_muon_schedules():
     schedules = []
-    for batch_size in BATCH_SIZE_VALUES:
-        for lr in MUON_LR_VALUES:
-            schedules.append(dict(
-                index=len(schedules) + 1,
-                batch_size=batch_size,
-                initial_lr=lr,
-                shape="linear_decay",
-                shape_pattern="L",
-                name="bs%d linear %.2g->0" % (batch_size, lr),
-                profile="batch_size_128_512_2048_linear_decay_0.02_to_0.90_step_0.04",
-                segments=[dict(shape="linear", start_lr=lr, end_lr=0.0)],
-            ))
+    configs = [(batch_size, lr) for batch_size in BATCH_SIZE_VALUES for lr in MUON_LR_VALUES]
+    sanity_configs = [
+        config for config in configs
+        if config[0] == 2000 and abs(config[1] - 0.24) < 1e-12
+    ]
+    configs = sanity_configs + [config for config in configs if config not in sanity_configs]
+    for batch_size, lr in configs:
+        schedules.append(dict(
+            index=len(schedules) + 1,
+            batch_size=batch_size,
+            initial_lr=lr,
+            shape="linear_decay",
+            shape_pattern="L",
+            name="bs%d linear %.2g->0" % (batch_size, lr),
+            profile="batch_size_125_500_2000_linear_decay_0.3_times_0.8_pow_k_0_to_15",
+            segments=[dict(shape="linear", start_lr=lr, end_lr=0.0)],
+        ))
     return schedules
 
 
@@ -500,7 +643,7 @@ def print_sweep_summary(sweep_results):
     return ranked
 
 
-def main(run, model, muon_schedule):
+def main(run, model, muon_schedule, graph_trainers):
     set_training_seed()
 
     batch_size = muon_schedule["batch_size"]
@@ -519,15 +662,23 @@ def main(run, model, muon_schedule):
     # Create optimizers and learning rate schedulers
     filter_params = [p for p in model.parameters() if len(p.shape) == 4 and p.requires_grad]
     norm_biases = [p for n, p in model.named_parameters() if "norm" in n and p.requires_grad]
-    param_configs = [dict(params=[model.whiten.bias], lr=bias_lr, weight_decay=wd/bias_lr),
-                     dict(params=norm_biases,         lr=bias_lr, weight_decay=wd/bias_lr),
-                     dict(params=[model.head.weight], lr=head_lr, weight_decay=wd/head_lr)]
-    optimizer1 = torch.optim.SGD(param_configs, momentum=0.85, nesterov=True, fused=True)
-    optimizer2 = Muon(filter_params, lr=muon_schedule["initial_lr"], momentum=0.6, nesterov=True)
-    optimizers = [optimizer1, optimizer2]
-    for opt in optimizers:
-        for group in opt.param_groups:
-            group["initial_lr"] = group["lr"]
+    sgd_groups = [
+        dict(params=[model.whiten.bias], initial_lr=bias_lr, weight_decay=wd/bias_lr),
+        dict(params=norm_biases,         initial_lr=bias_lr, weight_decay=wd/bias_lr),
+        dict(params=[model.head.weight], initial_lr=head_lr, weight_decay=wd/head_lr),
+    ]
+    use_cuda_graph = USE_CUDA_GRAPHS and batch_size in CUDA_GRAPH_BATCH_SIZES
+    if not use_cuda_graph:
+        param_configs = [
+            dict(params=group["params"], lr=group["initial_lr"], weight_decay=group["weight_decay"])
+            for group in sgd_groups
+        ]
+        optimizer1 = torch.optim.SGD(param_configs, momentum=0.85, nesterov=True, fused=True)
+        optimizer2 = Muon(filter_params, lr=muon_schedule["initial_lr"], momentum=0.6, nesterov=True)
+        optimizers = [optimizer1, optimizer2]
+        for opt in optimizers:
+            for group in opt.param_groups:
+                group["initial_lr"] = group["lr"]
 
     # For accurately timing GPU code
     starter = torch.cuda.Event(enable_timing=True)
@@ -543,11 +694,19 @@ def main(run, model, muon_schedule):
 
     model.reset()
     step = 0
+    train_eval_batches = []
 
     # Initialize the whitening layer using training images
     start_timer()
     train_images = train_loader.normalized_images()[:5000]
     model.init_whiten(train_images)
+    if use_cuda_graph:
+        if batch_size not in graph_trainers:
+            graph_trainers[batch_size] = CUDAGraphTrainer(model, batch_size, sgd_groups, filter_params)
+        trainer = graph_trainers[batch_size]
+        trainer.reset_optimizer_state()
+    else:
+        trainer = None
     stop_timer()
 
     for epoch in range(ceil(total_train_steps / len(train_loader))):
@@ -559,18 +718,38 @@ def main(run, model, muon_schedule):
         start_timer()
         model.train()
         for inputs, labels in train_loader:
-            outputs = model(inputs, whiten_bias_grad=(step < whiten_bias_train_steps))
-            loss = F.cross_entropy(outputs, labels, label_smoothing=0.2, reduction="sum")
-            loss.backward()
-            for group in optimizer1.param_groups[:1]:
-                group["lr"] = group["initial_lr"] * (1 - step / whiten_bias_train_steps)
-            for group in optimizer1.param_groups[1:]:
-                group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
-            for group in optimizer2.param_groups:
-                group["lr"] = muon_lr_at_step(muon_schedule, step, total_train_steps)
-            for opt in optimizers:
-                opt.step()
-            model.zero_grad(set_to_none=True)
+            if batch_size == BN_CAL_BATCH_SIZE:
+                train_eval_batches.append((inputs.detach(), labels.detach()))
+                train_eval_batches = train_eval_batches[-BN_CAL_BATCHES:]
+            if use_cuda_graph:
+                whiten_bias_grad = step < whiten_bias_train_steps
+                whiten_lr = bias_lr * (1 - step / whiten_bias_train_steps)
+                main_lr_factor = 1 - step / total_train_steps
+                sgd_lrs = (
+                    whiten_lr,
+                    bias_lr * main_lr_factor,
+                    head_lr * main_lr_factor,
+                )
+                outputs = trainer.step(
+                    inputs,
+                    labels,
+                    sgd_lrs,
+                    muon_lr_at_step(muon_schedule, step, total_train_steps),
+                    whiten_bias_grad,
+                )
+            else:
+                outputs = model(inputs, whiten_bias_grad=(step < whiten_bias_train_steps))
+                loss = F.cross_entropy(outputs, labels, label_smoothing=0.2, reduction="sum")
+                loss.backward()
+                for group in optimizer1.param_groups[:1]:
+                    group["lr"] = group["initial_lr"] * (1 - step / whiten_bias_train_steps)
+                for group in optimizer1.param_groups[1:]:
+                    group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
+                for group in optimizer2.param_groups:
+                    group["lr"] = muon_lr_at_step(muon_schedule, step, total_train_steps)
+                for opt in optimizers:
+                    opt.step()
+                model.zero_grad(set_to_none=True)
             step += 1
             if step >= total_train_steps:
                 break
@@ -592,8 +771,9 @@ def main(run, model, muon_schedule):
     ####################
 
     start_timer()
-    set_training_seed()
-    train_eval_batches = make_train_eval_batches()
+    if batch_size != BN_CAL_BATCH_SIZE:
+        set_training_seed()
+        train_eval_batches = make_train_eval_batches()
     train25_loss = evaluate_train_loss(model, train_eval_batches)
     tta_val_acc = evaluate(model, test_loader, tta_level=2)
     stop_timer()
@@ -631,10 +811,11 @@ if __name__ == "__main__":
     print_columns(logging_columns_list, is_head=True)
     # main("warmup", model)
     sweep_results = []
+    graph_trainers = {}
     for schedule in make_muon_schedules():
         run = "%03d %s" % (schedule["index"], schedule["name"])
         print("\nMuon schedule %s" % run, flush=True)
-        result = main(run, model, schedule)
+        result = main(run, model, schedule, graph_trainers)
         result.update(
             index=schedule["index"],
             schedule=schedule["name"],
