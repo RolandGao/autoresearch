@@ -368,77 +368,27 @@ def evaluate(model, loader, tta_level=0):
 #                Training                  #
 ############################################
 
-PIECEWISE_SCHEDULE_COUNT = 200
-PIECEWISE_BOUNDARIES = (0, 5, 25, 175, 200)
-LINEAR_ENDPOINT_RANGES = (
-    ((0.22606439, 0.44535854), (0.22383163, 0.43233505)),
-    ((0.22211325, 0.43770902), (0.19531117, 0.37758388)),
-    ((0.19485276, 0.36258634), (0.01880287, 0.04326520)),
-    ((0.01488104, 0.04454351), (0.00000000, 0.01623172)),
-)
-
-
-def make_segment(start_lr, end_lr, start_step, end_step):
-    return dict(
-        shape="linear",
-        start_lr=round(start_lr, 8),
-        end_lr=round(end_lr, 8),
-        start_step=start_step,
-        end_step=end_step,
-    )
-
-
-def shape_pattern(schedule):
-    return "".join(segment["shape"][0].upper() for segment in schedule["segments"])
-
-
-def format_segment(segment):
-    return "l %.4g->%.4g" % (segment["start_lr"], segment["end_lr"])
-
-
-def format_muon_schedule(schedule):
-    return "%s %s" % (
-        shape_pattern(schedule),
-        " | ".join(format_segment(segment) for segment in schedule["segments"]),
-    )
+MUON_LR_VALUES = [round(lr / 100, 2) for lr in range(10, 61)]
 
 
 def make_muon_schedules():
-    rng = random.Random(20260520)
     schedules = []
-    for _ in range(PIECEWISE_SCHEDULE_COUNT):
-        segments = []
-        for segment_index, (start_range, end_range) in enumerate(LINEAR_ENDPOINT_RANGES):
-            start_step = PIECEWISE_BOUNDARIES[segment_index]
-            end_step = PIECEWISE_BOUNDARIES[segment_index + 1]
-            start_lr = rng.uniform(*start_range)
-            end_lr = rng.uniform(*end_range)
-            segments.append(make_segment(start_lr, end_lr, start_step, end_step))
-        schedules.append(dict(profile="linear_uniform_tta_ge_0.94_ranges", segments=segments))
-    assert len(schedules) == PIECEWISE_SCHEDULE_COUNT
-    for index, schedule in enumerate(schedules, start=1):
-        schedule["index"] = index
-        schedule["initial_lr"] = schedule["segments"][0]["start_lr"]
-        schedule["shape"] = "piecewise"
-        schedule["shape_pattern"] = shape_pattern(schedule)
-        schedule["name"] = format_muon_schedule(schedule)
+    for index, lr in enumerate(MUON_LR_VALUES, start=1):
+        schedules.append(dict(
+            index=index,
+            initial_lr=lr,
+            shape="linear_decay",
+            shape_pattern="L",
+            name="linear %.2g->0" % lr,
+            profile="linear_decay_0.10_to_0.60_step_0.01",
+            segments=[dict(shape="linear", start_lr=lr, end_lr=0.0)],
+        ))
     return schedules
 
 
-def segment_lr_at_step(segment, step):
-    span = max(segment["end_step"] - segment["start_step"], 1)
-    x = min(max((step - segment["start_step"]) / span, 0.0), 1.0)
-    start_lr = segment["start_lr"]
-    end_lr = segment["end_lr"]
-    return start_lr + (end_lr - start_lr) * x
-
-
 def muon_lr_at_step(schedule, step, total_train_steps):
-    del total_train_steps
-    for segment in schedule["segments"]:
-        if segment["start_step"] <= step < segment["end_step"]:
-            return segment_lr_at_step(segment, step)
-    return segment_lr_at_step(schedule["segments"][-1], step)
+    progress = min(max(step / total_train_steps, 0.0), 1.0)
+    return schedule["initial_lr"] * (1 - progress)
 
 
 def print_sweep_summary(sweep_results):

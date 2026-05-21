@@ -495,6 +495,20 @@ def weighted_percentile_value(counts_by_value, fraction):
     return max(counts_by_value)
 
 
+def weighted_percentile_rank(counts_by_value, target):
+    if not finite(target):
+        return float("nan")
+    total = sum(counts_by_value.values())
+    if total <= 0:
+        return float("nan")
+    count_at_or_below_target = sum(
+        count
+        for value, count in counts_by_value.items()
+        if finite(value) and value <= target and finite(count) and count > 0
+    )
+    return count_at_or_below_target / total
+
+
 def weighted_mean_value(counts_by_value):
     total = sum(counts_by_value.values())
     if total <= 0:
@@ -1170,7 +1184,11 @@ def plot_sample_best_lr_histogram_grid(
         if finite(ground_truth_lr) and ground_truth_lr >= 0:
             line_specs.append((ground_truth_lr, "gt", "tab:orange", "-."))
         if linear_lr:
-            ax.set_xlim(0.0, SAMPLE_BEST_LR_HISTOGRAM_MAX_LR)
+            x_padding = SAMPLE_BEST_LR_HISTOGRAM_BIN_WIDTH * 1.5
+            ax.set_xlim(
+                -x_padding,
+                SAMPLE_BEST_LR_HISTOGRAM_MAX_LR + x_padding,
+            )
 
         ymax = ax.get_ylim()[1]
         for x, name, color, linestyle in line_specs:
@@ -1228,6 +1246,77 @@ def plot_sample_best_lr_histogram_grid(
         fontsize=14,
     )
     save_fast_figure(fig, output_path, show)
+    return output_path
+
+
+def format_report_float(value):
+    return f"{value:.8g}" if finite(value) else "nan"
+
+
+PERCENTILE_REPORT_COLUMNS = [
+    ("step", 6, ">"),
+    ("gt_lr", 12, ">"),
+    ("gt_lr_x2", 12, ">"),
+    ("log_pct", 12, ">"),
+    ("log_x2_pct", 12, ">"),
+    ("log_count", 10, ">"),
+]
+
+
+def format_report_row(values):
+    cells = []
+    for value, (_, width, align) in zip(values, PERCENTILE_REPORT_COLUMNS):
+        text = str(value)
+        cells.append(f"{text:{align}{width}}")
+    return "  ".join(cells)
+
+
+def write_sample_best_lr_percentile_report(runs, output_path):
+    lines = [
+        "# percentile = weighted fraction of best-lr count mass with lr <= target",
+        "# percentile values are fractions in [0, 1]",
+    ]
+    wrote_row = False
+    for label, rows in runs:
+        run_name = Path(label).name
+        wrote_run_header = False
+        for row in rows:
+            gt_lr = row.get("ground_truth_matrix_lr")
+            if not finite(gt_lr) or gt_lr < 0:
+                continue
+            log_counts = sample_best_matrix_lr_counts(row)
+            if not log_counts:
+                continue
+            gt_lr_x2 = gt_lr * 2
+            if not wrote_run_header:
+                if wrote_row:
+                    lines.append("")
+                lines.append(f"# run = {run_name}")
+                lines.append(
+                    format_report_row(
+                        [name for name, _, _ in PERCENTILE_REPORT_COLUMNS]
+                    )
+                )
+                wrote_run_header = True
+            lines.append(
+                format_report_row(
+                    [
+                        row["step"],
+                        format_report_float(gt_lr),
+                        format_report_float(gt_lr_x2),
+                        format_report_float(weighted_percentile_rank(log_counts, gt_lr)),
+                        format_report_float(weighted_percentile_rank(log_counts, gt_lr_x2)),
+                        format_report_float(sum(log_counts.values())),
+                    ]
+                )
+            )
+            wrote_row = True
+
+    if not wrote_row:
+        return None
+
+    output_path = Path(output_path)
+    output_path.write_text("\n".join(lines) + "\n")
     return output_path
 
 
@@ -1410,6 +1499,9 @@ def plot_log_job(job):
     elif kind == "sample_best_lr_linear_histograms":
         output_path = output_dir / "current_batch_sample_best_lr_linear_histograms.png"
         result = plot_sample_best_lr_histogram_grid(runs, output_path, linear_lr=True)
+    elif kind == "sample_best_lr_percentiles":
+        output_path = output_dir / "current_batch_sample_best_lr_percentiles.txt"
+        result = write_sample_best_lr_percentile_report(runs, output_path)
     elif kind == "sample_loss_curves":
         output_path = (
             output_dir
@@ -1454,6 +1546,7 @@ def main():
         jobs = [
             (label, str(output_dir), "sample_best_lr_histograms", None),
             (label, str(output_dir), "sample_best_lr_linear_histograms", None),
+            (label, str(output_dir), "sample_best_lr_percentiles", None),
             (label, str(output_dir), "sample_loss_curves", None),
             *[
                 (label, str(output_dir), "sample_loss_curve_step", step)
