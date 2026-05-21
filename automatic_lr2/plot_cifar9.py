@@ -13,6 +13,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.colors import PowerNorm
+from matplotlib.ticker import MaxNLocator, MultipleLocator
 
 
 FIELD_RE = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>[^\s]+)")
@@ -59,6 +60,8 @@ SAMPLE_LR_POSITION_BY_VALUE = {lr: index for index, lr in enumerate(SAMPLE_LR_GR
 SAMPLE_LOSS_CURVE_DETAIL_STEPS = (0, 10, 50, 190)
 SAMPLE_LOSS_CURVE_MAX_STEP = 200
 SAMPLE_BEST_LR_HISTOGRAM_MAX_SUBPLOTS = 200
+SAMPLE_BEST_LR_HISTOGRAM_BIN_WIDTH = 0.02
+SAMPLE_BEST_LR_HISTOGRAM_MAX_LR = 1.0
 SAMPLE_BEST_LR_HISTOGRAM_PEAK_RADIUS = 6
 PLOT_DPI = 180
 
@@ -407,6 +410,54 @@ def sample_lr_loss_curve_payload(row):
     )
 
 
+def linear_lr_max_bin():
+    return int(
+        round(SAMPLE_BEST_LR_HISTOGRAM_MAX_LR / SAMPLE_BEST_LR_HISTOGRAM_BIN_WIDTH)
+    )
+
+
+def linear_lr_bin_value(bin_index):
+    max_bin = linear_lr_max_bin()
+    bin_index = min(max(bin_index, 0), max_bin)
+    return float(f"{bin_index * SAMPLE_BEST_LR_HISTOGRAM_BIN_WIDTH:.10g}")
+
+
+def linear_lr_bin_index(lr):
+    max_bin = linear_lr_max_bin()
+    return min(max(int(round(lr / SAMPLE_BEST_LR_HISTOGRAM_BIN_WIDTH)), 0), max_bin)
+
+
+def add_linear_lr_count(counts_by_lr, lr, count):
+    if not finite(lr) or lr < 0 or not finite(count) or count <= 0:
+        return
+    if lr <= 0:
+        counts_by_lr[0.0] += count
+        return
+    if lr >= SAMPLE_BEST_LR_HISTOGRAM_MAX_LR:
+        counts_by_lr[SAMPLE_BEST_LR_HISTOGRAM_MAX_LR] += count
+        return
+
+    bin_position = lr / SAMPLE_BEST_LR_HISTOGRAM_BIN_WIDTH
+    nearest_bin = round(bin_position)
+    if abs(bin_position - nearest_bin) < 1e-9:
+        counts_by_lr[linear_lr_bin_value(nearest_bin)] += count
+        return
+
+    left_bin = math.floor(bin_position)
+    right_bin = left_bin + 1
+    right_count = count * (bin_position - left_bin)
+    counts_by_lr[linear_lr_bin_value(left_bin)] += count - right_count
+    counts_by_lr[linear_lr_bin_value(right_bin)] += right_count
+
+
+def finalize_linear_lr_counts(counts_by_lr):
+    if sum(counts_by_lr.values()) <= 0:
+        return Counter()
+    for bin_index in range(linear_lr_max_bin() + 1):
+        counts_by_lr[linear_lr_bin_value(bin_index)] += 0
+    return counts_by_lr
+
+
 def sample_best_matrix_lr_counts(row):
     payload_counts = sample_lr_loss_curve_payload(row).get("optimal_lr_counts", {})
     if payload_counts:
@@ -416,6 +467,19 @@ def sample_best_matrix_lr_counts(row):
                 counts[nearest_sample_lr_grid_value(lr)] += count
         return counts
     return Counter(nearest_sample_lr_grid_value(lr) for lr in sample_best_matrix_lrs(row))
+
+
+def sample_best_matrix_lr_linear_counts(row):
+    counts = Counter()
+    payload_counts = sample_lr_loss_curve_payload(row).get("optimal_lr_counts", {})
+    if payload_counts:
+        for lr, count in payload_counts.items():
+            add_linear_lr_count(counts, lr, count)
+        return finalize_linear_lr_counts(counts)
+
+    for lr in sample_best_matrix_lrs(row):
+        add_linear_lr_count(counts, lr, 1)
+    return finalize_linear_lr_counts(counts)
 
 
 def weighted_percentile_value(counts_by_value, fraction):
@@ -459,6 +523,33 @@ def triangle_smoothed_peak_value(counts_by_value):
         ),
     )
     return SAMPLE_LR_GRID[peak_position]
+
+
+def triangle_smoothed_linear_peak_value(counts_by_value):
+    indexed_counts = Counter()
+    for lr, count in counts_by_value.items():
+        if not finite(lr) or lr < 0 or not finite(count) or count <= 0:
+            continue
+        indexed_counts[linear_lr_bin_index(lr)] += count
+
+    if not indexed_counts:
+        return float("nan")
+
+    radius = SAMPLE_BEST_LR_HISTOGRAM_PEAK_RADIUS
+    candidate_positions = {
+        max(0, bin_index + offset)
+        for bin_index in indexed_counts
+        for offset in range(-radius, radius + 1)
+    }
+    peak_position = max(
+        candidate_positions,
+        key=lambda position: sum(
+            (radius + 1 - abs(offset)) * indexed_counts[position + offset]
+            for offset in range(-radius, radius + 1)
+            if position + offset >= 0
+        ),
+    )
+    return linear_lr_bin_value(peak_position)
 
 
 def sample_matrix_lr_train_losses(row):
@@ -1003,11 +1094,11 @@ def plot_sample_loss_curve_step_grid(runs, output_path, target_step, show=False)
     return output_path
 
 
-def first_sample_best_lr_rows(runs, limit):
+def first_sample_best_lr_rows(runs, limit, counts_fn=sample_best_matrix_lr_counts):
     rows = []
     for label, run_rows in runs:
         for row in run_rows:
-            if sample_best_matrix_lr_counts(row):
+            if counts_fn(row):
                 rows.append((label, row))
                 if len(rows) == limit:
                     return rows
@@ -1019,8 +1110,18 @@ def plot_sample_best_lr_histogram_grid(
     output_path,
     max_subplots=SAMPLE_BEST_LR_HISTOGRAM_MAX_SUBPLOTS,
     show=False,
+    linear_lr=False,
 ):
-    selected_rows = first_sample_best_lr_rows(runs, max_subplots)
+    if linear_lr:
+        counts_fn = sample_best_matrix_lr_linear_counts
+    else:
+        counts_fn = sample_best_matrix_lr_counts
+    peak_fn = (
+        triangle_smoothed_linear_peak_value
+        if linear_lr
+        else triangle_smoothed_peak_value
+    )
+    selected_rows = first_sample_best_lr_rows(runs, max_subplots, counts_fn)
     if not selected_rows:
         return None
 
@@ -1038,19 +1139,23 @@ def plot_sample_best_lr_histogram_grid(
     multiple_runs = len(runs) > 1
 
     for axis_index, (ax, (label, row)) in enumerate(zip(axes, selected_rows)):
-        counts_by_lr = sample_best_matrix_lr_counts(row)
+        counts_by_lr = counts_fn(row)
         if not counts_by_lr:
             ax.set_visible(False)
             continue
 
         unique_lrs = sorted(counts_by_lr)
+        counted_lrs = [lr for lr in unique_lrs if counts_by_lr[lr] > 0]
         counts = [counts_by_lr[lr] for lr in unique_lrs]
-        lr_positions = [sample_lr_grid_position(lr) for lr in unique_lrs]
-        ax.vlines(lr_positions, 0, counts, color="tab:blue", linewidth=1.2, alpha=0.85)
-        ax.scatter(lr_positions, counts, color="tab:blue", s=10, linewidths=0, zorder=3)
+        if linear_lr:
+            xs = unique_lrs
+        else:
+            xs = [sample_lr_grid_position(lr) for lr in unique_lrs]
+        ax.vlines(xs, 0, counts, color="tab:blue", linewidth=1.2, alpha=0.85)
+        ax.scatter(xs, counts, color="tab:blue", s=10, linewidths=0, zorder=3)
 
-        min_lr = min(unique_lrs)
-        peak_lr = triangle_smoothed_peak_value(counts_by_lr)
+        min_lr = min(counted_lrs)
+        peak_lr = peak_fn(counts_by_lr)
         median_lr = weighted_percentile_value(counts_by_lr, 0.5)
         p95_lr = weighted_percentile_value(counts_by_lr, 0.95)
         p98_lr = weighted_percentile_value(counts_by_lr, 0.98)
@@ -1064,9 +1169,12 @@ def plot_sample_best_lr_histogram_grid(
         ground_truth_lr = row.get("ground_truth_matrix_lr")
         if finite(ground_truth_lr) and ground_truth_lr >= 0:
             line_specs.append((ground_truth_lr, "gt", "tab:orange", "-."))
+        if linear_lr:
+            ax.set_xlim(0.0, SAMPLE_BEST_LR_HISTOGRAM_MAX_LR)
+
         ymax = ax.get_ylim()[1]
         for x, name, color, linestyle in line_specs:
-            x_pos = sample_lr_grid_position(x)
+            x_pos = x if linear_lr else sample_lr_grid_position(x)
             ax.axvline(
                 x_pos, color=color, linestyle=linestyle, linewidth=0.9, alpha=0.9
             )
@@ -1086,15 +1194,21 @@ def plot_sample_best_lr_histogram_grid(
         if multiple_runs:
             title = f"{Path(label).name}\n{title}"
         ax.set_title(title, fontsize=7)
-        tick_positions = sample_lr_tick_positions()
-        ax.set_xticks(tick_positions)
-        ax.set_xticklabels(
-            [f"{SAMPLE_LR_GRID[position]:.3g}" for position in tick_positions],
-            rotation=45,
-            ha="right",
-        )
-        ax.set_xticks(range(len(SAMPLE_LR_GRID)), minor=True)
-        ax.set_xlim(-1.4, len(SAMPLE_LR_GRID) + 0.4)
+        if linear_lr:
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=3))
+            ax.xaxis.set_minor_locator(
+                MultipleLocator(SAMPLE_BEST_LR_HISTOGRAM_BIN_WIDTH)
+            )
+        else:
+            tick_positions = sample_lr_tick_positions()
+            ax.set_xticks(tick_positions)
+            ax.set_xticklabels(
+                [f"{SAMPLE_LR_GRID[position]:.3g}" for position in tick_positions],
+                rotation=45,
+                ha="right",
+            )
+            ax.set_xticks(range(len(SAMPLE_LR_GRID)), minor=True)
+            ax.set_xlim(-1.4, len(SAMPLE_LR_GRID) + 0.4)
         configure_small_multiple_axis(
             ax, axis_index, ncols, len(selected_rows), labelsize=5.5
         )
@@ -1106,8 +1220,11 @@ def plot_sample_best_lr_histogram_grid(
 
     fig.supxlabel("sample best matrix lr")
     fig.supylabel("sample count")
+    title_prefix = "Current Batch Per-Sample Best LR"
+    if linear_lr:
+        title_prefix = "Current Batch Per-Sample Best LR Linear-Bin"
     fig.suptitle(
-        f"Current Batch Per-Sample Best LR Histograms ({len(selected_rows)} steps)",
+        f"{title_prefix} Histograms ({len(selected_rows)} steps)",
         fontsize=14,
     )
     save_fast_figure(fig, output_path, show)
@@ -1290,6 +1407,9 @@ def plot_log_job(job):
     if kind == "sample_best_lr_histograms":
         output_path = output_dir / "current_batch_sample_best_lr_histograms.png"
         result = plot_sample_best_lr_histogram_grid(runs, output_path)
+    elif kind == "sample_best_lr_linear_histograms":
+        output_path = output_dir / "current_batch_sample_best_lr_linear_histograms.png"
+        result = plot_sample_best_lr_histogram_grid(runs, output_path, linear_lr=True)
     elif kind == "sample_loss_curves":
         output_path = (
             output_dir
@@ -1333,6 +1453,7 @@ def main():
         output_dir = output_dir_for_log(label, args.output_dir)
         jobs = [
             (label, str(output_dir), "sample_best_lr_histograms", None),
+            (label, str(output_dir), "sample_best_lr_linear_histograms", None),
             (label, str(output_dir), "sample_loss_curves", None),
             *[
                 (label, str(output_dir), "sample_loss_curve_step", step)

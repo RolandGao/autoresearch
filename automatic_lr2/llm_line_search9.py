@@ -14,7 +14,9 @@ import json
 import math
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass, asdict
+from math import isfinite
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -744,10 +746,15 @@ def finite_loss_sum_item(losses):
     return finite_loss_item(losses.sum())
 
 
-def best_sample_matrix_lrs(sample_losses_by_matrix_lr):
+def finite_float_or_none(value):
+    value = float(value)
+    return value if isfinite(value) else None
+
+
+def sample_lr_loss_curve_payload(sample_losses_by_matrix_lr):
     matrix_lrs = sorted(sample_losses_by_matrix_lr)
     if not matrix_lrs:
-        return []
+        return dict(lrs=[], optimal_lr_counts={}, curves=[])
     losses = torch.stack(
         [
             torch.where(
@@ -759,7 +766,36 @@ def best_sample_matrix_lrs(sample_losses_by_matrix_lr):
         ]
     )
     best_indices = losses.argmin(dim=0).detach().cpu().tolist()
-    return [matrix_lrs[index] for index in best_indices]
+    best_lrs = [matrix_lrs[index] for index in best_indices]
+    optimal_lr_counts = Counter(best_lrs)
+
+    selected_indices = []
+    seen_best_indices = set()
+    for sample_index, best_index in enumerate(best_indices):
+        if best_index in seen_best_indices:
+            continue
+        selected_indices.append(sample_index)
+        seen_best_indices.add(best_index)
+
+    losses = losses.detach().cpu()
+    return dict(
+        lrs=format_matrix_lrs(matrix_lrs),
+        optimal_lr_counts={
+            "%.8g" % matrix_lr: count
+            for matrix_lr, count in sorted(optimal_lr_counts.items())
+        },
+        curves=[
+            dict(
+                sample_index=sample_index,
+                optimal_lr=float("%.8g" % best_lrs[sample_index]),
+                losses=[
+                    finite_float_or_none(losses[lr_index, sample_index].item())
+                    for lr_index in range(len(matrix_lrs))
+                ],
+            )
+            for sample_index in selected_indices
+        ],
+    )
 
 
 def evaluate_matrix_lr_grid(
@@ -786,7 +822,7 @@ def evaluate_matrix_lr_grid(
             restore_search_state()
             set_matrix_lr(matrix_optimizer, matrix_lr)
             for opt in optimizers:
-                opt.step(only_kind="muon")
+                opt.step()
             with torch.no_grad():
                 losses = compute_line_search_losses(model, batches)
             losses_by_name[name][matrix_lr] = finite_loss_sum_item(losses)
@@ -794,18 +830,19 @@ def evaluate_matrix_lr_grid(
                 sample_losses_by_name[name][matrix_lr] = losses.detach()
 
     restore_search_state()
-    return {
-        name: dict(
+    results = {}
+    for name, losses in losses_by_name.items():
+        results[name] = dict(
             best_matrix_lr=min(losses.items(), key=lambda item: item[1])[0],
             best_loss=min(losses.values()),
             losses_by_matrix_lr=losses,
-            sample_losses_by_matrix_lr=sample_losses_by_name.get(name, {}),
-            sample_best_matrix_lrs=best_sample_matrix_lrs(
-                sample_losses_by_name.get(name, {})
-            ),
         )
-        for name, losses in losses_by_name.items()
-    }
+        sample_losses = sample_losses_by_name.get(name, {})
+        if sample_losses:
+            results[name]["sample_lr_loss_curves"] = sample_lr_loss_curve_payload(
+                sample_losses
+            )
+    return results
 
 
 def initial_ground_truth_matrix_lr_sweep(ground_truth_matrix_lr):
@@ -827,16 +864,6 @@ def format_matrix_lr_loss_map(losses_by_matrix_lr):
 
 def format_matrix_lrs(matrix_lrs):
     return [float("%.8g" % matrix_lr) for matrix_lr in matrix_lrs]
-
-
-def format_sample_matrix_lr_loss_map(sample_losses_by_matrix_lr):
-    return {
-        "%.8g" % matrix_lr: [
-            float("%.8g" % loss)
-            for loss in losses.detach().float().cpu().tolist()
-        ]
-        for matrix_lr, losses in sorted(sample_losses_by_matrix_lr.items())
-    }
 
 
 def line_search_validation_sets(current_batches):
@@ -1205,10 +1232,8 @@ while True:
         "pre_update_train_loss=%.6f line_search_loss=%.6f "
         "current_batch_line_search_matrix_lr=%.8g "
         "current_batch_line_search_loss=%.6f "
-        "matrix_lr_train_losses=%s "
         "current_batch_matrix_lr_train_losses=%s "
-        "current_batch_sample_best_matrix_lrs=%s "
-        "current_batch_sample_matrix_lr_train_losses=%s"
+        "current_batch_sample_lr_loss_curves=%s"
         % (
             step,
             current_batch_results["best_matrix_lr"],
@@ -1220,20 +1245,14 @@ while True:
             json.dumps(
                 format_matrix_lr_loss_map(
                     current_batch_results["losses_by_matrix_lr"]
-                )
+                ),
+                separators=(",", ":"),
+                allow_nan=False,
             ),
             json.dumps(
-                format_matrix_lr_loss_map(
-                    current_batch_results["losses_by_matrix_lr"]
-                )
-            ),
-            json.dumps(
-                format_matrix_lrs(current_batch_results["sample_best_matrix_lrs"])
-            ),
-            json.dumps(
-                format_sample_matrix_lr_loss_map(
-                    current_batch_results["sample_losses_by_matrix_lr"]
-                )
+                current_batch_results["sample_lr_loss_curves"],
+                separators=(",", ":"),
+                allow_nan=False,
             ),
         ),
         flush=True,

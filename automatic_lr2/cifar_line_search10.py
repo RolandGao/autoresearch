@@ -14,9 +14,10 @@ import sys
 
 with open(sys.argv[0]) as f:
     code = f.read()
+from collections import Counter
 import json
 import uuid
-from math import ceil, isfinite
+from math import ceil, isfinite, log
 
 import torch
 from torch import nn
@@ -58,6 +59,7 @@ def set_training_seed():
     torch.manual_seed(TRAINING_SEED)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(TRAINING_SEED)
+
 
 #############################################
 #               Muon optimizer              #
@@ -347,20 +349,8 @@ class CifarNet(nn.Module):
 ############################################
 
 
-def print_columns(columns_list, is_head=False, is_final_entry=False):
-    print_string = ""
-    for col in columns_list:
-        print_string += "|  %s  " % col
-    print_string += "|"
-    if is_head:
-        print("-" * len(print_string))
-    print(print_string)
-    if is_head or is_final_entry:
-        print("-" * len(print_string))
-
-
 logging_columns_list = [
-    "run   ",
+    "run",
     "epoch",
     "train_loss",
     "train_acc",
@@ -371,18 +361,16 @@ logging_columns_list = [
 
 
 def print_training_details(variables, is_final_entry):
-    formatted = []
+    fields = []
     for col in logging_columns_list:
-        var = variables.get(col.strip(), None)
+        var = variables.get(col, None)
         if type(var) in (int, str):
-            res = str(var)
+            fields.append(f"{col}={var}")
         elif type(var) is float:
-            res = "{:0.4f}".format(var)
+            fields.append(f"{col}={var:0.4f}")
         else:
             assert var is None
-            res = ""
-        formatted.append(res.rjust(len(col)))
-    print_columns(formatted, is_final_entry=is_final_entry)
+    print("epoch_summary " + " ".join(fields), flush=True)
 
 
 ############################################
@@ -441,10 +429,9 @@ def evaluate(model, loader, tta_level=0):
 
 LINE_SEARCH_FACTOR = 0.8
 INITIAL_GROUND_TRUTH_MATRIX_LR = 0.24
-LINE_SEARCH_LEFT_STEPS = 20
-LINE_SEARCH_RIGHT_STEPS = 10
-REL_DIFF_THRESHOLDS = tuple(i / 10 for i in range(0, 21, 2))
-LINE_SEARCH_VAL_SETS = ("current_batch", "next_batch")
+LINE_SEARCH_LEFT_STEPS = 30
+LINE_SEARCH_RIGHT_STEPS = 20
+SAMPLE_BEST_LR_HISTOGRAM_PEAK_RADIUS = 6
 
 
 def clone_state(value):
@@ -497,102 +484,193 @@ def lr_from_exponent(base_lr, exponent):
     return base_lr * (LINE_SEARCH_FACTOR**exponent)
 
 
+SAMPLE_LR_GRID = [
+    0.0,
+    *[
+        float("%.8g" % lr_from_exponent(INITIAL_GROUND_TRUTH_MATRIX_LR, exponent))
+        for exponent in range(LINE_SEARCH_LEFT_STEPS, -LINE_SEARCH_RIGHT_STEPS - 1, -1)
+    ],
+]
+SAMPLE_LR_POSITION_BY_VALUE = {lr: index for index, lr in enumerate(SAMPLE_LR_GRID)}
+
+
+def nearest_sample_lr_grid_value(lr):
+    lr = float("%.8g" % lr)
+    if lr in SAMPLE_LR_POSITION_BY_VALUE:
+        return lr
+    if lr <= 0:
+        return 0.0
+    return min(
+        SAMPLE_LR_GRID[1:],
+        key=lambda grid_lr: abs(log(lr) - log(grid_lr)),
+    )
+
+
+def triangle_smoothed_peak_value(counts_by_value):
+    counts = [0] * len(SAMPLE_LR_GRID)
+    for lr, count in counts_by_value.items():
+        if count <= 0:
+            continue
+        lr = nearest_sample_lr_grid_value(lr)
+        counts[SAMPLE_LR_POSITION_BY_VALUE[lr]] += count
+
+    if not any(counts):
+        return float("nan")
+
+    radius = SAMPLE_BEST_LR_HISTOGRAM_PEAK_RADIUS
+    peak_position = max(
+        range(len(counts)),
+        key=lambda position: sum(
+            (radius + 1 - abs(offset)) * counts[position + offset]
+            for offset in range(-radius, radius + 1)
+            if 0 <= position + offset < len(counts)
+        ),
+    )
+    return SAMPLE_LR_GRID[peak_position]
+
+
+def sample_peak_matrix_lr(sample_lr_loss_curves):
+    counts = Counter(
+        {
+            float(matrix_lr): int(count)
+            for matrix_lr, count in sample_lr_loss_curves.get(
+                "optimal_lr_counts", {}
+            ).items()
+            if count > 0
+        }
+    )
+    return triangle_smoothed_peak_value(counts)
+
+
 def set_matrix_lr(optimizer, matrix_lr):
     for group in optimizer.param_groups:
         group["lr"] = matrix_lr
 
 
-def compute_line_search_loss(model, batches):
-    loss = None
+def compute_line_search_losses(model, batches):
+    losses = []
     model.train()
     for inputs, labels in batches:
         outputs = model(inputs)
-        batch_loss = F.cross_entropy(
-            outputs.float(), labels, label_smoothing=0.2, reduction="sum"
+        batch_losses = F.cross_entropy(
+            outputs.float(), labels, label_smoothing=0.2, reduction="none"
         )
-        loss = batch_loss if loss is None else loss + batch_loss
-    return loss
+        losses.append(batch_losses)
+    return torch.cat(losses)
 
 
 def finite_loss_item(loss):
     return loss.item() if torch.isfinite(loss) else float("inf")
 
 
+def finite_loss_sum_item(losses):
+    return finite_loss_item(losses.sum())
+
+
+def finite_float_or_none(value):
+    value = float(value)
+    return value if isfinite(value) else None
+
+
+def sample_lr_loss_curve_payload(sample_losses_by_matrix_lr):
+    matrix_lrs = sorted(sample_losses_by_matrix_lr)
+    if not matrix_lrs:
+        return dict(lrs=[], optimal_lr_counts={}, curves=[])
+    losses = torch.stack(
+        [
+            torch.where(
+                torch.isfinite(sample_losses_by_matrix_lr[matrix_lr]),
+                sample_losses_by_matrix_lr[matrix_lr],
+                torch.full_like(sample_losses_by_matrix_lr[matrix_lr], float("inf")),
+            )
+            for matrix_lr in matrix_lrs
+        ]
+    )
+    best_indices = losses.argmin(dim=0).detach().cpu().tolist()
+    best_lrs = [matrix_lrs[index] for index in best_indices]
+    optimal_lr_counts = Counter(best_lrs)
+
+    selected_indices = []
+    seen_best_indices = set()
+    for sample_index, best_index in enumerate(best_indices):
+        if best_index in seen_best_indices:
+            continue
+        selected_indices.append(sample_index)
+        seen_best_indices.add(best_index)
+
+    losses = losses.detach().cpu()
+    return dict(
+        lrs=format_matrix_lrs(matrix_lrs),
+        optimal_lr_counts={
+            "%.8g" % matrix_lr: count
+            for matrix_lr, count in sorted(optimal_lr_counts.items())
+        },
+        curves=[
+            dict(
+                sample_index=sample_index,
+                optimal_lr=float("%.8g" % best_lrs[sample_index]),
+                losses=[
+                    finite_float_or_none(losses[lr_index, sample_index].item())
+                    for lr_index in range(len(matrix_lrs))
+                ],
+            )
+            for sample_index in selected_indices
+        ],
+    )
+
+
 def evaluate_matrix_lr_grid(
     model,
     optimizers,
     matrix_optimizer,
-    batches,
+    validation_sets,
     matrix_lrs,
 ):
     search_state = capture_training_state(model, optimizers)
-    losses_by_matrix_lr = {}
+    losses_by_name = {name: {} for name, _ in validation_sets}
+    sample_losses_by_name = {name: {} for name, _ in validation_sets}
 
     def restore_search_state():
         restore_training_state(model, optimizers, search_state)
 
     for matrix_lr in matrix_lrs:
-        if matrix_lr in losses_by_matrix_lr:
+        if all(matrix_lr in losses for losses in losses_by_name.values()):
             continue
-        restore_search_state()
-        set_matrix_lr(matrix_optimizer, matrix_lr)
-        for opt in optimizers:
-            opt.step()
-        with torch.no_grad():
-            loss = compute_line_search_loss(model, batches)
-        losses_by_matrix_lr[matrix_lr] = finite_loss_item(loss)
+        for name, batches in validation_sets:
+            if matrix_lr in losses_by_name[name]:
+                continue
+            restore_search_state()
+            set_matrix_lr(matrix_optimizer, matrix_lr)
+            for opt in optimizers:
+                opt.step()
+            with torch.no_grad():
+                losses = compute_line_search_losses(model, batches)
+            losses_by_name[name][matrix_lr] = finite_loss_sum_item(losses)
+            if name == "current_batch":
+                sample_losses_by_name[name][matrix_lr] = losses.detach()
 
     restore_search_state()
-    best_matrix_lr, best_loss = min(
-        losses_by_matrix_lr.items(), key=lambda item: item[1]
-    )
-    return best_matrix_lr, best_loss, losses_by_matrix_lr
-
-
-def relative_loss_diff(loss, best_loss, zero_loss):
-    denominator = zero_loss - best_loss
-    if denominator <= 0:
-        return float("inf")
-    return (loss - best_loss) / denominator
-
-
-def largest_matrix_lr_within_rel_diff(losses_by_matrix_lr, rel_diff_threshold):
-    finite_losses = {
-        matrix_lr: loss
-        for matrix_lr, loss in losses_by_matrix_lr.items()
-        if matrix_lr >= 0 and isfinite(loss)
-    }
-    if not finite_losses:
-        return 0.0, float("inf"), float("inf")
-
-    best_loss = min(finite_losses.values())
-    zero_loss = finite_losses.get(0.0, float("inf"))
-    candidates = [
-        (matrix_lr, loss)
-        for matrix_lr, loss in finite_losses.items()
-        if relative_loss_diff(loss, best_loss, zero_loss) <= rel_diff_threshold
-    ]
-    if not candidates:
-        best_matrix_lr, selected_loss = min(
-            finite_losses.items(), key=lambda item: item[1]
+    results = {}
+    for name, losses in losses_by_name.items():
+        results[name] = dict(
+            best_matrix_lr=min(losses.items(), key=lambda item: item[1])[0],
+            best_loss=min(losses.values()),
+            losses_by_matrix_lr=losses,
         )
-        return best_matrix_lr, selected_loss, relative_loss_diff(
-            selected_loss, best_loss, zero_loss
-        )
-
-    selected_matrix_lr, selected_loss = max(candidates, key=lambda item: item[0])
-    return selected_matrix_lr, selected_loss, relative_loss_diff(
-        selected_loss, best_loss, zero_loss
-    )
+        sample_losses = sample_losses_by_name.get(name, {})
+        if sample_losses:
+            results[name]["sample_lr_loss_curves"] = sample_lr_loss_curve_payload(
+                sample_losses
+            )
+    return results
 
 
-def initial_ground_truth_matrix_lr_sweep(ground_truth_matrix_lr):
+def fixed_matrix_lr_sweep():
     sweep = [0.0, INITIAL_GROUND_TRUTH_MATRIX_LR]
     for i in range(1, LINE_SEARCH_LEFT_STEPS + 1):
         sweep.append(lr_from_exponent(INITIAL_GROUND_TRUTH_MATRIX_LR, i))
     for i in range(1, LINE_SEARCH_RIGHT_STEPS + 1):
         sweep.append(lr_from_exponent(INITIAL_GROUND_TRUTH_MATRIX_LR, -i))
-    sweep.append(ground_truth_matrix_lr)
     return sweep
 
 
@@ -603,16 +681,14 @@ def format_matrix_lr_loss_map(losses_by_matrix_lr):
     }
 
 
-def line_search_batches(epoch_batches, batch_index, val_set):
-    if val_set == "current_batch":
-        return [epoch_batches[batch_index]]
-    if val_set == "next_batch":
-        return [epoch_batches[(batch_index + 1) % len(epoch_batches)]]
-    raise ValueError(f"Unknown line-search validation set: {val_set}")
+def format_matrix_lrs(matrix_lrs):
+    return [float("%.8g" % matrix_lr) for matrix_lr in matrix_lrs]
 
 
-def matrix_lr_losses_log_field(val_set):
-    return f"{val_set}_matrix_lr_train_losses"
+def line_search_validation_sets(epoch_batches, batch_index):
+    return [
+        ("current_batch", [epoch_batches[batch_index]]),
+    ]
 
 
 ############################################
@@ -620,7 +696,7 @@ def matrix_lr_losses_log_field(val_set):
 ############################################
 
 
-def main(run, model, rel_diff_threshold, val_set):
+def main(run, model):
     set_training_seed()
 
     batch_size = 2000
@@ -652,7 +728,9 @@ def main(run, model, rel_diff_threshold, val_set):
         dict(params=norm_biases, lr=bias_lr, weight_decay=wd / bias_lr),
         dict(params=[model.head.weight], lr=head_lr, weight_decay=wd / head_lr),
     ]
-    optimizer1 = torch.optim.SGD(param_configs, momentum=0.85, nesterov=True, fused=True)
+    optimizer1 = torch.optim.SGD(
+        param_configs, momentum=0.85, nesterov=True, fused=True
+    )
     optimizer2 = Muon(filter_params, lr=0.24, momentum=0.6, nesterov=True)
     optimizers = [optimizer1, optimizer2]
     for opt in optimizers:
@@ -701,45 +779,57 @@ def main(run, model, rel_diff_threshold, val_set):
             for group in optimizer1.param_groups[1:] + optimizer2.param_groups:
                 group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
             ground_truth_matrix_lr = optimizer2.param_groups[0]["lr"]
-            _, best_line_search_loss, matrix_lr_train_losses = evaluate_matrix_lr_grid(
+            line_search_results = evaluate_matrix_lr_grid(
                 model,
                 optimizers,
                 optimizer2,
-                line_search_batches(epoch_batches, batch_index, val_set),
-                initial_ground_truth_matrix_lr_sweep(ground_truth_matrix_lr),
+                line_search_validation_sets(epoch_batches, batch_index),
+                fixed_matrix_lr_sweep(),
             )
-            (
-                line_search_matrix_lr,
-                line_search_loss,
-                line_search_rel_diff,
-            ) = largest_matrix_lr_within_rel_diff(
-                matrix_lr_train_losses, rel_diff_threshold
+            current_batch_results = line_search_results["current_batch"]
+            peak_matrix_lr = sample_peak_matrix_lr(
+                current_batch_results["sample_lr_loss_curves"]
             )
-            matrix_lr_losses_field = matrix_lr_losses_log_field(val_set)
+            matrix_lr_for_step = (
+                peak_matrix_lr
+                if isfinite(peak_matrix_lr) and peak_matrix_lr >= 0
+                else ground_truth_matrix_lr
+            )
+            set_matrix_lr(optimizer2, matrix_lr_for_step)
             print(
                 "\nline_search step=%d "
-                "rel_diff_threshold=%.8g val_set=%s "
                 "line_search_matrix_lr=%.8g ground_truth_matrix_lr=%.8g "
+                "peak_matrix_lr=%.8g applied_matrix_lr=%.8g "
                 "pre_update_train_loss=%.6f line_search_loss=%.6f "
-                "best_line_search_loss=%.6f line_search_rel_diff=%.8g "
-                "matrix_lr_train_losses=%s %s=%s"
+                "current_batch_line_search_matrix_lr=%.8g "
+                "current_batch_line_search_loss=%.6f "
+                "current_batch_matrix_lr_train_losses=%s "
+                "current_batch_sample_lr_loss_curves=%s"
                 % (
                     step,
-                    rel_diff_threshold,
-                    val_set,
-                    line_search_matrix_lr,
+                    current_batch_results["best_matrix_lr"],
                     ground_truth_matrix_lr,
+                    peak_matrix_lr,
+                    matrix_lr_for_step,
                     finite_loss_item(train_loss),
-                    line_search_loss,
-                    best_line_search_loss,
-                    line_search_rel_diff,
-                    json.dumps(format_matrix_lr_loss_map(matrix_lr_train_losses)),
-                    matrix_lr_losses_field,
-                    json.dumps(format_matrix_lr_loss_map(matrix_lr_train_losses)),
+                    current_batch_results["best_loss"],
+                    current_batch_results["best_matrix_lr"],
+                    current_batch_results["best_loss"],
+                    json.dumps(
+                        format_matrix_lr_loss_map(
+                            current_batch_results["losses_by_matrix_lr"]
+                        ),
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    ),
+                    json.dumps(
+                        current_batch_results["sample_lr_loss_curves"],
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    ),
                 ),
                 flush=True,
             )
-            set_matrix_lr(optimizer2, line_search_matrix_lr)
             for opt in optimizers:
                 opt.step()
             model.zero_grad(set_to_none=True)
@@ -759,7 +849,6 @@ def main(run, model, rel_diff_threshold, val_set):
         train_acc = (outputs.detach().argmax(1) == labels).float().mean().item()
         val_acc = evaluate(model, test_loader, tta_level=0)
         print_training_details(locals(), is_final_entry=False)
-        run = None  # Only print the run number once
 
     ####################
     #  TTA Evaluation  #
@@ -780,24 +869,12 @@ if __name__ == "__main__":
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
     # model.compile(mode="max-autotune")
 
-    print_columns(logging_columns_list, is_head=True)
     # main("warmup", model)
-    sweep_results = []
-    for rel_diff_threshold in REL_DIFF_THRESHOLDS:
-        for val_set in LINE_SEARCH_VAL_SETS:
-            run = "%s/%g" % (val_set, rel_diff_threshold)
-            sweep_results.append(
-                dict(
-                    rel_diff_threshold=rel_diff_threshold,
-                    val_set=val_set,
-                    acc=main(run, model, rel_diff_threshold, val_set),
-                )
-            )
-    accs = torch.tensor([result["acc"] for result in sweep_results])
+    accs = torch.tensor([main(run, model) for run in range(1)])
     print("Mean: %.4f    Std: %.4f" % (accs.mean(), accs.std()))
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "log.pt")
-    torch.save(dict(code=code, accs=accs, sweep_results=sweep_results), log_path)
+    torch.save(dict(code=code, accs=accs), log_path)
     print(os.path.abspath(log_path))
