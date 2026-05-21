@@ -1062,3 +1062,9 @@ TODO: be careful of batch norm when evaluating cuz of running statistics.
 TODO: really understand whitening. i think whitening is actually not what we want for the gradient matrix. 
 TODO: chatgpt proposes maximum safe LR * manual annealing factor instead of argmin loss landscape. 
 TODO: a lr that temporarily increases the loss can be OK. 
+
+
+
+the automatic lr scheduler should take into account the batch size. 
+it should also somehow cooldown. 
+get more benchmarks with varying datasets. 

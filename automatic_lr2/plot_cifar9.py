@@ -516,20 +516,49 @@ def weighted_mean_value(counts_by_value):
     return sum(value * count for value, count in counts_by_value.items()) / total
 
 
+def excluded_peak_lrs(counts_by_value):
+    counted_lrs = [
+        lr
+        for lr, count in counts_by_value.items()
+        if finite(lr) and lr >= 0 and finite(count) and count > 0
+    ]
+    if not counted_lrs:
+        return set()
+
+    excluded = {0.0, max(counted_lrs)}
+    positive_lrs = [lr for lr in counted_lrs if lr > 0]
+    if positive_lrs:
+        excluded.add(min(positive_lrs))
+    return excluded
+
+
 def triangle_smoothed_peak_value(counts_by_value):
+    excluded_positions = {
+        SAMPLE_LR_POSITION_BY_VALUE[nearest_sample_lr_grid_value(lr)]
+        for lr in excluded_peak_lrs(counts_by_value)
+    }
     counts = [0] * len(SAMPLE_LR_GRID)
     for lr, count in counts_by_value.items():
         if count <= 0:
             continue
         lr = nearest_sample_lr_grid_value(lr)
-        counts[SAMPLE_LR_POSITION_BY_VALUE[lr]] += count
+        position = SAMPLE_LR_POSITION_BY_VALUE[lr]
+        if position in excluded_positions:
+            continue
+        counts[position] += count
 
     if not any(counts):
         return float("nan")
 
     radius = SAMPLE_BEST_LR_HISTOGRAM_PEAK_RADIUS
+    candidate_positions = [
+        position for position in range(len(counts)) if position not in excluded_positions
+    ]
+    if not candidate_positions:
+        return float("nan")
+
     peak_position = max(
-        range(len(counts)),
+        candidate_positions,
         key=lambda position: sum(
             (radius + 1 - abs(offset)) * counts[position + offset]
             for offset in range(-radius, radius + 1)
@@ -540,11 +569,17 @@ def triangle_smoothed_peak_value(counts_by_value):
 
 
 def triangle_smoothed_linear_peak_value(counts_by_value):
+    excluded_positions = {
+        linear_lr_bin_index(lr) for lr in excluded_peak_lrs(counts_by_value)
+    }
     indexed_counts = Counter()
     for lr, count in counts_by_value.items():
         if not finite(lr) or lr < 0 or not finite(count) or count <= 0:
             continue
-        indexed_counts[linear_lr_bin_index(lr)] += count
+        bin_index = linear_lr_bin_index(lr)
+        if bin_index in excluded_positions:
+            continue
+        indexed_counts[bin_index] += count
 
     if not indexed_counts:
         return float("nan")
@@ -555,6 +590,10 @@ def triangle_smoothed_linear_peak_value(counts_by_value):
         for bin_index in indexed_counts
         for offset in range(-radius, radius + 1)
     }
+    candidate_positions = candidate_positions - excluded_positions
+    if not candidate_positions:
+        return float("nan")
+
     peak_position = max(
         candidate_positions,
         key=lambda position: sum(
@@ -1119,12 +1158,41 @@ def first_sample_best_lr_rows(runs, limit, counts_fn=sample_best_matrix_lr_count
     return rows
 
 
+def sample_best_lr_rows(runs, counts_fn=sample_best_matrix_lr_counts):
+    rows = []
+    for label, run_rows in runs:
+        for row in run_rows:
+            if counts_fn(row):
+                rows.append((label, row))
+    return rows
+
+
+def chunked_rows(rows, chunk_size):
+    return [
+        rows[index : index + chunk_size]
+        for index in range(0, len(rows), chunk_size)
+    ]
+
+
+def histogram_chunk_output_path(output_path, selected_rows, multiple_chunks):
+    output_path = Path(output_path)
+    if not multiple_chunks:
+        return output_path
+
+    first_step = selected_rows[0][1]["step"]
+    last_step = selected_rows[-1][1]["step"]
+    return output_path.with_name(
+        f"{output_path.stem}_steps{first_step:03d}-{last_step:03d}{output_path.suffix}"
+    )
+
+
 def plot_sample_best_lr_histogram_grid(
     runs,
     output_path,
     max_subplots=SAMPLE_BEST_LR_HISTOGRAM_MAX_SUBPLOTS,
     show=False,
     linear_lr=False,
+    selected_rows=None,
 ):
     if linear_lr:
         counts_fn = sample_best_matrix_lr_linear_counts
@@ -1135,7 +1203,8 @@ def plot_sample_best_lr_histogram_grid(
         if linear_lr
         else triangle_smoothed_peak_value
     )
-    selected_rows = first_sample_best_lr_rows(runs, max_subplots, counts_fn)
+    if selected_rows is None:
+        selected_rows = first_sample_best_lr_rows(runs, max_subplots, counts_fn)
     if not selected_rows:
         return None
 
@@ -1247,6 +1316,42 @@ def plot_sample_best_lr_histogram_grid(
     )
     save_fast_figure(fig, output_path, show)
     return output_path
+
+
+def plot_sample_best_lr_histogram_grids(
+    runs,
+    output_path,
+    max_subplots=SAMPLE_BEST_LR_HISTOGRAM_MAX_SUBPLOTS,
+    show=False,
+    linear_lr=False,
+):
+    counts_fn = (
+        sample_best_matrix_lr_linear_counts
+        if linear_lr
+        else sample_best_matrix_lr_counts
+    )
+    rows = sample_best_lr_rows(runs, counts_fn)
+    if not rows:
+        return []
+
+    chunks = chunked_rows(rows, max_subplots)
+    multiple_chunks = len(chunks) > 1
+    output_paths = []
+    for selected_rows in chunks:
+        chunk_output_path = histogram_chunk_output_path(
+            output_path, selected_rows, multiple_chunks
+        )
+        result = plot_sample_best_lr_histogram_grid(
+            runs,
+            chunk_output_path,
+            max_subplots=max_subplots,
+            show=show,
+            linear_lr=linear_lr,
+            selected_rows=selected_rows,
+        )
+        if result:
+            output_paths.append(result)
+    return output_paths
 
 
 def format_report_float(value):
@@ -1495,10 +1600,12 @@ def plot_log_job(job):
     runs = [(label, rows)]
     if kind == "sample_best_lr_histograms":
         output_path = output_dir / "current_batch_sample_best_lr_histograms.png"
-        result = plot_sample_best_lr_histogram_grid(runs, output_path)
+        result = plot_sample_best_lr_histogram_grids(runs, output_path)
     elif kind == "sample_best_lr_linear_histograms":
         output_path = output_dir / "current_batch_sample_best_lr_linear_histograms.png"
-        result = plot_sample_best_lr_histogram_grid(runs, output_path, linear_lr=True)
+        result = plot_sample_best_lr_histogram_grids(
+            runs, output_path, linear_lr=True
+        )
     elif kind == "sample_best_lr_percentiles":
         output_path = output_dir / "current_batch_sample_best_lr_percentiles.txt"
         result = write_sample_best_lr_percentile_report(runs, output_path)
@@ -1522,6 +1629,8 @@ def plot_log_job(job):
         result = plot_loss_landscape_grid(runs, output_path, val_set)
     else:
         raise ValueError(f"unknown plot job kind: {kind}")
+    if isinstance(result, list):
+        return [str(path.resolve()) for path in result]
     return str(result.resolve()) if result else None
 
 
@@ -1558,7 +1667,10 @@ def main():
         max_workers = min(len(jobs), os.cpu_count() or 1, 4)
         with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
             for output_path in executor.map(plot_log_job, jobs):
-                if output_path:
+                if isinstance(output_path, list):
+                    for path in output_path:
+                        print(f"wrote {path}")
+                elif output_path:
                     print(f"wrote {output_path}")
 
 

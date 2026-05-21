@@ -141,7 +141,7 @@ def batch_crop(images, crop_size):
 
 class CifarLoader:
 
-    def __init__(self, path, train=True, batch_size=500, aug=None):
+    def __init__(self, path, train=True, batch_size=500, aug=None, shuffle=None, drop_last=None):
         data_path = os.path.join(path, "train.pt" if train else "test.pt")
         if not os.path.exists(data_path):
             dset = torchvision.datasets.CIFAR10(path, download=True, train=train)
@@ -163,8 +163,8 @@ class CifarLoader:
             assert k in ["flip", "translate"], "Unrecognized key: %s" % k
 
         self.batch_size = batch_size
-        self.drop_last = train
-        self.shuffle = train
+        self.drop_last = train if drop_last is None else drop_last
+        self.shuffle = train if shuffle is None else shuffle
 
     def _ensure_proc_images(self):
         if "norm" in self.proc_images:
@@ -364,25 +364,78 @@ def evaluate(model, loader, tta_level=0):
     logits = infer(model, loader, tta_level)
     return (logits.argmax(1) == loader.labels).float().mean().item()
 
+
+def evaluate_train_loss(model, batches):
+    model.eval()
+    total_loss = 0.0
+    total_examples = 0
+    with torch.inference_mode():
+        for inputs, labels in batches:
+            outputs = model(inputs)
+            total_loss += F.cross_entropy(
+                outputs.float(), labels, label_smoothing=0.2, reduction="sum"
+            ).item()
+            total_examples += len(labels)
+    return total_loss / total_examples
+
+
+def calibrate_batchnorm(model, batches):
+    batchnorms = [module for module in model.modules() if isinstance(module, BatchNorm)]
+    momentums = [module.momentum for module in batchnorms]
+    for module in batchnorms:
+        module.reset_running_stats()
+        module.momentum = None
+
+    model.train()
+    with torch.inference_mode():
+        for inputs, _ in batches:
+            model(inputs)
+
+    model.eval()
+    for module, momentum in zip(batchnorms, momentums):
+        module.momentum = momentum
+
+
+def make_train_eval_batches():
+    loader = CifarLoader(
+        "cifar10",
+        train=True,
+        batch_size=BN_CAL_BATCH_SIZE,
+        aug=dict(flip=True, translate=2),
+        shuffle=False,
+        drop_last=False,
+    )
+    batches = []
+    for inputs, labels in loader:
+        batches.append((inputs.detach(), labels.detach()))
+        if len(batches) >= BN_CAL_BATCHES:
+            break
+    return batches
+
 ############################################
 #                Training                  #
 ############################################
 
-MUON_LR_VALUES = [round(lr / 100, 2) for lr in range(10, 61)]
+MUON_LR_VALUES = [round(lr / 100, 2) for lr in range(2, 91, 4)]
+BATCH_SIZE_VALUES = (128, 512, 2048)
+BN_CAL_BATCH_SIZE = 2048
+BN_CAL_BATCHES = 25
 
 
 def make_muon_schedules():
     schedules = []
-    for index, lr in enumerate(MUON_LR_VALUES, start=1):
-        schedules.append(dict(
-            index=index,
-            initial_lr=lr,
-            shape="linear_decay",
-            shape_pattern="L",
-            name="linear %.2g->0" % lr,
-            profile="linear_decay_0.10_to_0.60_step_0.01",
-            segments=[dict(shape="linear", start_lr=lr, end_lr=0.0)],
-        ))
+    for batch_size in BATCH_SIZE_VALUES:
+        for lr in MUON_LR_VALUES:
+            schedules.append(dict(
+                index=len(schedules) + 1,
+                batch_size=batch_size,
+                initial_lr=lr,
+                shape="linear_decay",
+                shape_pattern="L",
+                name="bs%d linear %.2g->0" % (batch_size, lr),
+                profile="batch_size_128_512_2048_linear_decay_0.02_to_0.90_step_0.04",
+                segments=[dict(shape="linear", start_lr=lr, end_lr=0.0)],
+            ))
     return schedules
 
 
@@ -425,18 +478,22 @@ def print_sweep_summary(sweep_results):
         )
 
     print("\nMuon LR scheduler ranking")
-    print("rank | run | patt | val_acc | tta_val_acc | train_loss | schedule")
-    print("-" * 140)
+    print("rank | run | bs | patt | 25batch_loss | val_acc | tta_val_acc | bn_cal_25batch_loss | bn_cal_val | bn_cal_tta | schedule")
+    print("-" * 170)
     for rank, result in enumerate(ranked, start=1):
         print(
-            "%4d | %3d | %-4s | %.4f  | %.4f      | %.4f     | %s"
+            "%4d | %3d | %4d | %-4s | %.4f       | %.4f  | %.4f      | %.4f             | %.4f     | %.4f     | %s"
             % (
                 rank,
                 result["index"],
+                result["batch_size"],
                 result["shape_pattern"],
+                result["train25_loss"],
                 result["val_acc"],
                 result["tta_val_acc"],
-                result["train_loss"],
+                result["bn_cal_train25_loss"],
+                result["bn_cal_val_acc"],
+                result["bn_cal_tta_val_acc"],
                 result["schedule"],
             )
         )
@@ -446,7 +503,7 @@ def print_sweep_summary(sweep_results):
 def main(run, model, muon_schedule):
     set_training_seed()
 
-    batch_size = 2000
+    batch_size = muon_schedule["batch_size"]
     bias_lr = 0.053
     head_lr = 0.67
     wd = 2e-6 * batch_size
@@ -535,12 +592,34 @@ def main(run, model, muon_schedule):
     ####################
 
     start_timer()
+    set_training_seed()
+    train_eval_batches = make_train_eval_batches()
+    train25_loss = evaluate_train_loss(model, train_eval_batches)
     tta_val_acc = evaluate(model, test_loader, tta_level=2)
     stop_timer()
     epoch = "eval"
     print_training_details(locals(), is_final_entry=True)
 
-    return dict(train_loss=train_loss, train_acc=train_acc, val_acc=val_acc, tta_val_acc=tta_val_acc)
+    start_timer()
+    calibrate_batchnorm(model, train_eval_batches)
+    bn_cal_train25_loss = evaluate_train_loss(model, train_eval_batches)
+    bn_cal_val_acc = evaluate(model, test_loader, tta_level=0)
+    bn_cal_tta_val_acc = evaluate(model, test_loader, tta_level=2)
+    stop_timer()
+
+    return {
+        "batch_size": batch_size,
+        "train_loss": train_loss,
+        "train_acc": train_acc,
+        "train25_loss": train25_loss,
+        "25batch_train_loss": train25_loss,
+        "val_acc": val_acc,
+        "tta_val_acc": tta_val_acc,
+        "bn_cal_train25_loss": bn_cal_train25_loss,
+        "bn_cal_25batch_train_loss": bn_cal_train25_loss,
+        "bn_cal_val_acc": bn_cal_val_acc,
+        "bn_cal_tta_val_acc": bn_cal_tta_val_acc,
+    }
 
 if __name__ == "__main__":
 
@@ -561,15 +640,21 @@ if __name__ == "__main__":
             schedule=schedule["name"],
             shape=schedule["shape"],
             shape_pattern=schedule["shape_pattern"],
+            batch_size=schedule["batch_size"],
             initial_lr=schedule["initial_lr"],
             segments=schedule["segments"],
             profile=schedule["profile"],
         )
         sweep_results.append(result)
+        print("Batch size:  %d" % result["batch_size"])
         print("Train loss: %.4f" % result["train_loss"])
         print("Train acc:  %.4f" % result["train_acc"])
-        print("Val acc:    %.4f" % result["val_acc"])
-        print("TTA val:    %.4f" % result["tta_val_acc"])
+        print("25batch train loss:        %.4f" % result["train25_loss"])
+        print("Val acc:                   %.4f" % result["val_acc"])
+        print("TTA val:                   %.4f" % result["tta_val_acc"])
+        print("BN cal 25batch train loss: %.4f" % result["bn_cal_train25_loss"])
+        print("BN cal val acc:            %.4f" % result["bn_cal_val_acc"])
+        print("BN cal TTA val:            %.4f" % result["bn_cal_tta_val_acc"])
 
     ranking = print_sweep_summary(sweep_results)
 
