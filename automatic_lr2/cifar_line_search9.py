@@ -431,6 +431,8 @@ LINE_SEARCH_FACTOR = 0.8
 INITIAL_GROUND_TRUTH_MATRIX_LR = 0.24
 LINE_SEARCH_LEFT_STEPS = 30
 LINE_SEARCH_RIGHT_STEPS = 20
+
+
 def clone_state(value):
     if torch.is_tensor(value):
         return value.detach().clone(memory_format=torch.preserve_format)
@@ -671,7 +673,7 @@ def main(run, model):
     optimizer1 = torch.optim.SGD(
         param_configs, momentum=0.85, nesterov=True, fused=True
     )
-    optimizer2 = Muon(filter_params, lr=0.24, momentum=0.6, nesterov=True)
+    optimizer2 = Muon(filter_params, lr=1.0, momentum=0.6, nesterov=True)
     optimizers = [optimizer1, optimizer2]
     for opt in optimizers:
         for group in opt.param_groups:

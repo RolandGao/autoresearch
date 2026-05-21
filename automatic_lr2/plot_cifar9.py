@@ -59,6 +59,7 @@ SAMPLE_LR_POSITION_BY_VALUE = {lr: index for index, lr in enumerate(SAMPLE_LR_GR
 SAMPLE_LOSS_CURVE_DETAIL_STEPS = (0, 10, 50, 190)
 SAMPLE_LOSS_CURVE_MAX_STEP = 200
 SAMPLE_BEST_LR_HISTOGRAM_MAX_SUBPLOTS = 200
+SAMPLE_BEST_LR_HISTOGRAM_PEAK_RADIUS = 6
 PLOT_DPI = 180
 
 
@@ -435,6 +436,29 @@ def weighted_mean_value(counts_by_value):
     if total <= 0:
         return float("nan")
     return sum(value * count for value, count in counts_by_value.items()) / total
+
+
+def triangle_smoothed_peak_value(counts_by_value):
+    counts = [0] * len(SAMPLE_LR_GRID)
+    for lr, count in counts_by_value.items():
+        if count <= 0:
+            continue
+        lr = nearest_sample_lr_grid_value(lr)
+        counts[SAMPLE_LR_POSITION_BY_VALUE[lr]] += count
+
+    if not any(counts):
+        return float("nan")
+
+    radius = SAMPLE_BEST_LR_HISTOGRAM_PEAK_RADIUS
+    peak_position = max(
+        range(len(counts)),
+        key=lambda position: sum(
+            (radius + 1 - abs(offset)) * counts[position + offset]
+            for offset in range(-radius, radius + 1)
+            if 0 <= position + offset < len(counts)
+        ),
+    )
+    return SAMPLE_LR_GRID[peak_position]
 
 
 def sample_matrix_lr_train_losses(row):
@@ -1026,16 +1050,16 @@ def plot_sample_best_lr_histogram_grid(
         ax.scatter(lr_positions, counts, color="tab:blue", s=10, linewidths=0, zorder=3)
 
         min_lr = min(unique_lrs)
-        mean_lr = weighted_mean_value(counts_by_lr)
+        peak_lr = triangle_smoothed_peak_value(counts_by_lr)
         median_lr = weighted_percentile_value(counts_by_lr, 0.5)
         p95_lr = weighted_percentile_value(counts_by_lr, 0.95)
         p98_lr = weighted_percentile_value(counts_by_lr, 0.98)
         line_specs = [
             (min_lr, "min", "tab:green", "--"),
+            (peak_lr, "peak", "tab:cyan", "-."),
             (p95_lr, "p95", "tab:purple", ":"),
             (p98_lr, "p98", "tab:red", "--"),
             (median_lr, "median", "tab:brown", "-"),
-            (mean_lr, "mean", "tab:pink", "-"),
         ]
         ground_truth_lr = row.get("ground_truth_matrix_lr")
         if finite(ground_truth_lr) and ground_truth_lr >= 0:
@@ -1100,7 +1124,9 @@ def plot_lr_curves(ax, runs, val_set, min_step=None, max_step=None):
             if (min_step is None or row["step"] >= min_step)
             and (max_step is None or row["step"] < max_step)
         ]
-        if not rows or not any(matrix_lr_losses(row, val_set) for row in rows):
+        has_matrix_lrs = any(matrix_lr_losses(row, val_set) for row in rows)
+        has_peak_lrs = any(sample_best_matrix_lr_counts(row) for row in rows)
+        if not rows or not (has_matrix_lrs or has_peak_lrs):
             continue
 
         steps = series(rows, "step")
@@ -1114,23 +1140,36 @@ def plot_lr_curves(ax, runs, val_set, min_step=None, max_step=None):
                 linewidth=1.8,
                 linestyle="-",
             )
-        ax.plot(
-            steps,
-            [best_matrix_lr(row, val_set) for row in rows],
-            label=f"best loss lr{suffix}",
-            linewidth=1.4,
-            linestyle="--",
-        )
-        for max_loss_gap in (0.1, 0.2, 0.4):
+        if has_matrix_lrs:
+            ax.plot(
+                steps,
+                [best_matrix_lr(row, val_set) for row in rows],
+                label=f"best loss lr{suffix}",
+                linewidth=1.4,
+                linestyle="--",
+            )
+            for max_loss_gap in (0.1, 0.2, 0.4):
+                ax.plot(
+                    steps,
+                    [
+                        largest_matrix_lr_within_loss_gap(row, max_loss_gap, val_set)
+                        for row in rows
+                    ],
+                    label=f"largest lr within {max_loss_gap:g} rel loss{suffix}",
+                    linewidth=1.3,
+                    linestyle=":",
+                )
+        if has_peak_lrs:
             ax.plot(
                 steps,
                 [
-                    largest_matrix_lr_within_loss_gap(row, max_loss_gap, val_set)
+                    triangle_smoothed_peak_value(sample_best_matrix_lr_counts(row))
                     for row in rows
                 ],
-                label=f"largest lr within {max_loss_gap:g} rel loss{suffix}",
-                linewidth=1.3,
-                linestyle=":",
+                label=f"peak lr{suffix}",
+                color="tab:cyan",
+                linewidth=1.5,
+                linestyle="-.",
             )
         plotted = True
 
