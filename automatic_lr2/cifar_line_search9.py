@@ -641,7 +641,7 @@ def line_search_validation_sets(epoch_batches, batch_index):
 def main(run, model):
     set_training_seed()
 
-    batch_size = 2000
+    batch_size = 125
     bias_lr = 0.053
     head_lr = 0.67
     wd = 2e-6 * batch_size
@@ -673,7 +673,7 @@ def main(run, model):
     optimizer1 = torch.optim.SGD(
         param_configs, momentum=0.85, nesterov=True, fused=True
     )
-    optimizer2 = Muon(filter_params, lr=1.0, momentum=0.6, nesterov=True)
+    optimizer2 = Muon(filter_params, lr=0.04, momentum=0.6, nesterov=True)
     optimizers = [optimizer1, optimizer2]
     for opt in optimizers:
         for group in opt.param_groups:

@@ -60,6 +60,7 @@ SAMPLE_LR_POSITION_BY_VALUE = {lr: index for index, lr in enumerate(SAMPLE_LR_GR
 SAMPLE_LOSS_CURVE_DETAIL_STEPS = (0, 10, 50, 190)
 SAMPLE_LOSS_CURVE_MAX_STEP = 200
 SAMPLE_BEST_LR_HISTOGRAM_MAX_SUBPLOTS = 200
+SAMPLE_BEST_LR_LINEAR_HISTOGRAM_MAX_STEP = 200
 SAMPLE_BEST_LR_HISTOGRAM_BIN_WIDTH = 0.02
 SAMPLE_BEST_LR_HISTOGRAM_MAX_LR = 1.0
 SAMPLE_BEST_LR_HISTOGRAM_PEAK_RADIUS = 6
@@ -1331,6 +1332,12 @@ def plot_sample_best_lr_histogram_grids(
         else sample_best_matrix_lr_counts
     )
     rows = sample_best_lr_rows(runs, counts_fn)
+    if linear_lr:
+        rows = [
+            (label, row)
+            for label, row in rows
+            if row["step"] < SAMPLE_BEST_LR_LINEAR_HISTOGRAM_MAX_STEP
+        ]
     if not rows:
         return []
 

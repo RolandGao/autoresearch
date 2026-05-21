@@ -11,8 +11,7 @@
 #############################################
 
 import os
-import sys
-import uuid
+import random
 from math import ceil
 
 import torch
@@ -21,7 +20,32 @@ import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as T
 
-torch.backends.cudnn.benchmark = True
+TRAINING_SEED = 42
+DATA_SEED = 1_000_003
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CIFAR10_DIR = os.path.join(SCRIPT_DIR, "cifar10")
+USE_COMPILE = os.environ.get("CIFAR96_COMPILE", "0") == "1"
+
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.backends.cudnn.allow_tf32 = False
+
+
+def setup_reproducibility(seed):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def base_model(model):
+    return getattr(model, "_orig_mod", model)
+
+
+def maybe_compile(model):
+    if USE_COMPILE:
+        return torch.compile(model, mode="reduce-overhead")
+    return model
 
 hyp = {
     "opt": {
@@ -574,7 +598,7 @@ def train_proxy(hyp, model, data_seed):
         label_smoothing=hyp["opt"]["label_smoothing"], reduction="none"
     )
     train_loader = InfiniteCifarLoader(
-        "cifar10",
+        CIFAR10_DIR,
         train=True,
         batch_size=batch_size,
         aug=hyp["aug"],
@@ -584,7 +608,7 @@ def train_proxy(hyp, model, data_seed):
     steps_per_epoch = len(train_loader.images) // batch_size
     total_train_steps = ceil(steps_per_epoch * epochs)
 
-    set_random_state(None, 0)
+    set_random_state(TRAINING_SEED, 1)
     reinit_net(model)
     print("Proxy parameters:", sum(p.numel() for p in model.parameters()))
     current_steps = 0
@@ -615,7 +639,7 @@ def train_proxy(hyp, model, data_seed):
 
     # Initialize the whitening layer using training images
     train_images = train_loader.normalize(train_loader.images[:5000])
-    init_whitening_conv(model._orig_mod[0], train_images)
+    init_whitening_conv(base_model(model)[0], train_images)
 
     masks = []
 
@@ -666,17 +690,15 @@ def main(run, hyp, model_proxy, model_trainbias, model_freezebias):
     wd = hyp["opt"]["weight_decay"] * batch_size / kilostep_scale
     lr_biases = lr * hyp["opt"]["bias_scaler"]
 
-    set_random_state(None, 0)
-    import random
-
-    data_seed = random.randint(0, 2**50)
+    set_random_state(TRAINING_SEED, 0)
+    data_seed = DATA_SEED
 
     loss_fn = nn.CrossEntropyLoss(
         label_smoothing=hyp["opt"]["label_smoothing"], reduction="none"
     )
-    test_loader = InfiniteCifarLoader("cifar10", train=False, batch_size=2000)
+    test_loader = InfiniteCifarLoader(CIFAR10_DIR, train=False, batch_size=2000)
     train_loader = InfiniteCifarLoader(
-        "cifar10",
+        CIFAR10_DIR,
         train=True,
         batch_size=batch_size,
         aug=hyp["aug"],
@@ -686,7 +708,7 @@ def main(run, hyp, model_proxy, model_trainbias, model_freezebias):
     steps_per_epoch = len(train_loader.images) // batch_size
     total_train_steps = ceil(steps_per_epoch * epochs)
 
-    set_random_state(None, 0)
+    set_random_state(TRAINING_SEED, 2)
     reinit_net(model_trainbias)
     print(
         "Main model parameters:", sum(p.numel() for p in model_trainbias.parameters())
@@ -743,7 +765,7 @@ def main(run, hyp, model_proxy, model_trainbias, model_freezebias):
     # Initialize the whitening layer using training images
     starter.record()
     train_images = train_loader.normalize(train_loader.images[:5000])
-    init_whitening_conv(model_trainbias._orig_mod[0], train_images)
+    init_whitening_conv(base_model(model_trainbias)[0], train_images)
     ender.record()
     torch.cuda.synchronize()
     total_time_seconds += 1e-3 * starter.elapsed_time(ender)
@@ -835,30 +857,25 @@ def main(run, hyp, model_proxy, model_trainbias, model_freezebias):
 
 
 if __name__ == "__main__":
-    with open(sys.argv[0]) as f:
-        code = f.read()
+    setup_reproducibility(TRAINING_SEED)
 
     model_proxy = make_net(hyp["proxy"])
     model_proxy[0].bias.requires_grad = False
     model_trainbias = make_net(hyp["net"])
     model_freezebias = make_net(hyp["net"])
     model_freezebias[0].bias.requires_grad = False
-    model_proxy = torch.compile(model_proxy, mode="max-autotune")
-    model_trainbias = torch.compile(model_trainbias, mode="max-autotune")
-    model_freezebias = torch.compile(model_freezebias, mode="max-autotune")
+    model_proxy = maybe_compile(model_proxy)
+    model_trainbias = maybe_compile(model_trainbias)
+    model_freezebias = maybe_compile(model_freezebias)
 
+    print(f"Seed: {TRAINING_SEED}")
+    print(f"Compile: {USE_COMPILE}")
     print_columns(logging_columns_list, is_head=True)
-    accs = torch.tensor(
-        [
-            main(run, hyp, model_proxy, model_trainbias, model_freezebias)
-            for run in range(200)
-        ]
+    acc = main(
+        0,
+        hyp,
+        model_proxy,
+        model_trainbias,
+        model_freezebias,
     )
-    print("Mean: %.4f    Std: %.4f" % (accs.mean(), accs.std()))
-
-    log = {"code": code, "accs": accs}
-    log_dir = os.path.join("logs", str(uuid.uuid4()))
-    os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, "log.pt")
-    print(os.path.abspath(log_path))
-    torch.save(log, os.path.join(log_dir, "log.pt"))
+    print("Accuracy: %.4f" % acc)
