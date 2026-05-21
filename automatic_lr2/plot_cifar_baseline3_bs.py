@@ -168,6 +168,13 @@ def best_run(runs, name):
     return max(candidates, key=lambda run: metric(run, name))
 
 
+def lowest_run(runs, name):
+    candidates = [run for run in runs if is_finite(metric(run, name))]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda run: metric(run, name))
+
+
 def annotate_best(ax, run, value, label, color):
     ax.scatter([run.start_lr], [value], s=75, color=color, zorder=6)
     ax.annotate(
@@ -215,6 +222,23 @@ def annotate_batch_maxima(ax, groups, metric_name):
         )
 
 
+def annotate_batch_minima(ax, groups, metric_name):
+    for batch_size, batch_runs in groups.items():
+        best = lowest_run(batch_runs, metric_name)
+        if best is None:
+            continue
+        value = metric(best, metric_name)
+        ax.scatter([best.start_lr], [value], s=80, edgecolor="black", facecolor="none", zorder=7)
+        ax.annotate(
+            "bs%d min\nlr %.3g\n%.4f" % (batch_size, best.start_lr, value),
+            xy=(best.start_lr, value),
+            xytext=(8, -28),
+            textcoords="offset points",
+            arrowprops=dict(arrowstyle="->", linewidth=0.8),
+            fontsize=8,
+        )
+
+
 def plot_results(runs, output_path, top_k):
     if not runs:
         raise ValueError("No runs parsed from log")
@@ -255,6 +279,7 @@ def plot_results(runs, output_path, top_k):
         lrs = [run.start_lr for run in batch_runs]
         values = [metric(run, "bn_cal_train25_loss") for run in batch_runs]
         ax.plot(lrs, values, marker="x", linewidth=1.1, linestyle="--", label="bs%d BN cal" % batch_size)
+    annotate_batch_minima(ax, groups, "train25_loss")
     ax.legend(ncol=3, fontsize=8)
 
     ax = axes[3]
