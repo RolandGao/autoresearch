@@ -10,15 +10,22 @@
 #            Setup/Hyperparameters          #
 #############################################
 
+import json
 import os
 import random
-from math import ceil
+import sys
+import uuid
+from collections import Counter
+from math import ceil, isfinite
 
 import torch
 from torch import nn
 import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as T
+
+with open(sys.argv[0]) as f:
+    code = f.read()
 
 TRAINING_SEED = 42
 DATA_SEED = 1_000_003
@@ -46,6 +53,7 @@ def maybe_compile(model):
     if USE_COMPILE:
         return torch.compile(model, mode="reduce-overhead")
     return model
+
 
 hyp = {
     "opt": {
@@ -536,47 +544,253 @@ class LookaheadState:
                 net_param.copy_(ema_param)
 
 
-############################################
-#                 Logging                  #
-############################################
-
-
-def print_columns(columns_list, is_head=False, is_final_entry=False):
-    print_string = ""
-    for col in columns_list:
-        print_string += "|  %s  " % col
-    print_string += "|"
-    if is_head:
-        print("-" * len(print_string))
-    print(print_string)
-    if is_head or is_final_entry:
-        print("-" * len(print_string))
-
-
 logging_columns_list = [
-    "run   ",
+    "run",
     "epoch",
     "train_loss",
     "train_acc",
     "val_acc",
     "tta_val_acc",
-    "total_time_seconds",
+    "time_seconds",
 ]
 
 
 def print_training_details(variables, is_final_entry):
-    formatted = []
+    fields = []
     for col in logging_columns_list:
-        var = variables.get(col.strip(), None)
+        var = variables.get(col, None)
         if type(var) in (int, str):
-            res = str(var)
+            fields.append(f"{col}={var}")
         elif type(var) is float:
-            res = "{:0.4f}".format(var)
+            fields.append(f"{col}={var:0.4f}")
         else:
             assert var is None
-            res = ""
-        formatted.append(res.rjust(len(col)))
-    print_columns(formatted, is_final_entry=is_final_entry)
+    print("epoch_summary " + " ".join(fields), flush=True)
+
+
+############################################
+#              Line Search                 #
+############################################
+
+LINE_SEARCH_FACTOR = 0.8
+LINE_SEARCH_LEFT_STEPS = 30
+LINE_SEARCH_RIGHT_STEPS = 20
+
+
+def clone_state(value):
+    if torch.is_tensor(value):
+        return value.detach().clone(memory_format=torch.preserve_format)
+    if isinstance(value, dict):
+        return {k: clone_state(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [clone_state(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(clone_state(v) for v in value)
+    return value
+
+
+def clone_grads(model):
+    return [
+        None
+        if p.grad is None
+        else p.grad.detach().clone(memory_format=torch.preserve_format)
+        for p in model.parameters()
+    ]
+
+
+def restore_grads(model, grads):
+    for p, grad in zip(model.parameters(), grads):
+        p.grad = (
+            None if grad is None else grad.clone(memory_format=torch.preserve_format)
+        )
+
+
+def capture_training_state(model, optimizers):
+    return (
+        clone_state(model.state_dict()),
+        [clone_state(opt.state_dict()) for opt in optimizers],
+        clone_grads(model),
+        model.training,
+    )
+
+
+def restore_training_state(model, optimizers, state):
+    model_state, optimizer_states, grads, was_training = state
+    model.load_state_dict(model_state)
+    for opt, opt_state in zip(optimizers, optimizer_states):
+        opt.load_state_dict(clone_state(opt_state))
+    restore_grads(model, grads)
+    model.train(was_training)
+
+
+def lr_from_exponent(base_lr, exponent):
+    return base_lr * (LINE_SEARCH_FACTOR**exponent)
+
+
+def configure_matrix_lr_multipliers(optimizer, initial_matrix_lr):
+    for group in optimizer.param_groups:
+        group_initial_lr = group.get("initial_lr", group["lr"])
+        group["matrix_lr_multiplier"] = group_initial_lr / initial_matrix_lr
+
+
+def matrix_lr_from_optimizer(optimizer):
+    group = optimizer.param_groups[-1]
+    return group["lr"] / group.get("matrix_lr_multiplier", 1.0)
+
+
+def set_matrix_lr(optimizer, matrix_lr):
+    for group in optimizer.param_groups:
+        group["lr"] = matrix_lr * group.get("matrix_lr_multiplier", 1.0)
+
+
+def compute_line_search_losses(model, batches):
+    losses = []
+    model.train()
+    for inputs, labels in batches:
+        outputs = model(inputs)
+        batch_losses = F.cross_entropy(
+            outputs.float(),
+            labels,
+            label_smoothing=hyp["opt"]["label_smoothing"],
+            reduction="none",
+        )
+        losses.append(batch_losses)
+    return torch.cat(losses)
+
+
+def finite_loss_item(loss):
+    return loss.item() if torch.isfinite(loss) else float("inf")
+
+
+def finite_loss_sum_item(losses):
+    return finite_loss_item(losses.sum())
+
+
+def finite_float_or_none(value):
+    value = float(value)
+    return value if isfinite(value) else None
+
+
+def sample_lr_loss_curve_payload(sample_losses_by_matrix_lr):
+    matrix_lrs = sorted(sample_losses_by_matrix_lr)
+    if not matrix_lrs:
+        return dict(lrs=[], optimal_lr_counts={}, curves=[])
+    losses = torch.stack(
+        [
+            torch.where(
+                torch.isfinite(sample_losses_by_matrix_lr[matrix_lr]),
+                sample_losses_by_matrix_lr[matrix_lr],
+                torch.full_like(sample_losses_by_matrix_lr[matrix_lr], float("inf")),
+            )
+            for matrix_lr in matrix_lrs
+        ]
+    )
+    best_indices = losses.argmin(dim=0).detach().cpu().tolist()
+    best_lrs = [matrix_lrs[index] for index in best_indices]
+    optimal_lr_counts = Counter(best_lrs)
+
+    selected_indices = []
+    seen_best_indices = set()
+    for sample_index, best_index in enumerate(best_indices):
+        if best_index in seen_best_indices:
+            continue
+        selected_indices.append(sample_index)
+        seen_best_indices.add(best_index)
+
+    losses = losses.detach().cpu()
+    return dict(
+        lrs=format_matrix_lrs(matrix_lrs),
+        optimal_lr_counts={
+            "%.8g" % matrix_lr: count
+            for matrix_lr, count in sorted(optimal_lr_counts.items())
+        },
+        curves=[
+            dict(
+                sample_index=sample_index,
+                optimal_lr=float("%.8g" % best_lrs[sample_index]),
+                losses=[
+                    finite_float_or_none(losses[lr_index, sample_index].item())
+                    for lr_index in range(len(matrix_lrs))
+                ],
+            )
+            for sample_index in selected_indices
+        ],
+    )
+
+
+def evaluate_matrix_lr_grid(
+    model,
+    optimizers,
+    matrix_optimizer,
+    validation_sets,
+    matrix_lrs,
+):
+    search_state = capture_training_state(model, optimizers)
+    losses_by_name = {name: {} for name, _ in validation_sets}
+    sample_losses_by_name = {name: {} for name, _ in validation_sets}
+
+    def restore_search_state():
+        restore_training_state(model, optimizers, search_state)
+
+    for matrix_lr in matrix_lrs:
+        if all(matrix_lr in losses for losses in losses_by_name.values()):
+            continue
+        for name, batches in validation_sets:
+            if matrix_lr in losses_by_name[name]:
+                continue
+            restore_search_state()
+            set_matrix_lr(matrix_optimizer, matrix_lr)
+            for opt in optimizers:
+                opt.step()
+            with torch.no_grad():
+                losses = compute_line_search_losses(model, batches)
+            losses_by_name[name][matrix_lr] = finite_loss_sum_item(losses)
+            if name == "current_batch":
+                sample_losses_by_name[name][matrix_lr] = losses.detach()
+
+    restore_search_state()
+    results = {}
+    for name, losses in losses_by_name.items():
+        results[name] = dict(
+            best_matrix_lr=min(losses.items(), key=lambda item: item[1])[0],
+            best_loss=min(losses.values()),
+            losses_by_matrix_lr=losses,
+        )
+        sample_losses = sample_losses_by_name.get(name, {})
+        if sample_losses:
+            results[name]["sample_lr_loss_curves"] = sample_lr_loss_curve_payload(
+                sample_losses
+            )
+    return results
+
+
+def initial_ground_truth_matrix_lr_sweep(
+    initial_ground_truth_matrix_lr, ground_truth_matrix_lr
+):
+    sweep = [0.0, initial_ground_truth_matrix_lr]
+    for i in range(1, LINE_SEARCH_LEFT_STEPS + 1):
+        sweep.append(lr_from_exponent(initial_ground_truth_matrix_lr, i))
+    for i in range(1, LINE_SEARCH_RIGHT_STEPS + 1):
+        sweep.append(lr_from_exponent(initial_ground_truth_matrix_lr, -i))
+    sweep.append(ground_truth_matrix_lr)
+    return sweep
+
+
+def format_matrix_lr_loss_map(losses_by_matrix_lr):
+    return {
+        "%.8g" % matrix_lr: loss
+        for matrix_lr, loss in sorted(losses_by_matrix_lr.items())
+    }
+
+
+def format_matrix_lrs(matrix_lrs):
+    return [float("%.8g" % matrix_lr) for matrix_lr in matrix_lrs]
+
+
+def line_search_validation_sets(epoch_batches, batch_index):
+    return [
+        ("current_batch", [epoch_batches[batch_index]]),
+    ]
 
 
 ############################################
@@ -751,6 +965,8 @@ def main(run, hyp, model_proxy, model_trainbias, model_freezebias):
     scheduler_freezebias = torch.optim.lr_scheduler.LambdaLR(
         optimizer_freezebias, get_lr
     )
+    configure_matrix_lr_multipliers(optimizer_trainbias, lr)
+    configure_matrix_lr_multipliers(optimizer_freezebias, lr)
 
     alpha_schedule = (
         0.95**5 * (torch.arange(total_train_steps + 1) / total_train_steps) ** 3
@@ -760,7 +976,7 @@ def main(run, hyp, model_proxy, model_trainbias, model_freezebias):
     # For accurately timing GPU code
     starter = torch.cuda.Event(enable_timing=True)
     ender = torch.cuda.Event(enable_timing=True)
-    total_time_seconds = 0.0
+    time_seconds = 0.0
 
     # Initialize the whitening layer using training images
     starter.record()
@@ -768,7 +984,7 @@ def main(run, hyp, model_proxy, model_trainbias, model_freezebias):
     init_whitening_conv(base_model(model_trainbias)[0], train_images)
     ender.record()
     torch.cuda.synchronize()
-    total_time_seconds += 1e-3 * starter.elapsed_time(ender)
+    time_seconds += 1e-3 * starter.elapsed_time(ender)
 
     # Do a small proxy run to collect masks for use in fullsize run
     print("Training small proxy...")
@@ -776,7 +992,7 @@ def main(run, hyp, model_proxy, model_trainbias, model_freezebias):
     masks = iter(train_proxy(hyp, model_proxy, data_seed))
     ender.record()
     torch.cuda.synchronize()
-    total_time_seconds += 1e-3 * starter.elapsed_time(ender)
+    time_seconds += 1e-3 * starter.elapsed_time(ender)
 
     for indices, inputs, labels in train_loader:
         # After training the whiten bias for some epochs, swap in the compiled model with frozen bias
@@ -809,8 +1025,49 @@ def main(run, hyp, model_proxy, model_trainbias, model_freezebias):
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
+        ground_truth_matrix_lr = matrix_lr_from_optimizer(optimizer)
+        line_search_results = evaluate_matrix_lr_grid(
+            model,
+            [optimizer],
+            optimizer,
+            line_search_validation_sets([(inputs, labels)], 0),
+            initial_ground_truth_matrix_lr_sweep(lr, ground_truth_matrix_lr),
+        )
+        current_batch_results = line_search_results["current_batch"]
+        print(
+            "\nline_search step=%d "
+            "line_search_matrix_lr=%.8g ground_truth_matrix_lr=%.8g "
+            "pre_update_train_loss=%.6f line_search_loss=%.6f "
+            "current_batch_line_search_matrix_lr=%.8g "
+            "current_batch_line_search_loss=%.6f "
+            "current_batch_matrix_lr_train_losses=%s "
+            "current_batch_sample_lr_loss_curves=%s"
+            % (
+                current_steps,
+                current_batch_results["best_matrix_lr"],
+                ground_truth_matrix_lr,
+                finite_loss_item(loss),
+                current_batch_results["best_loss"],
+                current_batch_results["best_matrix_lr"],
+                current_batch_results["best_loss"],
+                json.dumps(
+                    format_matrix_lr_loss_map(
+                        current_batch_results["losses_by_matrix_lr"]
+                    ),
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ),
+                json.dumps(
+                    current_batch_results["sample_lr_loss_curves"],
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ),
+            ),
+            flush=True,
+        )
         optimizer.step()
         scheduler.step()
+        model.zero_grad(set_to_none=True)
 
         current_steps += 1
         if current_steps % 5 == 0:
@@ -824,7 +1081,7 @@ def main(run, hyp, model_proxy, model_trainbias, model_freezebias):
         ):
             ender.record()
             torch.cuda.synchronize()
-            total_time_seconds += 1e-3 * starter.elapsed_time(ender)
+            time_seconds += 1e-3 * starter.elapsed_time(ender)
 
             ####################
             #    Evaluation    #
@@ -848,7 +1105,7 @@ def main(run, hyp, model_proxy, model_trainbias, model_freezebias):
     tta_val_acc = evaluate(model, test_loader, tta_level=hyp["net"]["tta_level"])
     ender.record()
     torch.cuda.synchronize()
-    total_time_seconds += 1e-3 * starter.elapsed_time(ender)
+    time_seconds += 1e-3 * starter.elapsed_time(ender)
 
     epoch = "eval"
     print_training_details(locals(), is_final_entry=True)
@@ -868,14 +1125,21 @@ if __name__ == "__main__":
     model_trainbias = maybe_compile(model_trainbias)
     model_freezebias = maybe_compile(model_freezebias)
 
-    print(f"Seed: {TRAINING_SEED}")
-    print(f"Compile: {USE_COMPILE}")
-    print_columns(logging_columns_list, is_head=True)
-    acc = main(
-        0,
-        hyp,
-        model_proxy,
-        model_trainbias,
-        model_freezebias,
+    accs = torch.tensor(
+        [
+            main(
+                0,
+                hyp,
+                model_proxy,
+                model_trainbias,
+                model_freezebias,
+            )
+        ]
     )
-    print("Accuracy: %.4f" % acc)
+    print("Mean: %.4f    Std: %.4f" % (accs.mean(), accs.std()))
+
+    log_dir = os.path.join("logs", str(uuid.uuid4()))
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "log.pt")
+    torch.save(dict(code=code, accs=accs), log_path)
+    print(os.path.abspath(log_path))

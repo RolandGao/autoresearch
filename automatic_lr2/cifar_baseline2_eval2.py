@@ -14,6 +14,7 @@ import sys
 
 with open(sys.argv[0]) as f:
     code = f.read()
+import json
 import uuid
 from math import ceil
 
@@ -335,10 +336,20 @@ class CifarNet(nn.Module):
 ############################################
 
 
-def log_step(epoch, step, total_steps, loss, head_lr, muon_lr):
+def log_training_batch_losses(step, total_steps, update, losses):
     print(
-        f"step={step}/{total_steps} epoch={epoch} "
-        f"loss={loss:.4f} head_lr={head_lr:.6g} muon_lr={muon_lr:.6g}",
+        "training_batch_losses "
+        f"step={step}/{total_steps} update={update} losses={json.dumps(losses)}",
+        flush=True,
+    )
+
+
+def log_best_lr(step, init_lr, best_lr, best_lr_ema, best_loss, losses_by_lr):
+    print(
+        "best_lr "
+        f"step={step} init_lr={init_lr:.8g} best_lr={best_lr:.8g} "
+        f"best_lr_ema={best_lr_ema:.8g} best_loss={best_loss:.6f} "
+        f"losses={json.dumps(format_lr_loss_map(losses_by_lr))}",
         flush=True,
     )
 
@@ -425,19 +436,230 @@ def evaluate_train_loss(model, batches):
     return total_loss / total_examples
 
 
+def batchnorm_modules(model):
+    return [
+        module
+        for module in model.modules()
+        if isinstance(module, nn.modules.batchnorm._BatchNorm)
+    ]
+
+
+def snapshot_batchnorm_buffers(model):
+    return [
+        (
+            module,
+            None
+            if module.running_mean is None
+            else module.running_mean.detach().clone(),
+            None if module.running_var is None else module.running_var.detach().clone(),
+            None
+            if module.num_batches_tracked is None
+            else module.num_batches_tracked.detach().clone(),
+        )
+        for module in batchnorm_modules(model)
+    ]
+
+
+def restore_batchnorm_buffers(states):
+    for module, running_mean, running_var, num_batches_tracked in states:
+        if running_mean is not None:
+            module.running_mean.copy_(running_mean)
+        if running_var is not None:
+            module.running_var.copy_(running_var)
+        if num_batches_tracked is not None:
+            module.num_batches_tracked.copy_(num_batches_tracked)
+
+
+def evaluate_training_batch_losses(model, batches):
+    was_training = model.training
+    batchnorm_states = snapshot_batchnorm_buffers(model)
+    model.eval()
+    for module in batchnorm_modules(model):
+        module.train()
+
+    losses = []
+    try:
+        with torch.no_grad():
+            for inputs, labels in batches:
+                outputs = model(inputs)
+                loss = F.cross_entropy(
+                    outputs.float(), labels, label_smoothing=0.2, reduction="mean"
+                )
+                losses.append(loss.item())
+    finally:
+        restore_batchnorm_buffers(batchnorm_states)
+        model.train(was_training)
+
+    return losses
+
+
+def materialize_training_batches(train_loader, total_steps):
+    batches = []
+    while len(batches) < total_steps:
+        for inputs, labels in train_loader:
+            batches.append((inputs.detach(), labels.detach()))
+            if len(batches) >= total_steps:
+                break
+    return batches
+
+
+def training_loss_log_steps(total_steps, log_count):
+    return [ceil(total_steps * index / log_count) for index in range(1, log_count + 1)]
+
+
+############################################
+#              Line Search                 #
+############################################
+
+BEST_LR_FACTOR = 0.8
+BEST_LR_EMA_MOMENTUM = 0.9
+BEST_LR_MAX_SEARCH_STEPS = 40
+
+
+def clone_state(value):
+    if torch.is_tensor(value):
+        return value.detach().clone(memory_format=torch.preserve_format)
+    if isinstance(value, dict):
+        return {k: clone_state(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [clone_state(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(clone_state(v) for v in value)
+    return value
+
+
+def clone_grads(model):
+    return [
+        None
+        if p.grad is None
+        else p.grad.detach().clone(memory_format=torch.preserve_format)
+        for p in model.parameters()
+    ]
+
+
+def restore_grads(model, grads):
+    for p, grad in zip(model.parameters(), grads):
+        p.grad = (
+            None if grad is None else grad.clone(memory_format=torch.preserve_format)
+        )
+
+
+def capture_training_state(model, optimizers):
+    return (
+        clone_state(model.state_dict()),
+        [clone_state(opt.state_dict()) for opt in optimizers],
+        clone_grads(model),
+        model.training,
+    )
+
+
+def restore_training_state(model, optimizers, state):
+    model_state, optimizer_states, grads, was_training = state
+    model.load_state_dict(model_state)
+    for opt, opt_state in zip(optimizers, optimizer_states):
+        opt.load_state_dict(clone_state(opt_state))
+    restore_grads(model, grads)
+    model.train(was_training)
+
+
+def set_muon_lr(optimizer, lr):
+    for group in optimizer.param_groups:
+        group["lr"] = lr
+
+
+def finite_loss_item(loss):
+    return loss.item() if torch.isfinite(loss) else float("inf")
+
+
+def format_lr_loss_map(losses_by_lr):
+    return {"%.8g" % lr: loss for lr, loss in sorted(losses_by_lr.items())}
+
+
+def evaluate_candidate_lr(
+    model,
+    optimizers,
+    muon_optimizer,
+    inputs,
+    labels,
+    whiten_bias_grad,
+    lr,
+    search_state,
+    losses_by_lr,
+):
+    if lr in losses_by_lr:
+        restore_training_state(model, optimizers, search_state)
+        return losses_by_lr[lr]
+
+    restore_training_state(model, optimizers, search_state)
+    set_muon_lr(muon_optimizer, lr)
+    for opt in optimizers:
+        opt.step()
+    with torch.no_grad():
+        outputs = model(inputs, whiten_bias_grad=whiten_bias_grad)
+        loss = F.cross_entropy(
+            outputs.float(), labels, label_smoothing=0.2, reduction="mean"
+        )
+    losses_by_lr[lr] = finite_loss_item(loss)
+    restore_training_state(model, optimizers, search_state)
+    return losses_by_lr[lr]
+
+
+def choose_best_lr(
+    model,
+    optimizers,
+    muon_optimizer,
+    inputs,
+    labels,
+    whiten_bias_grad,
+    init_lr,
+):
+    search_state = capture_training_state(model, optimizers)
+    losses_by_lr = {}
+
+    def candidate_loss(lr):
+        return evaluate_candidate_lr(
+            model,
+            optimizers,
+            muon_optimizer,
+            inputs,
+            labels,
+            whiten_bias_grad,
+            lr,
+            search_state,
+            losses_by_lr,
+        )
+
+    center_lr = init_lr
+    for _ in range(BEST_LR_MAX_SEARCH_STEPS):
+        left_lr = center_lr * BEST_LR_FACTOR
+        right_lr = center_lr / BEST_LR_FACTOR
+        left_loss = candidate_loss(left_lr)
+        center_loss = candidate_loss(center_lr)
+        right_loss = candidate_loss(right_lr)
+        if center_loss <= left_loss and center_loss <= right_loss:
+            restore_training_state(model, optimizers, search_state)
+            return center_lr, center_loss, losses_by_lr
+        center_lr = left_lr if left_loss < right_loss else right_lr
+
+    best_lr, best_loss = min(losses_by_lr.items(), key=lambda item: item[1])
+    restore_training_state(model, optimizers, search_state)
+    return best_lr, best_loss, losses_by_lr
+
+
 ############################################
 #                Training                  #
 ############################################
 
 TRAIN_EVAL_BATCHES = 25
+TRAINING_LOSS_LOG_COUNT = 40
 RUN_CONFIGS = [
-    dict(batch_size=125, muon_lr=0.04),
-    dict(batch_size=500, muon_lr=0.079),
-    dict(batch_size=2000, muon_lr=0.19),
+    dict(name="best_lr", batch_size=125, muon_lr=0.04 * 6, use_best_lr=True),
+    dict(name="muon_0.04", batch_size=125, muon_lr=0.04, use_best_lr=False),
+    dict(name="muon_0.24", batch_size=125, muon_lr=0.04 * 6, use_best_lr=False),
 ]
 
 
-def main(run, model, batch_size, muon_lr):
+def main(run, model, name, batch_size, muon_lr, use_best_lr=False):
     set_training_seed()
 
     SGD_LR_MULT = batch_size / 2000
@@ -493,13 +715,21 @@ def main(run, model, batch_size, muon_lr):
 
     model.reset()
     step = 0
-    train_eval_batches = []
 
     # Initialize the whitening layer using training images
     start_timer()
     train_images = train_loader.normalized_images()[:5000]
     model.init_whiten(train_images)
     stop_timer()
+
+    training_batches = materialize_training_batches(train_loader, total_train_steps)
+    train_eval_batches = training_batches[-TRAIN_EVAL_BATCHES:]
+    loss_log_steps = set(
+        training_loss_log_steps(total_train_steps, TRAINING_LOSS_LOG_COUNT)
+    )
+    training_batch_loss_logs = []
+    best_lr_ema = muon_lr
+    best_lr_logs = []
 
     for epoch in range(ceil(total_train_steps / len(train_loader))):
         ####################
@@ -508,30 +738,87 @@ def main(run, model, batch_size, muon_lr):
 
         start_timer()
         model.train()
-        for inputs, labels in train_loader:
-            train_eval_batches.append((inputs.detach(), labels.detach()))
-            train_eval_batches = train_eval_batches[-TRAIN_EVAL_BATCHES:]
-            outputs = model(inputs, whiten_bias_grad=(step < whiten_bias_train_steps))
+        epoch_start = epoch * len(train_loader)
+        epoch_batches = training_batches[epoch_start : epoch_start + len(train_loader)]
+        for inputs, labels in epoch_batches:
+            whiten_bias_grad = step < whiten_bias_train_steps
+            outputs = model(inputs, whiten_bias_grad=whiten_bias_grad)
             loss = F.cross_entropy(
                 outputs, labels, label_smoothing=0.2, reduction="mean"
             )
             loss.backward()
             for group in optimizer1.param_groups[:1]:
                 group["lr"] = group["initial_lr"] * (1 - step / whiten_bias_train_steps)
-            for group in optimizer1.param_groups[1:] + optimizer2.param_groups:
+            for group in optimizer1.param_groups[1:]:
                 group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
+            if not use_best_lr:
+                for group in optimizer2.param_groups:
+                    group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
+            if step + 1 in loss_log_steps:
+                stop_timer()
+                pre_update_losses = evaluate_training_batch_losses(
+                    model, training_batches
+                )
+                training_batch_loss_logs.append(
+                    dict(step=step + 1, update="pre", losses=pre_update_losses)
+                )
+                log_training_batch_losses(
+                    step + 1, total_train_steps, "pre", pre_update_losses
+                )
+                start_timer()
+            if use_best_lr:
+                init_lr = best_lr_ema
+                best_lr, best_loss, losses_by_lr = choose_best_lr(
+                    model,
+                    optimizers,
+                    optimizer2,
+                    inputs,
+                    labels,
+                    whiten_bias_grad,
+                    init_lr,
+                )
+                best_lr_ema = (
+                    BEST_LR_EMA_MOMENTUM * best_lr_ema
+                    + (1 - BEST_LR_EMA_MOMENTUM) * best_lr
+                )
+                best_lr_logs.append(
+                    dict(
+                        step=step + 1,
+                        init_lr=init_lr,
+                        best_lr=best_lr,
+                        best_lr_ema=best_lr_ema,
+                        best_loss=best_loss,
+                        losses_by_lr=format_lr_loss_map(losses_by_lr),
+                    )
+                )
+                if step + 1 in loss_log_steps:
+                    stop_timer()
+                    log_best_lr(
+                        step + 1,
+                        init_lr,
+                        best_lr,
+                        best_lr_ema,
+                        best_loss,
+                        losses_by_lr,
+                    )
+                    start_timer()
+                set_muon_lr(optimizer2, best_lr)
             for opt in optimizers:
                 opt.step()
             model.zero_grad(set_to_none=True)
             step += 1
-            log_step(
-                epoch=epoch,
-                step=step,
-                total_steps=total_train_steps,
-                loss=loss.item(),
-                head_lr=optimizer1.param_groups[2]["lr"],
-                muon_lr=optimizer2.param_groups[0]["lr"],
-            )
+            if step in loss_log_steps:
+                stop_timer()
+                post_update_losses = evaluate_training_batch_losses(
+                    model, training_batches
+                )
+                training_batch_loss_logs.append(
+                    dict(step=step, update="post", losses=post_update_losses)
+                )
+                log_training_batch_losses(
+                    step, total_train_steps, "post", post_update_losses
+                )
+                start_timer()
             if step >= total_train_steps:
                 break
         stop_timer()
@@ -559,9 +846,17 @@ def main(run, model, batch_size, muon_lr):
         **{"25batch_train_loss": train25_loss},
         val_acc=val_acc,
         tta_val_acc=tta_val_acc,
+        name=name,
         batch_size=batch_size,
         muon_lr=muon_lr,
+        use_best_lr=use_best_lr,
+        best_lr_ema=best_lr_ema,
+        best_lr_logs=best_lr_logs,
         sgd_lr_mult=SGD_LR_MULT,
+        training_batch_loss_logs=training_batch_loss_logs,
+        training_batch_loss_log_steps=training_loss_log_steps(
+            total_train_steps, TRAINING_LOSS_LOG_COUNT
+        ),
     )
 
 
@@ -571,18 +866,28 @@ if __name__ == "__main__":
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
     # model.compile(mode="max-autotune")
 
-    # main("warmup", model, RUN_CONFIGS[0]["batch_size"], RUN_CONFIGS[0]["muon_lr"])
+    # main("warmup", model, **RUN_CONFIGS[0])
     results = []
     for run, config in enumerate(RUN_CONFIGS):
         print(
-            "cifar_baseline2 run=%d batch_size=%d muon_lr=%.6g"
-            % (run, config["batch_size"], config["muon_lr"]),
+            "cifar_baseline2 run=%d batch_size=%d muon_lr=%.6g name=%s use_best_lr=%s"
+            % (
+                run,
+                config["batch_size"],
+                config["muon_lr"],
+                config["name"],
+                config["use_best_lr"],
+            ),
             flush=True,
         )
-        result = main(run, model, config["batch_size"], config["muon_lr"])
+        result = main(run, model, **config)
         results.append(result)
+        print("Name:               %s" % result["name"])
         print("Batch size:         %d" % result["batch_size"])
         print("Muon lr:            %.6g" % result["muon_lr"])
+        print("Use best lr:        %s" % result["use_best_lr"])
+        if result["use_best_lr"]:
+            print("Final best lr ema:  %.6g" % result["best_lr_ema"])
         print("SGD lr mult:        %.6g" % result["sgd_lr_mult"])
         print("25batch train loss: %.4f" % result["train25_loss"])
         print("Val acc:            %.4f" % result["val_acc"])

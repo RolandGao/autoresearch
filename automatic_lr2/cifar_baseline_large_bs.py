@@ -10,11 +10,7 @@ Descends from https://github.com/tysam-code/hlb-CIFAR10/blob/main/main.py
 #############################################
 
 import os
-import random
 import sys
-import gc
-
-os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 with open(sys.argv[0]) as f:
     code = f.read()
@@ -40,20 +36,15 @@ USE_CUDNN_BENCHMARK = False
 USE_TF32 = IS_AMPERE_OR_NEWER
 
 torch.backends.cudnn.benchmark = USE_CUDNN_BENCHMARK
-torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.allow_tf32 = USE_TF32
 torch.backends.cuda.matmul.allow_tf32 = USE_TF32
-torch.use_deterministic_algorithms(True)
 
 USE_COMPILED_MUON = False
-USE_CUDA_GRAPHS = True
-CUDA_GRAPH_BATCH_SIZES = {125, 500, 2000}
-MUON_DTYPE = torch.bfloat16 if IS_AMPERE_OR_NEWER else torch.float16
+MUON_DTYPE = torch.bfloat16
 TRAINING_SEED = 0
 
 
 def set_training_seed():
-    random.seed(TRAINING_SEED)
     torch.manual_seed(TRAINING_SEED)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(TRAINING_SEED)
@@ -64,14 +55,14 @@ def set_training_seed():
 #############################################
 
 
-def zeropower_via_newtonschulz5(G, steps=3, eps=1e-7):
-    """
+def zeropower_via_newtonschulz5(G, steps=3, eps=0):
+    r"""
     Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
     quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
     of minimizing steps, it turns out to be empirically effective to keep increasing the slope at
     zero even beyond the point where the iteration no longer converges all the way to one everywhere
     on the interval. This iteration therefore does not produce UV^T but rather something like US'V^T
-    where S' is diagonal with S_{ii}' \\sim Uniform(0.5, 1.5), which turns out not to hurt model
+    where S' is diagonal with S_{ii}' \sim Uniform(0.5, 1.5), which turns out not to hurt model
     performance at all relative to UV^T, where USV^T = G is the SVD.
     """
     assert len(G.shape) == 2
@@ -95,7 +86,7 @@ if USE_COMPILED_MUON:
 
 class Muon(torch.optim.Optimizer):
     def __init__(self, params, lr=1e-3, momentum=0, nesterov=False):
-        if not torch.is_tensor(lr) and lr < 0.0:
+        if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
         if momentum < 0.0:
             raise ValueError(f"Invalid momentum value: {momentum}")
@@ -124,146 +115,7 @@ class Muon(torch.optim.Optimizer):
                 update = zeropower_via_newtonschulz5(g.reshape(len(g), -1)).view(
                     g.shape
                 )  # whiten the update
-                if torch.is_tensor(lr):
-                    p.data.addcmul_(update, lr, value=-1)  # take a step
-                else:
-                    p.data.add_(update, alpha=-lr)  # take a step
-
-
-class CUDAGraphTrainer:
-    def __init__(self, model, batch_size, sgd_groups, muon_params):
-        self.model = model
-        self.batch_size = batch_size
-        self.static_inputs = torch.empty(
-            batch_size, 3, 32, 32, device="cuda", dtype=torch.float16
-        ).to(memory_format=torch.channels_last)
-        self.static_labels = torch.empty(batch_size, device="cuda", dtype=torch.long)
-        self.static_inputs.zero_()
-        self.static_labels.zero_()
-        self.sgd_lr_tensors = [
-            torch.zeros((), device="cuda", dtype=torch.float32) for _ in sgd_groups
-        ]
-        self.muon_lr_tensor = torch.zeros((), device="cuda", dtype=torch.float32)
-        whiten_param_config = [
-            dict(
-                params=sgd_groups[0]["params"],
-                lr=self.sgd_lr_tensors[0],
-                weight_decay=sgd_groups[0]["weight_decay"],
-            )
-        ]
-        main_param_configs = [
-            dict(
-                params=group["params"],
-                lr=self.sgd_lr_tensors[group_index],
-                weight_decay=group["weight_decay"],
-            )
-            for group_index, group in enumerate(sgd_groups[1:], start=1)
-        ]
-        self.optimizer_whiten = torch.optim.SGD(
-            whiten_param_config, momentum=0.85, nesterov=True, fused=True
-        )
-        self.optimizer_main = torch.optim.SGD(
-            main_param_configs, momentum=0.85, nesterov=True, fused=True
-        )
-        self.optimizer2 = Muon(
-            muon_params, lr=self.muon_lr_tensor, momentum=0.6, nesterov=True
-        )
-        self.optimizers = [self.optimizer_whiten, self.optimizer_main, self.optimizer2]
-        self.graphs = {}
-        self.outputs = {}
-        self._initialize_optimizer_state()
-        self._capture_graphs()
-
-    def _model_tensors(self):
-        tensors = []
-        tensors.extend(param.data for param in self.model.parameters())
-        tensors.extend(buffer.data for buffer in self.model.buffers())
-        return tensors
-
-    def _optimizer_state_tensors(self):
-        tensors = []
-        for opt in self.optimizers:
-            for state in opt.state.values():
-                for value in state.values():
-                    if torch.is_tensor(value):
-                        tensors.append(value)
-        return tensors
-
-    def _state_tensors(self):
-        return self._model_tensors() + self._optimizer_state_tensors()
-
-    def _snapshot_state(self):
-        return [tensor.detach().clone() for tensor in self._state_tensors()]
-
-    def _restore_state(self, snapshot):
-        for tensor, value in zip(self._state_tensors(), snapshot):
-            tensor.copy_(value)
-        self._zero_grads()
-
-    def reset_optimizer_state(self):
-        for tensor in self._optimizer_state_tensors():
-            tensor.zero_()
-        self._zero_grads()
-
-    def _zero_grads(self):
-        for opt in self.optimizers:
-            opt.zero_grad(set_to_none=False)
-
-    def _fill_lrs(self, sgd_lrs, muon_lr):
-        for lr_tensor, lr in zip(self.sgd_lr_tensors, sgd_lrs):
-            lr_tensor.fill_(lr)
-        self.muon_lr_tensor.fill_(muon_lr)
-
-    def _run_step(self, whiten_bias_grad):
-        outputs = self.model(self.static_inputs, whiten_bias_grad=whiten_bias_grad)
-        loss = F.cross_entropy(
-            outputs, self.static_labels, label_smoothing=0.2, reduction="sum"
-        )
-        loss.backward()
-        if whiten_bias_grad:
-            self.optimizer_whiten.step()
-        self.optimizer_main.step()
-        self.optimizer2.step()
-        self._zero_grads()
-        return outputs
-
-    def _initialize_optimizer_state(self):
-        model_snapshot = [tensor.detach().clone() for tensor in self._model_tensors()]
-        self._fill_lrs((0.0, 0.0, 0.0), 0.0)
-        self.model.train()
-        self._run_step(True)
-        self._run_step(False)
-        for tensor, value in zip(self._model_tensors(), model_snapshot):
-            tensor.copy_(value)
-        self.reset_optimizer_state()
-
-    def _capture_one_graph(self, whiten_bias_grad, snapshot):
-        self._restore_state(snapshot)
-        side_stream = torch.cuda.Stream()
-        side_stream.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(side_stream):
-            for _ in range(3):
-                self._run_step(whiten_bias_grad)
-        torch.cuda.current_stream().wait_stream(side_stream)
-
-        self._restore_state(snapshot)
-        graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph):
-            self.outputs[whiten_bias_grad] = self._run_step(whiten_bias_grad)
-        self.graphs[whiten_bias_grad] = graph
-        self._restore_state(snapshot)
-
-    def _capture_graphs(self):
-        snapshot = self._snapshot_state()
-        self._capture_one_graph(True, snapshot)
-        self._capture_one_graph(False, snapshot)
-
-    def step(self, inputs, labels, sgd_lrs, muon_lr, whiten_bias_grad):
-        self.static_inputs.copy_(inputs)
-        self.static_labels.copy_(labels)
-        self._fill_lrs(sgd_lrs, muon_lr)
-        self.graphs[whiten_bias_grad].replay()
-        return self.outputs[whiten_bias_grad]
+                p.data.add_(update, alpha=-lr)  # take a step
 
 
 #############################################
@@ -295,9 +147,7 @@ def batch_crop(images, crop_size):
 
 
 class CifarLoader:
-    def __init__(
-        self, path, train=True, batch_size=500, aug=None, shuffle=None, drop_last=None
-    ):
+    def __init__(self, path, train=True, batch_size=500, aug=None):
         data_path = os.path.join(path, "train.pt" if train else "test.pt")
         if not os.path.exists(data_path):
             dset = torchvision.datasets.CIFAR10(path, download=True, train=train)
@@ -315,7 +165,7 @@ class CifarLoader:
         )
         # It's faster to load+process uint8 data than to load preprocessed fp16 data
         self.images = (
-            (self.images.half() / 255)
+            (self.images.bfloat16() / 255)
             .permute(0, 3, 1, 2)
             .to(memory_format=torch.channels_last)
         )
@@ -329,8 +179,8 @@ class CifarLoader:
             assert k in ["flip", "translate"], "Unrecognized key: %s" % k
 
         self.batch_size = batch_size
-        self.drop_last = train if drop_last is None else drop_last
-        self.shuffle = train if shuffle is None else shuffle
+        self.drop_last = train
+        self.shuffle = train
 
     def _ensure_proc_images(self):
         if "norm" in self.proc_images:
@@ -447,7 +297,7 @@ class CifarNet(nn.Module):
             if isinstance(mod, BatchNorm):
                 mod.float()
             else:
-                mod.half()
+                mod.bfloat16()
 
     def reset(self):
         for m in self.modules():
@@ -503,8 +353,7 @@ def print_columns(columns_list, is_head=False, is_final_entry=False):
 logging_columns_list = [
     "run   ",
     "epoch",
-    "train_loss",
-    "train_acc",
+    "25batch_train_loss",
     "val_acc",
     "tta_val_acc",
     "time_seconds",
@@ -590,233 +439,33 @@ def evaluate_train_loss(model, batches):
     return total_loss / total_examples
 
 
-def calibrate_batchnorm(model, batches):
-    batchnorms = [module for module in model.modules() if isinstance(module, BatchNorm)]
-    momentums = [module.momentum for module in batchnorms]
-    for module in batchnorms:
-        module.reset_running_stats()
-        module.momentum = None
-
-    model.train()
-    with torch.inference_mode():
-        for inputs, _ in batches:
-            model(inputs)
-
-    model.eval()
-    for module, momentum in zip(batchnorms, momentums):
-        module.momentum = momentum
-
-
-def make_train_eval_batches():
-    loader = CifarLoader(
-        "cifar10",
-        train=True,
-        batch_size=BN_CAL_BATCH_SIZE,
-        aug=dict(flip=True, translate=2),
-        shuffle=False,
-        drop_last=False,
-    )
-    batches = []
-    for inputs, labels in loader:
-        batches.append((inputs.detach(), labels.detach()))
-        if len(batches) >= BN_CAL_BATCHES:
-            break
-    return batches
-
-
 ############################################
 #                Training                  #
 ############################################
 
-
-def log_linear_values(start, end, count):
-    if count == 1:
-        return [start]
-    ratio = end / start
-    return [start * ratio ** (index / (count - 1)) for index in range(count)]
+TRAIN_EVAL_BATCHES = 25
 
 
-MUON_LR_VALUES = log_linear_values(0.1, 5.0, 20)
-BATCH_SIZE_VALUES = (2000, 10000, 50000)
-BN_CAL_BATCH_SIZE = 2000
-BN_CAL_BATCHES = 25
-
-
-def make_muon_schedules():
-    schedules = []
-    sanity_configs = [(2000, 0.24), (50000, 0.24)]
-    configs = [
-        (batch_size, lr) for batch_size in BATCH_SIZE_VALUES for lr in MUON_LR_VALUES
-    ]
-    configs = sanity_configs + [
-        config
-        for config in configs
-        if not any(
-            config[0] == sanity_config[0]
-            and abs(config[1] - sanity_config[1]) < 1e-12
-            for sanity_config in sanity_configs
-        )
-    ]
-    for batch_size, lr in configs:
-        schedules.append(
-            dict(
-                index=len(schedules) + 1,
-                batch_size=batch_size,
-                micro_batch_size=batch_size,
-                initial_lr=lr,
-                shape="linear_decay",
-                shape_pattern="L",
-                name="bs%d linear %.2g->0" % (batch_size, lr),
-                profile="batch_size_2000_10000_50000_linear_decay_muon_lr_0.1_to_5_loglinear_20",
-                segments=[dict(shape="linear", start_lr=lr, end_lr=0.0)],
-            )
-        )
-    return schedules
-
-
-def divisible_batch_sizes(batch_size):
-    return [
-        candidate
-        for candidate in range(batch_size, 0, -1)
-        if batch_size % candidate == 0
-    ]
-
-
-def is_cuda_oom(error):
-    if isinstance(error, torch.cuda.OutOfMemoryError):
-        return True
-    message = str(error).lower()
-    return "out of memory" in message and ("cuda" in message or "cublas" in message)
-
-
-def cleanup_after_cuda_oom(graph_trainers):
-    graph_trainers.clear()
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-
-def muon_lr_at_step(schedule, step, total_train_steps):
-    progress = min(max(step / total_train_steps, 0.0), 1.0)
-    return schedule["initial_lr"] * (1 - progress)
-
-
-def print_sweep_summary(sweep_results):
-    ranked = sorted(
-        sweep_results,
-        key=lambda result: (
-            result["tta_val_acc"],
-            result["val_acc"],
-            -result["train_loss"],
-        ),
-        reverse=True,
-    )
-    tta_accs = torch.tensor([result["tta_val_acc"] for result in sweep_results])
-    val_accs = torch.tensor([result["val_acc"] for result in sweep_results])
-    print("\nMuon LR scheduler sweep summary")
-    print("schedules: %d" % len(sweep_results))
-    print(
-        "tta mean: %.4f    tta std: %.4f    best: %.4f    worst: %.4f"
-        % (
-            tta_accs.mean().item(),
-            tta_accs.std().item(),
-            tta_accs.max().item(),
-            tta_accs.min().item(),
-        )
-    )
-    print(
-        "val mean: %.4f    val std: %.4f    best: %.4f    worst: %.4f"
-        % (
-            val_accs.mean().item(),
-            val_accs.std().item(),
-            val_accs.max().item(),
-            val_accs.min().item(),
-        )
-    )
-    top_patterns = sorted(
-        {result["shape_pattern"] for result in sweep_results},
-        key=lambda pattern: max(
-            result["tta_val_acc"]
-            for result in sweep_results
-            if result["shape_pattern"] == pattern
-        ),
-        reverse=True,
-    )[:10]
-    for pattern in top_patterns:
-        pattern_results = [
-            result for result in sweep_results if result["shape_pattern"] == pattern
-        ]
-        pattern_tta = torch.tensor(
-            [result["tta_val_acc"] for result in pattern_results]
-        )
-        best = max(
-            pattern_results,
-            key=lambda result: (result["tta_val_acc"], result["val_acc"]),
-        )
-        print(
-            "%-4s count=%2d mean_tta=%.4f best_tta=%.4f best=%s"
-            % (
-                pattern,
-                len(pattern_results),
-                pattern_tta.mean().item(),
-                best["tta_val_acc"],
-                best["schedule"],
-            )
-        )
-
-    print("\nMuon LR scheduler ranking")
-    print(
-        "rank | run | bs | micro | accum | patt | 25batch_loss | val_acc | tta_val_acc | bn_cal_25batch_loss | bn_cal_val | bn_cal_tta | schedule"
-    )
-    print("-" * 190)
-    for rank, result in enumerate(ranked, start=1):
-        print(
-            "%4d | %3d | %5d | %5d | %5d | %-4s | %.4f       | %.4f  | %.4f      | %.4f             | %.4f     | %.4f     | %s"
-            % (
-                rank,
-                result["index"],
-                result["batch_size"],
-                result["micro_batch_size"],
-                result["accum_steps"],
-                result["shape_pattern"],
-                result["train25_loss"],
-                result["val_acc"],
-                result["tta_val_acc"],
-                result["bn_cal_train25_loss"],
-                result["bn_cal_val_acc"],
-                result["bn_cal_tta_val_acc"],
-                result["schedule"],
-            )
-        )
-    return ranked
-
-
-def main(run, model, muon_schedule, graph_trainers):
+def main(run, model):
     set_training_seed()
 
-    batch_size = muon_schedule["batch_size"]
-    micro_batch_size = muon_schedule.get("micro_batch_size", batch_size)
-    assert batch_size % micro_batch_size == 0
-    accum_steps = batch_size // micro_batch_size
-    bias_lr = 0.053
-    head_lr = 0.67
-    wd = 2e-6 * batch_size
+    batch_size = 500
+    SGD_LR_MULT = 0.25
+    MUON_LR_MULT = 0.32
+    bias_lr = 104 * SGD_LR_MULT
+    head_lr = 1340 * SGD_LR_MULT
 
     test_loader = CifarLoader("cifar10", train=False, batch_size=2000)
     train_loader = CifarLoader(
-        "cifar10",
-        train=True,
-        batch_size=micro_batch_size,
-        aug=dict(flip=True, translate=2),
+        "cifar10", train=True, batch_size=batch_size, aug=dict(flip=True, translate=2)
     )
     if run == "warmup":
         # The only purpose of the first run is to warmup the compiled model, so we can use dummy data
         train_loader.labels = torch.randint(
             0, 10, size=(len(train_loader.labels),), device=train_loader.labels.device
         )
-    train_steps_per_epoch = len(train_loader) // accum_steps
-    total_train_steps = ceil(8 * train_steps_per_epoch)
-    whiten_bias_train_steps = ceil(3 * train_steps_per_epoch)
+    total_train_steps = ceil(8 * len(train_loader))
+    whiten_bias_train_steps = ceil(3 * len(train_loader))
 
     # Create optimizers and learning rate schedulers
     filter_params = [
@@ -825,35 +474,21 @@ def main(run, model, muon_schedule, graph_trainers):
     norm_biases = [
         p for n, p in model.named_parameters() if "norm" in n and p.requires_grad
     ]
-    sgd_groups = [
-        dict(params=[model.whiten.bias], initial_lr=bias_lr, weight_decay=wd / bias_lr),
-        dict(params=norm_biases, initial_lr=bias_lr, weight_decay=wd / bias_lr),
-        dict(params=[model.head.weight], initial_lr=head_lr, weight_decay=wd / head_lr),
+    param_configs = [
+        dict(params=[model.whiten.bias], lr=bias_lr, weight_decay=0),
+        dict(params=norm_biases, lr=bias_lr, weight_decay=0),
+        dict(params=[model.head.weight], lr=head_lr, weight_decay=0),
     ]
-    use_cuda_graph = (
-        USE_CUDA_GRAPHS
-        and accum_steps == 1
-        and micro_batch_size in CUDA_GRAPH_BATCH_SIZES
+    optimizer1 = torch.optim.SGD(
+        param_configs, momentum=0.85, nesterov=True, fused=True
     )
-    if not use_cuda_graph:
-        param_configs = [
-            dict(
-                params=group["params"],
-                lr=group["initial_lr"],
-                weight_decay=group["weight_decay"],
-            )
-            for group in sgd_groups
-        ]
-        optimizer1 = torch.optim.SGD(
-            param_configs, momentum=0.85, nesterov=True, fused=True
-        )
-        optimizer2 = Muon(
-            filter_params, lr=muon_schedule["initial_lr"], momentum=0.6, nesterov=True
-        )
-        optimizers = [optimizer1, optimizer2]
-        for opt in optimizers:
-            for group in opt.param_groups:
-                group["initial_lr"] = group["lr"]
+    optimizer2 = Muon(
+        filter_params, lr=0.24 * MUON_LR_MULT, momentum=0.6, nesterov=True
+    )
+    optimizers = [optimizer1, optimizer2]
+    for opt in optimizers:
+        for group in opt.param_groups:
+            group["initial_lr"] = group["lr"]
 
     # For accurately timing GPU code
     starter = torch.cuda.Event(enable_timing=True)
@@ -877,81 +512,30 @@ def main(run, model, muon_schedule, graph_trainers):
     start_timer()
     train_images = train_loader.normalized_images()[:5000]
     model.init_whiten(train_images)
-    if use_cuda_graph:
-        if micro_batch_size not in graph_trainers:
-            graph_trainers[micro_batch_size] = CUDAGraphTrainer(
-                model, micro_batch_size, sgd_groups, filter_params
-            )
-        trainer = graph_trainers[micro_batch_size]
-        trainer.reset_optimizer_state()
-    else:
-        trainer = None
     stop_timer()
 
-    for epoch in range(ceil(total_train_steps / train_steps_per_epoch)):
+    for epoch in range(ceil(total_train_steps / len(train_loader))):
         ####################
         #     Training     #
         ####################
 
         start_timer()
         model.train()
-        accum_outputs = []
-        accum_labels = []
-        micro_step = 0
         for inputs, labels in train_loader:
-            if micro_batch_size == BN_CAL_BATCH_SIZE:
-                train_eval_batches.append((inputs.detach(), labels.detach()))
-                train_eval_batches = train_eval_batches[-BN_CAL_BATCHES:]
-            if use_cuda_graph:
-                whiten_bias_grad = step < whiten_bias_train_steps
-                whiten_lr = bias_lr * (1 - step / whiten_bias_train_steps)
-                main_lr_factor = 1 - step / total_train_steps
-                sgd_lrs = (
-                    whiten_lr,
-                    bias_lr * main_lr_factor,
-                    head_lr * main_lr_factor,
-                )
-                outputs = trainer.step(
-                    inputs,
-                    labels,
-                    sgd_lrs,
-                    muon_lr_at_step(muon_schedule, step, total_train_steps),
-                    whiten_bias_grad,
-                )
-            else:
-                if micro_step == 0:
-                    model.zero_grad(set_to_none=True)
-                outputs = model(
-                    inputs, whiten_bias_grad=(step < whiten_bias_train_steps)
-                )
-                loss = F.cross_entropy(
-                    outputs, labels, label_smoothing=0.2, reduction="sum"
-                )
-                loss.backward()
-                accum_outputs.append(outputs.detach())
-                accum_labels.append(labels.detach())
-                micro_step += 1
-                if micro_step < accum_steps:
-                    continue
-
-                for group in optimizer1.param_groups[:1]:
-                    group["lr"] = group["initial_lr"] * (
-                        1 - step / whiten_bias_train_steps
-                    )
-                for group in optimizer1.param_groups[1:]:
-                    group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
-                for group in optimizer2.param_groups:
-                    group["lr"] = muon_lr_at_step(
-                        muon_schedule, step, total_train_steps
-                    )
-                for opt in optimizers:
-                    opt.step()
-                model.zero_grad(set_to_none=True)
-                outputs = torch.cat(accum_outputs)
-                labels = torch.cat(accum_labels)
-                accum_outputs = []
-                accum_labels = []
-                micro_step = 0
+            train_eval_batches.append((inputs.detach(), labels.detach()))
+            train_eval_batches = train_eval_batches[-TRAIN_EVAL_BATCHES:]
+            outputs = model(inputs, whiten_bias_grad=(step < whiten_bias_train_steps))
+            loss = F.cross_entropy(
+                outputs, labels, label_smoothing=0.2, reduction="mean"
+            )
+            loss.backward()
+            for group in optimizer1.param_groups[:1]:
+                group["lr"] = group["initial_lr"] * (1 - step / whiten_bias_train_steps)
+            for group in optimizer1.param_groups[1:] + optimizer2.param_groups:
+                group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
+            for opt in optimizers:
+                opt.step()
+            model.zero_grad(set_to_none=True)
             step += 1
             if step >= total_train_steps:
                 break
@@ -961,11 +545,6 @@ def main(run, model, muon_schedule, graph_trainers):
         #    Evaluation    #
         ####################
 
-        # Save the accuracy and loss from the last training batch of the epoch
-        train_loss = F.cross_entropy(
-            outputs.detach().float(), labels, label_smoothing=0.2
-        ).item()
-        train_acc = (outputs.detach().argmax(1) == labels).float().mean().item()
         val_acc = evaluate(model, test_loader, tta_level=0)
         print_training_details(locals(), is_final_entry=False)
         run = None  # Only print the run number once
@@ -975,37 +554,20 @@ def main(run, model, muon_schedule, graph_trainers):
     ####################
 
     start_timer()
-    if micro_batch_size != BN_CAL_BATCH_SIZE:
-        set_training_seed()
-        train_eval_batches = make_train_eval_batches()
     train25_loss = evaluate_train_loss(model, train_eval_batches)
     tta_val_acc = evaluate(model, test_loader, tta_level=2)
     stop_timer()
     epoch = "eval"
-    print_training_details(locals(), is_final_entry=True)
+    final_variables = locals()
+    final_variables["25batch_train_loss"] = train25_loss
+    print_training_details(final_variables, is_final_entry=True)
 
-    start_timer()
-    calibrate_batchnorm(model, train_eval_batches)
-    bn_cal_train25_loss = evaluate_train_loss(model, train_eval_batches)
-    bn_cal_val_acc = evaluate(model, test_loader, tta_level=0)
-    bn_cal_tta_val_acc = evaluate(model, test_loader, tta_level=2)
-    stop_timer()
-
-    return {
-        "batch_size": batch_size,
-        "micro_batch_size": micro_batch_size,
-        "accum_steps": accum_steps,
-        "train_loss": train_loss,
-        "train_acc": train_acc,
-        "train25_loss": train25_loss,
-        "25batch_train_loss": train25_loss,
-        "val_acc": val_acc,
-        "tta_val_acc": tta_val_acc,
-        "bn_cal_train25_loss": bn_cal_train25_loss,
-        "bn_cal_25batch_train_loss": bn_cal_train25_loss,
-        "bn_cal_val_acc": bn_cal_val_acc,
-        "bn_cal_tta_val_acc": bn_cal_tta_val_acc,
-    }
+    return dict(
+        train25_loss=train25_loss,
+        **{"25batch_train_loss": train25_loss},
+        val_acc=val_acc,
+        tta_val_acc=tta_val_acc,
+    )
 
 
 if __name__ == "__main__":
@@ -1016,86 +578,13 @@ if __name__ == "__main__":
 
     print_columns(logging_columns_list, is_head=True)
     # main("warmup", model)
-    sweep_results = []
-    graph_trainers = {}
-    micro_batch_size_cache = {}
-    for schedule in make_muon_schedules():
-        batch_size = schedule["batch_size"]
-        candidate_micro_batch_sizes = (
-            [micro_batch_size_cache[batch_size]]
-            if batch_size in micro_batch_size_cache
-            else divisible_batch_sizes(batch_size)
-        )
-        result = None
-        schedule_to_run = None
-        for micro_batch_size in candidate_micro_batch_sizes:
-            schedule_to_run = dict(schedule, micro_batch_size=micro_batch_size)
-            accum_steps = batch_size // micro_batch_size
-            run = "%03d %s micro%d accum%d" % (
-                schedule["index"],
-                schedule["name"],
-                micro_batch_size,
-                accum_steps,
-            )
-            print("\nMuon schedule %s" % run, flush=True)
-            try:
-                result = main(run, model, schedule_to_run, graph_trainers)
-            except RuntimeError as error:
-                if not is_cuda_oom(error):
-                    raise
-                print(
-                    "CUDA OOM with effective batch %d, microbatch %d; trying the next divisor."
-                    % (batch_size, micro_batch_size),
-                    flush=True,
-                )
-                cleanup_after_cuda_oom(graph_trainers)
-                result = None
-                continue
-
-            micro_batch_size_cache.setdefault(batch_size, micro_batch_size)
-            if accum_steps > 1:
-                print(
-                    "Using gradient accumulation: effective batch %d = %d x microbatch %d"
-                    % (batch_size, accum_steps, micro_batch_size),
-                    flush=True,
-                )
-            break
-
-        if result is None:
-            raise RuntimeError(
-                "All divisible microbatch sizes OOM for effective batch %d" % batch_size
-            )
-
-        result.update(
-            index=schedule["index"],
-            schedule=schedule["name"],
-            shape=schedule["shape"],
-            shape_pattern=schedule["shape_pattern"],
-            batch_size=schedule_to_run["batch_size"],
-            micro_batch_size=schedule_to_run["micro_batch_size"],
-            accum_steps=schedule_to_run["batch_size"]
-            // schedule_to_run["micro_batch_size"],
-            initial_lr=schedule_to_run["initial_lr"],
-            segments=schedule_to_run["segments"],
-            profile=schedule_to_run["profile"],
-        )
-        sweep_results.append(result)
-        print("Batch size:  %d" % result["batch_size"])
-        print("Microbatch:  %d" % result["micro_batch_size"])
-        print("Accum steps: %d" % result["accum_steps"])
-        print("Train loss: %.4f" % result["train_loss"])
-        print("Train acc:  %.4f" % result["train_acc"])
-        print("25batch train loss:        %.4f" % result["train25_loss"])
-        print("Val acc:                   %.4f" % result["val_acc"])
-        print("TTA val:                   %.4f" % result["tta_val_acc"])
-        print("BN cal 25batch train loss: %.4f" % result["bn_cal_train25_loss"])
-        print("BN cal val acc:            %.4f" % result["bn_cal_val_acc"])
-        print("BN cal TTA val:            %.4f" % result["bn_cal_tta_val_acc"])
-
-    ranking = print_sweep_summary(sweep_results)
+    result = main(0, model)
+    print("25batch train loss: %.4f" % result["train25_loss"])
+    print("Val acc:            %.4f" % result["val_acc"])
+    print("TTA val:            %.4f" % result["tta_val_acc"])
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "log.pt")
-    torch.save(dict(code=code, sweep_results=sweep_results, ranking=ranking), log_path)
+    torch.save(dict(code=code, result=result), log_path)
     print(os.path.abspath(log_path))

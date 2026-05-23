@@ -15,7 +15,7 @@ import sys
 with open(sys.argv[0]) as f:
     code = f.read()
 import uuid
-from math import ceil
+from math import ceil, log10
 
 import torch
 from torch import nn
@@ -119,6 +119,55 @@ class Muon(torch.optim.Optimizer):
 
 
 #############################################
+#             Angular optimizer             #
+#############################################
+
+
+def angular_fallback_tangent(p):
+    fallback = torch.roll(p, shifts=1, dims=-1)
+    p_norm_sq = (p * p).sum(dim=(-2, -1), keepdim=True).clamp_min(1e-24)
+    tangent = fallback - (fallback * p).sum(dim=(-2, -1), keepdim=True) / p_norm_sq * p
+    second = torch.roll(p, shifts=1, dims=-2)
+    second = second - (second * p).sum(dim=(-2, -1), keepdim=True) / p_norm_sq * p
+    tangent_norm = tangent.norm(dim=(-2, -1), keepdim=True)
+    return torch.where(tangent_norm > 1e-12, tangent, second)
+
+
+def angular_move_on_frobenius_sphere(p, direction, lr):
+    p = p.float()
+    direction = direction.float()
+    p_norm = p.norm(dim=(-2, -1), keepdim=True).clamp_min(1e-12)
+    inner = (direction * p).sum(dim=(-2, -1), keepdim=True)
+    tangent = direction - inner / p_norm.square() * p
+    tangent_norm = tangent.norm(dim=(-2, -1), keepdim=True)
+    fallback = angular_fallback_tangent(p)
+    tangent = torch.where(tangent_norm > 1e-12, tangent, fallback)
+    tangent_unit = tangent / tangent.norm(dim=(-2, -1), keepdim=True).clamp_min(1e-12)
+    lr = torch.as_tensor(lr, device=p.device, dtype=p.dtype)
+    rotated = p * torch.cos(lr) - tangent_unit * (p_norm * torch.sin(lr))
+    return rotated / rotated.norm(dim=(-2, -1), keepdim=True).clamp_min(1e-12) * p_norm
+
+
+class AngularSGD(torch.optim.Optimizer):
+    def __init__(self, params, lr=1e-2):
+        if lr < 0.0:
+            raise ValueError(f"Invalid learning rate: {lr}")
+        defaults = dict(lr=lr)
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self):
+        for group in self.param_groups:
+            lr = group["lr"]
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                p.copy_(
+                    angular_move_on_frobenius_sphere(p, p.grad, lr).to(dtype=p.dtype)
+                )
+
+
+#############################################
 #                DataLoader                 #
 #############################################
 
@@ -163,9 +212,9 @@ class CifarLoader:
             data["labels"],
             data["classes"],
         )
-        # It's faster to load+process uint8 data than to load preprocessed data
+        # It's faster to load+process uint8 data than to load preprocessed fp16 data
         self.images = (
-            (self.images.float() / 255)
+            (self.images.bfloat16() / 255)
             .permute(0, 3, 1, 2)
             .to(memory_format=torch.channels_last)
         )
@@ -294,7 +343,10 @@ class CifarNet(nn.Module):
         )
         self.head = nn.Linear(widths["block3"], 10, bias=False)
         for mod in self.modules():
-            mod.float()
+            if isinstance(mod, BatchNorm):
+                mod.float()
+            else:
+                mod.bfloat16()
 
     def reset(self):
         for m in self.modules():
@@ -335,10 +387,35 @@ class CifarNet(nn.Module):
 ############################################
 
 
-def log_step(epoch, step, total_steps, loss, head_lr, muon_lr):
+def compute_weight_angles(previous_weights, current_params):
+    angle_tensors = []
+    for (name, previous), (current_name, current) in zip(
+        previous_weights, current_params
+    ):
+        assert name == current_name
+        previous_flat = previous.reshape(-1)
+        current_flat = current.detach().float().reshape(-1)
+        denom = previous_flat.norm() * current_flat.norm()
+        cos_angle = (previous_flat @ current_flat / denom.clamp_min(1e-30)).clamp(
+            -1.0, 1.0
+        )
+        angle_tensors.append(torch.acos(cos_angle))
+    return [
+        (name, angle)
+        for (name, _), angle in zip(
+            previous_weights, torch.stack(angle_tensors).cpu().tolist()
+        )
+    ]
+
+
+def log_step(epoch, step, total_steps, loss, head_lr, muon_lr, weight_angles):
+    angle_info = " ".join(
+        f"{name}_angle_rad={angle:.6g}" for name, angle in weight_angles
+    )
     print(
         f"step={step}/{total_steps} epoch={epoch} "
-        f"loss={loss:.4f} head_lr={head_lr:.6g} muon_lr={muon_lr:.6g}",
+        f"loss={loss:.4f} head_lr={head_lr:.6g} muon_lr={muon_lr:.6g} "
+        f"{angle_info}",
         flush=True,
     )
 
@@ -430,19 +507,24 @@ def evaluate_train_loss(model, batches):
 ############################################
 
 TRAIN_EVAL_BATCHES = 25
-RUN_CONFIGS = [
-    dict(batch_size=125, muon_lr=0.04),
-    dict(batch_size=500, muon_lr=0.079),
-    dict(batch_size=2000, muon_lr=0.19),
-]
+HEAD_WARMUP_STEPS = 5
+HEAD_WARMUP_LR = 1000.0
 
 
-def main(run, model, batch_size, muon_lr):
+def decayed_angular_lr(step, total_steps, initial_lr):
+    angular_step = step - HEAD_WARMUP_STEPS
+    angular_steps = max(1, total_steps - HEAD_WARMUP_STEPS - 1)
+    return initial_lr * max(0.0, 1.0 - angular_step / angular_steps)
+
+
+def main(run, model, angular_lr):
     set_training_seed()
 
-    SGD_LR_MULT = batch_size / 2000
+    batch_size = 2000
+    SGD_LR_MULT = 1.0
+    MUON_LR_MULT = 1.0
     bias_lr = 104 * SGD_LR_MULT
-    head_lr = 1340 * SGD_LR_MULT
+    angular_lr = float(angular_lr)
 
     test_loader = CifarLoader("cifar10", train=False, batch_size=2000)
     train_loader = CifarLoader(
@@ -457,8 +539,14 @@ def main(run, model, batch_size, muon_lr):
     whiten_bias_train_steps = ceil(3 * len(train_loader))
 
     # Create optimizers and learning rate schedulers
-    filter_params = [
-        p for p in model.parameters() if len(p.shape) == 4 and p.requires_grad
+    muon_params = [
+        (n, p)
+        for n, p in model.named_parameters()
+        if len(p.shape) == 4 and p.requires_grad
+    ]
+    filter_params = [p for _, p in muon_params]
+    angle_params = [("head", model.head.weight)] + [
+        (f"muon.{name}", param) for name, param in muon_params
     ]
     norm_biases = [
         p for n, p in model.named_parameters() if "norm" in n and p.requires_grad
@@ -466,12 +554,20 @@ def main(run, model, batch_size, muon_lr):
     param_configs = [
         dict(params=[model.whiten.bias], lr=bias_lr, weight_decay=0),
         dict(params=norm_biases, lr=bias_lr, weight_decay=0),
-        dict(params=[model.head.weight], lr=head_lr, weight_decay=0),
     ]
     optimizer1 = torch.optim.SGD(
         param_configs, momentum=0.85, nesterov=True, fused=True
     )
-    optimizer2 = Muon(filter_params, lr=muon_lr, momentum=0.6, nesterov=True)
+    head_warmup_optimizer = torch.optim.SGD(
+        [dict(params=[model.head.weight], lr=HEAD_WARMUP_LR, weight_decay=0)],
+        momentum=0.85,
+        nesterov=True,
+        fused=True,
+    )
+    head_angular_optimizer = AngularSGD([model.head.weight], lr=angular_lr)
+    optimizer2 = Muon(
+        filter_params, lr=0.24 * MUON_LR_MULT, momentum=0.6, nesterov=True
+    )
     optimizers = [optimizer1, optimizer2]
     for opt in optimizers:
         for group in opt.param_groups:
@@ -520,8 +616,20 @@ def main(run, model, batch_size, muon_lr):
                 group["lr"] = group["initial_lr"] * (1 - step / whiten_bias_train_steps)
             for group in optimizer1.param_groups[1:] + optimizer2.param_groups:
                 group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
-            for opt in optimizers:
-                opt.step()
+            previous_weights = [
+                (name, param.detach().float().clone()) for name, param in angle_params
+            ]
+            use_head_warmup = step < HEAD_WARMUP_STEPS
+            optimizer1.step()
+            if use_head_warmup:
+                head_lr = HEAD_WARMUP_LR
+                head_warmup_optimizer.step()
+            else:
+                head_lr = decayed_angular_lr(step, total_train_steps, angular_lr)
+                head_angular_optimizer.param_groups[0]["lr"] = head_lr
+                head_angular_optimizer.step()
+            optimizer2.step()
+            weight_angles = compute_weight_angles(previous_weights, angle_params)
             model.zero_grad(set_to_none=True)
             step += 1
             log_step(
@@ -529,8 +637,9 @@ def main(run, model, batch_size, muon_lr):
                 step=step,
                 total_steps=total_train_steps,
                 loss=loss.item(),
-                head_lr=optimizer1.param_groups[2]["lr"],
+                head_lr=head_lr,
                 muon_lr=optimizer2.param_groups[0]["lr"],
+                weight_angles=weight_angles,
             )
             if step >= total_train_steps:
                 break
@@ -559,9 +668,6 @@ def main(run, model, batch_size, muon_lr):
         **{"25batch_train_loss": train25_loss},
         val_acc=val_acc,
         tta_val_acc=tta_val_acc,
-        batch_size=batch_size,
-        muon_lr=muon_lr,
-        sgd_lr_mult=SGD_LR_MULT,
     )
 
 
@@ -571,25 +677,26 @@ if __name__ == "__main__":
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
     # model.compile(mode="max-autotune")
 
-    # main("warmup", model, RUN_CONFIGS[0]["batch_size"], RUN_CONFIGS[0]["muon_lr"])
+    angular_lrs = torch.logspace(log10(0.01), log10(0.3), steps=40).tolist()
+    # main("warmup", model, angular_lrs[0])
     results = []
-    for run, config in enumerate(RUN_CONFIGS):
-        print(
-            "cifar_baseline2 run=%d batch_size=%d muon_lr=%.6g"
-            % (run, config["batch_size"], config["muon_lr"]),
-            flush=True,
-        )
-        result = main(run, model, config["batch_size"], config["muon_lr"])
+    for run, angular_lr in enumerate(angular_lrs):
+        print(f"angular_lr_search run={run} angular_lr={angular_lr:.6g}", flush=True)
+        result = main(run, model, angular_lr)
+        result["angular_lr"] = angular_lr
         results.append(result)
-        print("Batch size:         %d" % result["batch_size"])
-        print("Muon lr:            %.6g" % result["muon_lr"])
-        print("SGD lr mult:        %.6g" % result["sgd_lr_mult"])
+        print("angular lr:         %.6g" % result["angular_lr"])
         print("25batch train loss: %.4f" % result["train25_loss"])
         print("Val acc:            %.4f" % result["val_acc"])
         print("TTA val:            %.4f" % result["tta_val_acc"])
 
+    best_result = max(results, key=lambda result: result["tta_val_acc"])
+    print("Best angular lr:    %.6g" % best_result["angular_lr"])
+    print("Best val acc:       %.4f" % best_result["val_acc"])
+    print("Best TTA val:       %.4f" % best_result["tta_val_acc"])
+
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "log.pt")
-    torch.save(dict(code=code, results=results), log_path)
+    torch.save(dict(code=code, results=results, best_result=best_result), log_path)
     print(os.path.abspath(log_path))

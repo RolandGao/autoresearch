@@ -14,6 +14,7 @@ import sys
 
 with open(sys.argv[0]) as f:
     code = f.read()
+import json
 import uuid
 from math import ceil
 
@@ -335,10 +336,10 @@ class CifarNet(nn.Module):
 ############################################
 
 
-def log_step(epoch, step, total_steps, loss, head_lr, muon_lr):
+def log_training_batch_losses(step, total_steps, losses):
     print(
-        f"step={step}/{total_steps} epoch={epoch} "
-        f"loss={loss:.4f} head_lr={head_lr:.6g} muon_lr={muon_lr:.6g}",
+        "training_batch_losses "
+        f"step={step}/{total_steps} losses={json.dumps(losses)}",
         flush=True,
     )
 
@@ -425,15 +426,92 @@ def evaluate_train_loss(model, batches):
     return total_loss / total_examples
 
 
+def batchnorm_modules(model):
+    return [
+        module
+        for module in model.modules()
+        if isinstance(module, nn.modules.batchnorm._BatchNorm)
+    ]
+
+
+def snapshot_batchnorm_buffers(model):
+    return [
+        (
+            module,
+            None
+            if module.running_mean is None
+            else module.running_mean.detach().clone(),
+            None
+            if module.running_var is None
+            else module.running_var.detach().clone(),
+            None
+            if module.num_batches_tracked is None
+            else module.num_batches_tracked.detach().clone(),
+        )
+        for module in batchnorm_modules(model)
+    ]
+
+
+def restore_batchnorm_buffers(states):
+    for module, running_mean, running_var, num_batches_tracked in states:
+        if running_mean is not None:
+            module.running_mean.copy_(running_mean)
+        if running_var is not None:
+            module.running_var.copy_(running_var)
+        if num_batches_tracked is not None:
+            module.num_batches_tracked.copy_(num_batches_tracked)
+
+
+def evaluate_training_batch_losses(model, batches):
+    was_training = model.training
+    batchnorm_states = snapshot_batchnorm_buffers(model)
+    model.eval()
+    for module in batchnorm_modules(model):
+        module.train()
+
+    losses = []
+    try:
+        with torch.no_grad():
+            for inputs, labels in batches:
+                outputs = model(inputs)
+                loss = F.cross_entropy(
+                    outputs.float(), labels, label_smoothing=0.2, reduction="mean"
+                )
+                losses.append(loss.item())
+    finally:
+        restore_batchnorm_buffers(batchnorm_states)
+        model.train(was_training)
+
+    return losses
+
+
+def materialize_training_batches(train_loader, total_steps):
+    batches = []
+    while len(batches) < total_steps:
+        for inputs, labels in train_loader:
+            batches.append((inputs.detach(), labels.detach()))
+            if len(batches) >= total_steps:
+                break
+    return batches
+
+
+def training_loss_log_steps(total_steps, log_count):
+    return [ceil(total_steps * index / log_count) for index in range(1, log_count + 1)]
+
+
 ############################################
 #                Training                  #
 ############################################
 
 TRAIN_EVAL_BATCHES = 25
+TRAINING_LOSS_LOG_COUNT = 40
 RUN_CONFIGS = [
     dict(batch_size=125, muon_lr=0.04),
     dict(batch_size=500, muon_lr=0.079),
     dict(batch_size=2000, muon_lr=0.19),
+    dict(batch_size=125, muon_lr=0.04 * 2),
+    dict(batch_size=125, muon_lr=0.04 * 4),
+    dict(batch_size=125, muon_lr=0.04 * 6),
 ]
 
 
@@ -493,13 +571,19 @@ def main(run, model, batch_size, muon_lr):
 
     model.reset()
     step = 0
-    train_eval_batches = []
 
     # Initialize the whitening layer using training images
     start_timer()
     train_images = train_loader.normalized_images()[:5000]
     model.init_whiten(train_images)
     stop_timer()
+
+    training_batches = materialize_training_batches(train_loader, total_train_steps)
+    train_eval_batches = training_batches[-TRAIN_EVAL_BATCHES:]
+    loss_log_steps = set(
+        training_loss_log_steps(total_train_steps, TRAINING_LOSS_LOG_COUNT)
+    )
+    training_batch_loss_logs = []
 
     for epoch in range(ceil(total_train_steps / len(train_loader))):
         ####################
@@ -508,9 +592,9 @@ def main(run, model, batch_size, muon_lr):
 
         start_timer()
         model.train()
-        for inputs, labels in train_loader:
-            train_eval_batches.append((inputs.detach(), labels.detach()))
-            train_eval_batches = train_eval_batches[-TRAIN_EVAL_BATCHES:]
+        epoch_start = epoch * len(train_loader)
+        epoch_batches = training_batches[epoch_start : epoch_start + len(train_loader)]
+        for inputs, labels in epoch_batches:
             outputs = model(inputs, whiten_bias_grad=(step < whiten_bias_train_steps))
             loss = F.cross_entropy(
                 outputs, labels, label_smoothing=0.2, reduction="mean"
@@ -524,14 +608,12 @@ def main(run, model, batch_size, muon_lr):
                 opt.step()
             model.zero_grad(set_to_none=True)
             step += 1
-            log_step(
-                epoch=epoch,
-                step=step,
-                total_steps=total_train_steps,
-                loss=loss.item(),
-                head_lr=optimizer1.param_groups[2]["lr"],
-                muon_lr=optimizer2.param_groups[0]["lr"],
-            )
+            if step in loss_log_steps:
+                stop_timer()
+                losses = evaluate_training_batch_losses(model, training_batches)
+                training_batch_loss_logs.append(losses)
+                log_training_batch_losses(step, total_train_steps, losses)
+                start_timer()
             if step >= total_train_steps:
                 break
         stop_timer()
@@ -562,6 +644,10 @@ def main(run, model, batch_size, muon_lr):
         batch_size=batch_size,
         muon_lr=muon_lr,
         sgd_lr_mult=SGD_LR_MULT,
+        training_batch_loss_logs=training_batch_loss_logs,
+        training_batch_loss_log_steps=training_loss_log_steps(
+            total_train_steps, TRAINING_LOSS_LOG_COUNT
+        ),
     )
 
 

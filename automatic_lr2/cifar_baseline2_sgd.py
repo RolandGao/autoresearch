@@ -55,33 +55,13 @@ def set_training_seed():
 #############################################
 
 
-def zeropower_via_newtonschulz5(G, steps=3, eps=0):
-    r"""
-    Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
-    quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
-    of minimizing steps, it turns out to be empirically effective to keep increasing the slope at
-    zero even beyond the point where the iteration no longer converges all the way to one everywhere
-    on the interval. This iteration therefore does not produce UV^T but rather something like US'V^T
-    where S' is diagonal with S_{ii}' \sim Uniform(0.5, 1.5), which turns out not to hurt model
-    performance at all relative to UV^T, where USV^T = G is the SVD.
-    """
+def normalize_rows(G):
     assert len(G.shape) == 2
-    a, b, c = (3.4445, -4.7750, 2.0315)
-    X = G.to(MUON_DTYPE)
-    X /= X.norm() + eps  # ensure top singular value <= 1
-    if G.size(0) > G.size(1):
-        X = X.T
-    for _ in range(steps):
-        A = X @ X.T
-        B = b * A + c * A @ A
-        X = a * X + B @ X
-    if G.size(0) > G.size(1):
-        X = X.T
-    return X
+    return G / G.norm(dim=1, keepdim=True)
 
 
 if USE_COMPILED_MUON:
-    zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
+    normalize_rows = torch.compile(normalize_rows)
 
 
 class Muon(torch.optim.Optimizer):
@@ -112,9 +92,7 @@ class Muon(torch.optim.Optimizer):
                 g = g.add(buf, alpha=momentum) if group["nesterov"] else buf
 
                 p.data.mul_(len(p.data) ** 0.5 / p.data.norm())  # normalize the weight
-                update = zeropower_via_newtonschulz5(g.reshape(len(g), -1)).view(
-                    g.shape
-                )  # whiten the update
+                update = normalize_rows(g.reshape(len(g), -1)).view(g.shape)
                 p.data.add_(update, alpha=-lr)  # take a step
 
 
