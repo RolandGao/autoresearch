@@ -1,0 +1,4 @@
+run,name,batch_size,muon_lr,use_best_lr,train25_loss,val_acc,tta_val_acc,time_seconds,best_lr_logs,final_best_lr_ema
+0,best_lr,125,0.24,True,1.008,0.7908,0.8164,114.9349,40,0.066195861
+1,muon_0.04,125,0.04,False,0.916,0.9296,0.9384,24.595,0,
+2,muon_0.24,125,0.24,False,1.0212,0.9074,0.9181,24.227,0,
