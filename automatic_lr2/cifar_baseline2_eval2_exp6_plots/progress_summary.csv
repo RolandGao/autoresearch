@@ -1,0 +1,13 @@
+run,name,batch_size,muon_lr,strategy,scheduler,steps,total_steps,progress,best_lr_logs,eval_points,is_complete
+3,muon_bs125_lr0.04,125,0.04,fixed_muon,fixed lr=0.04,3200,3200,1,0,8,True
+4,muon_bs125_lr0.05,125,0.05,fixed_muon,fixed lr=0.05,3200,3200,1,0,8,True
+5,muon_bs125_lr0.06,125,0.06,fixed_muon,fixed lr=0.06,3200,3200,1,0,8,True
+9,min_loss_bs125,125,0.04,min_loss,constant,3200,3200,1,3200,8,True
+10,min_loss_decay_bs125,125,0.04,min_loss,linear,3200,3200,1,3200,8,True
+11,min_loss_last2_decay_bs125,125,0.04,min_loss,last2_linear,3200,3200,1,3200,8,True
+0,muon_bs2000_lr0.19,2000,0.19,fixed_muon,fixed lr=0.19,200,200,1,0,8,True
+1,muon_bs2000_lr0.24,2000,0.24,fixed_muon,fixed lr=0.24,200,200,1,0,8,True
+2,muon_bs2000_lr0.3,2000,0.3,fixed_muon,fixed lr=0.3,200,200,1,0,8,True
+6,min_loss_bs2000,2000,0.19,min_loss,constant,200,200,1,200,8,True
+7,min_loss_decay_bs2000,2000,0.19,min_loss,linear,200,200,1,200,8,True
+8,min_loss_last2_decay_bs2000,2000,0.19,min_loss,last2_linear,200,200,1,200,8,True

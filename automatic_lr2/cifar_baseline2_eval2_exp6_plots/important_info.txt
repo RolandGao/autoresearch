@@ -1,0 +1,242 @@
+CIFAR Baseline Exp6 Results
+===========================
+
+Runs: 12
+Complete runs: 12
+
+All Runs
+--------
+name                         train loss  val loss  train acc  val acc  val tta
+---------------------------  ----------  --------  ---------  -------  -------
+muon_bs125_lr0.04            0.9014      1.0099    0.993      0.9296   0.9384 
+muon_bs125_lr0.05            0.9046      1.0092    0.9911     0.927    0.9386 
+muon_bs125_lr0.06            0.9093      1.0056    0.9889     0.9304   0.9391 
+min_loss_bs125               1.1878      1.2566    0.839      0.7943   0.8266 
+min_loss_decay_bs125         0.9074      1.0111    0.9903     0.9288   0.9389 
+min_loss_last2_decay_bs125   0.9812      1.0356    0.952      0.9165   0.9215 
+muon_bs2000_lr0.19           0.9051      1.0119    0.9944     0.9304   0.9379 
+muon_bs2000_lr0.24           0.91        1.0132    0.9923     0.931    0.9387 
+muon_bs2000_lr0.3            0.9192      1.0171    0.9884     0.9284   0.9364 
+min_loss_bs2000              0.9668      1.0993    0.9737     0.8886   0.9032 
+min_loss_decay_bs2000        1.0021      1.1046    0.9679     0.8999   0.9126 
+min_loss_last2_decay_bs2000  0.945       1.0477    0.9848     0.9212   0.9265 
+
+Metric Correlations, All Runs
+-----------------------------
+Rows: 12
+metric      train loss  val loss  train acc  val acc  val tta
+----------  ----------  --------  ---------  -------  -------
+train loss  1.0000      0.9730    -0.9782    -0.9718  -0.9810
+val loss    0.9730      1.0000    -0.9287    -0.9841  -0.9864
+train acc   -0.9782     -0.9287   1.0000     0.9637   0.9681 
+val acc     -0.9718     -0.9841   0.9637     1.0000   0.9974 
+val tta     -0.9810     -0.9864   0.9681     0.9974   1.0000 
+
+Metric Correlations, batch_size=125
+-----------------------------------
+Rows: 6
+metric      train loss  val loss  train acc  val acc  val tta
+----------  ----------  --------  ---------  -------  -------
+train loss  1.0000      0.9861    -0.9999    -0.9835  -0.9929
+val loss    0.9861      1.0000    -0.9880    -0.9997  -0.9988
+train acc   -0.9999     -0.9880   1.0000     0.9857   0.9942 
+val acc     -0.9835     -0.9997   0.9857     1.0000   0.9979 
+val tta     -0.9929     -0.9988   0.9942     0.9979   1.0000 
+
+Metric Correlations, batch_size=2000
+------------------------------------
+Rows: 6
+metric      train loss  val loss  train acc  val acc  val tta
+----------  ----------  --------  ---------  -------  -------
+train loss  1.0000      0.9606    -0.9851    -0.8593  -0.8709
+val loss    0.9606      1.0000    -0.9795    -0.9650  -0.9710
+train acc   -0.9851     -0.9795   1.0000     0.9182   0.9190 
+val acc     -0.8593     -0.9650   0.9182     1.0000   0.9944 
+val tta     -0.8709     -0.9710   0.9190     0.9944   1.0000 
+
+batch_size=125
+---------------
+1. muon_bs125_lr0.06
+   strategy: fixed_muon
+   scheduler: fixed lr=0.06
+   TTA val acc: 0.9391
+   val acc: 0.9304
+   train acc: 0.9889
+   train loss: 0.9093
+   val loss: 1.0056
+   final post-loss mean: 0.9093429
+   final post-loss sum: 2909.8973
+   wall time seconds: 34.3809
+   CUDA time seconds: 29.9446
+   final applied LR: 1.875e-05
+   final searched LR: NA
+   final best-LR EMA: NA
+2. min_loss_decay_bs125
+   strategy: min_loss
+   scheduler: linear
+   TTA val acc: 0.9389
+   val acc: 0.9288
+   train acc: 0.9903
+   train loss: 0.9074
+   val loss: 1.0111
+   final post-loss mean: 0.90737116
+   final post-loss sum: 2903.5877
+   wall time seconds: 130.3619
+   CUDA time seconds: 125.5979
+   final applied LR: 0.00015572673
+   final searched LR: 0.015572673
+   final best-LR EMA: 0.012769592
+3. muon_bs125_lr0.05
+   strategy: fixed_muon
+   scheduler: fixed lr=0.05
+   TTA val acc: 0.9386
+   val acc: 0.927
+   train acc: 0.9911
+   train loss: 0.9046
+   val loss: 1.0092
+   final post-loss mean: 0.90462707
+   final post-loss sum: 2894.8066
+   wall time seconds: 33.5478
+   CUDA time seconds: 29.1071
+   final applied LR: 1.5625e-05
+   final searched LR: NA
+   final best-LR EMA: NA
+4. muon_bs125_lr0.04
+   strategy: fixed_muon
+   scheduler: fixed lr=0.04
+   TTA val acc: 0.9384
+   val acc: 0.9296
+   train acc: 0.993
+   train loss: 0.9014
+   val loss: 1.0099
+   final post-loss mean: 0.90136356
+   final post-loss sum: 2884.3634
+   wall time seconds: 34.9827
+   CUDA time seconds: 30.4949
+   final applied LR: 1.25e-05
+   final searched LR: NA
+   final best-LR EMA: NA
+5. min_loss_last2_decay_bs125
+   strategy: min_loss
+   scheduler: last2_linear
+   TTA val acc: 0.9215
+   val acc: 0.9165
+   train acc: 0.952
+   train loss: 0.9812
+   val loss: 1.0356
+   final post-loss mean: 0.98122641
+   final post-loss sum: 3139.9245
+   wall time seconds: 128.6283
+   CUDA time seconds: 123.8541
+   final applied LR: 0.00038133263
+   final searched LR: 0.038133263
+   final best-LR EMA: 0.038133263
+6. min_loss_bs125
+   strategy: min_loss
+   scheduler: constant
+   TTA val acc: 0.8266
+   val acc: 0.7943
+   train acc: 0.839
+   train loss: 1.1878
+   val loss: 1.2566
+   final post-loss mean: 1.1878084
+   final post-loss sum: 3800.9868
+   wall time seconds: 125.9199
+   CUDA time seconds: 121.0107
+   final applied LR: 0.062915665
+   final searched LR: 0.062915665
+   final best-LR EMA: 0.062915665
+
+batch_size=2000
+---------------
+1. muon_bs2000_lr0.24
+   strategy: fixed_muon
+   scheduler: fixed lr=0.24
+   TTA val acc: 0.9387
+   val acc: 0.931
+   train acc: 0.9923
+   train loss: 0.91
+   val loss: 1.0132
+   final post-loss mean: 0.9099601
+   final post-loss sum: 181.99202
+   wall time seconds: 15.055
+   CUDA time seconds: 12.2119
+   final applied LR: 0.0012
+   final searched LR: NA
+   final best-LR EMA: NA
+2. muon_bs2000_lr0.19
+   strategy: fixed_muon
+   scheduler: fixed lr=0.19
+   TTA val acc: 0.9379
+   val acc: 0.9304
+   train acc: 0.9944
+   train loss: 0.9051
+   val loss: 1.0119
+   final post-loss mean: 0.90510688
+   final post-loss sum: 181.02138
+   wall time seconds: 15.8939
+   CUDA time seconds: 12.9469
+   final applied LR: 0.00095
+   final searched LR: NA
+   final best-LR EMA: NA
+3. muon_bs2000_lr0.3
+   strategy: fixed_muon
+   scheduler: fixed lr=0.3
+   TTA val acc: 0.9364
+   val acc: 0.9284
+   train acc: 0.9884
+   train loss: 0.9192
+   val loss: 1.0171
+   final post-loss mean: 0.91920682
+   final post-loss sum: 183.84136
+   wall time seconds: 15.1334
+   CUDA time seconds: 12.287
+   final applied LR: 0.0015
+   final searched LR: NA
+   final best-LR EMA: NA
+4. min_loss_last2_decay_bs2000
+   strategy: min_loss
+   scheduler: last2_linear
+   TTA val acc: 0.9265
+   val acc: 0.9212
+   train acc: 0.9848
+   train loss: 0.945
+   val loss: 1.0477
+   final post-loss mean: 0.94503102
+   final post-loss sum: 189.0062
+   wall time seconds: 27.8025
+   CUDA time seconds: 24.8962
+   final applied LR: 0.00052267006
+   final searched LR: 0.052267006
+   final best-LR EMA: 0.052267006
+5. min_loss_decay_bs2000
+   strategy: min_loss
+   scheduler: linear
+   TTA val acc: 0.9126
+   val acc: 0.8999
+   train acc: 0.9679
+   train loss: 1.0021
+   val loss: 1.1046
+   final post-loss mean: 1.0021276
+   final post-loss sum: 200.42552
+   wall time seconds: 27.4616
+   CUDA time seconds: 24.5752
+   final applied LR: 0.00039984345
+   final searched LR: 0.039984345
+   final best-LR EMA: 0.039984345
+6. min_loss_bs2000
+   strategy: min_loss
+   scheduler: constant
+   TTA val acc: 0.9032
+   val acc: 0.8886
+   train acc: 0.9737
+   train loss: 0.9668
+   val loss: 1.0993
+   final post-loss mean: 0.96679753
+   final post-loss sum: 193.35951
+   wall time seconds: 27.5054
+   CUDA time seconds: 24.6306
+   final applied LR: 0.054422122
+   final searched LR: 0.054422122
+   final best-LR EMA: 0.054422122
+
