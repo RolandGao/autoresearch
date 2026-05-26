@@ -11,6 +11,7 @@ Descends from https://github.com/tysam-code/hlb-CIFAR10/blob/main/main.py
 
 import os
 import sys
+import time
 
 with open(sys.argv[0]) as f:
     code = f.read()
@@ -380,6 +381,15 @@ def log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds):
     )
 
 
+def log_run_time(run, name, wall_time_seconds, cuda_time_seconds):
+    print(
+        f"run_time run={run} name={name} "
+        f"wall_time_seconds={wall_time_seconds:.4f} "
+        f"cuda_time_seconds={cuda_time_seconds:.4f}",
+        flush=True,
+    )
+
+
 ############################################
 #               Evaluation                 #
 ############################################
@@ -541,6 +551,8 @@ PEAK_LR_INITIAL_SIDE_STEPS = (
     + PEAK_LR_DISCARDED_EDGE_STEPS
 )
 LOG_PRE_POST_LOSSES = True
+LOG_PRE_UPDATE_LOSSES = False
+LOG_POST_UPDATE_LOSSES = True
 LOG_BEST_LR = True
 
 
@@ -987,6 +999,32 @@ def choose_peak_lr(
     return peak_lr, peak_loss, losses_by_lr
 
 
+def resolve_best_lr_scheduler(best_lr_scheduler, best_lr_linear_decay):
+    if best_lr_scheduler is not None:
+        return best_lr_scheduler
+    return "linear" if best_lr_linear_decay else "constant"
+
+
+def uses_best_lr_decay(best_lr_scheduler):
+    return best_lr_scheduler != "constant"
+
+
+def best_lr_scheduler_multiplier(
+    step, total_steps, steps_per_epoch, best_lr_scheduler
+):
+    if best_lr_scheduler == "constant":
+        return 1.0
+    if best_lr_scheduler == "linear":
+        return 1 - step / total_steps
+    if best_lr_scheduler == "last2_linear":
+        decay_start_step = max(0, total_steps - 2 * steps_per_epoch)
+        if step < decay_start_step:
+            return 1.0
+        denominator = max(1, total_steps - 1 - decay_start_step)
+        return max(0.0, 1 - (step - decay_start_step) / denominator)
+    raise ValueError(f"Unknown best_lr_scheduler: {best_lr_scheduler}")
+
+
 ############################################
 #                Training                  #
 ############################################
@@ -1018,6 +1056,13 @@ BEST_LR_VERSION_CONFIGS = [
     dict(
         name="best_lr_v6_peak_lr_decay",
         best_lr_strategy="peak_lr",
+        best_lr_scheduler="linear",
+        best_lr_linear_decay=True,
+    ),
+    dict(
+        name="best_lr_v7_peak_lr_last2_decay",
+        best_lr_strategy="peak_lr",
+        best_lr_scheduler="last2_linear",
         best_lr_linear_decay=True,
     ),
 ]
@@ -1067,12 +1112,22 @@ RUN_CONFIGS = [
         batch_size=2000,
         muon_lr=0.19,
         best_lr_strategy="peak_lr",
+        best_lr_scheduler="constant",
     ),
     dict(
         name="best_lr_v6_peak_lr_decay_bs2000_lr0.19",
         batch_size=2000,
         muon_lr=0.19,
         best_lr_strategy="peak_lr",
+        best_lr_scheduler="linear",
+        best_lr_linear_decay=True,
+    ),
+    dict(
+        name="best_lr_v7_peak_lr_last2_decay_bs2000_lr0.19",
+        batch_size=2000,
+        muon_lr=0.19,
+        best_lr_strategy="peak_lr",
+        best_lr_scheduler="last2_linear",
         best_lr_linear_decay=True,
     ),
     # dict(
@@ -1108,12 +1163,22 @@ RUN_CONFIGS = [
         batch_size=125,
         muon_lr=0.04,
         best_lr_strategy="peak_lr",
+        best_lr_scheduler="constant",
     ),
     dict(
         name="best_lr_v6_peak_lr_decay_bs125_lr0.04",
         batch_size=125,
         muon_lr=0.04,
         best_lr_strategy="peak_lr",
+        best_lr_scheduler="linear",
+        best_lr_linear_decay=True,
+    ),
+    dict(
+        name="best_lr_v7_peak_lr_last2_decay_bs125_lr0.04",
+        batch_size=125,
+        muon_lr=0.04,
+        best_lr_strategy="peak_lr",
+        best_lr_scheduler="last2_linear",
         best_lr_linear_decay=True,
     ),
 ]
@@ -1128,9 +1193,16 @@ def main(
     best_lr_strategy=None,
     best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
     best_lr_linear_decay=False,
+    best_lr_scheduler=None,
 ):
+    run_id = run
+    run_wall_start = time.perf_counter()
     set_training_seed()
     use_best_lr = best_lr_strategy is not None
+    best_lr_scheduler = resolve_best_lr_scheduler(
+        best_lr_scheduler, best_lr_linear_decay
+    )
+    best_lr_linear_decay = uses_best_lr_decay(best_lr_scheduler)
 
     SGD_LR_MULT = batch_size / 2000
     bias_lr = 104 * SGD_LR_MULT
@@ -1194,11 +1266,7 @@ def main(
 
     training_batches = materialize_training_batches(train_loader, total_train_steps)
     train_eval_batches = training_batches[-TRAIN_EVAL_BATCHES:]
-    loss_log_steps_list = (
-        epoch_end_steps(total_train_steps, len(train_loader))
-        if LOG_PRE_POST_LOSSES
-        else []
-    )
+    loss_log_steps_list = [total_train_steps] if LOG_PRE_POST_LOSSES else []
     loss_log_steps = set(loss_log_steps_list)
     training_batch_loss_logs = []
     best_lr_ema = muon_lr
@@ -1227,7 +1295,7 @@ def main(
             if not use_best_lr:
                 for group in optimizer2.param_groups:
                     group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
-            if step + 1 in loss_log_steps:
+            if LOG_PRE_UPDATE_LOSSES and step + 1 in loss_log_steps:
                 stop_timer()
                 pre_update_losses = evaluate_training_batch_losses(
                     model, training_batches
@@ -1240,8 +1308,8 @@ def main(
                 )
                 start_timer()
             if use_best_lr:
-                lr_decay_multiplier = (
-                    1 - step / total_train_steps if best_lr_linear_decay else 1.0
+                lr_decay_multiplier = best_lr_scheduler_multiplier(
+                    step, total_train_steps, len(train_loader), best_lr_scheduler
                 )
                 init_lr = best_lr_ema
                 if best_lr_strategy == "min_loss":
@@ -1291,6 +1359,7 @@ def main(
                         actual_lr=actual_lr,
                         best_lr=searched_lr,
                         best_lr_ema=best_lr_ema,
+                        best_lr_scheduler=best_lr_scheduler,
                         lr_decay_multiplier=lr_decay_multiplier,
                         best_loss=best_loss,
                         losses_by_lr=format_lr_loss_map(losses_by_lr),
@@ -1314,7 +1383,7 @@ def main(
                 opt.step()
             model.zero_grad(set_to_none=True)
             step += 1
-            if step in loss_log_steps:
+            if LOG_POST_UPDATE_LOSSES and step in loss_log_steps:
                 stop_timer()
                 post_update_losses = evaluate_training_batch_losses(
                     model, training_batches
@@ -1347,6 +1416,8 @@ def main(
     tta_val_acc = evaluate(model, test_loader, tta_level=2)
     stop_timer()
     log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds)
+    wall_time_seconds = time.perf_counter() - run_wall_start
+    log_run_time(run_id, name, wall_time_seconds, time_seconds)
 
     return dict(
         train25_loss=train25_loss,
@@ -1360,11 +1431,14 @@ def main(
         best_lr_strategy=best_lr_strategy,
         best_lr_rel_diff_threshold=best_lr_rel_diff_threshold,
         best_lr_linear_decay=best_lr_linear_decay,
+        best_lr_scheduler=best_lr_scheduler,
         best_lr_ema=best_lr_ema,
         best_lr_logs=best_lr_logs,
         sgd_lr_mult=SGD_LR_MULT,
         training_batch_loss_logs=training_batch_loss_logs,
         training_batch_loss_log_steps=loss_log_steps_list,
+        wall_time_seconds=wall_time_seconds,
+        cuda_time_seconds=time_seconds,
     )
 
 
@@ -1379,7 +1453,7 @@ if __name__ == "__main__":
     for run, config in enumerate(RUN_CONFIGS):
         print(
             "cifar_baseline2 run=%d batch_size=%d muon_lr=%.6g name=%s "
-            "best_lr_strategy=%s best_lr_linear_decay=%s"
+            "best_lr_strategy=%s best_lr_linear_decay=%s best_lr_scheduler=%s"
             % (
                 run,
                 config["batch_size"],
@@ -1387,6 +1461,10 @@ if __name__ == "__main__":
                 config["name"],
                 config["best_lr_strategy"],
                 config.get("best_lr_linear_decay", False),
+                resolve_best_lr_scheduler(
+                    config.get("best_lr_scheduler"),
+                    config.get("best_lr_linear_decay", False),
+                ),
             ),
             flush=True,
         )
@@ -1399,6 +1477,7 @@ if __name__ == "__main__":
         if result["use_best_lr"]:
             print("Best lr strategy:   %s" % result["best_lr_strategy"])
             print("Best lr decay:      %s" % result["best_lr_linear_decay"])
+            print("Best lr scheduler:  %s" % result["best_lr_scheduler"])
             print("Final best lr ema:  %.6g" % result["best_lr_ema"])
         print("SGD lr mult:        %.6g" % result["sgd_lr_mult"])
         print("25batch train loss: %.4f" % result["train25_loss"])
