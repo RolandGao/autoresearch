@@ -515,6 +515,13 @@ def every_training_step(total_steps):
     return list(range(1, total_steps + 1))
 
 
+def epoch_end_steps(total_steps, steps_per_epoch):
+    steps = list(range(steps_per_epoch, total_steps + 1, steps_per_epoch))
+    if not steps or steps[-1] != total_steps:
+        steps.append(total_steps)
+    return steps
+
+
 ############################################
 #              Line Search                 #
 ############################################
@@ -523,10 +530,17 @@ BEST_LR_FACTOR = 0.8
 BEST_LR_EMA_MOMENTUM = 0.9
 BEST_LR_MAX_SEARCH_STEPS = 40
 BEST_LR_REL_DIFF_THRESHOLD = 0.4
-PEAK_LR_LEFT_STEPS = 30
-PEAK_LR_RIGHT_STEPS = 20
-PEAK_LR_HISTOGRAM_RADIUS = 6
-LOG_PRE_POST_LOSSES = False
+PEAK_LR_MAX_LEFT_STEPS = 30
+PEAK_LR_MAX_RIGHT_STEPS = 20
+PEAK_LR_HISTOGRAM_RADIUS = 5
+PEAK_LR_LOCAL_NEIGHBOR_DISTANCE = 2
+PEAK_LR_DISCARDED_EDGE_STEPS = 1
+PEAK_LR_INITIAL_SIDE_STEPS = (
+    PEAK_LR_HISTOGRAM_RADIUS
+    + PEAK_LR_LOCAL_NEIGHBOR_DISTANCE
+    + PEAK_LR_DISCARDED_EDGE_STEPS
+)
+LOG_PRE_POST_LOSSES = True
 LOG_BEST_LR = True
 
 
@@ -793,50 +807,101 @@ def evaluate_candidate_lr_sample_losses(
     return sample_losses_by_lr[lr]
 
 
-def triangle_smoothed_peak_lr(counts_by_lr, lr_grid):
-    valid_positions = range(2, len(lr_grid) - 1)
-    counts = [int(counts_by_lr.get(lr, 0)) for lr in lr_grid]
-    if not any(counts[position] for position in valid_positions):
-        return float("nan")
+def peak_lr_valid_positions(lr_grid):
+    return range(2, len(lr_grid) - 1)
 
+
+def peak_lr_candidate_positions(lr_grid):
+    margin = PEAK_LR_HISTOGRAM_RADIUS + PEAK_LR_LOCAL_NEIGHBOR_DISTANCE
+    valid_positions = peak_lr_valid_positions(lr_grid)
+    valid_start = valid_positions.start
+    valid_stop = valid_positions.stop - 1
+    return range(valid_start + margin, valid_stop - margin + 1)
+
+
+def triangle_smoothed_peak_scores(counts_by_lr, lr_grid):
+    valid_positions = set(peak_lr_valid_positions(lr_grid))
+    counts = [int(counts_by_lr.get(lr, 0)) for lr in lr_grid]
     radius = PEAK_LR_HISTOGRAM_RADIUS
-    peak_position = max(
-        valid_positions,
-        key=lambda position: sum(
+    return {
+        position: sum(
             (radius + 1 - abs(offset)) * counts[position + offset]
             for offset in range(-radius, radius + 1)
             if position + offset in valid_positions
-        ),
-    )
-    return lr_grid[peak_position]
-
-
-def choose_peak_lr(
-    model,
-    optimizers,
-    muon_optimizer,
-    inputs,
-    labels,
-    whiten_bias_grad,
-    init_lr,
-):
-    search_state = capture_training_state(model, optimizers)
-    lr_grid = lr_grid_around(init_lr, PEAK_LR_LEFT_STEPS, PEAK_LR_RIGHT_STEPS)
-    sample_losses_by_lr = {}
-
-    for lr in lr_grid:
-        evaluate_candidate_lr_sample_losses(
-            model,
-            optimizers,
-            muon_optimizer,
-            inputs,
-            labels,
-            whiten_bias_grad,
-            lr,
-            search_state,
-            sample_losses_by_lr,
         )
+        for position in valid_positions
+    }
 
+
+def local_smoothed_peak_position(counts_by_lr, lr_grid, init_position):
+    scores = triangle_smoothed_peak_scores(counts_by_lr, lr_grid)
+    candidate_positions = list(peak_lr_candidate_positions(lr_grid))
+    if not candidate_positions:
+        return None
+
+    local_peaks = []
+    for position in candidate_positions:
+        score = scores[position]
+        if score <= 0:
+            continue
+        if all(
+            score > scores[position + offset]
+            for offset in range(
+                -PEAK_LR_LOCAL_NEIGHBOR_DISTANCE,
+                PEAK_LR_LOCAL_NEIGHBOR_DISTANCE + 1,
+            )
+            if offset != 0
+        ):
+            local_peaks.append(position)
+    if not local_peaks:
+        return None
+
+    return max(
+        local_peaks,
+        key=lambda position: (scores[position], -abs(position - init_position)),
+    )
+
+
+def fallback_smoothed_peak_position(counts_by_lr, lr_grid):
+    scores = triangle_smoothed_peak_scores(counts_by_lr, lr_grid)
+    candidate_positions = list(peak_lr_candidate_positions(lr_grid))
+    if not candidate_positions:
+        return None
+    return max(candidate_positions, key=lambda position: scores[position])
+
+
+def peak_lr_extension_sides(counts_by_lr, lr_grid):
+    scores = triangle_smoothed_peak_scores(counts_by_lr, lr_grid)
+    candidate_positions = list(peak_lr_candidate_positions(lr_grid))
+    if not candidate_positions:
+        return True, True
+
+    position = max(candidate_positions, key=lambda candidate: scores[candidate])
+    score = scores[position]
+    blockers = [
+        (position + offset, scores[position + offset])
+        for offset in range(
+            -PEAK_LR_LOCAL_NEIGHBOR_DISTANCE,
+            PEAK_LR_LOCAL_NEIGHBOR_DISTANCE + 1,
+        )
+        if offset != 0 and scores[position + offset] >= score
+    ]
+    left_blockers = [item for item in blockers if item[0] < position]
+    right_blockers = [item for item in blockers if item[0] > position]
+    if left_blockers and right_blockers:
+        left_score = max(score for _, score in left_blockers)
+        right_score = max(score for _, score in right_blockers)
+        if left_score == right_score:
+            return True, True
+        return left_score > right_score, right_score > left_score
+    if left_blockers:
+        return True, False
+    if right_blockers:
+        return False, True
+    return True, True
+
+
+def peak_lr_counts_for_grid(sample_losses_by_lr, lr_grid):
     sample_selection_lrs = lr_grid[2:-1]
     losses = torch.stack(
         [
@@ -849,8 +914,68 @@ def choose_peak_lr(
         ]
     )
     best_indices = losses.argmin(dim=0).detach().cpu().tolist()
-    optimal_lr_counts = Counter(sample_selection_lrs[index] for index in best_indices)
-    peak_lr = triangle_smoothed_peak_lr(optimal_lr_counts, lr_grid)
+    return Counter(sample_selection_lrs[index] for index in best_indices)
+
+
+def choose_peak_lr(
+    model,
+    optimizers,
+    muon_optimizer,
+    inputs,
+    labels,
+    whiten_bias_grad,
+    init_lr,
+):
+    search_state = capture_training_state(model, optimizers)
+    left_steps = PEAK_LR_INITIAL_SIDE_STEPS
+    right_steps = PEAK_LR_INITIAL_SIDE_STEPS
+    sample_losses_by_lr = {}
+    selected_position = None
+
+    while True:
+        lr_grid = lr_grid_around(init_lr, left_steps, right_steps)
+        for lr in lr_grid:
+            evaluate_candidate_lr_sample_losses(
+                model,
+                optimizers,
+                muon_optimizer,
+                inputs,
+                labels,
+                whiten_bias_grad,
+                lr,
+                search_state,
+                sample_losses_by_lr,
+            )
+
+        optimal_lr_counts = peak_lr_counts_for_grid(sample_losses_by_lr, lr_grid)
+        selected_position = local_smoothed_peak_position(
+            optimal_lr_counts, lr_grid, 1 + left_steps
+        )
+        if selected_position is not None:
+            break
+
+        can_extend_left = left_steps < PEAK_LR_MAX_LEFT_STEPS
+        can_extend_right = right_steps < PEAK_LR_MAX_RIGHT_STEPS
+        if not can_extend_left and not can_extend_right:
+            selected_position = fallback_smoothed_peak_position(
+                optimal_lr_counts, lr_grid
+            )
+            break
+        extend_left, extend_right = peak_lr_extension_sides(
+            optimal_lr_counts, lr_grid
+        )
+        if extend_left and not can_extend_left:
+            extend_right = True
+        if extend_right and not can_extend_right:
+            extend_left = True
+        if can_extend_left and extend_left:
+            left_steps += 1
+        if can_extend_right and extend_right:
+            right_steps += 1
+
+    peak_lr = (
+        lr_grid[selected_position] if selected_position is not None else float("nan")
+    )
     if not (isfinite(peak_lr) and peak_lr >= 0):
         peak_lr = init_lr
 
@@ -896,22 +1021,102 @@ BEST_LR_VERSION_CONFIGS = [
         best_lr_linear_decay=True,
     ),
 ]
-ACTIVE_BEST_LR_VERSION_NAMES = {
-    "best_lr_v5_peak_lr",
-    "best_lr_v6_peak_lr_decay",
-}
-RUN_CONFIGS = []
-for base_config in BASE_RUN_CONFIGS:
-    for version_config in BEST_LR_VERSION_CONFIGS:
-        if version_config["name"] not in ACTIVE_BEST_LR_VERSION_NAMES:
-            continue
-        config = dict(**base_config, **version_config)
-        config["name"] = "%s_bs%d_lr%.6g" % (
-            version_config["name"],
-            base_config["batch_size"],
-            base_config["muon_lr"],
-        )
-        RUN_CONFIGS.append(config)
+RUN_CONFIGS = [
+    # dict(
+    #     name="muon_bs2000_lr0.19",
+    #     batch_size=2000,
+    #     muon_lr=0.19,
+    #     best_lr_strategy=None,
+    # ),
+    # dict(
+    #     name="muon_bs125_lr0.04",
+    #     batch_size=125,
+    #     muon_lr=0.04,
+    #     best_lr_strategy=None,
+    # ),
+    # dict(
+    #     name="best_lr_v1_min_loss_bs2000_lr0.19",
+    #     batch_size=2000,
+    #     muon_lr=0.19,
+    #     best_lr_strategy="min_loss",
+    # ),
+    # dict(
+    #     name="best_lr_v2_rel0.4_bs2000_lr0.19",
+    #     batch_size=2000,
+    #     muon_lr=0.19,
+    #     best_lr_strategy="largest_rel",
+    #     best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
+    # ),
+    # dict(
+    #     name="best_lr_v3_min_loss_decay_bs2000_lr0.19",
+    #     batch_size=2000,
+    #     muon_lr=0.19,
+    #     best_lr_strategy="min_loss",
+    #     best_lr_linear_decay=True,
+    # ),
+    # dict(
+    #     name="best_lr_v4_rel0.4_decay_bs2000_lr0.19",
+    #     batch_size=2000,
+    #     muon_lr=0.19,
+    #     best_lr_strategy="largest_rel",
+    #     best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
+    #     best_lr_linear_decay=True,
+    # ),
+    dict(
+        name="best_lr_v5_peak_lr_bs2000_lr0.19",
+        batch_size=2000,
+        muon_lr=0.19,
+        best_lr_strategy="peak_lr",
+    ),
+    dict(
+        name="best_lr_v6_peak_lr_decay_bs2000_lr0.19",
+        batch_size=2000,
+        muon_lr=0.19,
+        best_lr_strategy="peak_lr",
+        best_lr_linear_decay=True,
+    ),
+    # dict(
+    #     name="best_lr_v1_min_loss_bs125_lr0.04",
+    #     batch_size=125,
+    #     muon_lr=0.04,
+    #     best_lr_strategy="min_loss",
+    # ),
+    # dict(
+    #     name="best_lr_v2_rel0.4_bs125_lr0.04",
+    #     batch_size=125,
+    #     muon_lr=0.04,
+    #     best_lr_strategy="largest_rel",
+    #     best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
+    # ),
+    # dict(
+    #     name="best_lr_v3_min_loss_decay_bs125_lr0.04",
+    #     batch_size=125,
+    #     muon_lr=0.04,
+    #     best_lr_strategy="min_loss",
+    #     best_lr_linear_decay=True,
+    # ),
+    # dict(
+    #     name="best_lr_v4_rel0.4_decay_bs125_lr0.04",
+    #     batch_size=125,
+    #     muon_lr=0.04,
+    #     best_lr_strategy="largest_rel",
+    #     best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
+    #     best_lr_linear_decay=True,
+    # ),
+    dict(
+        name="best_lr_v5_peak_lr_bs125_lr0.04",
+        batch_size=125,
+        muon_lr=0.04,
+        best_lr_strategy="peak_lr",
+    ),
+    dict(
+        name="best_lr_v6_peak_lr_decay_bs125_lr0.04",
+        batch_size=125,
+        muon_lr=0.04,
+        best_lr_strategy="peak_lr",
+        best_lr_linear_decay=True,
+    ),
+]
 
 
 def main(
@@ -990,7 +1195,9 @@ def main(
     training_batches = materialize_training_batches(train_loader, total_train_steps)
     train_eval_batches = training_batches[-TRAIN_EVAL_BATCHES:]
     loss_log_steps_list = (
-        every_training_step(total_train_steps) if LOG_PRE_POST_LOSSES else []
+        epoch_end_steps(total_train_steps, len(train_loader))
+        if LOG_PRE_POST_LOSSES
+        else []
     )
     loss_log_steps = set(loss_log_steps_list)
     training_batch_loss_logs = []

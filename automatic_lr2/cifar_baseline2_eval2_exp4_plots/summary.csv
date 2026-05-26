@@ -1,0 +1,5 @@
+run,name,batch_size,muon_lr,best_lr_strategy,best_lr_linear_decay,train25_loss,val_acc,tta_val_acc,time_seconds,steps,final_applied_lr,final_searched_lr,final_best_lr_ema
+0,best_lr_v5_peak_lr_bs2000_lr0.19,2000,0.19,peak_lr,False,0.9067,0.9157,0.9296,142.608,200,0.048604734,0.048604734,0.048604734
+1,best_lr_v6_peak_lr_decay_bs2000_lr0.19,2000,0.19,peak_lr,True,0.9308,0.9217,0.9314,143.2842,200,0.00025228706,0.050457412,0.050457412
+2,best_lr_v5_peak_lr_bs125_lr0.04,125,0.04,peak_lr,False,0.9472,0.8432,0.8635,1268.3149,3200,0.047084298,0.047084298,0.047084298
+3,best_lr_v6_peak_lr_decay_bs125_lr0.04,125,0.04,peak_lr,True,0.9209,0.9257,0.9361,1266.6791,3200,5.2136809e-06,0.016683779,0.016683779

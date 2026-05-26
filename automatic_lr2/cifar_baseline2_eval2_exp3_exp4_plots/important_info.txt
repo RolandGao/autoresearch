@@ -1,0 +1,185 @@
+Combined exp3 + exp4 CIFAR Baseline Results
+==============================================
+
+Runs: 14
+Complete runs: 14
+
+Best overall by TTA val acc
+----------------------------
+Name: best_lr_v3_min_loss_decay_bs125_lr0.04_exp3
+Batch size: 125
+TTA val acc: 0.9386
+Val acc: 0.9268
+25-batch train loss: 0.9169
+
+Best by batch size
+------------------
+batch_size=125
+  name: best_lr_v3_min_loss_decay_bs125_lr0.04_exp3
+  TTA val acc: 0.9386
+  val acc: 0.9268
+batch_size=2000
+  name: muon_bs2000_lr0.19_exp3
+  TTA val acc: 0.9379
+  val acc: 0.9304
+
+Rankings by batch size
+----------------------
+
+batch_size=125
+1. best_lr_v3_min_loss_decay_bs125_lr0.04_exp3
+   TTA val acc: 0.9386
+   Val acc: 0.9268
+   25-batch train loss: 0.9169
+   Strategy: min_loss
+   Linear decay: True
+   Base Muon LR: 0.04
+   Steps: 3200
+   Final applied LR: 4.0403945e-06
+   Final searched LR: 0.012929262
+   Final best-LR EMA: 0.012929262
+2. muon_bs125_lr0.04_exp3
+   TTA val acc: 0.9384
+   Val acc: 0.9296
+   25-batch train loss: 0.916
+   Strategy: fixed
+   Linear decay: False
+   Base Muon LR: 0.04
+   Steps: 3200
+   Final applied LR: 1.25e-05
+   Final searched LR: NA
+   Final best-LR EMA: NA
+3. best_lr_v6_peak_lr_decay_bs125_lr0.04_exp4
+   TTA val acc: 0.9361
+   Val acc: 0.9257
+   25-batch train loss: 0.9209
+   Strategy: peak_lr
+   Linear decay: True
+   Base Muon LR: 0.04
+   Steps: 3200
+   Final applied LR: 5.2136809e-06
+   Final searched LR: 0.016683779
+   Final best-LR EMA: 0.016683779
+4. best_lr_v4_rel0.4_decay_bs125_lr0.04_exp3
+   TTA val acc: 0.9065
+   Val acc: 0.898
+   25-batch train loss: 1.0552
+   Strategy: largest_rel
+   Linear decay: True
+   Base Muon LR: 0.04
+   Steps: 3200
+   Final applied LR: 3.3241397e-05
+   Final searched LR: 0.10637247
+   Final best-LR EMA: 0.10637247
+5. best_lr_v5_peak_lr_bs125_lr0.04_exp4
+   TTA val acc: 0.8635
+   Val acc: 0.8432
+   25-batch train loss: 0.9472
+   Strategy: peak_lr
+   Linear decay: False
+   Base Muon LR: 0.04
+   Steps: 3200
+   Final applied LR: 0.047084298
+   Final searched LR: 0.047084298
+   Final best-LR EMA: 0.047084298
+6. best_lr_v1_min_loss_bs125_lr0.04_exp3
+   TTA val acc: 0.8266
+   Val acc: 0.7943
+   25-batch train loss: 0.9995
+   Strategy: min_loss
+   Linear decay: False
+   Base Muon LR: 0.04
+   Steps: 3200
+   Final applied LR: 0.062915665
+   Final searched LR: 0.062915665
+   Final best-LR EMA: 0.062915665
+7. best_lr_v2_rel0.4_bs125_lr0.04_exp3
+   TTA val acc: 0.1427
+   Val acc: 0.1429
+   25-batch train loss: 2.4104
+   Strategy: largest_rel
+   Linear decay: False
+   Base Muon LR: 0.04
+   Steps: 3200
+   Final applied LR: 0.57830865
+   Final searched LR: 0.57830865
+   Final best-LR EMA: 0.7084281
+
+batch_size=2000
+1. muon_bs2000_lr0.19_exp3
+   TTA val acc: 0.9379
+   Val acc: 0.9304
+   25-batch train loss: 0.8986
+   Strategy: fixed
+   Linear decay: False
+   Base Muon LR: 0.19
+   Steps: 200
+   Final applied LR: 0.00095
+   Final searched LR: NA
+   Final best-LR EMA: NA
+2. best_lr_v4_rel0.4_decay_bs2000_lr0.19_exp3
+   TTA val acc: 0.933
+   Val acc: 0.9245
+   25-batch train loss: 0.9166
+   Strategy: largest_rel
+   Linear decay: True
+   Base Muon LR: 0.19
+   Steps: 200
+   Final applied LR: 0.00036112098
+   Final searched LR: 0.072224196
+   Final best-LR EMA: 0.072224196
+3. best_lr_v6_peak_lr_decay_bs2000_lr0.19_exp4
+   TTA val acc: 0.9314
+   Val acc: 0.9217
+   25-batch train loss: 0.9308
+   Strategy: peak_lr
+   Linear decay: True
+   Base Muon LR: 0.19
+   Steps: 200
+   Final applied LR: 0.00025228706
+   Final searched LR: 0.050457412
+   Final best-LR EMA: 0.050457412
+4. best_lr_v5_peak_lr_bs2000_lr0.19_exp4
+   TTA val acc: 0.9296
+   Val acc: 0.9157
+   25-batch train loss: 0.9067
+   Strategy: peak_lr
+   Linear decay: False
+   Base Muon LR: 0.19
+   Steps: 200
+   Final applied LR: 0.048604734
+   Final searched LR: 0.048604734
+   Final best-LR EMA: 0.048604734
+5. best_lr_v3_min_loss_decay_bs2000_lr0.19_exp3
+   TTA val acc: 0.9137
+   Val acc: 0.9003
+   25-batch train loss: 1.0125
+   Strategy: min_loss
+   Linear decay: True
+   Base Muon LR: 0.19
+   Steps: 200
+   Final applied LR: 0.00019858017
+   Final searched LR: 0.039716035
+   Final best-LR EMA: 0.039716035
+6. best_lr_v1_min_loss_bs2000_lr0.19_exp3
+   TTA val acc: 0.9032
+   Val acc: 0.8886
+   25-batch train loss: 0.9618
+   Strategy: min_loss
+   Linear decay: False
+   Base Muon LR: 0.19
+   Steps: 200
+   Final applied LR: 0.054422122
+   Final searched LR: 0.054422122
+   Final best-LR EMA: 0.054422122
+7. best_lr_v2_rel0.4_bs2000_lr0.19_exp3
+   TTA val acc: 0.7881
+   Val acc: 0.7685
+   25-batch train loss: 1.2751
+   Strategy: largest_rel
+   Linear decay: False
+   Base Muon LR: 0.19
+   Steps: 200
+   Final applied LR: 0.23749461
+   Final searched LR: 0.23749461
+   Final best-LR EMA: 0.23749461

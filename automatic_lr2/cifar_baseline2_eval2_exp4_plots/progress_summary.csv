@@ -1,0 +1,5 @@
+run,name,batch_size,steps,total_steps,progress,best_lr_logs,eval_points,is_complete,final_val_acc,final_tta_val_acc
+0,best_lr_v5_peak_lr_bs2000_lr0.19,2000,200,200,1,200,8,True,0.9157,0.9296
+1,best_lr_v6_peak_lr_decay_bs2000_lr0.19,2000,200,200,1,200,8,True,0.9217,0.9314
+2,best_lr_v5_peak_lr_bs125_lr0.04,125,3200,3200,1,3200,8,True,0.8432,0.8635
+3,best_lr_v6_peak_lr_decay_bs125_lr0.04,125,3200,3200,1,3200,8,True,0.9257,0.9361
