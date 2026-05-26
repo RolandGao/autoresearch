@@ -257,6 +257,93 @@ def plot_pre_post_delta(runs, output_path):
     plt.close(fig)
 
 
+def plot_post_pre_sum_windows(runs, output_path):
+    plot_runs = [run for run in runs if paired_snapshots(run)]
+    if not plot_runs:
+        return
+
+    window_specs = [
+        ("current train batch", "current_batch"),
+        ("current + up to 15 previous", "trailing_16"),
+        ("current + up to 31 previous", "trailing_32"),
+        ("current + up to 63 previous", "trailing_64"),
+        ("current + up to 127 previous", "trailing_128"),
+        ("current + up to 255 previous", "trailing_256"),
+        ("all previous batches", "all_previous"),
+        ("all future batches", "all_future"),
+        ("all batches", "all_batches"),
+    ]
+    fig, axes = plt.subplots(
+        len(window_specs),
+        1,
+        figsize=(12, 3.0 * len(window_specs)),
+        sharex=True,
+        squeeze=False,
+    )
+
+    for run in plot_runs:
+        pairs = paired_snapshots(run)
+        series = {
+            "progress": [],
+            "current_batch": [],
+            "all_previous": [],
+            "all_future": [],
+            "all_batches": [],
+            "trailing_16": [],
+            "trailing_32": [],
+            "trailing_64": [],
+            "trailing_128": [],
+            "trailing_256": [],
+        }
+
+        for pre, post in pairs:
+            deltas = post.losses - pre.losses
+            current_index = min(max(post.step - 1, 0), len(deltas) - 1)
+            start_16 = max(0, current_index - 15)
+            start_32 = max(0, current_index - 31)
+            start_64 = max(0, current_index - 63)
+            start_128 = max(0, current_index - 127)
+            start_256 = max(0, current_index - 255)
+
+            series["progress"].append(post.step / post.total_steps)
+            series["current_batch"].append(deltas[current_index])
+            series["all_previous"].append(deltas[:current_index].sum())
+            series["all_future"].append(deltas[current_index + 1 :].sum())
+            series["all_batches"].append(deltas.sum())
+            series["trailing_16"].append(deltas[start_16 : current_index + 1].sum())
+            series["trailing_32"].append(deltas[start_32 : current_index + 1].sum())
+            series["trailing_64"].append(deltas[start_64 : current_index + 1].sum())
+            series["trailing_128"].append(
+                deltas[start_128 : current_index + 1].sum()
+            )
+            series["trailing_256"].append(
+                deltas[start_256 : current_index + 1].sum()
+            )
+
+        for ax, (title, key) in zip(axes.ravel(), window_specs):
+            ax.plot(
+                series["progress"],
+                series[key],
+                marker="o",
+                markersize=3,
+                linewidth=1.5,
+                label=run.label,
+            )
+
+    for ax, (title, _) in zip(axes.ravel(), window_specs):
+        ax.axhline(0.0, color="black", linewidth=0.8, alpha=0.65)
+        ax.set_title(title)
+        ax.set_ylabel("sum(post - pre)")
+        ax.grid(True, alpha=0.25)
+        ax.legend(fontsize=8)
+
+    axes[-1, 0].set_xlabel("training progress")
+    fig.suptitle("Post-Update Minus Pre-Update Loss Sums")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
 def plot_final_metrics(runs, output_path):
     labels = [run.name or f"run {run.index}" for run in runs]
     val_acc = [run.val_acc if finite_metric(run.val_acc) else np.nan for run in runs]
@@ -399,13 +486,14 @@ def plot_lr_landscape_snapshots(runs, output_path, max_panels=24):
     plt.close(fig)
 
 
-def plot_batch_loss_profiles(runs, output_dir, update="post"):
+def plot_batch_loss_profiles(runs, output_dir):
     output_paths = []
     for run in runs:
-        losses = snapshot_matrix(run, update)
-        selected = snapshots(run, update)
-        if losses.size == 0:
+        pairs = paired_snapshots(run)
+        if not pairs:
             continue
+        selected = [post for _, post in pairs]
+        losses = np.stack([post.losses - pre.losses for pre, post in pairs])
 
         ncols = 5
         nrows = math.ceil(len(selected) / ncols)
@@ -436,13 +524,13 @@ def plot_batch_loss_profiles(runs, output_dir, update="post"):
             ax.axis("off")
 
         for ax in axes[:, 0]:
-            ax.set_ylabel("loss")
+            ax.set_ylabel("post - pre")
         for ax in axes[-1, :]:
             ax.set_xlabel("training batch epoch")
 
-        fig.suptitle(f"{run.label} ({update})")
+        fig.suptitle(f"{run.label} (post - pre)")
         fig.tight_layout()
-        output_path = output_dir / f"batch_loss_profiles_{safe_name(run.name or run.index)}_{update}.png"
+        output_path = output_dir / f"batch_loss_profiles_{safe_name(run.name or run.index)}_post.png"
         fig.savefig(output_path, dpi=180)
         plt.close(fig)
         output_paths.append(output_path)
@@ -475,6 +563,23 @@ def write_summary(runs, output_path):
     output_path.write_text("\n".join(lines) + "\n")
 
 
+def write_post_pre_all_batches_totals(runs, output_path):
+    lines = ["run,name,sum_over_logged_steps_all_batches_post_minus_pre"]
+    for run in runs:
+        total = 0.0
+        for pre, post in paired_snapshots(run):
+            total += float((post.losses - pre.losses).sum())
+        lines.append(
+            "%d,%s,%.12g"
+            % (
+                run.index,
+                run.name or "",
+                total,
+            )
+        )
+    output_path.write_text("\n".join(lines) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Plot cifar_baseline2_eval2 pre/post and best_lr results."
@@ -493,14 +598,18 @@ def main():
 
     plot_mean_loss_curves(runs, args.output_dir / "mean_loss_curves.png")
     plot_pre_post_delta(runs, args.output_dir / "pre_post_delta.png")
+    plot_post_pre_sum_windows(runs, args.output_dir / "post_pre_sum_windows.png")
     plot_final_metrics(runs, args.output_dir / "final_metrics.png")
     plot_loss_heatmaps(runs, args.output_dir / "loss_heatmap_pre.png", "pre")
     plot_loss_heatmaps(runs, args.output_dir / "loss_heatmap_post.png", "post")
     plot_best_lr_trace(runs, args.output_dir / "best_lr_trace.png")
     plot_lr_landscape_snapshots(runs, args.output_dir / "best_lr_landscapes.png")
     if not args.skip_profiles:
-        plot_batch_loss_profiles(runs, args.output_dir, "post")
+        plot_batch_loss_profiles(runs, args.output_dir)
     write_summary(runs, args.output_dir / "summary.csv")
+    write_post_pre_all_batches_totals(
+        runs, args.output_dir / "post_pre_all_batches_totals.txt"
+    )
 
     print(f"Parsed {len(runs)} runs from {args.log}")
     for run in runs:

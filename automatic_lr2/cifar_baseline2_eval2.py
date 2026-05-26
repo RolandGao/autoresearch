@@ -14,9 +14,10 @@ import sys
 
 with open(sys.argv[0]) as f:
     code = f.read()
+from collections import Counter
 import json
 import uuid
-from math import ceil
+from math import ceil, isfinite
 
 import torch
 from torch import nn
@@ -354,6 +355,13 @@ def log_best_lr(step, init_lr, best_lr, best_lr_ema, best_loss, losses_by_lr):
     )
 
 
+def log_applied_lr(step, total_steps, name, lr):
+    print(
+        f"applied_lr step={step}/{total_steps} name={name} muon_lr={lr:.8g}",
+        flush=True,
+    )
+
+
 def log_eval(run, epoch, val_acc, time_seconds):
     run_info = f" run={run}" if run is not None else ""
     print(
@@ -503,8 +511,8 @@ def materialize_training_batches(train_loader, total_steps):
     return batches
 
 
-def training_loss_log_steps(total_steps, log_count):
-    return [ceil(total_steps * index / log_count) for index in range(1, log_count + 1)]
+def every_training_step(total_steps):
+    return list(range(1, total_steps + 1))
 
 
 ############################################
@@ -514,6 +522,12 @@ def training_loss_log_steps(total_steps, log_count):
 BEST_LR_FACTOR = 0.8
 BEST_LR_EMA_MOMENTUM = 0.9
 BEST_LR_MAX_SEARCH_STEPS = 40
+BEST_LR_REL_DIFF_THRESHOLD = 0.4
+PEAK_LR_LEFT_STEPS = 30
+PEAK_LR_RIGHT_STEPS = 20
+PEAK_LR_HISTOGRAM_RADIUS = 6
+LOG_PRE_POST_LOSSES = False
+LOG_BEST_LR = True
 
 
 def clone_state(value):
@@ -646,21 +660,272 @@ def choose_best_lr(
     return best_lr, best_loss, losses_by_lr
 
 
+def relative_loss_diff(loss, best_loss, zero_loss):
+    denominator = zero_loss - best_loss
+    if denominator <= 0:
+        return float("inf")
+    return (loss - best_loss) / denominator
+
+
+def largest_lr_within_rel_diff(losses_by_lr, rel_diff_threshold):
+    finite_losses = {
+        lr: loss for lr, loss in losses_by_lr.items() if lr >= 0 and isfinite(loss)
+    }
+    if not finite_losses:
+        return 0.0, float("inf"), float("inf")
+
+    best_loss = min(finite_losses.values())
+    zero_loss = finite_losses.get(0.0, float("inf"))
+    candidates = [
+        (lr, loss)
+        for lr, loss in finite_losses.items()
+        if relative_loss_diff(loss, best_loss, zero_loss) <= rel_diff_threshold
+    ]
+    if not candidates:
+        best_lr, selected_loss = min(finite_losses.items(), key=lambda item: item[1])
+        return (
+            best_lr,
+            selected_loss,
+            relative_loss_diff(selected_loss, best_loss, zero_loss),
+        )
+
+    selected_lr, selected_loss = max(candidates, key=lambda item: item[0])
+    return (
+        selected_lr,
+        selected_loss,
+        relative_loss_diff(selected_loss, best_loss, zero_loss),
+    )
+
+
+def choose_largest_rel_loss_lr(
+    model,
+    optimizers,
+    muon_optimizer,
+    inputs,
+    labels,
+    whiten_bias_grad,
+    init_lr,
+    rel_diff_threshold,
+):
+    best_lr, best_loss, losses_by_lr = choose_best_lr(
+        model,
+        optimizers,
+        muon_optimizer,
+        inputs,
+        labels,
+        whiten_bias_grad,
+        init_lr,
+    )
+    search_state = capture_training_state(model, optimizers)
+
+    def candidate_loss(lr):
+        return evaluate_candidate_lr(
+            model,
+            optimizers,
+            muon_optimizer,
+            inputs,
+            labels,
+            whiten_bias_grad,
+            lr,
+            search_state,
+            losses_by_lr,
+        )
+
+    candidate_loss(0.0)
+    center_lr = max(best_lr, init_lr)
+    candidate_loss(center_lr)
+    for _ in range(BEST_LR_MAX_SEARCH_STEPS):
+        selected_lr, _, selected_rel_diff = largest_lr_within_rel_diff(
+            losses_by_lr, rel_diff_threshold
+        )
+        largest_lr = max(lr for lr in losses_by_lr if lr >= 0)
+        if (
+            selected_lr < largest_lr
+            or not isfinite(selected_rel_diff)
+            or selected_rel_diff > rel_diff_threshold
+        ):
+            break
+        candidate_loss(largest_lr / BEST_LR_FACTOR)
+
+    restore_training_state(model, optimizers, search_state)
+    selected_lr, selected_loss, _ = largest_lr_within_rel_diff(
+        losses_by_lr, rel_diff_threshold
+    )
+    return selected_lr, selected_loss, losses_by_lr
+
+
+def lr_grid_around(base_lr, left_steps, right_steps):
+    return [
+        0.0,
+        *[
+            float("%.8g" % (base_lr * (BEST_LR_FACTOR**exponent)))
+            for exponent in range(left_steps, -right_steps - 1, -1)
+        ],
+    ]
+
+
+def evaluate_candidate_lr_sample_losses(
+    model,
+    optimizers,
+    muon_optimizer,
+    inputs,
+    labels,
+    whiten_bias_grad,
+    lr,
+    search_state,
+    sample_losses_by_lr,
+):
+    if lr in sample_losses_by_lr:
+        restore_training_state(model, optimizers, search_state)
+        return sample_losses_by_lr[lr]
+
+    restore_training_state(model, optimizers, search_state)
+    set_muon_lr(muon_optimizer, lr)
+    for opt in optimizers:
+        opt.step()
+    with torch.no_grad():
+        outputs = model(inputs, whiten_bias_grad=whiten_bias_grad)
+        losses = F.cross_entropy(
+            outputs.float(), labels, label_smoothing=0.2, reduction="none"
+        )
+    sample_losses_by_lr[lr] = losses.detach()
+    restore_training_state(model, optimizers, search_state)
+    return sample_losses_by_lr[lr]
+
+
+def triangle_smoothed_peak_lr(counts_by_lr, lr_grid):
+    valid_positions = range(2, len(lr_grid) - 1)
+    counts = [int(counts_by_lr.get(lr, 0)) for lr in lr_grid]
+    if not any(counts[position] for position in valid_positions):
+        return float("nan")
+
+    radius = PEAK_LR_HISTOGRAM_RADIUS
+    peak_position = max(
+        valid_positions,
+        key=lambda position: sum(
+            (radius + 1 - abs(offset)) * counts[position + offset]
+            for offset in range(-radius, radius + 1)
+            if position + offset in valid_positions
+        ),
+    )
+    return lr_grid[peak_position]
+
+
+def choose_peak_lr(
+    model,
+    optimizers,
+    muon_optimizer,
+    inputs,
+    labels,
+    whiten_bias_grad,
+    init_lr,
+):
+    search_state = capture_training_state(model, optimizers)
+    lr_grid = lr_grid_around(init_lr, PEAK_LR_LEFT_STEPS, PEAK_LR_RIGHT_STEPS)
+    sample_losses_by_lr = {}
+
+    for lr in lr_grid:
+        evaluate_candidate_lr_sample_losses(
+            model,
+            optimizers,
+            muon_optimizer,
+            inputs,
+            labels,
+            whiten_bias_grad,
+            lr,
+            search_state,
+            sample_losses_by_lr,
+        )
+
+    sample_selection_lrs = lr_grid[2:-1]
+    losses = torch.stack(
+        [
+            torch.where(
+                torch.isfinite(sample_losses_by_lr[lr]),
+                sample_losses_by_lr[lr],
+                torch.full_like(sample_losses_by_lr[lr], float("inf")),
+            )
+            for lr in sample_selection_lrs
+        ]
+    )
+    best_indices = losses.argmin(dim=0).detach().cpu().tolist()
+    optimal_lr_counts = Counter(sample_selection_lrs[index] for index in best_indices)
+    peak_lr = triangle_smoothed_peak_lr(optimal_lr_counts, lr_grid)
+    if not (isfinite(peak_lr) and peak_lr >= 0):
+        peak_lr = init_lr
+
+    losses_by_lr = {
+        lr: finite_loss_item(sample_losses_by_lr[lr].mean()) for lr in lr_grid
+    }
+    peak_loss = losses_by_lr.get(peak_lr, float("inf"))
+    restore_training_state(model, optimizers, search_state)
+    return peak_lr, peak_loss, losses_by_lr
+
+
 ############################################
 #                Training                  #
 ############################################
 
 TRAIN_EVAL_BATCHES = 25
-TRAINING_LOSS_LOG_COUNT = 40
-RUN_CONFIGS = [
-    dict(name="best_lr", batch_size=125, muon_lr=0.04 * 6, use_best_lr=True),
-    dict(name="muon_0.04", batch_size=125, muon_lr=0.04, use_best_lr=False),
-    dict(name="muon_0.24", batch_size=125, muon_lr=0.04 * 6, use_best_lr=False),
+BASE_RUN_CONFIGS = [
+    dict(batch_size=2000, muon_lr=0.19),
+    dict(batch_size=125, muon_lr=0.04),
 ]
+BEST_LR_VERSION_CONFIGS = [
+    dict(name="best_lr_v1_min_loss", best_lr_strategy="min_loss"),
+    dict(
+        name="best_lr_v2_rel0.4",
+        best_lr_strategy="largest_rel",
+        best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
+    ),
+    dict(
+        name="best_lr_v3_min_loss_decay",
+        best_lr_strategy="min_loss",
+        best_lr_linear_decay=True,
+    ),
+    dict(
+        name="best_lr_v4_rel0.4_decay",
+        best_lr_strategy="largest_rel",
+        best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
+        best_lr_linear_decay=True,
+    ),
+    dict(name="best_lr_v5_peak_lr", best_lr_strategy="peak_lr"),
+    dict(
+        name="best_lr_v6_peak_lr_decay",
+        best_lr_strategy="peak_lr",
+        best_lr_linear_decay=True,
+    ),
+]
+ACTIVE_BEST_LR_VERSION_NAMES = {
+    "best_lr_v5_peak_lr",
+    "best_lr_v6_peak_lr_decay",
+}
+RUN_CONFIGS = []
+for base_config in BASE_RUN_CONFIGS:
+    for version_config in BEST_LR_VERSION_CONFIGS:
+        if version_config["name"] not in ACTIVE_BEST_LR_VERSION_NAMES:
+            continue
+        config = dict(**base_config, **version_config)
+        config["name"] = "%s_bs%d_lr%.6g" % (
+            version_config["name"],
+            base_config["batch_size"],
+            base_config["muon_lr"],
+        )
+        RUN_CONFIGS.append(config)
 
 
-def main(run, model, name, batch_size, muon_lr, use_best_lr=False):
+def main(
+    run,
+    model,
+    name,
+    batch_size,
+    muon_lr,
+    best_lr_strategy=None,
+    best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
+    best_lr_linear_decay=False,
+):
     set_training_seed()
+    use_best_lr = best_lr_strategy is not None
 
     SGD_LR_MULT = batch_size / 2000
     bias_lr = 104 * SGD_LR_MULT
@@ -724,9 +989,10 @@ def main(run, model, name, batch_size, muon_lr, use_best_lr=False):
 
     training_batches = materialize_training_batches(train_loader, total_train_steps)
     train_eval_batches = training_batches[-TRAIN_EVAL_BATCHES:]
-    loss_log_steps = set(
-        training_loss_log_steps(total_train_steps, TRAINING_LOSS_LOG_COUNT)
+    loss_log_steps_list = (
+        every_training_step(total_train_steps) if LOG_PRE_POST_LOSSES else []
     )
+    loss_log_steps = set(loss_log_steps_list)
     training_batch_loss_logs = []
     best_lr_ema = muon_lr
     best_lr_logs = []
@@ -767,42 +1033,76 @@ def main(run, model, name, batch_size, muon_lr, use_best_lr=False):
                 )
                 start_timer()
             if use_best_lr:
-                init_lr = best_lr_ema
-                best_lr, best_loss, losses_by_lr = choose_best_lr(
-                    model,
-                    optimizers,
-                    optimizer2,
-                    inputs,
-                    labels,
-                    whiten_bias_grad,
-                    init_lr,
+                lr_decay_multiplier = (
+                    1 - step / total_train_steps if best_lr_linear_decay else 1.0
                 )
+                init_lr = best_lr_ema
+                if best_lr_strategy == "min_loss":
+                    searched_lr, best_loss, losses_by_lr = choose_best_lr(
+                        model,
+                        optimizers,
+                        optimizer2,
+                        inputs,
+                        labels,
+                        whiten_bias_grad,
+                        init_lr,
+                    )
+                elif best_lr_strategy == "largest_rel":
+                    searched_lr, best_loss, losses_by_lr = choose_largest_rel_loss_lr(
+                        model,
+                        optimizers,
+                        optimizer2,
+                        inputs,
+                        labels,
+                        whiten_bias_grad,
+                        init_lr,
+                        best_lr_rel_diff_threshold,
+                    )
+                elif best_lr_strategy == "peak_lr":
+                    searched_lr, best_loss, losses_by_lr = choose_peak_lr(
+                        model,
+                        optimizers,
+                        optimizer2,
+                        inputs,
+                        labels,
+                        whiten_bias_grad,
+                        init_lr,
+                    )
+                else:
+                    raise ValueError(f"Unknown best_lr_strategy: {best_lr_strategy}")
+                actual_lr = searched_lr * lr_decay_multiplier
                 best_lr_ema = (
                     BEST_LR_EMA_MOMENTUM * best_lr_ema
-                    + (1 - BEST_LR_EMA_MOMENTUM) * best_lr
+                    + (1 - BEST_LR_EMA_MOMENTUM) * searched_lr
                 )
                 best_lr_logs.append(
                     dict(
                         step=step + 1,
+                        strategy=best_lr_strategy,
                         init_lr=init_lr,
-                        best_lr=best_lr,
+                        searched_lr=searched_lr,
+                        actual_lr=actual_lr,
+                        best_lr=searched_lr,
                         best_lr_ema=best_lr_ema,
+                        lr_decay_multiplier=lr_decay_multiplier,
                         best_loss=best_loss,
                         losses_by_lr=format_lr_loss_map(losses_by_lr),
                     )
                 )
-                if step + 1 in loss_log_steps:
+                if LOG_BEST_LR:
                     stop_timer()
                     log_best_lr(
                         step + 1,
                         init_lr,
-                        best_lr,
+                        searched_lr,
                         best_lr_ema,
                         best_loss,
                         losses_by_lr,
                     )
                     start_timer()
-                set_muon_lr(optimizer2, best_lr)
+                set_muon_lr(optimizer2, actual_lr)
+            applied_muon_lr = optimizer2.param_groups[0]["lr"]
+            log_applied_lr(step + 1, total_train_steps, name, applied_muon_lr)
             for opt in optimizers:
                 opt.step()
             model.zero_grad(set_to_none=True)
@@ -850,13 +1150,14 @@ def main(run, model, name, batch_size, muon_lr, use_best_lr=False):
         batch_size=batch_size,
         muon_lr=muon_lr,
         use_best_lr=use_best_lr,
+        best_lr_strategy=best_lr_strategy,
+        best_lr_rel_diff_threshold=best_lr_rel_diff_threshold,
+        best_lr_linear_decay=best_lr_linear_decay,
         best_lr_ema=best_lr_ema,
         best_lr_logs=best_lr_logs,
         sgd_lr_mult=SGD_LR_MULT,
         training_batch_loss_logs=training_batch_loss_logs,
-        training_batch_loss_log_steps=training_loss_log_steps(
-            total_train_steps, TRAINING_LOSS_LOG_COUNT
-        ),
+        training_batch_loss_log_steps=loss_log_steps_list,
     )
 
 
@@ -870,13 +1171,15 @@ if __name__ == "__main__":
     results = []
     for run, config in enumerate(RUN_CONFIGS):
         print(
-            "cifar_baseline2 run=%d batch_size=%d muon_lr=%.6g name=%s use_best_lr=%s"
+            "cifar_baseline2 run=%d batch_size=%d muon_lr=%.6g name=%s "
+            "best_lr_strategy=%s best_lr_linear_decay=%s"
             % (
                 run,
                 config["batch_size"],
                 config["muon_lr"],
                 config["name"],
-                config["use_best_lr"],
+                config["best_lr_strategy"],
+                config.get("best_lr_linear_decay", False),
             ),
             flush=True,
         )
@@ -887,6 +1190,8 @@ if __name__ == "__main__":
         print("Muon lr:            %.6g" % result["muon_lr"])
         print("Use best lr:        %s" % result["use_best_lr"])
         if result["use_best_lr"]:
+            print("Best lr strategy:   %s" % result["best_lr_strategy"])
+            print("Best lr decay:      %s" % result["best_lr_linear_decay"])
             print("Final best lr ema:  %.6g" % result["best_lr_ema"])
         print("SGD lr mult:        %.6g" % result["sgd_lr_mult"])
         print("25batch train loss: %.4f" % result["train25_loss"])

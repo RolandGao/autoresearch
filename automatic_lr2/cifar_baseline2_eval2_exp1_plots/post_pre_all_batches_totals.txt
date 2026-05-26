@@ -1,0 +1,4 @@
+run,name,sum_over_logged_steps_all_batches_post_minus_pre
+0,best_lr,-48.396777153
+1,muon_0.04,-68.8677892089
+2,muon_0.24,131.701751053
