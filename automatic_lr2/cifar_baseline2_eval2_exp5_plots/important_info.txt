@@ -1,0 +1,84 @@
+CIFAR Baseline Exp5 Peak-LR Scheduler Results
+==============================================
+
+Runs: 6
+Complete runs: 6
+
+batch_size=125
+---------------
+1. best_lr_v6_peak_lr_decay_bs125_lr0.04
+   scheduler: linear
+   TTA val acc: 0.9372
+   val acc: 0.9287
+   25-batch train loss: 0.9184
+   final post-loss mean: 0.90612056
+   final post-loss sum: 2899.5858
+   wall time seconds: 504.7252
+   CUDA time seconds: 499.9106
+   final applied LR: 5.1798913e-06
+   final searched LR: 0.016575652
+   final best-LR EMA: 0.016575652
+2. best_lr_v7_peak_lr_last2_decay_bs125_lr0.04
+   scheduler: last2_linear
+   TTA val acc: 0.9298
+   val acc: 0.9212
+   25-batch train loss: 0.9894
+   final post-loss mean: 0.9598205
+   final post-loss sum: 3071.4256
+   wall time seconds: 510.1174
+   CUDA time seconds: 505.2468
+   final applied LR: 0
+   final searched LR: 0.030097533
+   final best-LR EMA: 0.030097533
+3. best_lr_v5_peak_lr_bs125_lr0.04
+   scheduler: constant
+   TTA val acc: 0.8691
+   val acc: 0.8481
+   25-batch train loss: 0.9399
+   final post-loss mean: 1.0981766
+   final post-loss sum: 3514.165
+   wall time seconds: 508.671
+   CUDA time seconds: 503.8804
+   final applied LR: 0.04556685
+   final searched LR: 0.04556685
+   final best-LR EMA: 0.04556685
+
+batch_size=2000
+---------------
+1. best_lr_v7_peak_lr_last2_decay_bs2000_lr0.19
+   scheduler: last2_linear
+   TTA val acc: 0.9378
+   val acc: 0.927
+   25-batch train loss: 0.9039
+   final post-loss mean: 0.90936348
+   final post-loss sum: 181.8727
+   wall time seconds: 62.9291
+   CUDA time seconds: 60.0239
+   final applied LR: 0
+   final searched LR: 0.050269053
+   final best-LR EMA: 0.050269053
+2. best_lr_v6_peak_lr_decay_bs2000_lr0.19
+   scheduler: linear
+   TTA val acc: 0.9301
+   val acc: 0.9204
+   25-batch train loss: 0.934
+   final post-loss mean: 0.92737535
+   final post-loss sum: 185.47507
+   wall time seconds: 62.9385
+   CUDA time seconds: 60.0382
+   final applied LR: 0.00024503106
+   final searched LR: 0.049006211
+   final best-LR EMA: 0.049006211
+3. best_lr_v5_peak_lr_bs2000_lr0.19
+   scheduler: constant
+   TTA val acc: 0.9258
+   val acc: 0.9104
+   25-batch train loss: 0.9116
+   final post-loss mean: 0.92477217
+   final post-loss sum: 184.95443
+   wall time seconds: 63.114
+   CUDA time seconds: 60.1326
+   final applied LR: 0.046995343
+   final searched LR: 0.046995343
+   final best-LR EMA: 0.046995343
+

@@ -372,9 +372,17 @@ def log_eval(run, epoch, val_acc, time_seconds):
     )
 
 
-def log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds):
+def log_final_eval(
+    train_loss,
+    val_loss,
+    train_acc,
+    val_acc,
+    tta_val_acc,
+    time_seconds,
+):
     print(
-        f"eval epoch=final 25batch_train_loss={train25_loss:.4f} "
+        f"eval epoch=final train_loss={train_loss:.4f} "
+        f"val_loss={val_loss:.4f} train_acc={train_acc:.4f} "
         f"val_acc={val_acc:.4f} tta_val_acc={tta_val_acc:.4f} "
         f"time_seconds={time_seconds:.4f}",
         flush=True,
@@ -440,18 +448,21 @@ def evaluate(model, loader, tta_level=0):
     return (logits.argmax(1) == loader.labels).float().mean().item()
 
 
-def evaluate_train_loss(model, batches):
+def evaluate_loader_loss_and_accuracy(model, loader):
     model.eval()
     total_loss = 0.0
+    total_correct = 0
     total_examples = 0
+    images = loader.normalized_images()
     with torch.inference_mode():
-        for inputs, labels in batches:
+        for inputs, labels in zip(images.split(2000), loader.labels.split(2000)):
             outputs = model(inputs)
             total_loss += F.cross_entropy(
                 outputs.float(), labels, label_smoothing=0.2, reduction="sum"
             ).item()
+            total_correct += (outputs.argmax(1) == labels).sum().item()
             total_examples += len(labels)
-    return total_loss / total_examples
+    return total_loss / total_examples, total_correct / total_examples
 
 
 def batchnorm_modules(model):
@@ -511,6 +522,32 @@ def evaluate_training_batch_losses(model, batches):
     return losses
 
 
+def evaluate_training_loss_and_accuracy(model, batches):
+    was_training = model.training
+    batchnorm_states = snapshot_batchnorm_buffers(model)
+    model.eval()
+    for module in batchnorm_modules(model):
+        module.train()
+
+    total_loss = 0.0
+    total_correct = 0
+    total_examples = 0
+    try:
+        with torch.no_grad():
+            for inputs, labels in batches:
+                outputs = model(inputs)
+                total_loss += F.cross_entropy(
+                    outputs.float(), labels, label_smoothing=0.2, reduction="sum"
+                ).item()
+                total_correct += (outputs.argmax(1) == labels).sum().item()
+                total_examples += len(labels)
+    finally:
+        restore_batchnorm_buffers(batchnorm_states)
+        model.train(was_training)
+
+    return total_loss / total_examples, total_correct / total_examples
+
+
 def materialize_training_batches(train_loader, total_steps):
     batches = []
     while len(batches) < total_steps:
@@ -540,6 +577,7 @@ BEST_LR_FACTOR = 0.8
 BEST_LR_EMA_MOMENTUM = 0.9
 BEST_LR_MAX_SEARCH_STEPS = 40
 BEST_LR_REL_DIFF_THRESHOLD = 0.4
+END_LR_MULTIPLIER = 0.01
 PEAK_LR_MAX_LEFT_STEPS = 30
 PEAK_LR_MAX_RIGHT_STEPS = 20
 PEAK_LR_HISTOGRAM_RADIUS = 5
@@ -973,9 +1011,7 @@ def choose_peak_lr(
                 optimal_lr_counts, lr_grid
             )
             break
-        extend_left, extend_right = peak_lr_extension_sides(
-            optimal_lr_counts, lr_grid
-        )
+        extend_left, extend_right = peak_lr_extension_sides(optimal_lr_counts, lr_grid)
         if extend_left and not can_extend_left:
             extend_right = True
         if extend_right and not can_extend_right:
@@ -1009,19 +1045,20 @@ def uses_best_lr_decay(best_lr_scheduler):
     return best_lr_scheduler != "constant"
 
 
-def best_lr_scheduler_multiplier(
-    step, total_steps, steps_per_epoch, best_lr_scheduler
-):
+def best_lr_scheduler_multiplier(step, total_steps, steps_per_epoch, best_lr_scheduler):
     if best_lr_scheduler == "constant":
         return 1.0
     if best_lr_scheduler == "linear":
-        return 1 - step / total_steps
+        denominator = max(1, total_steps - 1)
+        progress = step / denominator
+        return 1.0 + (END_LR_MULTIPLIER - 1.0) * progress
     if best_lr_scheduler == "last2_linear":
         decay_start_step = max(0, total_steps - 2 * steps_per_epoch)
         if step < decay_start_step:
             return 1.0
         denominator = max(1, total_steps - 1 - decay_start_step)
-        return max(0.0, 1 - (step - decay_start_step) / denominator)
+        progress = (step - decay_start_step) / denominator
+        return 1.0 + (END_LR_MULTIPLIER - 1.0) * progress
     raise ValueError(f"Unknown best_lr_scheduler: {best_lr_scheduler}")
 
 
@@ -1029,62 +1066,58 @@ def best_lr_scheduler_multiplier(
 #                Training                  #
 ############################################
 
-TRAIN_EVAL_BATCHES = 25
 BASE_RUN_CONFIGS = [
     dict(batch_size=2000, muon_lr=0.19),
+    dict(batch_size=2000, muon_lr=0.24),
+    dict(batch_size=2000, muon_lr=0.30),
     dict(batch_size=125, muon_lr=0.04),
-]
-BEST_LR_VERSION_CONFIGS = [
-    dict(name="best_lr_v1_min_loss", best_lr_strategy="min_loss"),
-    dict(
-        name="best_lr_v2_rel0.4",
-        best_lr_strategy="largest_rel",
-        best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
-    ),
-    dict(
-        name="best_lr_v3_min_loss_decay",
-        best_lr_strategy="min_loss",
-        best_lr_linear_decay=True,
-    ),
-    dict(
-        name="best_lr_v4_rel0.4_decay",
-        best_lr_strategy="largest_rel",
-        best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
-        best_lr_linear_decay=True,
-    ),
-    dict(name="best_lr_v5_peak_lr", best_lr_strategy="peak_lr"),
-    dict(
-        name="best_lr_v6_peak_lr_decay",
-        best_lr_strategy="peak_lr",
-        best_lr_scheduler="linear",
-        best_lr_linear_decay=True,
-    ),
-    dict(
-        name="best_lr_v7_peak_lr_last2_decay",
-        best_lr_strategy="peak_lr",
-        best_lr_scheduler="last2_linear",
-        best_lr_linear_decay=True,
-    ),
+    dict(batch_size=125, muon_lr=0.05),
+    dict(batch_size=125, muon_lr=0.06),
 ]
 RUN_CONFIGS = [
-    # dict(
-    #     name="muon_bs2000_lr0.19",
-    #     batch_size=2000,
-    #     muon_lr=0.19,
-    #     best_lr_strategy=None,
-    # ),
-    # dict(
-    #     name="muon_bs125_lr0.04",
-    #     batch_size=125,
-    #     muon_lr=0.04,
-    #     best_lr_strategy=None,
-    # ),
-    # dict(
-    #     name="best_lr_v1_min_loss_bs2000_lr0.19",
-    #     batch_size=2000,
-    #     muon_lr=0.19,
-    #     best_lr_strategy="min_loss",
-    # ),
+    dict(
+        name="muon_bs2000_lr0.19",
+        batch_size=2000,
+        muon_lr=0.19,
+        best_lr_strategy=None,
+    ),
+    dict(
+        name="muon_bs2000_lr0.24",
+        batch_size=2000,
+        muon_lr=0.24,
+        best_lr_strategy=None,
+    ),
+    dict(
+        name="muon_bs2000_lr0.3",
+        batch_size=2000,
+        muon_lr=0.30,
+        best_lr_strategy=None,
+    ),
+    dict(
+        name="muon_bs125_lr0.04",
+        batch_size=125,
+        muon_lr=0.04,
+        best_lr_strategy=None,
+    ),
+    dict(
+        name="muon_bs125_lr0.05",
+        batch_size=125,
+        muon_lr=0.05,
+        best_lr_strategy=None,
+    ),
+    dict(
+        name="muon_bs125_lr0.06",
+        batch_size=125,
+        muon_lr=0.06,
+        best_lr_strategy=None,
+    ),
+    dict(
+        name="min_loss_bs2000",
+        batch_size=2000,
+        muon_lr=0.19,
+        best_lr_strategy="min_loss",
+        best_lr_scheduler="constant",
+    ),
     # dict(
     #     name="best_lr_v2_rel0.4_bs2000_lr0.19",
     #     batch_size=2000,
@@ -1092,13 +1125,22 @@ RUN_CONFIGS = [
     #     best_lr_strategy="largest_rel",
     #     best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
     # ),
-    # dict(
-    #     name="best_lr_v3_min_loss_decay_bs2000_lr0.19",
-    #     batch_size=2000,
-    #     muon_lr=0.19,
-    #     best_lr_strategy="min_loss",
-    #     best_lr_linear_decay=True,
-    # ),
+    dict(
+        name="min_loss_decay_bs2000",
+        batch_size=2000,
+        muon_lr=0.19,
+        best_lr_strategy="min_loss",
+        best_lr_scheduler="linear",
+        best_lr_linear_decay=True,
+    ),
+    dict(
+        name="min_loss_last2_decay_bs2000",
+        batch_size=2000,
+        muon_lr=0.19,
+        best_lr_strategy="min_loss",
+        best_lr_scheduler="last2_linear",
+        best_lr_linear_decay=True,
+    ),
     # dict(
     #     name="best_lr_v4_rel0.4_decay_bs2000_lr0.19",
     #     batch_size=2000,
@@ -1107,35 +1149,36 @@ RUN_CONFIGS = [
     #     best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
     #     best_lr_linear_decay=True,
     # ),
+    # dict(
+    #     name="best_lr_v5_peak_lr_bs2000_lr0.19",
+    #     batch_size=2000,
+    #     muon_lr=0.19,
+    #     best_lr_strategy="peak_lr",
+    #     best_lr_scheduler="constant",
+    # ),
+    # dict(
+    #     name="best_lr_v6_peak_lr_decay_bs2000_lr0.19",
+    #     batch_size=2000,
+    #     muon_lr=0.19,
+    #     best_lr_strategy="peak_lr",
+    #     best_lr_scheduler="linear",
+    #     best_lr_linear_decay=True,
+    # ),
+    # dict(
+    #     name="best_lr_v7_peak_lr_last2_decay_bs2000_lr0.19",
+    #     batch_size=2000,
+    #     muon_lr=0.19,
+    #     best_lr_strategy="peak_lr",
+    #     best_lr_scheduler="last2_linear",
+    #     best_lr_linear_decay=True,
+    # ),
     dict(
-        name="best_lr_v5_peak_lr_bs2000_lr0.19",
-        batch_size=2000,
-        muon_lr=0.19,
-        best_lr_strategy="peak_lr",
+        name="min_loss_bs125",
+        batch_size=125,
+        muon_lr=0.04,
+        best_lr_strategy="min_loss",
         best_lr_scheduler="constant",
     ),
-    dict(
-        name="best_lr_v6_peak_lr_decay_bs2000_lr0.19",
-        batch_size=2000,
-        muon_lr=0.19,
-        best_lr_strategy="peak_lr",
-        best_lr_scheduler="linear",
-        best_lr_linear_decay=True,
-    ),
-    dict(
-        name="best_lr_v7_peak_lr_last2_decay_bs2000_lr0.19",
-        batch_size=2000,
-        muon_lr=0.19,
-        best_lr_strategy="peak_lr",
-        best_lr_scheduler="last2_linear",
-        best_lr_linear_decay=True,
-    ),
-    # dict(
-    #     name="best_lr_v1_min_loss_bs125_lr0.04",
-    #     batch_size=125,
-    #     muon_lr=0.04,
-    #     best_lr_strategy="min_loss",
-    # ),
     # dict(
     #     name="best_lr_v2_rel0.4_bs125_lr0.04",
     #     batch_size=125,
@@ -1143,13 +1186,22 @@ RUN_CONFIGS = [
     #     best_lr_strategy="largest_rel",
     #     best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
     # ),
-    # dict(
-    #     name="best_lr_v3_min_loss_decay_bs125_lr0.04",
-    #     batch_size=125,
-    #     muon_lr=0.04,
-    #     best_lr_strategy="min_loss",
-    #     best_lr_linear_decay=True,
-    # ),
+    dict(
+        name="min_loss_decay_bs125",
+        batch_size=125,
+        muon_lr=0.04,
+        best_lr_strategy="min_loss",
+        best_lr_scheduler="linear",
+        best_lr_linear_decay=True,
+    ),
+    dict(
+        name="min_loss_last2_decay_bs125",
+        batch_size=125,
+        muon_lr=0.04,
+        best_lr_strategy="min_loss",
+        best_lr_scheduler="last2_linear",
+        best_lr_linear_decay=True,
+    ),
     # dict(
     #     name="best_lr_v4_rel0.4_decay_bs125_lr0.04",
     #     batch_size=125,
@@ -1158,29 +1210,29 @@ RUN_CONFIGS = [
     #     best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
     #     best_lr_linear_decay=True,
     # ),
-    dict(
-        name="best_lr_v5_peak_lr_bs125_lr0.04",
-        batch_size=125,
-        muon_lr=0.04,
-        best_lr_strategy="peak_lr",
-        best_lr_scheduler="constant",
-    ),
-    dict(
-        name="best_lr_v6_peak_lr_decay_bs125_lr0.04",
-        batch_size=125,
-        muon_lr=0.04,
-        best_lr_strategy="peak_lr",
-        best_lr_scheduler="linear",
-        best_lr_linear_decay=True,
-    ),
-    dict(
-        name="best_lr_v7_peak_lr_last2_decay_bs125_lr0.04",
-        batch_size=125,
-        muon_lr=0.04,
-        best_lr_strategy="peak_lr",
-        best_lr_scheduler="last2_linear",
-        best_lr_linear_decay=True,
-    ),
+    # dict(
+    #     name="best_lr_v5_peak_lr_bs125_lr0.04",
+    #     batch_size=125,
+    #     muon_lr=0.04,
+    #     best_lr_strategy="peak_lr",
+    #     best_lr_scheduler="constant",
+    # ),
+    # dict(
+    #     name="best_lr_v6_peak_lr_decay_bs125_lr0.04",
+    #     batch_size=125,
+    #     muon_lr=0.04,
+    #     best_lr_strategy="peak_lr",
+    #     best_lr_scheduler="linear",
+    #     best_lr_linear_decay=True,
+    # ),
+    # dict(
+    #     name="best_lr_v7_peak_lr_last2_decay_bs125_lr0.04",
+    #     batch_size=125,
+    #     muon_lr=0.04,
+    #     best_lr_strategy="peak_lr",
+    #     best_lr_scheduler="last2_linear",
+    #     best_lr_linear_decay=True,
+    # ),
 ]
 
 
@@ -1265,7 +1317,6 @@ def main(
     stop_timer()
 
     training_batches = materialize_training_batches(train_loader, total_train_steps)
-    train_eval_batches = training_batches[-TRAIN_EVAL_BATCHES:]
     loss_log_steps_list = [total_train_steps] if LOG_PRE_POST_LOSSES else []
     loss_log_steps = set(loss_log_steps_list)
     training_batch_loss_logs = []
@@ -1412,16 +1463,18 @@ def main(
     ####################
 
     start_timer()
-    train25_loss = evaluate_train_loss(model, train_eval_batches)
+    train_loss, train_acc = evaluate_training_loss_and_accuracy(model, training_batches)
+    val_loss, val_acc = evaluate_loader_loss_and_accuracy(model, test_loader)
     tta_val_acc = evaluate(model, test_loader, tta_level=2)
     stop_timer()
-    log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds)
+    log_final_eval(train_loss, val_loss, train_acc, val_acc, tta_val_acc, time_seconds)
     wall_time_seconds = time.perf_counter() - run_wall_start
     log_run_time(run_id, name, wall_time_seconds, time_seconds)
 
     return dict(
-        train25_loss=train25_loss,
-        **{"25batch_train_loss": train25_loss},
+        train_loss=train_loss,
+        val_loss=val_loss,
+        train_acc=train_acc,
         val_acc=val_acc,
         tta_val_acc=tta_val_acc,
         name=name,
@@ -1480,9 +1533,11 @@ if __name__ == "__main__":
             print("Best lr scheduler:  %s" % result["best_lr_scheduler"])
             print("Final best lr ema:  %.6g" % result["best_lr_ema"])
         print("SGD lr mult:        %.6g" % result["sgd_lr_mult"])
-        print("25batch train loss: %.4f" % result["train25_loss"])
+        print("Train loss:         %.4f" % result["train_loss"])
+        print("Val loss:           %.4f" % result["val_loss"])
+        print("Train acc:          %.4f" % result["train_acc"])
         print("Val acc:            %.4f" % result["val_acc"])
-        print("TTA val:            %.4f" % result["tta_val_acc"])
+        print("TTA val acc:        %.4f" % result["tta_val_acc"])
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)

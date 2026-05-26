@@ -37,6 +37,12 @@ FINAL_RE = re.compile(
     r"val_acc=(?P<val_acc>\S+) tta_val_acc=(?P<tta_val_acc>\S+) "
     r"time_seconds=(?P<time_seconds>\S+)"
 )
+FINAL_FULL_RE = re.compile(
+    r"^eval epoch=final train_loss=(?P<train_loss>\S+) "
+    r"val_loss=(?P<val_loss>\S+) train_acc=(?P<train_acc>\S+) "
+    r"val_acc=(?P<val_acc>\S+) tta_val_acc=(?P<tta_val_acc>\S+) "
+    r"time_seconds=(?P<time_seconds>\S+)"
+)
 
 
 @dataclass
@@ -75,6 +81,9 @@ class Run:
     best_lr_logs: list[BestLRLog] = field(default_factory=list)
     eval_logs: list[EvalLog] = field(default_factory=list)
     train25_loss: float | None = None
+    train_loss: float | None = None
+    val_loss: float | None = None
+    train_acc: float | None = None
     val_acc: float | None = None
     tta_val_acc: float | None = None
     time_seconds: float | None = None
@@ -186,6 +195,16 @@ def parse_log(path):
                 current.val_acc = float(match.group("val_acc"))
                 current.tta_val_acc = float(match.group("tta_val_acc"))
                 current.time_seconds = float(match.group("time_seconds"))
+                continue
+
+            match = FINAL_FULL_RE.match(line)
+            if match and current is not None:
+                current.train_loss = float(match.group("train_loss"))
+                current.val_loss = float(match.group("val_loss"))
+                current.train_acc = float(match.group("train_acc"))
+                current.val_acc = float(match.group("val_acc"))
+                current.tta_val_acc = float(match.group("tta_val_acc"))
+                current.time_seconds = float(match.group("time_seconds"))
 
     if not runs:
         raise ValueError(f"No runs found in {path}")
@@ -212,6 +231,10 @@ def best_runs(runs):
     return [run for run in runs if run.best_lr_logs]
 
 
+def final_train_loss(run):
+    return run.train_loss if run.train_loss is not None else run.train25_loss
+
+
 def plot_final_metrics(runs, output_path):
     runs = run_order(runs)
     labels = [run.name.replace("_", "\n", 2) for run in runs]
@@ -220,8 +243,9 @@ def plot_final_metrics(runs, output_path):
     tta_val_acc = [
         run.tta_val_acc if finite_metric(run.tta_val_acc) else np.nan for run in runs
     ]
-    train25_loss = [
-        run.train25_loss if finite_metric(run.train25_loss) else np.nan for run in runs
+    train_loss = [
+        final_train_loss(run) if finite_metric(final_train_loss(run)) else np.nan
+        for run in runs
     ]
 
     fig, (acc_ax, loss_ax) = plt.subplots(2, 1, figsize=(15, 8), sharex=True)
@@ -232,8 +256,8 @@ def plot_final_metrics(runs, output_path):
     acc_ax.grid(True, axis="y", alpha=0.25)
     acc_ax.legend()
 
-    loss_ax.bar(x, train25_loss, width=0.6, color="tab:green")
-    loss_ax.set_ylabel("25-batch train loss")
+    loss_ax.bar(x, train_loss, width=0.6, color="tab:green")
+    loss_ax.set_ylabel("train loss")
     loss_ax.set_xticks(x, labels, rotation=35, ha="right")
     loss_ax.grid(True, axis="y", alpha=0.25)
 
@@ -373,7 +397,8 @@ def plot_lr_landscape_snapshots(runs, output_path, max_panels_per_run=4):
 def write_summary(runs, output_path):
     lines = [
         "run,name,batch_size,muon_lr,best_lr_strategy,best_lr_linear_decay,"
-        "train25_loss,val_acc,tta_val_acc,time_seconds,steps,final_applied_lr,"
+        "train_loss,train25_loss,val_loss,train_acc,val_acc,tta_val_acc,"
+        "time_seconds,steps,final_applied_lr,"
         "final_searched_lr,final_best_lr_ema"
     ]
     for run in runs:
@@ -387,7 +412,10 @@ def write_summary(runs, output_path):
             "%.8g" % run.muon_lr,
             run.best_lr_strategy or "",
             run.best_lr_linear_decay,
+            "" if run.train_loss is None else "%.8g" % run.train_loss,
             "" if run.train25_loss is None else "%.8g" % run.train25_loss,
+            "" if run.val_loss is None else "%.8g" % run.val_loss,
+            "" if run.train_acc is None else "%.8g" % run.train_acc,
             "" if run.val_acc is None else "%.8g" % run.val_acc,
             "" if run.tta_val_acc is None else "%.8g" % run.tta_val_acc,
             "" if run.time_seconds is None else "%.8g" % run.time_seconds,

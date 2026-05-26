@@ -1,0 +1,7 @@
+run,name,batch_size,scheduler,steps,total_steps,progress,best_lr_logs,eval_points,is_complete
+3,best_lr_v5_peak_lr_bs125_lr0.04,125,constant,3200,3200,1,3200,8,True
+4,best_lr_v6_peak_lr_decay_bs125_lr0.04,125,linear,3200,3200,1,3200,8,True
+5,best_lr_v7_peak_lr_last2_decay_bs125_lr0.04,125,last2_linear,3200,3200,1,3200,8,True
+0,best_lr_v5_peak_lr_bs2000_lr0.19,2000,constant,200,200,1,200,8,True
+1,best_lr_v6_peak_lr_decay_bs2000_lr0.19,2000,linear,200,200,1,200,8,True
+2,best_lr_v7_peak_lr_last2_decay_bs2000_lr0.19,2000,last2_linear,200,200,1,200,8,True
