@@ -578,7 +578,6 @@ BEST_LR_EMA_MOMENTUM = 0.9
 BEST_LR_MAX_SEARCH_STEPS = 40
 BEST_LR_REL_DIFF_THRESHOLD = 0.4
 END_LR_MULTIPLIER = 0.01
-START_LR_MULTIPLIER = 2.0
 PEAK_LR_MAX_LEFT_STEPS = 30
 PEAK_LR_MAX_RIGHT_STEPS = 20
 PEAK_LR_HISTOGRAM_RADIUS = 5
@@ -1049,13 +1048,6 @@ def uses_best_lr_decay(best_lr_scheduler):
 def best_lr_scheduler_multiplier(step, total_steps, steps_per_epoch, best_lr_scheduler):
     if best_lr_scheduler == "constant":
         return 1.0
-    if best_lr_scheduler == "linear_2_to_0.01":
-        denominator = max(1, total_steps - 1)
-        progress = step / denominator
-        return (
-            START_LR_MULTIPLIER
-            + (END_LR_MULTIPLIER - START_LR_MULTIPLIER) * progress
-        )
     if best_lr_scheduler == "linear":
         denominator = max(1, total_steps - 1)
         progress = step / denominator
@@ -1074,49 +1066,52 @@ def best_lr_scheduler_multiplier(step, total_steps, steps_per_epoch, best_lr_sch
 #                Training                  #
 ############################################
 
-BASE_RUN_CONFIGS = [
-    dict(batch_size=500, muon_lr=0.1216, sgd_lr_mult=1.0),
-    dict(batch_size=2000, muon_lr=0.2375, sgd_lr_mult=0.8),
-]
-RUN_CONFIGS = [
-    dict(
+JOINT_LINE_SEARCH_BATCH_SIZES = [125, 250, 500, 1000, 2000]
+JOINT_LINE_SEARCH_INITIAL_MUON_LR = 0.19
+JOINT_LINE_SEARCH_INITIAL_SGD_LR_MULT = 1.0
+JOINT_LINE_SEARCH_FACTOR = 0.8
+JOINT_LINE_SEARCH_MAX_MOVES = 30
+
+
+def line_search_value(initial_value, exponent):
+    return initial_value * (JOINT_LINE_SEARCH_FACTOR**exponent)
+
+
+def exponent_label(exponent):
+    if exponent == 0:
+        return "0"
+    if exponent > 0:
+        return f"p{exponent}"
+    return f"m{-exponent}"
+
+
+def joint_line_search_config(batch_size, point):
+    muon_exponent, sgd_exponent = point
+    muon_lr = line_search_value(JOINT_LINE_SEARCH_INITIAL_MUON_LR, muon_exponent)
+    sgd_lr_mult = line_search_value(JOINT_LINE_SEARCH_INITIAL_SGD_LR_MULT, sgd_exponent)
+    return dict(
         name=(
-            f"muon_bs{config['batch_size']}_lr{config['muon_lr']:.6g}"
-            f"_sgd{config['sgd_lr_mult']:.6g}"
+            f"joint_bs{batch_size}"
+            f"_mu{exponent_label(muon_exponent)}"
+            f"_sgd{exponent_label(sgd_exponent)}"
+            f"_muon{muon_lr:.6g}"
+            f"_sgd{sgd_lr_mult:.6g}"
         ),
-        batch_size=config["batch_size"],
-        muon_lr=config["muon_lr"],
-        sgd_lr_mult=config["sgd_lr_mult"],
+        batch_size=batch_size,
+        muon_lr=muon_lr,
+        sgd_lr_mult=sgd_lr_mult,
         best_lr_strategy=None,
     )
-    for config in BASE_RUN_CONFIGS
-] + [
-    dict(
-        name=(
-            f"min_loss_bs{config['batch_size']}_lr{config['muon_lr']:.6g}"
-            f"_sgd{config['sgd_lr_mult']:.6g}"
-        ),
-        batch_size=config["batch_size"],
-        muon_lr=config["muon_lr"],
-        sgd_lr_mult=config["sgd_lr_mult"],
-        best_lr_strategy="min_loss",
-        best_lr_scheduler="constant",
-    )
-    for config in BASE_RUN_CONFIGS
-] + [
-    dict(
-        name=(
-            f"min_loss_muon2_decay_bs{config['batch_size']}"
-            f"_lr{config['muon_lr']:.6g}_sgd{config['sgd_lr_mult']:.6g}"
-        ),
-        batch_size=config["batch_size"],
-        muon_lr=config["muon_lr"],
-        sgd_lr_mult=config["sgd_lr_mult"],
-        best_lr_strategy="min_loss",
-        best_lr_scheduler="linear_2_to_0.01",
-    )
-    for config in BASE_RUN_CONFIGS
-]
+
+
+def joint_line_search_neighbors(point):
+    muon_exponent, sgd_exponent = point
+    return [
+        (muon_exponent + 1, sgd_exponent),
+        (muon_exponent - 1, sgd_exponent),
+        (muon_exponent, sgd_exponent + 1),
+        (muon_exponent, sgd_exponent - 1),
+    ]
 
 
 def main(
@@ -1125,7 +1120,7 @@ def main(
     name,
     batch_size,
     muon_lr,
-    sgd_lr_mult=1.0,
+    sgd_lr_mult=None,
     best_lr_strategy=None,
     best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
     best_lr_linear_decay=False,
@@ -1140,7 +1135,7 @@ def main(
     )
     best_lr_linear_decay = uses_best_lr_decay(best_lr_scheduler)
 
-    SGD_LR_MULT = sgd_lr_mult
+    SGD_LR_MULT = batch_size / 2000 if sgd_lr_mult is None else sgd_lr_mult
     bias_lr = 104 * SGD_LR_MULT
     head_lr = 1340 * SGD_LR_MULT
 
@@ -1385,15 +1380,33 @@ if __name__ == "__main__":
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
     # model.compile(mode="max-autotune")
 
-    # main("warmup", model, **RUN_CONFIGS[0])
     results = []
-    for run, config in enumerate(RUN_CONFIGS):
+    run_index = [0]
+
+    def evaluate_point(batch_size, point, result_cache):
+        if point in result_cache:
+            cached = result_cache[point]
+            print(
+                "joint_line_search cache_hit batch_size=%d point=%s "
+                "muon_lr=%.6g sgd_lr_mult=%.6g tta_val_acc=%.4f"
+                % (
+                    batch_size,
+                    point,
+                    cached["muon_lr"],
+                    cached["sgd_lr_mult"],
+                    cached["tta_val_acc"],
+                ),
+                flush=True,
+            )
+            return cached
+
+        config = joint_line_search_config(batch_size, point)
         print(
             "cifar_baseline2 run=%d batch_size=%d muon_lr=%.6g "
             "sgd_lr_mult=%.6g name=%s best_lr_strategy=%s "
             "best_lr_linear_decay=%s best_lr_scheduler=%s"
             % (
-                run,
+                run_index[0],
                 config["batch_size"],
                 config["muon_lr"],
                 config["sgd_lr_mult"],
@@ -1407,26 +1420,96 @@ if __name__ == "__main__":
             ),
             flush=True,
         )
-        result = main(run, model, **config)
+        result = main(run_index[0], model, **config)
+        result["joint_line_search_point"] = point
+        result_cache[point] = result
         results.append(result)
+        run_index[0] += 1
+
         print("Name:               %s" % result["name"])
         print("Batch size:         %d" % result["batch_size"])
         print("Muon lr:            %.6g" % result["muon_lr"])
+        print("SGD lr mult:        %.6g" % result["sgd_lr_mult"])
         print("Use best lr:        %s" % result["use_best_lr"])
         if result["use_best_lr"]:
             print("Best lr strategy:   %s" % result["best_lr_strategy"])
             print("Best lr decay:      %s" % result["best_lr_linear_decay"])
             print("Best lr scheduler:  %s" % result["best_lr_scheduler"])
             print("Final best lr ema:  %.6g" % result["best_lr_ema"])
-        print("SGD lr mult:        %.6g" % result["sgd_lr_mult"])
         print("Train loss:         %.4f" % result["train_loss"])
         print("Val loss:           %.4f" % result["val_loss"])
         print("Train acc:          %.4f" % result["train_acc"])
         print("Val acc:            %.4f" % result["val_acc"])
         print("TTA val acc:        %.4f" % result["tta_val_acc"])
+        return result
+
+    search_summaries = []
+    for batch_size in JOINT_LINE_SEARCH_BATCH_SIZES:
+        result_cache = {}
+        current_point = (0, 0)
+        current_result = evaluate_point(batch_size, current_point, result_cache)
+
+        for move in range(JOINT_LINE_SEARCH_MAX_MOVES):
+            neighbor_points = joint_line_search_neighbors(current_point)
+            neighbor_results = [
+                evaluate_point(batch_size, point, result_cache)
+                for point in neighbor_points
+            ]
+            candidates = [current_result] + neighbor_results
+            best_result = max(candidates, key=lambda result: result["tta_val_acc"])
+            best_point = best_result["joint_line_search_point"]
+            print(
+                "joint_line_search step batch_size=%d move=%d center=%s "
+                "center_tta=%.4f best=%s best_tta=%.4f"
+                % (
+                    batch_size,
+                    move,
+                    current_point,
+                    current_result["tta_val_acc"],
+                    best_point,
+                    best_result["tta_val_acc"],
+                ),
+                flush=True,
+            )
+            if best_point == current_point:
+                break
+            current_point = best_point
+            current_result = best_result
+        else:
+            print(
+                "joint_line_search max_moves_reached batch_size=%d point=%s "
+                "tta_val_acc=%.4f"
+                % (batch_size, current_point, current_result["tta_val_acc"]),
+                flush=True,
+            )
+
+        search_summaries.append(
+            dict(
+                batch_size=batch_size,
+                best_point=current_point,
+                best_result=current_result,
+                evaluated_points=sorted(result_cache),
+            )
+        )
+        print(
+            "joint_line_search complete batch_size=%d best_point=%s "
+            "muon_lr=%.6g sgd_lr_mult=%.6g tta_val_acc=%.4f "
+            "evaluated_points=%d"
+            % (
+                batch_size,
+                current_point,
+                current_result["muon_lr"],
+                current_result["sgd_lr_mult"],
+                current_result["tta_val_acc"],
+                len(result_cache),
+            ),
+            flush=True,
+        )
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "log.pt")
-    torch.save(dict(code=code, results=results), log_path)
+    torch.save(
+        dict(code=code, results=results, search_summaries=search_summaries), log_path
+    )
     print(os.path.abspath(log_path))

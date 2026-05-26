@@ -1,0 +1,106 @@
+CIFAR Baseline Eval2 Exp8 Results
+==================================
+
+Runs: 6
+
+batch_size=500
+---------------
+1. muon_bs500_lr0.1216_sgd1
+   kind: fixed
+   muon_lr: 0.1216
+   sgd_lr_mult: 1
+   TTA val acc: 0.9401
+   val acc: 0.9309
+   train acc: 0.9889
+   train loss: 0.9117
+   val loss: 1.0073
+   final post-loss mean: 0.91165278
+   wall time seconds: 17.6751
+   final applied LR: 0.000152
+   final searched LR: NA
+   final best-LR EMA: NA
+2. min_loss_muon2_decay_bs500_lr0.1216_sgd1
+   kind: min_loss 2->0.01
+   muon_lr: 0.1216
+   sgd_lr_mult: 1
+   TTA val acc: 0.9345
+   val acc: 0.9243
+   train acc: 0.9796
+   train loss: 0.9317
+   val loss: 1.0188
+   final post-loss mean: 0.93165425
+   wall time seconds: 40.4265
+   final applied LR: 0.00030852287
+   final searched LR: 0.030852287
+   final best-LR EMA: 0.030852287
+3. min_loss_bs500_lr0.1216_sgd1
+   kind: min_loss const
+   muon_lr: 0.1216
+   sgd_lr_mult: 1
+   TTA val acc: 0.9185
+   val acc: 0.904
+   train acc: 0.9708
+   train loss: 0.9497
+   val loss: 1.0553
+   final post-loss mean: 0.9497217
+   wall time seconds: 40.6786
+   final applied LR: 0.033877272
+   final searched LR: 0.033877272
+   final best-LR EMA: 0.033877272
+
+batch_size=2000
+---------------
+1. muon_bs2000_lr0.2375_sgd0.8
+   kind: fixed
+   muon_lr: 0.2375
+   sgd_lr_mult: 0.8
+   TTA val acc: 0.9421
+   val acc: 0.9282
+   train acc: 0.9925
+   train loss: 0.9091
+   val loss: 1.0142
+   final post-loss mean: 0.90911015
+   wall time seconds: 15.1503
+   final applied LR: 0.0011875
+   final searched LR: NA
+   final best-LR EMA: NA
+2. min_loss_muon2_decay_bs2000_lr0.2375_sgd0.8
+   kind: min_loss 2->0.01
+   muon_lr: 0.2375
+   sgd_lr_mult: 0.8
+   TTA val acc: 0.9397
+   val acc: 0.9296
+   train acc: 0.994
+   train loss: 0.9064
+   val loss: 1.0174
+   final post-loss mean: 0.90643884
+   wall time seconds: 27.5908
+   final applied LR: 0.00037961619
+   final searched LR: 0.037961619
+   final best-LR EMA: 0.037961619
+3. min_loss_bs2000_lr0.2375_sgd0.8
+   kind: min_loss const
+   muon_lr: 0.2375
+   sgd_lr_mult: 0.8
+   TTA val acc: 0.9125
+   val acc: 0.9025
+   train acc: 0.9737
+   train loss: 0.9671
+   val loss: 1.0817
+   final post-loss mean: 0.96709061
+   wall time seconds: 27.7685
+   final applied LR: 0.054511938
+   final searched LR: 0.054511938
+   final best-LR EMA: 0.054511938
+
+All Runs
+--------
+run  name                                         batch  kind              muon_lr  sgd_mult  train_loss  val_loss  train_acc  val_acc  tta_val_acc  post_loss_mean  wall_s   final_applied_lr  final_searched_lr
+---  -------------------------------------------  -----  ----------------  -------  --------  ----------  --------  ---------  -------  -----------  --------------  -------  ----------------  -----------------
+0    muon_bs500_lr0.1216_sgd1                     500    fixed             0.1216   1         0.9117      1.0073    0.9889     0.9309   0.9401       0.91165278      17.6751  0.000152          NA               
+2    min_loss_bs500_lr0.1216_sgd1                 500    min_loss const    0.1216   1         0.9497      1.0553    0.9708     0.904    0.9185       0.9497217       40.6786  0.033877272       0.033877272      
+4    min_loss_muon2_decay_bs500_lr0.1216_sgd1     500    min_loss 2->0.01  0.1216   1         0.9317      1.0188    0.9796     0.9243   0.9345       0.93165425      40.4265  0.00030852287     0.030852287      
+1    muon_bs2000_lr0.2375_sgd0.8                  2000   fixed             0.2375   0.8       0.9091      1.0142    0.9925     0.9282   0.9421       0.90911015      15.1503  0.0011875         NA               
+3    min_loss_bs2000_lr0.2375_sgd0.8              2000   min_loss const    0.2375   0.8       0.9671      1.0817    0.9737     0.9025   0.9125       0.96709061      27.7685  0.054511938       0.054511938      
+5    min_loss_muon2_decay_bs2000_lr0.2375_sgd0.8  2000   min_loss 2->0.01  0.2375   0.8       0.9064      1.0174    0.994      0.9296   0.9397       0.90643884      27.5908  0.00037961619     0.037961619      
+
