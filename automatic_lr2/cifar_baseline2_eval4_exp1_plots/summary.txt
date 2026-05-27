@@ -1,0 +1,110 @@
+CIFAR Baseline Eval4 Exp1 Overfit Sweep
+===========================================
+
+Evaluated runs: 400
+Batch sizes: 500, 2000, 5000, 10000
+
+batch_size=500 best train loss
+--------------------------------------
+1. run=99 scheduler=mult_sched_099_bezier train_loss=0.8761 train_acc=1 val_acc=0.425 tta_val_acc=0.4642 schedule=1.9,1.8888889,1.8555556,1.8,1.7222222,1.6222222,1.5,1.3555556,1.1888889,1
+2. run=98 scheduler=mult_sched_098_bezier train_loss=0.8762 train_acc=1 val_acc=0.4278 tta_val_acc=0.469 schedule=1.9,1.8545679,1.7954938,1.7227778,1.6364198,1.5364198,1.4227778,1.2954938,1.1545679,1
+3. run=90 scheduler=mult_sched_090_bezier train_loss=0.8764 train_acc=1 val_acc=0.4163 tta_val_acc=0.4507 schedule=1.761,1.7790617,1.7714691,1.7382222,1.679321,1.5947654,1.4845556,1.3486914,1.1871728,1
+4. run=81 scheduler=mult_sched_081_bezier train_loss=0.8765 train_acc=1 val_acc=0.4179 tta_val_acc=0.4563 schedule=1.622,1.6692346,1.6873827,1.6764444,1.6364198,1.5673086,1.4691111,1.3418272,1.1854568,1
+5. run=97 scheduler=mult_sched_097_bezier train_loss=0.8765 train_acc=1 val_acc=0.4229 tta_val_acc=0.462 schedule=1.9,1.8202469,1.7354321,1.6455556,1.5506173,1.4506173,1.3455556,1.2354321,1.1202469,1
+6. run=71 scheduler=mult_sched_071_bezier train_loss=0.8766 train_acc=1 val_acc=0.3988 tta_val_acc=0.4341 schedule=1.483,1.5250864,1.5432346,1.5374444,1.507716,1.4540494,1.3764444,1.2749012,1.1494198,1
+7. run=63 scheduler=mult_sched_063_bezier train_loss=0.8767 train_acc=1 val_acc=0.4061 tta_val_acc=0.4367 schedule=1.344,1.4495802,1.5192099,1.5528889,1.5506173,1.5123951,1.4382222,1.3280988,1.1820247,1
+8. run=88 scheduler=mult_sched_088_bezier train_loss=0.8767 train_acc=1 val_acc=0.4117 tta_val_acc=0.4515 schedule=1.761,1.7104198,1.6513457,1.5837778,1.507716,1.4231605,1.3301111,1.2285679,1.1185309,1
+9. run=89 scheduler=mult_sched_089_bezier train_loss=0.8767 train_acc=1 val_acc=0.4122 tta_val_acc=0.4515 schedule=1.761,1.7447407,1.7114074,1.661,1.5935185,1.508963,1.4073333,1.2886296,1.1528519,1
+10. run=54 scheduler=mult_sched_054_bezier train_loss=0.8769 train_acc=1 val_acc=0.3911 tta_val_acc=0.4303 schedule=1.205,1.3397531,1.4351235,1.4911111,1.507716,1.4849383,1.4227778,1.3212346,1.1803086,1
+11. run=72 scheduler=mult_sched_072_bezier train_loss=0.8769 train_acc=1 val_acc=0.4018 tta_val_acc=0.4381 schedule=1.483,1.5594074,1.6032963,1.6146667,1.5935185,1.5398519,1.4536667,1.334963,1.1837407,1
+12. run=80 scheduler=mult_sched_080_bezier train_loss=0.8769 train_acc=1 val_acc=0.4113 tta_val_acc=0.449 schedule=1.622,1.6349136,1.627321,1.5992222,1.5506173,1.4815062,1.3918889,1.2817654,1.1511358,1
+
+batch_size=500 best TTA val acc
+--------------------------------------
+1. run=92 scheduler=mult_sched_092_bezier tta_val_acc=0.4716 train_loss=0.8802 val_acc=0.4307
+2. run=93 scheduler=mult_sched_093_bezier tta_val_acc=0.4709 train_loss=0.8795 val_acc=0.4316
+3. run=98 scheduler=mult_sched_098_bezier tta_val_acc=0.469 train_loss=0.8762 val_acc=0.4278
+4. run=94 scheduler=mult_sched_094_bezier tta_val_acc=0.4674 train_loss=0.8787 val_acc=0.4278
+5. run=91 scheduler=mult_sched_091_bezier tta_val_acc=0.4669 train_loss=0.8808 val_acc=0.4305
+6. run=99 scheduler=mult_sched_099_bezier tta_val_acc=0.4642 train_loss=0.8761 val_acc=0.425
+7. run=95 scheduler=mult_sched_095_bezier tta_val_acc=0.463 train_loss=0.8787 val_acc=0.4236
+8. run=97 scheduler=mult_sched_097_bezier tta_val_acc=0.462 train_loss=0.8765 val_acc=0.4229
+
+batch_size=2000 best train loss
+--------------------------------------
+1. run=154 scheduler=mult_sched_054_bezier train_loss=1.0486 train_acc=0.979 val_acc=0.5334 tta_val_acc=0.5627 schedule=1.205,1.3397531,1.4351235,1.4911111,1.507716,1.4849383,1.4227778,1.3212346,1.1803086,1
+2. run=172 scheduler=mult_sched_072_bezier train_loss=1.0512 train_acc=0.9785 val_acc=0.5417 tta_val_acc=0.5743 schedule=1.483,1.5594074,1.6032963,1.6146667,1.5935185,1.5398519,1.4536667,1.334963,1.1837407,1
+3. run=163 scheduler=mult_sched_063_bezier train_loss=1.0524 train_acc=0.9795 val_acc=0.5419 tta_val_acc=0.5671 schedule=1.344,1.4495802,1.5192099,1.5528889,1.5506173,1.5123951,1.4382222,1.3280988,1.1820247,1
+4. run=145 scheduler=mult_sched_045_bezier train_loss=1.0559 train_acc=0.9785 val_acc=0.5242 tta_val_acc=0.5597 schedule=1.066,1.2299259,1.351037,1.4293333,1.4648148,1.4574815,1.4073333,1.3143704,1.1785926,1
+5. run=153 scheduler=mult_sched_053_bezier train_loss=1.0564 train_acc=0.975 val_acc=0.525 tta_val_acc=0.5542 schedule=1.205,1.3054321,1.3750617,1.4138889,1.4219136,1.3991358,1.3455556,1.2611728,1.1459877,1
+6. run=162 scheduler=mult_sched_062_bezier train_loss=1.057 train_acc=0.9765 val_acc=0.5387 tta_val_acc=0.5637 schedule=1.344,1.4152593,1.4591481,1.4756667,1.4648148,1.4265926,1.361,1.268037,1.1477037,1
+7. run=181 scheduler=mult_sched_081_bezier train_loss=1.0583 train_acc=0.9815 val_acc=0.556 tta_val_acc=0.5873 schedule=1.622,1.6692346,1.6873827,1.6764444,1.6364198,1.5673086,1.4691111,1.3418272,1.1854568,1
+8. run=180 scheduler=mult_sched_080_bezier train_loss=1.0594 train_acc=0.9785 val_acc=0.5588 tta_val_acc=0.5882 schedule=1.622,1.6349136,1.627321,1.5992222,1.5506173,1.4815062,1.3918889,1.2817654,1.1511358,1
+9. run=189 scheduler=mult_sched_089_bezier train_loss=1.0594 train_acc=0.98 val_acc=0.5646 tta_val_acc=0.5949 schedule=1.761,1.7447407,1.7114074,1.661,1.5935185,1.508963,1.4073333,1.2886296,1.1528519,1
+10. run=190 scheduler=mult_sched_090_bezier train_loss=1.06 train_acc=0.9805 val_acc=0.5677 tta_val_acc=0.6001 schedule=1.761,1.7790617,1.7714691,1.7382222,1.679321,1.5947654,1.4845556,1.3486914,1.1871728,1
+11. run=179 scheduler=mult_sched_079_bezier train_loss=1.0607 train_acc=0.9795 val_acc=0.5553 tta_val_acc=0.5838 schedule=1.622,1.6005926,1.5672593,1.522,1.4648148,1.3957037,1.3146667,1.2217037,1.1168148,1
+12. run=152 scheduler=mult_sched_052_bezier train_loss=1.0613 train_acc=0.9765 val_acc=0.5247 tta_val_acc=0.5535 schedule=1.205,1.2711111,1.315,1.3366667,1.3361111,1.3133333,1.2683333,1.2011111,1.1116667,1
+
+batch_size=2000 best TTA val acc
+--------------------------------------
+1. run=199 scheduler=mult_sched_099_bezier tta_val_acc=0.6137 train_loss=1.0817 val_acc=0.5814
+2. run=198 scheduler=mult_sched_098_bezier tta_val_acc=0.6092 train_loss=1.0793 val_acc=0.5804
+3. run=197 scheduler=mult_sched_097_bezier tta_val_acc=0.6042 train_loss=1.0863 val_acc=0.5715
+4. run=190 scheduler=mult_sched_090_bezier tta_val_acc=0.6001 train_loss=1.06 val_acc=0.5677
+5. run=196 scheduler=mult_sched_096_bezier tta_val_acc=0.5998 train_loss=1.0874 val_acc=0.5687
+6. run=188 scheduler=mult_sched_088_bezier tta_val_acc=0.5976 train_loss=1.0662 val_acc=0.5616
+7. run=189 scheduler=mult_sched_089_bezier tta_val_acc=0.5949 train_loss=1.0594 val_acc=0.5646
+8. run=187 scheduler=mult_sched_087_bezier tta_val_acc=0.591 train_loss=1.0695 val_acc=0.5569
+
+batch_size=5000 best train loss
+--------------------------------------
+1. run=236 scheduler=mult_sched_036_bezier train_loss=1.3343 train_acc=0.848 val_acc=0.6044 tta_val_acc=0.621 schedule=0.927,1.1200988,1.2669506,1.3675556,1.4219136,1.4300247,1.3918889,1.3075062,1.1768765,1
+2. run=243 scheduler=mult_sched_043_bezier train_loss=1.3355 train_acc=0.8508 val_acc=0.6007 tta_val_acc=0.6192 schedule=1.066,1.161284,1.2309136,1.2748889,1.2932099,1.2858765,1.2528889,1.1942469,1.1099506,1
+3. run=235 scheduler=mult_sched_035_bezier train_loss=1.3384 train_acc=0.8492 val_acc=0.6016 tta_val_acc=0.6214 schedule=0.927,1.0857778,1.2068889,1.2903333,1.3361111,1.3442222,1.3146667,1.2474444,1.1425556,1
+4. run=253 scheduler=mult_sched_053_bezier train_loss=1.3413 train_acc=0.8342 val_acc=0.6204 tta_val_acc=0.6395 schedule=1.205,1.3054321,1.3750617,1.4138889,1.4219136,1.3991358,1.3455556,1.2611728,1.1459877,1
+5. run=227 scheduler=mult_sched_027_bezier train_loss=1.3416 train_acc=0.844 val_acc=0.604 tta_val_acc=0.6232 schedule=0.788,1.0102716,1.1828642,1.3057778,1.3790123,1.4025679,1.3764444,1.300642,1.1751605,1
+6. run=234 scheduler=mult_sched_034_bezier train_loss=1.3426 train_acc=0.8486 val_acc=0.5983 tta_val_acc=0.6159 schedule=0.927,1.0514568,1.1468272,1.2131111,1.2503086,1.2584198,1.2374444,1.1873827,1.1082346,1
+7. run=242 scheduler=mult_sched_042_bezier train_loss=1.3442 train_acc=0.847 val_acc=0.5993 tta_val_acc=0.6162 schedule=1.066,1.126963,1.1708519,1.1976667,1.2074074,1.2000741,1.1756667,1.1341852,1.0756296,1
+8. run=245 scheduler=mult_sched_045_bezier train_loss=1.3448 train_acc=0.8312 val_acc=0.6232 tta_val_acc=0.6405 schedule=1.066,1.2299259,1.351037,1.4293333,1.4648148,1.4574815,1.4073333,1.3143704,1.1785926,1
+9. run=218 scheduler=mult_sched_018_bezier train_loss=1.3459 train_acc=0.8478 val_acc=0.5906 tta_val_acc=0.6076 schedule=0.649,0.90044444,1.0987778,1.244,1.3361111,1.3751111,1.361,1.2937778,1.1734444,1
+10. run=244 scheduler=mult_sched_044_bezier train_loss=1.3495 train_acc=0.8288 val_acc=0.6178 tta_val_acc=0.633 schedule=1.066,1.1956049,1.2909753,1.3521111,1.3790123,1.371679,1.3301111,1.2543086,1.1442716,1
+11. run=254 scheduler=mult_sched_054_bezier train_loss=1.3502 train_acc=0.8284 val_acc=0.6143 tta_val_acc=0.6311 schedule=1.205,1.3397531,1.4351235,1.4911111,1.507716,1.4849383,1.4227778,1.3212346,1.1803086,1
+12. run=217 scheduler=mult_sched_017_bezier train_loss=1.351 train_acc=0.844 val_acc=0.591 tta_val_acc=0.6074 schedule=0.649,0.86612346,1.038716,1.1667778,1.2503086,1.2893086,1.2837778,1.233716,1.1391235,1
+
+batch_size=5000 best TTA val acc
+--------------------------------------
+1. run=281 scheduler=mult_sched_081_bezier tta_val_acc=0.6408 train_loss=1.3769 val_acc=0.6245
+2. run=245 scheduler=mult_sched_045_bezier tta_val_acc=0.6405 train_loss=1.3448 val_acc=0.6232
+3. run=253 scheduler=mult_sched_053_bezier tta_val_acc=0.6395 train_loss=1.3413 val_acc=0.6204
+4. run=263 scheduler=mult_sched_063_bezier tta_val_acc=0.6373 train_loss=1.3523 val_acc=0.6171
+5. run=271 scheduler=mult_sched_071_bezier tta_val_acc=0.6369 train_loss=1.3675 val_acc=0.6196
+6. run=270 scheduler=mult_sched_070_bezier tta_val_acc=0.6359 train_loss=1.3677 val_acc=0.6179
+7. run=272 scheduler=mult_sched_072_bezier tta_val_acc=0.6355 train_loss=1.3709 val_acc=0.6187
+8. run=279 scheduler=mult_sched_079_bezier tta_val_acc=0.635 train_loss=1.375 val_acc=0.6182
+
+batch_size=10000 best train loss
+--------------------------------------
+1. run=318 scheduler=mult_sched_018_bezier train_loss=1.4376 train_acc=0.7655 val_acc=0.639 tta_val_acc=0.6572 schedule=0.649,0.90044444,1.0987778,1.244,1.3361111,1.3751111,1.361,1.2937778,1.1734444,1
+2. run=327 scheduler=mult_sched_027_bezier train_loss=1.4429 train_acc=0.7546 val_acc=0.6454 tta_val_acc=0.662 schedule=0.788,1.0102716,1.1828642,1.3057778,1.3790123,1.4025679,1.3764444,1.300642,1.1751605,1
+3. run=326 scheduler=mult_sched_026_bezier train_loss=1.4467 train_acc=0.7577 val_acc=0.642 tta_val_acc=0.6605 schedule=0.788,0.97595062,1.1228025,1.2285556,1.2932099,1.3167654,1.2992222,1.2405802,1.1408395,1
+4. run=325 scheduler=mult_sched_025_bezier train_loss=1.4473 train_acc=0.7621 val_acc=0.6396 tta_val_acc=0.6603 schedule=0.788,0.94162963,1.0627407,1.1513333,1.2074074,1.230963,1.222,1.1805185,1.1065185,1
+5. run=317 scheduler=mult_sched_017_bezier train_loss=1.4482 train_acc=0.7643 val_acc=0.6276 tta_val_acc=0.6441 schedule=0.649,0.86612346,1.038716,1.1667778,1.2503086,1.2893086,1.2837778,1.233716,1.1391235,1
+6. run=324 scheduler=mult_sched_024_bezier train_loss=1.4495 train_acc=0.7643 val_acc=0.6357 tta_val_acc=0.6555 schedule=0.788,0.90730864,1.002679,1.0741111,1.1216049,1.1451605,1.1447778,1.1204568,1.0721975,1
+7. run=336 scheduler=mult_sched_036_bezier train_loss=1.4519 train_acc=0.7459 val_acc=0.6423 tta_val_acc=0.6581 schedule=0.927,1.1200988,1.2669506,1.3675556,1.4219136,1.4300247,1.3918889,1.3075062,1.1768765,1
+8. run=345 scheduler=mult_sched_045_bezier train_loss=1.4532 train_acc=0.7431 val_acc=0.6393 tta_val_acc=0.6536 schedule=1.066,1.2299259,1.351037,1.4293333,1.4648148,1.4574815,1.4073333,1.3143704,1.1785926,1
+9. run=335 scheduler=mult_sched_035_bezier train_loss=1.4548 train_acc=0.7471 val_acc=0.6428 tta_val_acc=0.6559 schedule=0.927,1.0857778,1.2068889,1.2903333,1.3361111,1.3442222,1.3146667,1.2474444,1.1425556,1
+10. run=316 scheduler=mult_sched_016_bezier train_loss=1.4551 train_acc=0.7587 val_acc=0.6278 tta_val_acc=0.6424 schedule=0.649,0.83180247,0.97865432,1.0895556,1.1645062,1.2035062,1.2065556,1.1736543,1.1048025,1
+11. run=315 scheduler=mult_sched_015_bezier train_loss=1.4585 train_acc=0.7603 val_acc=0.6286 tta_val_acc=0.6443 schedule=0.649,0.79748148,0.91859259,1.0123333,1.0787037,1.1177037,1.1293333,1.1135926,1.0704815,1
+12. run=322 scheduler=mult_sched_022_bezier train_loss=1.4587 train_acc=0.7583 val_acc=0.6293 tta_val_acc=0.646 schedule=0.788,0.83866667,0.88255556,0.91966667,0.95,0.97355556,0.99033333,1.0003333,1.0035556,1
+
+batch_size=10000 best TTA val acc
+--------------------------------------
+1. run=327 scheduler=mult_sched_027_bezier tta_val_acc=0.662 train_loss=1.4429 val_acc=0.6454
+2. run=326 scheduler=mult_sched_026_bezier tta_val_acc=0.6605 train_loss=1.4467 val_acc=0.642
+3. run=325 scheduler=mult_sched_025_bezier tta_val_acc=0.6603 train_loss=1.4473 val_acc=0.6396
+4. run=336 scheduler=mult_sched_036_bezier tta_val_acc=0.6581 train_loss=1.4519 val_acc=0.6423
+5. run=354 scheduler=mult_sched_054_bezier tta_val_acc=0.6577 train_loss=1.4609 val_acc=0.6417
+6. run=318 scheduler=mult_sched_018_bezier tta_val_acc=0.6572 train_loss=1.4376 val_acc=0.639
+7. run=335 scheduler=mult_sched_035_bezier tta_val_acc=0.6559 train_loss=1.4548 val_acc=0.6428
+8. run=324 scheduler=mult_sched_024_bezier tta_val_acc=0.6555 train_loss=1.4495 val_acc=0.6357
+

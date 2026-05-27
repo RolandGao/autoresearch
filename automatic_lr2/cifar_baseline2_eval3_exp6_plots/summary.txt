@@ -1,0 +1,103 @@
+CIFAR Baseline Eval3 Exp6 Joint Line Search
+=============================================
+
+Muon LR and SGD LR multiplier are rounded to 2 significant figures before running.
+
+Unique evaluated runs: 39
+Search steps: 7
+Cache hits: 18
+
+batch_size=125 selected best
+-----------------------------------
+point: (5, 3)
+muon_lr: 0.062
+sgd_lr_mult: 0.51
+TTA val acc: 0.939
+evaluated points: 39
+
+All Evaluated Points
+--------------------
+run  batch  point    muon_lr  sgd_mult  train_loss  val_loss  train_acc  val_acc  tta_val_acc  wall_s 
+---  -----  -------  -------  --------  ----------  --------  ---------  -------  -----------  -------
+0    125    (0, 0)   0.19     1         1.0059      1.0575    0.9384     0.9038   0.9142       33.9649
+1    125    (-1, 0)  0.24     1         1.0242      1.0702    0.928      0.8956   0.9057       33.1786
+2    125    (-2, 0)  0.3      1         1.0414      1.0823    0.9189     0.8916   0.9027       32.6777
+3    125    (1, 0)   0.15     1         0.9893      1.0508    0.9472     0.907    0.9164       32.1723
+4    125    (2, 0)   0.12     1         0.9743      1.0326    0.9547     0.9152   0.9244       33.2004
+5    125    (0, -1)  0.19     1.2       1.0211      1.0707    0.9298     0.8955   0.9073       32.8427
+6    125    (0, -2)  0.19     1.6       2.0199      2.0221    0.2832     0.2814   0.2846       33.0907
+7    125    (0, 1)   0.19     0.8       0.9973      1.0516    0.943      0.9078   0.9178       32.8014
+8    125    (0, 2)   0.19     0.64      0.9913      1.0469    0.9465     0.909    0.9196       32.9074
+9    125    (3, 0)   0.097    1         0.9648      1.0333    0.96       0.9147   0.9244       32.6082
+10   125    (4, 0)   0.078    1         0.9604      1.032     0.9629     0.9157   0.9288       32.953 
+11   125    (2, -1)  0.12     1.2       0.9955      1.0512    0.9431     0.9078   0.9153       32.3895
+12   125    (2, -2)  0.12     1.6       1.9977      1.9913    0.2812     0.2822   0.2833       32.884 
+13   125    (2, 1)   0.12     0.8       0.9659      1.0317    0.9597     0.9184   0.9258       33.0304
+14   125    (2, 2)   0.12     0.64      0.9605      1.0251    0.9625     0.9206   0.9286       33.1967
+15   125    (5, 0)   0.062    1         0.9534      1.0262    0.9671     0.9208   0.9293       32.5862
+16   125    (6, 0)   0.05     1         0.9535      1.0237    0.9679     0.9204   0.9317       31.9854
+17   125    (4, -1)  0.078    1.2       0.9946      1.0533    0.9437     0.9058   0.9142       32.873 
+18   125    (4, -2)  0.078    1.6       2.3026      2.3026    0.1        0.1      0.1          32.7962
+19   125    (4, 1)   0.078    0.8       0.9449      1.0194    0.9708     0.9244   0.9336       31.9865
+20   125    (4, 2)   0.078    0.64      0.9404      1.0166    0.9734     0.9236   0.9361       32.6142
+21   125    (3, 2)   0.097    0.64      0.9507      1.0219    0.9681     0.9235   0.9294       31.7071
+22   125    (5, 2)   0.062    0.64      0.9315      1.0114    0.9787     0.9276   0.9382       32.9604
+23   125    (6, 2)   0.05     0.64      0.9285      1.0156    0.9807     0.9272   0.9385       33.2144
+24   125    (4, 3)   0.078    0.51      0.9358      1.0144    0.9762     0.9263   0.9339       32.634 
+25   125    (4, 4)   0.078    0.41      0.9326      1.0136    0.9774     0.9261   0.9349       33.2429
+26   125    (7, 2)   0.04     0.64      0.9265      1.0147    0.9827     0.9291   0.9361       32.8956
+27   125    (8, 2)   0.032    0.64      0.9312      1.0235    0.9828     0.9235   0.9326       33.6552
+28   125    (6, 1)   0.05     0.8       0.936       1.0181    0.9771     0.9236   0.9362       33.0399
+29   125    (6, 3)   0.05     0.51      0.922       1.0113    0.9841     0.9284   0.9388       33.1285
+30   125    (6, 4)   0.05     0.41      0.9194      1.0096    0.9859     0.9299   0.9383       33.6748
+31   125    (5, 3)   0.062    0.51      0.9261      1.0114    0.9812     0.9266   0.939        33.3263
+32   125    (7, 3)   0.04     0.51      0.9207      1.0132    0.9856     0.9284   0.939        31.1591
+33   125    (8, 3)   0.032    0.51      0.9241      1.0187    0.9857     0.9263   0.937        33.5007
+34   125    (6, 5)   0.05     0.33      0.9152      1.0082    0.9875     0.9297   0.9381       33.5603
+35   125    (3, 3)   0.097    0.51      0.9454      1.0159    0.9706     0.9239   0.9341       33.3477
+36   125    (5, 1)   0.062    0.8       0.9383      1.0215    0.9746     0.9222   0.9326       32.3943
+37   125    (5, 4)   0.062    0.41      0.9232      1.0094    0.9827     0.9276   0.9388       33.3474
+38   125    (5, 5)   0.062    0.33      0.9209      1.0123    0.9836     0.926    0.937        33.4916
+
+Ranking, batch_size=125
+------------------------
+1. r31 point=(5, 3) muon_lr=0.062 sgd_lr_mult=0.51 tta_val_acc=0.939 val_acc=0.9266 train_loss=0.9261
+2. r32 point=(7, 3) muon_lr=0.04 sgd_lr_mult=0.51 tta_val_acc=0.939 val_acc=0.9284 train_loss=0.9207
+3. r29 point=(6, 3) muon_lr=0.05 sgd_lr_mult=0.51 tta_val_acc=0.9388 val_acc=0.9284 train_loss=0.922
+4. r37 point=(5, 4) muon_lr=0.062 sgd_lr_mult=0.41 tta_val_acc=0.9388 val_acc=0.9276 train_loss=0.9232
+5. r23 point=(6, 2) muon_lr=0.05 sgd_lr_mult=0.64 tta_val_acc=0.9385 val_acc=0.9272 train_loss=0.9285
+6. r30 point=(6, 4) muon_lr=0.05 sgd_lr_mult=0.41 tta_val_acc=0.9383 val_acc=0.9299 train_loss=0.9194
+7. r22 point=(5, 2) muon_lr=0.062 sgd_lr_mult=0.64 tta_val_acc=0.9382 val_acc=0.9276 train_loss=0.9315
+8. r34 point=(6, 5) muon_lr=0.05 sgd_lr_mult=0.33 tta_val_acc=0.9381 val_acc=0.9297 train_loss=0.9152
+9. r33 point=(8, 3) muon_lr=0.032 sgd_lr_mult=0.51 tta_val_acc=0.937 val_acc=0.9263 train_loss=0.9241
+10. r38 point=(5, 5) muon_lr=0.062 sgd_lr_mult=0.33 tta_val_acc=0.937 val_acc=0.926 train_loss=0.9209
+11. r28 point=(6, 1) muon_lr=0.05 sgd_lr_mult=0.8 tta_val_acc=0.9362 val_acc=0.9236 train_loss=0.936
+12. r20 point=(4, 2) muon_lr=0.078 sgd_lr_mult=0.64 tta_val_acc=0.9361 val_acc=0.9236 train_loss=0.9404
+13. r26 point=(7, 2) muon_lr=0.04 sgd_lr_mult=0.64 tta_val_acc=0.9361 val_acc=0.9291 train_loss=0.9265
+14. r25 point=(4, 4) muon_lr=0.078 sgd_lr_mult=0.41 tta_val_acc=0.9349 val_acc=0.9261 train_loss=0.9326
+15. r35 point=(3, 3) muon_lr=0.097 sgd_lr_mult=0.51 tta_val_acc=0.9341 val_acc=0.9239 train_loss=0.9454
+16. r24 point=(4, 3) muon_lr=0.078 sgd_lr_mult=0.51 tta_val_acc=0.9339 val_acc=0.9263 train_loss=0.9358
+17. r19 point=(4, 1) muon_lr=0.078 sgd_lr_mult=0.8 tta_val_acc=0.9336 val_acc=0.9244 train_loss=0.9449
+18. r27 point=(8, 2) muon_lr=0.032 sgd_lr_mult=0.64 tta_val_acc=0.9326 val_acc=0.9235 train_loss=0.9312
+19. r36 point=(5, 1) muon_lr=0.062 sgd_lr_mult=0.8 tta_val_acc=0.9326 val_acc=0.9222 train_loss=0.9383
+20. r16 point=(6, 0) muon_lr=0.05 sgd_lr_mult=1 tta_val_acc=0.9317 val_acc=0.9204 train_loss=0.9535
+21. r21 point=(3, 2) muon_lr=0.097 sgd_lr_mult=0.64 tta_val_acc=0.9294 val_acc=0.9235 train_loss=0.9507
+22. r15 point=(5, 0) muon_lr=0.062 sgd_lr_mult=1 tta_val_acc=0.9293 val_acc=0.9208 train_loss=0.9534
+23. r10 point=(4, 0) muon_lr=0.078 sgd_lr_mult=1 tta_val_acc=0.9288 val_acc=0.9157 train_loss=0.9604
+24. r14 point=(2, 2) muon_lr=0.12 sgd_lr_mult=0.64 tta_val_acc=0.9286 val_acc=0.9206 train_loss=0.9605
+25. r13 point=(2, 1) muon_lr=0.12 sgd_lr_mult=0.8 tta_val_acc=0.9258 val_acc=0.9184 train_loss=0.9659
+26. r4 point=(2, 0) muon_lr=0.12 sgd_lr_mult=1 tta_val_acc=0.9244 val_acc=0.9152 train_loss=0.9743
+27. r9 point=(3, 0) muon_lr=0.097 sgd_lr_mult=1 tta_val_acc=0.9244 val_acc=0.9147 train_loss=0.9648
+28. r8 point=(0, 2) muon_lr=0.19 sgd_lr_mult=0.64 tta_val_acc=0.9196 val_acc=0.909 train_loss=0.9913
+29. r7 point=(0, 1) muon_lr=0.19 sgd_lr_mult=0.8 tta_val_acc=0.9178 val_acc=0.9078 train_loss=0.9973
+30. r3 point=(1, 0) muon_lr=0.15 sgd_lr_mult=1 tta_val_acc=0.9164 val_acc=0.907 train_loss=0.9893
+31. r11 point=(2, -1) muon_lr=0.12 sgd_lr_mult=1.2 tta_val_acc=0.9153 val_acc=0.9078 train_loss=0.9955
+32. r0 point=(0, 0) muon_lr=0.19 sgd_lr_mult=1 tta_val_acc=0.9142 val_acc=0.9038 train_loss=1.0059
+33. r17 point=(4, -1) muon_lr=0.078 sgd_lr_mult=1.2 tta_val_acc=0.9142 val_acc=0.9058 train_loss=0.9946
+34. r5 point=(0, -1) muon_lr=0.19 sgd_lr_mult=1.2 tta_val_acc=0.9073 val_acc=0.8955 train_loss=1.0211
+35. r1 point=(-1, 0) muon_lr=0.24 sgd_lr_mult=1 tta_val_acc=0.9057 val_acc=0.8956 train_loss=1.0242
+36. r2 point=(-2, 0) muon_lr=0.3 sgd_lr_mult=1 tta_val_acc=0.9027 val_acc=0.8916 train_loss=1.0414
+37. r6 point=(0, -2) muon_lr=0.19 sgd_lr_mult=1.6 tta_val_acc=0.2846 val_acc=0.2814 train_loss=2.0199
+38. r12 point=(2, -2) muon_lr=0.12 sgd_lr_mult=1.6 tta_val_acc=0.2833 val_acc=0.2822 train_loss=1.9977
+39. r18 point=(4, -2) muon_lr=0.078 sgd_lr_mult=1.6 tta_val_acc=0.1 val_acc=0.1 train_loss=2.3026
+
