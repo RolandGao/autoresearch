@@ -577,7 +577,7 @@ BEST_LR_FACTOR = 0.8
 BEST_LR_EMA_MOMENTUM = 0.9
 BEST_LR_MAX_SEARCH_STEPS = 40
 BEST_LR_REL_DIFF_THRESHOLD = 0.4
-END_LR_MULTIPLIER = 0.01
+END_LR_MULTIPLIER = 0.1
 START_LR_MULTIPLIER = 2.0
 PEAK_LR_MAX_LEFT_STEPS = 30
 PEAK_LR_MAX_RIGHT_STEPS = 20
@@ -1049,7 +1049,7 @@ def uses_best_lr_decay(best_lr_scheduler):
 def best_lr_scheduler_multiplier(step, total_steps, steps_per_epoch, best_lr_scheduler):
     if best_lr_scheduler == "constant":
         return 1.0
-    if best_lr_scheduler == "linear_2_to_0.01":
+    if best_lr_scheduler in ("linear_2_to_0.1", "linear_2_to_0.01"):
         denominator = max(1, total_steps - 1)
         progress = step / denominator
         return (
@@ -1075,11 +1075,22 @@ def best_lr_scheduler_multiplier(step, total_steps, steps_per_epoch, best_lr_sch
 ############################################
 
 BASE_RUN_CONFIGS = [
+    dict(batch_size=125, muon_lr=0.0498074, sgd_lr_mult=0.512),
     dict(batch_size=500, muon_lr=0.1216, sgd_lr_mult=1.0),
     dict(batch_size=2000, muon_lr=0.2375, sgd_lr_mult=0.8),
+    dict(batch_size=5000, muon_lr=0.371094, sgd_lr_mult=0.64),
+    dict(batch_size=10000, muon_lr=0.296875, sgd_lr_mult=0.8),
 ]
-RUN_CONFIGS = [
-    dict(
+BEST_LR_RUN_SCHEDULES = [
+    ("constant", "constant"),
+    ("decay2to0.1", "linear_2_to_0.1"),
+    ("decay1to0.1", "linear"),
+    ("last2_decay", "last2_linear"),
+]
+
+
+def fixed_muon_run_config(config):
+    return dict(
         name=(
             f"muon_bs{config['batch_size']}_lr{config['muon_lr']:.6g}"
             f"_sgd{config['sgd_lr_mult']:.6g}"
@@ -1089,33 +1100,29 @@ RUN_CONFIGS = [
         sgd_lr_mult=config["sgd_lr_mult"],
         best_lr_strategy=None,
     )
-    for config in BASE_RUN_CONFIGS
-] + [
-    dict(
+
+
+def best_lr_run_config(config, schedule_name, scheduler):
+    return dict(
         name=(
-            f"min_loss_bs{config['batch_size']}_lr{config['muon_lr']:.6g}"
-            f"_sgd{config['sgd_lr_mult']:.6g}"
-        ),
-        batch_size=config["batch_size"],
-        muon_lr=config["muon_lr"],
-        sgd_lr_mult=config["sgd_lr_mult"],
-        best_lr_strategy="min_loss",
-        best_lr_scheduler="constant",
-    )
-    for config in BASE_RUN_CONFIGS
-] + [
-    dict(
-        name=(
-            f"min_loss_muon2_decay_bs{config['batch_size']}"
+            f"best_lr_{schedule_name}_bs{config['batch_size']}"
             f"_lr{config['muon_lr']:.6g}_sgd{config['sgd_lr_mult']:.6g}"
         ),
         batch_size=config["batch_size"],
         muon_lr=config["muon_lr"],
         sgd_lr_mult=config["sgd_lr_mult"],
         best_lr_strategy="min_loss",
-        best_lr_scheduler="linear_2_to_0.01",
+        best_lr_scheduler=scheduler,
     )
+
+
+RUN_CONFIGS = [
+    fixed_muon_run_config(config)
     for config in BASE_RUN_CONFIGS
+] + [
+    best_lr_run_config(config, schedule_name, scheduler)
+    for config in BASE_RUN_CONFIGS
+    for schedule_name, scheduler in BEST_LR_RUN_SCHEDULES
 ]
 
 
