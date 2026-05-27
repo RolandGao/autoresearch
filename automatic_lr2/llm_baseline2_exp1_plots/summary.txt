@@ -1,0 +1,50 @@
+LLM Baseline2 Exp1 Results
+===========================
+
+Runs: 3
+
+Ranking by val_bpb
+------------------
+1. muon_lr0.06
+   label: fixed
+   val_bpb: 1.0398
+   val_loss: 2.9121
+   train_loss: 2.8795
+   wall_time_seconds: 375.3194
+   cuda_time_seconds: 373.1403
+   final_applied_lr: 0.003
+   final_searched_lr: NA
+   final_best_lr_ema: NA
+   final_post_loss_mean: 2.8795264
+
+2. best_lr_decay1to0.1_lr0.06
+   label: best_lr 1->0.1
+   val_bpb: 1.0584
+   val_loss: 2.964
+   train_loss: 2.9074
+   wall_time_seconds: 861.9876
+   cuda_time_seconds: 861.1614
+   final_applied_lr: 0.028787428
+   final_searched_lr: 0.28787428
+   final_best_lr_ema: 0.23605691
+   final_post_loss_mean: 2.9074082
+
+3. best_lr_constant_lr0.06
+   label: best_lr const
+   val_bpb: 1.1309
+   val_loss: 3.1671
+   train_loss: 3.0726
+   wall_time_seconds: 811.998
+   cuda_time_seconds: 811.2285
+   final_applied_lr: 0.26016776
+   final_searched_lr: 0.26016776
+   final_best_lr_ema: 0.26016776
+   final_post_loss_mean: 3.0725815
+
+All Runs
+--------
+run  name                        label           muon_lr  scheduler  train_loss  val_loss  val_bpb  wall_s    cuda_s    steps  final_applied_lr  final_searched_lr
+---  --------------------------  --------------  -------  ---------  ----------  --------  -------  --------  --------  -----  ----------------  -----------------
+0    muon_lr0.06                 fixed           0.06     constant   2.8795      2.9121    1.0398   375.3194  373.1403  1350   0.003             NA               
+1    best_lr_constant_lr0.06     best_lr const   0.06     constant   3.0726      3.1671    1.1309   811.998   811.2285  1350   0.26016776        0.26016776       
+2    best_lr_decay1to0.1_lr0.06  best_lr 1->0.1  0.06     linear     2.9074      2.964     1.0584   861.9876  861.1614  1350   0.028787428       0.28787428       

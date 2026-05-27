@@ -18,7 +18,7 @@ with open(sys.argv[0]) as f:
 from collections import Counter
 import json
 import uuid
-from math import ceil, isfinite
+from math import ceil, floor, isfinite, log10
 
 import torch
 from torch import nn
@@ -1049,6 +1049,8 @@ def uses_best_lr_decay(best_lr_scheduler):
 def best_lr_scheduler_multiplier(step, total_steps, steps_per_epoch, best_lr_scheduler):
     if best_lr_scheduler == "constant":
         return 1.0
+    if best_lr_scheduler == "constant_2":
+        return START_LR_MULTIPLIER
     if best_lr_scheduler in ("linear_2_to_0.1", "linear_2_to_0.01"):
         denominator = max(1, total_steps - 1)
         progress = step / denominator
@@ -1067,6 +1069,16 @@ def best_lr_scheduler_multiplier(step, total_steps, steps_per_epoch, best_lr_sch
         denominator = max(1, total_steps - 1 - decay_start_step)
         progress = (step - decay_start_step) / denominator
         return 1.0 + (END_LR_MULTIPLIER - 1.0) * progress
+    if best_lr_scheduler == "last2_linear_2_to_0.1":
+        decay_start_step = max(0, total_steps - 2 * steps_per_epoch)
+        if step < decay_start_step:
+            return START_LR_MULTIPLIER
+        denominator = max(1, total_steps - 1 - decay_start_step)
+        progress = (step - decay_start_step) / denominator
+        return (
+            START_LR_MULTIPLIER
+            + (END_LR_MULTIPLIER - START_LR_MULTIPLIER) * progress
+        )
     raise ValueError(f"Unknown best_lr_scheduler: {best_lr_scheduler}")
 
 
@@ -1075,21 +1087,32 @@ def best_lr_scheduler_multiplier(step, total_steps, steps_per_epoch, best_lr_sch
 ############################################
 
 BASE_RUN_CONFIGS = [
-    dict(batch_size=125, muon_lr=0.0498074, sgd_lr_mult=0.512),
-    dict(batch_size=500, muon_lr=0.1216, sgd_lr_mult=1.0),
     dict(batch_size=2000, muon_lr=0.2375, sgd_lr_mult=0.8),
     dict(batch_size=5000, muon_lr=0.371094, sgd_lr_mult=0.64),
     dict(batch_size=10000, muon_lr=0.296875, sgd_lr_mult=0.8),
 ]
 BEST_LR_RUN_SCHEDULES = [
-    ("constant", "constant"),
-    ("decay2to0.1", "linear_2_to_0.1"),
-    ("decay1to0.1", "linear"),
-    ("last2_decay", "last2_linear"),
+    ("constant2", "constant_2"),
+    ("last2_decay2to0.1", "last2_linear_2_to_0.1"),
 ]
 
 
+def round_sigfigs(value, sigfigs=2):
+    if value == 0:
+        return 0.0
+    return round(value, sigfigs - 1 - floor(log10(abs(value))))
+
+
+def round_run_hparams(config):
+    return dict(
+        config,
+        muon_lr=round_sigfigs(config["muon_lr"]),
+        sgd_lr_mult=round_sigfigs(config["sgd_lr_mult"]),
+    )
+
+
 def fixed_muon_run_config(config):
+    config = round_run_hparams(config)
     return dict(
         name=(
             f"muon_bs{config['batch_size']}_lr{config['muon_lr']:.6g}"
@@ -1103,6 +1126,7 @@ def fixed_muon_run_config(config):
 
 
 def best_lr_run_config(config, schedule_name, scheduler):
+    config = round_run_hparams(config)
     return dict(
         name=(
             f"best_lr_{schedule_name}_bs{config['batch_size']}"
@@ -1117,9 +1141,6 @@ def best_lr_run_config(config, schedule_name, scheduler):
 
 
 RUN_CONFIGS = [
-    fixed_muon_run_config(config)
-    for config in BASE_RUN_CONFIGS
-] + [
     best_lr_run_config(config, schedule_name, scheduler)
     for config in BASE_RUN_CONFIGS
     for schedule_name, scheduler in BEST_LR_RUN_SCHEDULES

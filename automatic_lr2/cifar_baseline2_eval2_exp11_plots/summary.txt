@@ -1,0 +1,109 @@
+CIFAR Baseline Eval2 Exp11 Results
+==================================
+
+Runs: 6
+
+batch_size=2000
+---------------
+1. best_lr_last2_decay2to0.1_bs2000_lr0.2375_sgd0.8
+   kind: best_lr x2 last2->0.1
+   muon_lr: 0.2375
+   sgd_lr_mult: 0.8
+   TTA val acc: 0.9268
+   val acc: 0.9172
+   train acc: 0.9555
+   train loss: 0.9866
+   val loss: 1.0456
+   final post-loss mean: 0.98657183
+   wall time seconds: 26.3038
+   final applied LR: 0.0099794274
+   final searched LR: 0.099794274
+   final best-LR EMA: 0.099794274
+2. best_lr_constant2_bs2000_lr0.2375_sgd0.8
+   kind: best_lr const x2
+   muon_lr: 0.2375
+   sgd_lr_mult: 0.8
+   TTA val acc: 0.7706
+   val acc: 0.7517
+   train acc: 0.802
+   train loss: 1.2678
+   val loss: 1.3482
+   final post-loss mean: 1.2678287
+   wall time seconds: 26.7113
+   final applied LR: 0.27575183
+   final searched LR: 0.13787592
+   final best-LR EMA: 0.13787592
+
+batch_size=5000
+---------------
+1. best_lr_last2_decay2to0.1_bs5000_lr0.371094_sgd0.64
+   kind: best_lr x2 last2->0.1
+   muon_lr: 0.371094
+   sgd_lr_mult: 0.64
+   TTA val acc: 0.9292
+   val acc: 0.9201
+   train acc: 0.9655
+   train loss: 0.9784
+   val loss: 1.0482
+   final post-loss mean: 0.97843999
+   wall time seconds: 25.9648
+   final applied LR: 0.0099913521
+   final searched LR: 0.099913521
+   final best-LR EMA: 0.099913521
+2. best_lr_constant2_bs5000_lr0.371094_sgd0.64
+   kind: best_lr const x2
+   muon_lr: 0.371094
+   sgd_lr_mult: 0.64
+   TTA val acc: 0.787
+   val acc: 0.7706
+   train acc: 0.8872
+   train loss: 1.1309
+   val loss: 1.3362
+   final post-loss mean: 1.1309184
+   wall time seconds: 25.6401
+   final applied LR: 0.2301822
+   final searched LR: 0.1150911
+   final best-LR EMA: 0.1150911
+
+batch_size=10000
+---------------
+1. best_lr_last2_decay2to0.1_bs10000_lr0.296875_sgd0.8
+   kind: best_lr x2 last2->0.1
+   muon_lr: 0.296875
+   sgd_lr_mult: 0.8
+   TTA val acc: 0.8949
+   val acc: 0.8888
+   train acc: 0.9196
+   train loss: 1.0777
+   val loss: 1.129
+   final post-loss mean: 1.0776897
+   wall time seconds: 25.5392
+   final applied LR: 0.0077057728
+   final searched LR: 0.077057728
+   final best-LR EMA: 0.077057728
+2. best_lr_constant2_bs10000_lr0.296875_sgd0.8
+   kind: best_lr const x2
+   muon_lr: 0.296875
+   sgd_lr_mult: 0.8
+   TTA val acc: 0.7844
+   val acc: 0.7733
+   train acc: 0.8653
+   train loss: 1.172
+   val loss: 1.3212
+   final post-loss mean: 1.1719581
+   wall time seconds: 25.2842
+   final applied LR: 0.165717
+   final searched LR: 0.082858501
+   final best-LR EMA: 0.082858501
+
+All Runs
+--------
+run  name                                                 batch  kind                   muon_lr   sgd_mult  train_loss  val_loss  train_acc  val_acc  tta_val_acc  post_loss_mean  wall_s   final_applied_lr  final_searched_lr
+---  ---------------------------------------------------  -----  ---------------------  --------  --------  ----------  --------  ---------  -------  -----------  --------------  -------  ----------------  -----------------
+0    best_lr_constant2_bs2000_lr0.2375_sgd0.8             2000   best_lr const x2       0.2375    0.8       1.2678      1.3482    0.802      0.7517   0.7706       1.2678287       26.7113  0.27575183        0.13787592       
+1    best_lr_last2_decay2to0.1_bs2000_lr0.2375_sgd0.8     2000   best_lr x2 last2->0.1  0.2375    0.8       0.9866      1.0456    0.9555     0.9172   0.9268       0.98657183      26.3038  0.0099794274      0.099794274      
+2    best_lr_constant2_bs5000_lr0.371094_sgd0.64          5000   best_lr const x2       0.371094  0.64      1.1309      1.3362    0.8872     0.7706   0.787        1.1309184       25.6401  0.2301822         0.1150911        
+3    best_lr_last2_decay2to0.1_bs5000_lr0.371094_sgd0.64  5000   best_lr x2 last2->0.1  0.371094  0.64      0.9784      1.0482    0.9655     0.9201   0.9292       0.97843999      25.9648  0.0099913521      0.099913521      
+4    best_lr_constant2_bs10000_lr0.296875_sgd0.8          10000  best_lr const x2       0.296875  0.8       1.172       1.3212    0.8653     0.7733   0.7844       1.1719581       25.2842  0.165717          0.082858501      
+5    best_lr_last2_decay2to0.1_bs10000_lr0.296875_sgd0.8  10000  best_lr x2 last2->0.1  0.296875  0.8       1.0777      1.129     0.9196     0.8888   0.8949       1.0776897       25.5392  0.0077057728      0.077057728      
+

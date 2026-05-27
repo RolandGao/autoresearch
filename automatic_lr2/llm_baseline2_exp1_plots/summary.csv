@@ -1,0 +1,4 @@
+run,name,label,muon_lr,strategy,scheduler,train_loss,val_loss,val_bpb,wall_time_seconds,cuda_time_seconds,steps,total_steps,progress_points,best_lr_points,final_applied_lr,final_searched_lr,final_best_lr_ema,mfu_percent,peak_vram_mb,total_tokens_M
+0,muon_lr0.06,fixed,0.06,,constant,2.8795,2.9121,1.0398,375.3194,373.1403,1350,1350,1350,0,0.003,NA,NA,11.983,22654,176.95
+1,best_lr_constant_lr0.06,best_lr const,0.06,min_loss,constant,3.0726,3.1671,1.1309,811.998,811.2285,1350,1350,1350,1350,0.26016776,0.26016776,0.26016776,5.0664,22654,176.95
+2,best_lr_decay1to0.1_lr0.06,best_lr 1->0.1,0.06,min_loss,linear,2.9074,2.964,1.0584,861.9876,861.1614,1350,1350,1350,1350,0.028787428,0.28787428,0.23605691,4.7522,22654,176.95
