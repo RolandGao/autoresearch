@@ -1,0 +1,131 @@
+CIFAR Baseline Eval4 Exp3 Piecewise Schedule Search
+========================================================
+
+Evaluated runs: 180
+Search steps: 12
+Cache hits: 112
+
+batch_size=500 selected best
+--------------------------------------
+point: (-2, -3)
+step1_multiplier: 1.6
+step5_multiplier: 2
+train_loss: 0.8769
+evaluated_points: 46
+
+batch_size=2000 selected best
+--------------------------------------
+point: (0, -3)
+step1_multiplier: 1
+step5_multiplier: 2
+train_loss: 1.0272
+evaluated_points: 40
+
+batch_size=5000 selected best
+--------------------------------------
+point: (2, -3)
+step1_multiplier: 0.64
+step5_multiplier: 2
+train_loss: 1.3305
+evaluated_points: 46
+
+batch_size=10000 selected best
+--------------------------------------
+point: (1, -3)
+step1_multiplier: 0.8
+step5_multiplier: 2
+train_loss: 1.4347
+evaluated_points: 48
+
+Ranking, batch_size=500
+--------------------------
+1. r36 point=(-2, -3) step1=1.6 step5=2 train_loss=0.8769 train_acc=1 val_loss=2.0168 val_acc=0.4095 schedule=1.6,1.7,1.8,1.9,2,1.8,1.6,1.4,1.2,1
+2. r1 point=(-2, -2) step1=1.6 step5=1.6 train_loss=0.8773 train_acc=1 val_loss=2.0064 val_acc=0.4118 schedule=1.6,1.6,1.6,1.6,1.6,1.48,1.36,1.24,1.12,1
+3. r6 point=(-1, -2) step1=1.2 step5=1.6 train_loss=0.8776 train_acc=1 val_loss=2.0212 val_acc=0.3996 schedule=1.2,1.3,1.4,1.5,1.6,1.48,1.36,1.24,1.12,1
+4. r31 point=(-3, -3) step1=2 step5=2 train_loss=0.8776 train_acc=1 val_loss=1.994 val_acc=0.4323 schedule=2,2,2,2,2,1.8,1.6,1.4,1.2,1
+5. r11 point=(0, -2) step1=1 step5=1.6 train_loss=0.878 train_acc=1 val_loss=2.0281 val_acc=0.3983 schedule=1,1.15,1.3,1.45,1.6,1.48,1.36,1.24,1.12,1
+6. r40 point=(0, -3) step1=1 step5=2 train_loss=0.878 train_acc=1 val_loss=2.0327 val_acc=0.3859 schedule=1,1.25,1.5,1.75,2,1.8,1.6,1.4,1.2,1
+7. r32 point=(-3, -2) step1=2 step5=1.6 train_loss=0.8781 train_acc=1 val_loss=1.9921 val_acc=0.4273 schedule=2,1.9,1.8,1.7,1.6,1.48,1.36,1.24,1.12,1
+8. r2 point=(-2, -1) step1=1.6 step5=1.2 train_loss=0.8782 train_acc=1 val_loss=2.0042 val_acc=0.4196 schedule=1.6,1.5,1.4,1.3,1.2,1.16,1.12,1.08,1.04,1
+9. r33 point=(-3, -1) step1=2 step5=1.2 train_loss=0.8797 train_acc=1 val_loss=1.9887 val_acc=0.4322 schedule=2,1.8,1.6,1.4,1.2,1.16,1.12,1.08,1.04,1
+10. r38 point=(-1, -3) step1=1.2 step5=2 train_loss=0.8797 train_acc=1 val_loss=2.0395 val_acc=0.3743 schedule=1.2,1.4,1.6,1.8,2,1.8,1.6,1.4,1.2,1
+11. r15 point=(1, -2) step1=0.8 step5=1.6 train_loss=0.8798 train_acc=1 val_loss=2.0305 val_acc=0.4005 schedule=0.8,1,1.2,1.4,1.6,1.48,1.36,1.24,1.12,1
+12. r35 point=(-2, -4) step1=1.6 step5=2.4 train_loss=0.8799 train_acc=1 val_loss=2.0426 val_acc=0.3811 schedule=1.6,1.8,2,2.2,2.4,2.12,1.84,1.56,1.28,1
+13. r26 point=(-4, -3) step1=2.4 step5=2 train_loss=0.88 train_acc=1 val_loss=1.9884 val_acc=0.4517 schedule=2.4,2.3,2.2,2.1,2,1.8,1.6,1.4,1.2,1
+14. r27 point=(-4, -2) step1=2.4 step5=1.6 train_loss=0.88 train_acc=1 val_loss=1.9738 val_acc=0.454 schedule=2.4,2.2,2,1.8,1.6,1.48,1.36,1.24,1.12,1
+15. r39 point=(0, -4) step1=1 step5=2.4 train_loss=0.8802 train_acc=1 val_loss=2.0441 val_acc=0.3709 schedule=1,1.35,1.7,2.05,2.4,2.12,1.84,1.56,1.28,1
+16. r7 point=(-1, -1) step1=1.2 step5=1.2 train_loss=0.8804 train_acc=1 val_loss=2.0212 val_acc=0.405 schedule=1.2,1.2,1.2,1.2,1.2,1.16,1.12,1.08,1.04,1
+17. r28 point=(-4, -1) step1=2.4 step5=1.2 train_loss=0.8807 train_acc=1 val_loss=1.9756 val_acc=0.4521 schedule=2.4,2.1,1.8,1.5,1.2,1.16,1.12,1.08,1.04,1
+18. r37 point=(-1, -4) step1=1.2 step5=2.4 train_loss=0.8808 train_acc=1 val_loss=2.03 val_acc=0.39 schedule=1.2,1.5,1.8,2.1,2.4,2.12,1.84,1.56,1.28,1
+19. r3 point=(-2, 0) step1=1.6 step5=1 train_loss=0.881 train_acc=1 val_loss=2.0047 val_acc=0.4242 schedule=1.6,1.45,1.3,1.15,1,1,1,1,1,1
+20. r12 point=(0, -1) step1=1 step5=1.2 train_loss=0.8811 train_acc=1 val_loss=2.0259 val_acc=0.4058 schedule=1,1.05,1.1,1.15,1.2,1.16,1.12,1.08,1.04,1
+
+Ranking, batch_size=2000
+--------------------------
+1. r76 point=(0, -3) step1=1 step5=2 train_loss=1.0272 train_acc=0.986 val_loss=1.8528 val_acc=0.5433 schedule=1,1.25,1.5,1.75,2,1.8,1.6,1.4,1.2,1
+2. r78 point=(1, -3) step1=0.8 step5=2 train_loss=1.0297 train_acc=0.987 val_loss=1.8614 val_acc=0.5369 schedule=0.8,1.1,1.4,1.7,2,1.8,1.6,1.4,1.2,1
+3. r74 point=(-1, -3) step1=1.2 step5=2 train_loss=1.0366 train_acc=0.9825 val_loss=1.835 val_acc=0.5411 schedule=1.2,1.4,1.6,1.8,2,1.8,1.6,1.4,1.2,1
+4. r72 point=(-2, -3) step1=1.6 step5=2 train_loss=1.0428 train_acc=0.9835 val_loss=1.8118 val_acc=0.5709 schedule=1.6,1.7,1.8,1.9,2,1.8,1.6,1.4,1.2,1
+5. r80 point=(2, -3) step1=0.64 step5=2 train_loss=1.0428 train_acc=0.982 val_loss=1.8566 val_acc=0.5364 schedule=0.64,0.98,1.32,1.66,2,1.8,1.6,1.4,1.2,1
+6. r73 point=(-1, -4) step1=1.2 step5=2.4 train_loss=1.044 train_acc=0.9815 val_loss=1.8269 val_acc=0.5553 schedule=1.2,1.5,1.8,2.1,2.4,2.12,1.84,1.56,1.28,1
+7. r75 point=(0, -4) step1=1 step5=2.4 train_loss=1.048 train_acc=0.982 val_loss=1.8408 val_acc=0.5635 schedule=1,1.35,1.7,2.05,2.4,2.12,1.84,1.56,1.28,1
+8. r57 point=(0, -2) step1=1 step5=1.6 train_loss=1.0512 train_acc=0.981 val_loss=1.8722 val_acc=0.5225 schedule=1,1.15,1.3,1.45,1.6,1.48,1.36,1.24,1.12,1
+9. r77 point=(1, -4) step1=0.8 step5=2.4 train_loss=1.0524 train_acc=0.9855 val_loss=1.8754 val_acc=0.5417 schedule=0.8,1.2,1.6,2,2.4,2.12,1.84,1.56,1.28,1
+10. r79 point=(2, -4) step1=0.64 step5=2.4 train_loss=1.0524 train_acc=0.9855 val_loss=1.8684 val_acc=0.5477 schedule=0.64,1.08,1.52,1.96,2.4,2.12,1.84,1.56,1.28,1
+11. r52 point=(-1, -2) step1=1.2 step5=1.6 train_loss=1.0571 train_acc=0.977 val_loss=1.8397 val_acc=0.5281 schedule=1.2,1.3,1.4,1.5,1.6,1.48,1.36,1.24,1.12,1
+12. r47 point=(-2, -2) step1=1.6 step5=1.6 train_loss=1.0573 train_acc=0.9775 val_loss=1.8119 val_acc=0.5412 schedule=1.6,1.6,1.6,1.6,1.6,1.48,1.36,1.24,1.12,1
+13. r61 point=(1, -2) step1=0.8 step5=1.6 train_loss=1.0753 train_acc=0.9765 val_loss=1.8892 val_acc=0.5115 schedule=0.8,1,1.2,1.4,1.6,1.48,1.36,1.24,1.12,1
+14. r71 point=(-2, -4) step1=1.6 step5=2.4 train_loss=1.0771 train_acc=0.972 val_loss=1.8129 val_acc=0.5796 schedule=1.6,1.8,2,2.2,2.4,2.12,1.84,1.56,1.28,1
+15. r66 point=(2, -2) step1=0.64 step5=1.6 train_loss=1.0821 train_acc=0.975 val_loss=1.8789 val_acc=0.5133 schedule=0.64,0.88,1.12,1.36,1.6,1.48,1.36,1.24,1.12,1
+16. r85 point=(2, -5) step1=0.64 step5=3.1 train_loss=1.0885 train_acc=0.9775 val_loss=1.8383 val_acc=0.5578 schedule=0.64,1.255,1.87,2.485,3.1,2.68,2.26,1.84,1.42,1
+17. r48 point=(-2, -1) step1=1.6 step5=1.2 train_loss=1.0894 train_acc=0.9685 val_loss=1.8131 val_acc=0.5346 schedule=1.6,1.5,1.4,1.3,1.2,1.16,1.12,1.08,1.04,1
+18. r58 point=(0, -1) step1=1 step5=1.2 train_loss=1.0947 train_acc=0.9705 val_loss=1.8718 val_acc=0.5115 schedule=1,1.05,1.1,1.15,1.2,1.16,1.12,1.08,1.04,1
+19. r53 point=(-1, -1) step1=1.2 step5=1.2 train_loss=1.0966 train_acc=0.968 val_loss=1.8578 val_acc=0.5056 schedule=1.2,1.2,1.2,1.2,1.2,1.16,1.12,1.08,1.04,1
+20. r84 point=(1, -5) step1=0.8 step5=3.1 train_loss=1.1006 train_acc=0.975 val_loss=1.8437 val_acc=0.5712 schedule=0.8,1.375,1.95,2.525,3.1,2.68,2.26,1.84,1.42,1
+
+Ranking, batch_size=5000
+--------------------------
+1. r116 point=(2, -3) step1=0.64 step5=2 train_loss=1.3305 train_acc=0.8492 val_loss=1.6898 val_acc=0.6174 schedule=0.64,0.98,1.32,1.66,2,1.8,1.6,1.4,1.2,1
+2. r114 point=(1, -3) step1=0.8 step5=2 train_loss=1.337 train_acc=0.8388 val_loss=1.6859 val_acc=0.626 schedule=0.8,1.1,1.4,1.7,2,1.8,1.6,1.4,1.2,1
+3. r115 point=(2, -4) step1=0.64 step5=2.4 train_loss=1.3447 train_acc=0.8336 val_loss=1.6744 val_acc=0.6334 schedule=0.64,1.08,1.52,1.96,2.4,2.12,1.84,1.56,1.28,1
+4. r112 point=(0, -3) step1=1 step5=2 train_loss=1.3471 train_acc=0.829 val_loss=1.6911 val_acc=0.6247 schedule=1,1.25,1.5,1.75,2,1.8,1.6,1.4,1.2,1
+5. r123 point=(4, -3) step1=0.41 step5=2 train_loss=1.3483 train_acc=0.834 val_loss=1.6886 val_acc=0.6127 schedule=0.41,0.8075,1.205,1.6025,2,1.8,1.6,1.4,1.2,1
+6. r106 point=(2, -2) step1=0.64 step5=1.6 train_loss=1.3502 train_acc=0.8436 val_loss=1.7312 val_acc=0.5886 schedule=0.64,0.88,1.12,1.36,1.6,1.48,1.36,1.24,1.12,1
+7. r118 point=(3, -3) step1=0.51 step5=2 train_loss=1.3503 train_acc=0.8376 val_loss=1.689 val_acc=0.6133 schedule=0.51,0.8825,1.255,1.6275,2,1.8,1.6,1.4,1.2,1
+8. r92 point=(-1, -2) step1=1.2 step5=1.6 train_loss=1.3505 train_acc=0.8256 val_loss=1.6864 val_acc=0.6214 schedule=1.2,1.3,1.4,1.5,1.6,1.48,1.36,1.24,1.12,1
+9. r124 point=(4, -2) step1=0.41 step5=1.6 train_loss=1.3554 train_acc=0.8434 val_loss=1.7274 val_acc=0.5971 schedule=0.41,0.7075,1.005,1.3025,1.6,1.48,1.36,1.24,1.12,1
+10. r97 point=(0, -2) step1=1 step5=1.6 train_loss=1.3557 train_acc=0.83 val_loss=1.708 val_acc=0.6138 schedule=1,1.15,1.3,1.45,1.6,1.48,1.36,1.24,1.12,1
+11. r101 point=(1, -2) step1=0.8 step5=1.6 train_loss=1.3582 train_acc=0.8392 val_loss=1.7381 val_acc=0.5925 schedule=0.8,1,1.2,1.4,1.6,1.48,1.36,1.24,1.12,1
+12. r119 point=(3, -2) step1=0.51 step5=1.6 train_loss=1.359 train_acc=0.845 val_loss=1.7376 val_acc=0.5867 schedule=0.51,0.7825,1.055,1.3275,1.6,1.48,1.36,1.24,1.12,1
+13. r117 point=(3, -4) step1=0.51 step5=2.4 train_loss=1.3625 train_acc=0.8204 val_loss=1.665 val_acc=0.6265 schedule=0.51,0.9825,1.455,1.9275,2.4,2.12,1.84,1.56,1.28,1
+14. r111 point=(0, -4) step1=1 step5=2.4 train_loss=1.3631 train_acc=0.8138 val_loss=1.6536 val_acc=0.6371 schedule=1,1.35,1.7,2.05,2.4,2.12,1.84,1.56,1.28,1
+15. r113 point=(1, -4) step1=0.8 step5=2.4 train_loss=1.3647 train_acc=0.8122 val_loss=1.6599 val_acc=0.6333 schedule=0.8,1.2,1.6,2,2.4,2.12,1.84,1.56,1.28,1
+16. r122 point=(4, -4) step1=0.41 step5=2.4 train_loss=1.3695 train_acc=0.8112 val_loss=1.6611 val_acc=0.6154 schedule=0.41,0.9075,1.405,1.9025,2.4,2.12,1.84,1.56,1.28,1
+17. r125 point=(4, -1) step1=0.41 step5=1.2 train_loss=1.3747 train_acc=0.8398 val_loss=1.7647 val_acc=0.567 schedule=0.41,0.6075,0.805,1.0025,1.2,1.16,1.12,1.08,1.04,1
+18. r93 point=(-1, -1) step1=1.2 step5=1.2 train_loss=1.3749 train_acc=0.8202 val_loss=1.7184 val_acc=0.6003 schedule=1.2,1.2,1.2,1.2,1.2,1.16,1.12,1.08,1.04,1
+19. r107 point=(2, -1) step1=0.64 step5=1.2 train_loss=1.3759 train_acc=0.8352 val_loss=1.7491 val_acc=0.575 schedule=0.64,0.78,0.92,1.06,1.2,1.16,1.12,1.08,1.04,1
+20. r98 point=(0, -1) step1=1 step5=1.2 train_loss=1.3796 train_acc=0.8248 val_loss=1.7237 val_acc=0.5864 schedule=1,1.05,1.1,1.15,1.2,1.16,1.12,1.08,1.04,1
+
+Ranking, batch_size=10000
+--------------------------
+1. r160 point=(1, -3) step1=0.8 step5=2 train_loss=1.4347 train_acc=0.7541 val_loss=1.6278 val_acc=0.6589 schedule=0.8,1.1,1.4,1.7,2,1.8,1.6,1.4,1.2,1
+2. r158 point=(0, -3) step1=1 step5=2 train_loss=1.4388 train_acc=0.752 val_loss=1.6268 val_acc=0.6524 schedule=1,1.25,1.5,1.75,2,1.8,1.6,1.4,1.2,1
+3. r152 point=(2, -2) step1=0.64 step5=1.6 train_loss=1.4403 train_acc=0.759 val_loss=1.6419 val_acc=0.6467 schedule=0.64,0.88,1.12,1.36,1.6,1.48,1.36,1.24,1.12,1
+4. r162 point=(2, -3) step1=0.64 step5=2 train_loss=1.4411 train_acc=0.7503 val_loss=1.6399 val_acc=0.6528 schedule=0.64,0.98,1.32,1.66,2,1.8,1.6,1.4,1.2,1
+5. r148 point=(1, -1) step1=0.8 step5=1.2 train_loss=1.4449 train_acc=0.7653 val_loss=1.6677 val_acc=0.634 schedule=0.8,0.9,1,1.1,1.2,1.16,1.12,1.08,1.04,1
+6. r147 point=(1, -2) step1=0.8 step5=1.6 train_loss=1.4472 train_acc=0.7476 val_loss=1.6392 val_acc=0.6464 schedule=0.8,1,1.2,1.4,1.6,1.48,1.36,1.24,1.12,1
+7. r159 point=(1, -4) step1=0.8 step5=2.4 train_loss=1.4482 train_acc=0.7444 val_loss=1.6012 val_acc=0.6614 schedule=0.8,1.2,1.6,2,2.4,2.12,1.84,1.56,1.28,1
+8. r164 point=(3, -3) step1=0.51 step5=2 train_loss=1.4506 train_acc=0.7444 val_loss=1.636 val_acc=0.6523 schedule=0.51,0.8825,1.255,1.6275,2,1.8,1.6,1.4,1.2,1
+9. r163 point=(3, -4) step1=0.51 step5=2.4 train_loss=1.4507 train_acc=0.7406 val_loss=1.6341 val_acc=0.6457 schedule=0.51,0.9825,1.455,1.9275,2.4,2.12,1.84,1.56,1.28,1
+10. r161 point=(2, -4) step1=0.64 step5=2.4 train_loss=1.4539 train_acc=0.7383 val_loss=1.6152 val_acc=0.6465 schedule=0.64,1.08,1.52,1.96,2.4,2.12,1.84,1.56,1.28,1
+11. r169 point=(4, -3) step1=0.41 step5=2 train_loss=1.4546 train_acc=0.7404 val_loss=1.636 val_acc=0.645 schedule=0.41,0.8075,1.205,1.6025,2,1.8,1.6,1.4,1.2,1
+12. r165 point=(3, -2) step1=0.51 step5=1.6 train_loss=1.4554 train_acc=0.7461 val_loss=1.6619 val_acc=0.6343 schedule=0.51,0.7825,1.055,1.3275,1.6,1.48,1.36,1.24,1.12,1
+13. r143 point=(0, -2) step1=1 step5=1.6 train_loss=1.456 train_acc=0.7417 val_loss=1.6461 val_acc=0.6425 schedule=1,1.15,1.3,1.45,1.6,1.48,1.36,1.24,1.12,1
+14. r153 point=(2, -1) step1=0.64 step5=1.2 train_loss=1.4584 train_acc=0.7573 val_loss=1.6776 val_acc=0.6295 schedule=0.64,0.78,0.92,1.06,1.2,1.16,1.12,1.08,1.04,1
+15. r168 point=(4, -4) step1=0.41 step5=2.4 train_loss=1.4606 train_acc=0.7293 val_loss=1.6169 val_acc=0.6432 schedule=0.41,0.9075,1.405,1.9025,2.4,2.12,1.84,1.56,1.28,1
+16. r170 point=(4, -2) step1=0.41 step5=1.6 train_loss=1.4619 train_acc=0.7457 val_loss=1.6606 val_acc=0.6268 schedule=0.41,0.7075,1.005,1.3025,1.6,1.48,1.36,1.24,1.12,1
+17. r157 point=(0, -4) step1=1 step5=2.4 train_loss=1.4637 train_acc=0.7276 val_loss=1.6166 val_acc=0.6292 schedule=1,1.35,1.7,2.05,2.4,2.12,1.84,1.56,1.28,1
+18. r175 point=(-1, -3) step1=1.2 step5=2 train_loss=1.4648 train_acc=0.7308 val_loss=1.6193 val_acc=0.6376 schedule=1.2,1.4,1.6,1.8,2,1.8,1.6,1.4,1.2,1
+19. r166 point=(3, -1) step1=0.51 step5=1.2 train_loss=1.4699 train_acc=0.753 val_loss=1.6858 val_acc=0.6174 schedule=0.51,0.6825,0.855,1.0275,1.2,1.16,1.12,1.08,1.04,1
+20. r138 point=(-1, -2) step1=1.2 step5=1.6 train_loss=1.47 train_acc=0.7292 val_loss=1.6395 val_acc=0.6328 schedule=1.2,1.3,1.4,1.5,1.6,1.48,1.36,1.24,1.12,1
+

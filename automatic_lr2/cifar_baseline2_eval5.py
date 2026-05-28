@@ -1076,8 +1076,10 @@ OVERFIT_BATCH_SIZES = [500, 2000, 5000, 10000]
 OVERFIT_TRAIN_STEPS = 10
 OVERFIT_MUON_LR = 0.19
 OVERFIT_SGD_LR_MULT = 1.0
+SCHEDULE_SEARCH_BASE_LR = 0.2
 SCHEDULE_SEARCH_FACTOR = 0.8
-SCHEDULE_SEARCH_INITIAL_POINT = (0, 0)
+SCHEDULE_SEARCH_INITIAL_EXPONENTS = (0, 2, 10)
+SCHEDULE_SEARCH_INITIAL_POINT = SCHEDULE_SEARCH_INITIAL_EXPONENTS
 SCHEDULE_SEARCH_MAX_MOVES = 30
 APPLIED_LR_SCHEDULES = {}
 
@@ -1089,31 +1091,43 @@ def round_sigfigs(value, sigfigs=2):
 
 
 def schedule_value(exponent):
-    return round_sigfigs(OVERFIT_MUON_LR * (SCHEDULE_SEARCH_FACTOR**exponent))
+    return SCHEDULE_SEARCH_BASE_LR * (SCHEDULE_SEARCH_FACTOR**exponent)
 
 
 def schedule_cache_key(point):
-    return (schedule_value(point[0]), schedule_value(point[1]))
+    return tuple(schedule_value(exponent) for exponent in point)
 
 
 def point_valid(point):
-    return True
+    return len(point) == 3
 
 
 def schedule_from_point(point):
-    step1_lr = schedule_value(point[0])
-    step10_lr = schedule_value(point[1])
+    step1_lr, step5_lr, step10_lr = schedule_cache_key(point)
     values = []
     for one_indexed_step in range(1, OVERFIT_TRAIN_STEPS + 1):
-        progress = (one_indexed_step - 1) / (OVERFIT_TRAIN_STEPS - 1)
-        lr = step1_lr + (step10_lr - step1_lr) * progress
+        if one_indexed_step <= 5:
+            progress = (one_indexed_step - 1) / 4
+            lr = step1_lr + (step5_lr - step1_lr) * progress
+        else:
+            progress = (one_indexed_step - 5) / 5
+            lr = step5_lr + (step10_lr - step5_lr) * progress
         values.append(float("%.8g" % lr))
     values[-1] = step10_lr
     return tuple(values)
 
 
+def lr_label(value):
+    return ("%.8g" % value).replace("-", "m").replace(".", "p")
+
+
 def point_label(point):
-    return f"s1{point[0]}_s10{point[1]}"
+    step1_lr, step5_lr, step10_lr = schedule_cache_key(point)
+    return (
+        f"step1_k{point[0]}_{lr_label(step1_lr)}_"
+        f"step5_k{point[1]}_{lr_label(step5_lr)}_"
+        f"step10_k{point[2]}_{lr_label(step10_lr)}"
+    )
 
 
 def scheduler_name_from_point(point):
@@ -1140,16 +1154,12 @@ def overfit_run_config(batch_size, point):
 
 
 def schedule_search_neighbors(point):
-    step1_exponent, step5_exponent = point
     neighbors = []
-    for step1_offset in range(-2, 3):
-        for step5_offset in range(-2, 3):
-            if step1_offset == 0 and step5_offset == 0:
-                continue
-            neighbor = (
-                step1_exponent + step1_offset,
-                step5_exponent + step5_offset,
-            )
+    for index in range(len(point)):
+        for offset in (-1, 1):
+            neighbor = list(point)
+            neighbor[index] += offset
+            neighbor = tuple(neighbor)
             if point_valid(neighbor):
                 neighbors.append(neighbor)
     return neighbors
@@ -1434,13 +1444,14 @@ if __name__ == "__main__":
             cached = result_cache[cache_key]
             print(
                 "schedule_search cache_hit batch_size=%d point=%s cache_key=%s "
-                "step1_lr=%.6g step10_lr=%.6g train_loss=%.4f"
+                "step1_lr=%.6g step5_lr=%.6g step10_lr=%.6g train_loss=%.4f"
                 % (
                     batch_size,
                     point,
                     cache_key,
                     cache_key[0],
                     cache_key[1],
+                    cache_key[2],
                     cached["train_loss"],
                 ),
                 flush=True,
@@ -1469,12 +1480,13 @@ if __name__ == "__main__":
         )
         print(
             "applied_lr_schedule name=%s point=%s step1_lr=%.8g "
-            "step10_lr=%.8g values=%s"
+            "step5_lr=%.8g step10_lr=%.8g values=%s"
             % (
                 config["best_lr_scheduler"],
                 point,
-                schedule_value(point[0]),
-                schedule_value(point[1]),
+                schedule_cache_key(point)[0],
+                schedule_cache_key(point)[1],
+                schedule_cache_key(point)[2],
                 ",".join(
                     "%.8g" % value
                     for value in APPLIED_LR_SCHEDULES[config["best_lr_scheduler"]]
@@ -1484,8 +1496,11 @@ if __name__ == "__main__":
         )
         result = main(run_index[0], model, **config)
         result["schedule_search_point"] = point
-        result["schedule_step1_lr"] = schedule_value(point[0])
-        result["schedule_step10_lr"] = schedule_value(point[1])
+        (
+            result["schedule_step1_lr"],
+            result["schedule_step5_lr"],
+            result["schedule_step10_lr"],
+        ) = schedule_cache_key(point)
         result["applied_lr_schedule_values"] = APPLIED_LR_SCHEDULES[
             config["best_lr_scheduler"]
         ]
@@ -1563,12 +1578,13 @@ if __name__ == "__main__":
         )
         print(
             "schedule_search complete batch_size=%d best_point=%s "
-            "step1_lr=%.6g step10_lr=%.6g train_loss=%.4f "
+            "step1_lr=%.6g step5_lr=%.6g step10_lr=%.6g train_loss=%.4f "
             "evaluated_points=%d"
             % (
                 batch_size,
                 current_point,
                 current_result["schedule_step1_lr"],
+                current_result["schedule_step5_lr"],
                 current_result["schedule_step10_lr"],
                 current_result["train_loss"],
                 len(result_cache),

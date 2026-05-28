@@ -18,7 +18,7 @@ with open(sys.argv[0]) as f:
 from collections import Counter
 import json
 import uuid
-from math import ceil, floor, isfinite, log10
+from math import ceil, floor, isfinite, log, log10
 
 import torch
 from torch import nn
@@ -1079,8 +1079,14 @@ OVERFIT_TRAIN_STEPS = 10
 OVERFIT_MUON_LR = 0.19
 OVERFIT_SGD_LR_MULT = 1.0
 SCHEDULE_SEARCH_FACTOR = 0.8
-SCHEDULE_SEARCH_INITIAL_POINT = (0, 0)
 SCHEDULE_SEARCH_MAX_MOVES = 30
+SCHEDULE_SEARCH_STEPS = 9
+SCHEDULE_SEARCH_INITIAL_SCHEDULES = {
+    500: (1.6, 1.7, 1.8, 1.9, 2.0, 1.8, 1.6, 1.4, 1.2),
+    2000: (1.0, 1.25, 1.5, 1.75, 2.0, 1.8, 1.6, 1.4, 1.2),
+    5000: (0.64, 0.98, 1.32, 1.66, 2.0, 1.8, 1.6, 1.4, 1.2),
+    10000: (0.8, 1.1, 1.4, 1.7, 2.0, 1.8, 1.6, 1.4, 1.2),
+}
 LR_MULT_SCHEDULES = {}
 
 
@@ -1094,8 +1100,27 @@ def schedule_value(exponent):
     return round_sigfigs(SCHEDULE_SEARCH_FACTOR**exponent)
 
 
+def nearest_schedule_exponent(value):
+    if value <= 0:
+        raise ValueError(f"Schedule value must be positive, got {value}")
+    center = int(round(log(value) / log(SCHEDULE_SEARCH_FACTOR)))
+    candidates = range(center - 4, center + 5)
+    return min(
+        candidates,
+        key=lambda exponent: (
+            abs((SCHEDULE_SEARCH_FACTOR**exponent) - value),
+            abs(exponent),
+        ),
+    )
+
+
+def initial_schedule_point(batch_size):
+    schedule = SCHEDULE_SEARCH_INITIAL_SCHEDULES[batch_size]
+    return tuple(nearest_schedule_exponent(value) for value in schedule)
+
+
 def schedule_cache_key(point):
-    return (schedule_value(point[0]), schedule_value(point[1]))
+    return tuple(schedule_value(exponent) for exponent in point)
 
 
 def point_valid(point):
@@ -1103,26 +1128,17 @@ def point_valid(point):
 
 
 def schedule_from_point(point):
-    step1_multiplier = schedule_value(point[0])
-    step5_multiplier = schedule_value(point[1])
-    values = []
-    for one_indexed_step in range(1, OVERFIT_TRAIN_STEPS + 1):
-        if one_indexed_step <= 5:
-            progress = (one_indexed_step - 1) / 4
-            multiplier = (
-                step1_multiplier
-                + (step5_multiplier - step1_multiplier) * progress
-            )
-        else:
-            progress = (one_indexed_step - 5) / 5
-            multiplier = step5_multiplier + (1.0 - step5_multiplier) * progress
-        values.append(float("%.8g" % multiplier))
-    values[-1] = 1.0
-    return tuple(values)
+    multipliers = list(schedule_cache_key(point))
+    if len(multipliers) != SCHEDULE_SEARCH_STEPS:
+        raise ValueError(
+            f"Expected {SCHEDULE_SEARCH_STEPS} schedule exponents, got {len(point)}"
+        )
+    multipliers.append(1.0)
+    return tuple(multipliers)
 
 
 def point_label(point):
-    return f"s1{point[0]}_s5{point[1]}"
+    return "steps_" + "_".join(str(exponent) for exponent in point)
 
 
 def scheduler_name_from_point(point):
@@ -1149,16 +1165,12 @@ def overfit_run_config(batch_size, point):
 
 
 def schedule_search_neighbors(point):
-    step1_exponent, step5_exponent = point
     neighbors = []
-    for step1_offset in range(-2, 3):
-        for step5_offset in range(-2, 3):
-            if step1_offset == 0 and step5_offset == 0:
-                continue
-            neighbor = (
-                step1_exponent + step1_offset,
-                step5_exponent + step5_offset,
-            )
+    for index in range(len(point)):
+        for offset in (-1, 1):
+            neighbor = list(point)
+            neighbor[index] += offset
+            neighbor = tuple(neighbor)
             if point_valid(neighbor):
                 neighbors.append(neighbor)
     return neighbors
@@ -1441,13 +1453,12 @@ if __name__ == "__main__":
             cached = result_cache[cache_key]
             print(
                 "schedule_search cache_hit batch_size=%d point=%s cache_key=%s "
-                "step1_multiplier=%.6g step5_multiplier=%.6g train_loss=%.4f"
+                "multipliers=%s train_loss=%.4f"
                 % (
                     batch_size,
                     point,
                     cache_key,
-                    cache_key[0],
-                    cache_key[1],
+                    ",".join("%.6g" % value for value in cache_key),
                     cached["train_loss"],
                 ),
                 flush=True,
@@ -1475,13 +1486,11 @@ if __name__ == "__main__":
             flush=True,
         )
         print(
-            "lr_mult_schedule name=%s point=%s step1_multiplier=%.8g "
-            "step5_multiplier=%.8g values=%s"
+            "lr_mult_schedule name=%s point=%s multipliers=%s values=%s"
             % (
                 config["best_lr_scheduler"],
                 point,
-                schedule_value(point[0]),
-                schedule_value(point[1]),
+                ",".join("%.8g" % value for value in schedule_cache_key(point)),
                 ",".join(
                     "%.8g" % value
                     for value in LR_MULT_SCHEDULES[config["best_lr_scheduler"]]
@@ -1491,8 +1500,7 @@ if __name__ == "__main__":
         )
         result = main(run_index[0], model, **config)
         result["schedule_search_point"] = point
-        result["schedule_step1_multiplier"] = schedule_value(point[0])
-        result["schedule_step5_multiplier"] = schedule_value(point[1])
+        result["schedule_multipliers"] = schedule_cache_key(point)
         result["lr_mult_schedule_values"] = LR_MULT_SCHEDULES[
             config["best_lr_scheduler"]
         ]
@@ -1520,7 +1528,7 @@ if __name__ == "__main__":
     search_summaries = []
     for batch_size in OVERFIT_BATCH_SIZES:
         result_cache = {}
-        current_point = SCHEDULE_SEARCH_INITIAL_POINT
+        current_point = initial_schedule_point(batch_size)
         current_result = evaluate_point(batch_size, current_point, result_cache)
 
         for move in range(SCHEDULE_SEARCH_MAX_MOVES):
@@ -1569,13 +1577,14 @@ if __name__ == "__main__":
         )
         print(
             "schedule_search complete batch_size=%d best_point=%s "
-            "step1_multiplier=%.6g step5_multiplier=%.6g train_loss=%.4f "
+            "multipliers=%s train_loss=%.4f "
             "evaluated_points=%d"
             % (
                 batch_size,
                 current_point,
-                current_result["schedule_step1_multiplier"],
-                current_result["schedule_step5_multiplier"],
+                ",".join(
+                    "%.6g" % value for value in current_result["schedule_multipliers"]
+                ),
                 current_result["train_loss"],
                 len(result_cache),
             ),
