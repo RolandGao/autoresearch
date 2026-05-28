@@ -1,0 +1,402 @@
+CIFAR Baseline Eval5 No-Momentum Applied LR Schedule Search
+================================================================
+
+Evaluated runs: 915
+Search steps: 87
+Cache hits: 117
+
+train_steps=2, batch_size=500 selected best
+--------------------------------------------------------
+point: (1, 3)
+lrs: 0.16,0.1024
+train_loss: 1.879
+evaluated_points: 12
+val_loss: 2.2193
+val_acc: 0.2423
+tta_val_acc: 0.2451
+
+train_steps=2, batch_size=2000 selected best
+--------------------------------------------------------
+point: (1, 4)
+lrs: 0.16,0.08192
+train_loss: 2.0796
+evaluated_points: 15
+val_loss: 2.2202
+val_acc: 0.2318
+tta_val_acc: 0.2332
+
+train_steps=2, batch_size=5000 selected best
+--------------------------------------------------------
+point: (0, 3)
+lrs: 0.2,0.1024
+train_loss: 2.1688
+evaluated_points: 11
+val_loss: 2.2515
+val_acc: 0.2502
+tta_val_acc: 0.2556
+
+train_steps=2, batch_size=10000 selected best
+--------------------------------------------------------
+point: (0, 2)
+lrs: 0.2,0.128
+train_loss: 2.1743
+evaluated_points: 8
+val_loss: 2.2422
+val_acc: 0.2605
+tta_val_acc: 0.2605
+
+train_steps=3, batch_size=500 selected best
+--------------------------------------------------------
+point: (1, 1, 4)
+lrs: 0.16,0.16,0.08192
+train_loss: 1.6431
+evaluated_points: 26
+val_loss: 2.1805
+val_acc: 0.2722
+tta_val_acc: 0.2727
+
+train_steps=3, batch_size=2000 selected best
+--------------------------------------------------------
+point: (1, 2, 4)
+lrs: 0.16,0.128,0.08192
+train_loss: 1.9356
+evaluated_points: 29
+val_loss: 2.1363
+val_acc: 0.2904
+tta_val_acc: 0.2951
+
+train_steps=3, batch_size=5000 selected best
+--------------------------------------------------------
+point: (0, 2, 1)
+lrs: 0.2,0.128,0.16
+train_loss: 2.0434
+evaluated_points: 12
+val_loss: 2.1061
+val_acc: 0.3479
+tta_val_acc: 0.3557
+
+train_steps=3, batch_size=10000 selected best
+--------------------------------------------------------
+point: (-1, 1, 0)
+lrs: 0.25,0.16,0.2
+train_loss: 2.0464
+evaluated_points: 16
+val_loss: 2.0679
+val_acc: 0.3586
+tta_val_acc: 0.3672
+
+train_steps=4, batch_size=500 selected best
+--------------------------------------------------------
+point: (1, 0, 2, 5)
+lrs: 0.16,0.2,0.128,0.065536
+train_loss: 1.4085
+evaluated_points: 47
+val_loss: 2.1392
+val_acc: 0.3333
+tta_val_acc: 0.3371
+
+train_steps=4, batch_size=2000 selected best
+--------------------------------------------------------
+point: (1, 2, 2, 5)
+lrs: 0.16,0.128,0.128,0.065536
+train_loss: 1.7839
+evaluated_points: 47
+val_loss: 2.0862
+val_acc: 0.3697
+tta_val_acc: 0.3762
+
+train_steps=4, batch_size=5000 selected best
+--------------------------------------------------------
+point: (0, 3, 0, 3)
+lrs: 0.2,0.1024,0.2,0.1024
+train_loss: 1.9114
+evaluated_points: 35
+val_loss: 2.0349
+val_acc: 0.405
+tta_val_acc: 0.4123
+
+train_steps=4, batch_size=10000 selected best
+--------------------------------------------------------
+point: (0, 2, 0, 3)
+lrs: 0.2,0.128,0.2,0.1024
+train_loss: 1.9341
+evaluated_points: 28
+val_loss: 2.0047
+val_acc: 0.3964
+tta_val_acc: 0.4041
+
+train_steps=10, batch_size=500 selected best
+--------------------------------------------------------
+point: (0, 0, 2, 2, 3, 3, 4, 5, 7, 10)
+lrs: 0.2,0.2,0.128,0.128,0.1024,0.1024,0.08192,0.065536,0.041943,0.0214748
+train_loss: 0.8803
+evaluated_points: 76
+val_loss: 1.9908
+val_acc: 0.4155
+tta_val_acc: 0.4477
+
+train_steps=10, batch_size=2000 selected best
+--------------------------------------------------------
+point: (0, 1, 1, 3, 2, 3, 3, 6, 4, 7)
+lrs: 0.2,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.0524288,0.08192,0.041943
+train_loss: 1.0648
+evaluated_points: 185
+val_loss: 1.8363
+val_acc: 0.5201
+tta_val_acc: 0.5425
+
+train_steps=10, batch_size=5000 selected best
+--------------------------------------------------------
+point: (1, 1, 1, 2, 2, 3, 3, 6, 4, 7)
+lrs: 0.16,0.16,0.16,0.128,0.128,0.1024,0.1024,0.0524288,0.08192,0.041943
+train_loss: 1.3232
+evaluated_points: 184
+val_loss: 1.6838
+val_acc: 0.6182
+tta_val_acc: 0.6304
+
+train_steps=10, batch_size=10000 selected best
+--------------------------------------------------------
+point: (0, 2, 1, 2, 2, 4, 2, 4, 5, 8)
+lrs: 0.2,0.128,0.16,0.128,0.128,0.08192,0.128,0.08192,0.065536,0.0335544
+train_loss: 1.4389
+evaluated_points: 184
+val_loss: 1.6336
+val_acc: 0.6363
+tta_val_acc: 0.6516
+
+Top runs, train_steps=2, batch_size=500
+--------------------------------------------------------
+1. r9 point=(1, 3) train_loss=1.879 val_loss=2.2193 val_acc=0.2423 tta_val_acc=0.2451 schedule=0.16,0.1024
+2. r11 point=(1, 4) train_loss=1.8837 val_loss=2.2212 val_acc=0.2405 tta_val_acc=0.2443 schedule=0.16,0.08192
+3. r6 point=(1, 2) train_loss=1.8846 val_loss=2.2173 val_acc=0.243 tta_val_acc=0.2445 schedule=0.16,0.128
+4. r4 point=(0, 2) train_loss=1.8856 val_loss=2.2103 val_acc=0.2442 tta_val_acc=0.2483 schedule=0.2,0.128
+5. r10 point=(2, 3) train_loss=1.8856 val_loss=2.2256 val_acc=0.2403 tta_val_acc=0.2427 schedule=0.128,0.1024
+6. r7 point=(0, 3) train_loss=1.8858 val_loss=2.2127 val_acc=0.2433 tta_val_acc=0.2475 schedule=0.2,0.1024
+7. r0 point=(0, 1) train_loss=1.8965 val_loss=2.2084 val_acc=0.2423 tta_val_acc=0.2445 schedule=0.2,0.16
+8. r8 point=(2, 2) train_loss=1.8979 val_loss=2.2236 val_acc=0.2412 tta_val_acc=0.2422 schedule=0.128,0.128
+9. r5 point=(-1, 2) train_loss=1.9021 val_loss=2.2038 val_acc=0.244 tta_val_acc=0.2497 schedule=0.25,0.128
+10. r2 point=(1, 1) train_loss=1.9023 val_loss=2.2155 val_acc=0.2403 tta_val_acc=0.2432 schedule=0.16,0.16
+11. r1 point=(-1, 1) train_loss=1.9064 val_loss=2.201 val_acc=0.2451 tta_val_acc=0.2494 schedule=0.25,0.16
+12. r3 point=(0, 0) train_loss=1.9198 val_loss=2.2079 val_acc=0.2373 tta_val_acc=0.2391 schedule=0.2,0.2
+
+Top runs, train_steps=2, batch_size=2000
+--------------------------------------------------------
+1. r173 point=(1, 4) train_loss=2.0796 val_loss=2.2202 val_acc=0.2318 tta_val_acc=0.2332 schedule=0.16,0.08192
+2. r170 point=(1, 3) train_loss=2.0808 val_loss=2.2179 val_acc=0.2339 tta_val_acc=0.2344 schedule=0.16,0.1024
+3. r174 point=(2, 4) train_loss=2.0809 val_loss=2.2257 val_acc=0.2303 tta_val_acc=0.2324 schedule=0.128,0.08192
+4. r175 point=(1, 5) train_loss=2.0822 val_loss=2.2228 val_acc=0.2291 tta_val_acc=0.2314 schedule=0.16,0.065536
+5. r168 point=(0, 3) train_loss=2.0837 val_loss=2.2139 val_acc=0.2356 tta_val_acc=0.2371 schedule=0.2,0.1024
+6. r171 point=(0, 4) train_loss=2.0844 val_loss=2.2164 val_acc=0.234 tta_val_acc=0.2345 schedule=0.2,0.08192
+7. r172 point=(2, 3) train_loss=2.0844 val_loss=2.2237 val_acc=0.2326 tta_val_acc=0.2339 schedule=0.128,0.1024
+8. r167 point=(1, 2) train_loss=2.0867 val_loss=2.2169 val_acc=0.2348 tta_val_acc=0.2359 schedule=0.16,0.128
+9. r165 point=(0, 2) train_loss=2.0872 val_loss=2.2128 val_acc=0.2366 tta_val_acc=0.2376 schedule=0.2,0.128
+10. r169 point=(-1, 3) train_loss=2.0929 val_loss=2.2135 val_acc=0.2361 tta_val_acc=0.2373 schedule=0.25,0.1024
+11. r166 point=(-1, 2) train_loss=2.0943 val_loss=2.2128 val_acc=0.2375 tta_val_acc=0.2388 schedule=0.25,0.128
+12. r161 point=(0, 1) train_loss=2.0955 val_loss=2.215 val_acc=0.238 tta_val_acc=0.2375 schedule=0.2,0.16
+
+Top runs, train_steps=2, batch_size=5000
+--------------------------------------------------------
+1. r444 point=(0, 3) train_loss=2.1688 val_loss=2.2515 val_acc=0.2502 tta_val_acc=0.2556 schedule=0.2,0.1024
+2. r441 point=(0, 2) train_loss=2.1698 val_loss=2.2556 val_acc=0.2526 tta_val_acc=0.2556 schedule=0.2,0.128
+3. r447 point=(0, 4) train_loss=2.1699 val_loss=2.2508 val_acc=0.2468 tta_val_acc=0.2521 schedule=0.2,0.08192
+4. r446 point=(1, 3) train_loss=2.1705 val_loss=2.2494 val_acc=0.2494 tta_val_acc=0.2549 schedule=0.16,0.1024
+5. r442 point=(-1, 2) train_loss=2.1711 val_loss=2.2643 val_acc=0.2515 tta_val_acc=0.2535 schedule=0.25,0.128
+6. r445 point=(-1, 3) train_loss=2.1711 val_loss=2.2584 val_acc=0.2492 tta_val_acc=0.2528 schedule=0.25,0.1024
+7. r443 point=(1, 2) train_loss=2.1725 val_loss=2.2526 val_acc=0.2527 tta_val_acc=0.2566 schedule=0.16,0.128
+8. r437 point=(0, 1) train_loss=2.1731 val_loss=2.266 val_acc=0.2555 tta_val_acc=0.2571 schedule=0.2,0.16
+9. r438 point=(-1, 1) train_loss=2.1734 val_loss=2.2776 val_acc=0.2521 tta_val_acc=0.2561 schedule=0.25,0.16
+10. r439 point=(1, 1) train_loss=2.1769 val_loss=2.2615 val_acc=0.2562 tta_val_acc=0.2586 schedule=0.16,0.16
+11. r440 point=(0, 0) train_loss=2.179 val_loss=2.2877 val_acc=0.2571 tta_val_acc=0.2588 schedule=0.2,0.2
+
+Top runs, train_steps=2, batch_size=10000
+--------------------------------------------------------
+1. r683 point=(0, 2) train_loss=2.1743 val_loss=2.2422 val_acc=0.2605 tta_val_acc=0.2605 schedule=0.2,0.128
+2. r684 point=(-1, 2) train_loss=2.1744 val_loss=2.2489 val_acc=0.2591 tta_val_acc=0.2594 schedule=0.25,0.128
+3. r686 point=(0, 3) train_loss=2.1748 val_loss=2.2373 val_acc=0.2579 tta_val_acc=0.2592 schedule=0.2,0.1024
+4. r680 point=(-1, 1) train_loss=2.1752 val_loss=2.2638 val_acc=0.26 tta_val_acc=0.2612 schedule=0.25,0.16
+5. r679 point=(0, 1) train_loss=2.1758 val_loss=2.2547 val_acc=0.2604 tta_val_acc=0.2637 schedule=0.2,0.16
+6. r685 point=(1, 2) train_loss=2.1786 val_loss=2.2426 val_acc=0.2568 tta_val_acc=0.2581 schedule=0.16,0.128
+7. r682 point=(0, 0) train_loss=2.1795 val_loss=2.2814 val_acc=0.2605 tta_val_acc=0.263 schedule=0.2,0.2
+8. r681 point=(1, 1) train_loss=2.181 val_loss=2.2547 val_acc=0.2571 tta_val_acc=0.26 schedule=0.16,0.16
+
+Top runs, train_steps=3, batch_size=500
+--------------------------------------------------------
+1. r30 point=(1, 1, 4) train_loss=1.6431 val_loss=2.1805 val_acc=0.2722 tta_val_acc=0.2727 schedule=0.16,0.16,0.08192
+2. r37 point=(1, 1, 5) train_loss=1.6456 val_loss=2.1812 val_acc=0.2737 tta_val_acc=0.2762 schedule=0.16,0.16,0.065536
+3. r28 point=(0, 1, 4) train_loss=1.6461 val_loss=2.177 val_acc=0.2871 tta_val_acc=0.2875 schedule=0.2,0.16,0.08192
+4. r34 point=(2, 1, 4) train_loss=1.6466 val_loss=2.1812 val_acc=0.2678 tta_val_acc=0.2692 schedule=0.128,0.16,0.08192
+5. r31 point=(0, 0, 4) train_loss=1.6498 val_loss=2.167 val_acc=0.2832 tta_val_acc=0.286 schedule=0.2,0.2,0.08192
+6. r36 point=(1, 2, 4) train_loss=1.6498 val_loss=2.1893 val_acc=0.2802 tta_val_acc=0.2841 schedule=0.16,0.128,0.08192
+7. r35 point=(1, 0, 4) train_loss=1.65 val_loss=2.1688 val_acc=0.268 tta_val_acc=0.2694 schedule=0.16,0.2,0.08192
+8. r33 point=(0, 1, 5) train_loss=1.6503 val_loss=2.1771 val_acc=0.2876 tta_val_acc=0.286 schedule=0.2,0.16,0.065536
+9. r26 point=(0, 0, 3) train_loss=1.6517 val_loss=2.1659 val_acc=0.285 tta_val_acc=0.2848 schedule=0.2,0.2,0.1024
+10. r25 point=(1, 1, 3) train_loss=1.6529 val_loss=2.1811 val_acc=0.2657 tta_val_acc=0.2662 schedule=0.16,0.16,0.1024
+11. r32 point=(0, 2, 4) train_loss=1.6534 val_loss=2.1865 val_acc=0.2857 tta_val_acc=0.2864 schedule=0.2,0.128,0.08192
+12. r23 point=(0, 1, 3) train_loss=1.6537 val_loss=2.1781 val_acc=0.2855 tta_val_acc=0.2863 schedule=0.2,0.16,0.1024
+
+Top runs, train_steps=3, batch_size=2000
+--------------------------------------------------------
+1. r200 point=(1, 2, 4) train_loss=1.9356 val_loss=2.1363 val_acc=0.2904 tta_val_acc=0.2951 schedule=0.16,0.128,0.08192
+2. r203 point=(1, 3, 4) train_loss=1.9367 val_loss=2.1481 val_acc=0.2959 tta_val_acc=0.2986 schedule=0.16,0.1024,0.08192
+3. r194 point=(1, 2, 3) train_loss=1.9378 val_loss=2.1327 val_acc=0.2915 tta_val_acc=0.2948 schedule=0.16,0.128,0.1024
+4. r201 point=(2, 2, 4) train_loss=1.938 val_loss=2.1408 val_acc=0.2856 tta_val_acc=0.2879 schedule=0.128,0.128,0.08192
+5. r196 point=(0, 2, 4) train_loss=1.9392 val_loss=2.132 val_acc=0.298 tta_val_acc=0.3014 schedule=0.2,0.128,0.08192
+6. r191 point=(0, 2, 3) train_loss=1.9393 val_loss=2.1295 val_acc=0.299 tta_val_acc=0.3018 schedule=0.2,0.128,0.1024
+7. r189 point=(1, 1, 3) train_loss=1.9402 val_loss=2.1194 val_acc=0.2823 tta_val_acc=0.2845 schedule=0.16,0.16,0.1024
+8. r204 point=(1, 2, 5) train_loss=1.9403 val_loss=2.141 val_acc=0.2888 tta_val_acc=0.291 schedule=0.16,0.128,0.065536
+9. r202 point=(1, 1, 4) train_loss=1.9412 val_loss=2.1245 val_acc=0.2854 tta_val_acc=0.2888 schedule=0.16,0.16,0.08192
+10. r187 point=(0, 1, 3) train_loss=1.9414 val_loss=2.1169 val_acc=0.2854 tta_val_acc=0.2904 schedule=0.2,0.16,0.1024
+11. r197 point=(2, 2, 3) train_loss=1.9414 val_loss=2.1366 val_acc=0.2801 tta_val_acc=0.2846 schedule=0.128,0.128,0.1024
+12. r198 point=(1, 3, 3) train_loss=1.9418 val_loss=2.146 val_acc=0.2946 tta_val_acc=0.2995 schedule=0.16,0.1024,0.1024
+
+Top runs, train_steps=3, batch_size=5000
+--------------------------------------------------------
+1. r449 point=(-1, 1, 1) train_loss=2.0434 val_loss=2.0968 val_acc=0.3444 tta_val_acc=0.353 schedule=0.25,0.16,0.16
+2. r452 point=(0, 2, 1) train_loss=2.0434 val_loss=2.1061 val_acc=0.3479 tta_val_acc=0.3557 schedule=0.2,0.128,0.16
+3. r459 point=(0, 2, 2) train_loss=2.0436 val_loss=2.1126 val_acc=0.3452 tta_val_acc=0.3537 schedule=0.2,0.128,0.128
+4. r455 point=(-1, 2, 1) train_loss=2.0443 val_loss=2.0976 val_acc=0.3506 tta_val_acc=0.3573 schedule=0.25,0.128,0.16
+5. r448 point=(0, 1, 1) train_loss=2.0446 val_loss=2.1047 val_acc=0.3416 tta_val_acc=0.3523 schedule=0.2,0.16,0.16
+6. r454 point=(0, 1, 2) train_loss=2.0456 val_loss=2.1081 val_acc=0.3408 tta_val_acc=0.3471 schedule=0.2,0.16,0.128
+7. r457 point=(0, 3, 1) train_loss=2.0463 val_loss=2.1105 val_acc=0.347 tta_val_acc=0.3549 schedule=0.2,0.1024,0.16
+8. r458 point=(0, 2, 0) train_loss=2.0471 val_loss=2.1065 val_acc=0.3477 tta_val_acc=0.3533 schedule=0.2,0.128,0.2
+9. r453 point=(0, 1, 0) train_loss=2.0477 val_loss=2.1122 val_acc=0.3396 tta_val_acc=0.3475 schedule=0.2,0.16,0.2
+10. r451 point=(0, 0, 1) train_loss=2.0479 val_loss=2.1069 val_acc=0.337 tta_val_acc=0.3461 schedule=0.2,0.2,0.16
+11. r456 point=(1, 2, 1) train_loss=2.0485 val_loss=2.1137 val_acc=0.3426 tta_val_acc=0.3529 schedule=0.16,0.128,0.16
+12. r450 point=(1, 1, 1) train_loss=2.0498 val_loss=2.1117 val_acc=0.3363 tta_val_acc=0.3476 schedule=0.16,0.16,0.16
+
+Top runs, train_steps=3, batch_size=10000
+--------------------------------------------------------
+1. r697 point=(-1, 1, 0) train_loss=2.0464 val_loss=2.0679 val_acc=0.3586 tta_val_acc=0.3672 schedule=0.25,0.16,0.2
+2. r688 point=(-1, 1, 1) train_loss=2.0475 val_loss=2.0725 val_acc=0.3612 tta_val_acc=0.3673 schedule=0.25,0.16,0.16
+3. r701 point=(-1, 2, 0) train_loss=2.0476 val_loss=2.0671 val_acc=0.3645 tta_val_acc=0.3721 schedule=0.25,0.128,0.2
+4. r696 point=(-1, 2, 1) train_loss=2.0482 val_loss=2.0751 val_acc=0.3661 tta_val_acc=0.3717 schedule=0.25,0.128,0.16
+5. r687 point=(0, 1, 1) train_loss=2.0492 val_loss=2.0782 val_acc=0.3603 tta_val_acc=0.368 schedule=0.2,0.16,0.16
+6. r702 point=(-1, 1, -1) train_loss=2.0492 val_loss=2.0715 val_acc=0.3506 tta_val_acc=0.3584 schedule=0.25,0.16,0.25
+7. r691 point=(0, 2, 1) train_loss=2.0493 val_loss=2.0818 val_acc=0.3683 tta_val_acc=0.3771 schedule=0.2,0.128,0.16
+8. r692 point=(0, 1, 0) train_loss=2.0496 val_loss=2.0754 val_acc=0.3553 tta_val_acc=0.3631 schedule=0.2,0.16,0.2
+9. r700 point=(-1, 0, 0) train_loss=2.0498 val_loss=2.075 val_acc=0.3466 tta_val_acc=0.3529 schedule=0.25,0.2,0.2
+10. r699 point=(-2, 1, 0) train_loss=2.0504 val_loss=2.0638 val_acc=0.3568 tta_val_acc=0.3636 schedule=0.3125,0.16,0.2
+11. r695 point=(-1, 0, 1) train_loss=2.0505 val_loss=2.0737 val_acc=0.349 tta_val_acc=0.3543 schedule=0.25,0.2,0.16
+12. r694 point=(-2, 1, 1) train_loss=2.052 val_loss=2.0689 val_acc=0.3573 tta_val_acc=0.3629 schedule=0.3125,0.16,0.16
+
+Top runs, train_steps=4, batch_size=500
+--------------------------------------------------------
+1. r74 point=(1, 0, 2, 5) train_loss=1.4085 val_loss=2.1392 val_acc=0.3333 tta_val_acc=0.3371 schedule=0.16,0.2,0.128,0.065536
+2. r73 point=(2, 1, 2, 5) train_loss=1.4086 val_loss=2.1452 val_acc=0.332 tta_val_acc=0.336 schedule=0.128,0.16,0.128,0.065536
+3. r68 point=(1, 1, 2, 5) train_loss=1.4088 val_loss=2.1489 val_acc=0.3309 tta_val_acc=0.3336 schedule=0.16,0.16,0.128,0.065536
+4. r77 point=(1, 1, 3, 5) train_loss=1.41 val_loss=2.1576 val_acc=0.3279 tta_val_acc=0.3307 schedule=0.16,0.16,0.1024,0.065536
+5. r79 point=(2, 0, 2, 5) train_loss=1.4106 val_loss=2.1337 val_acc=0.3411 tta_val_acc=0.3416 schedule=0.128,0.2,0.128,0.065536
+6. r82 point=(1, 0, 3, 5) train_loss=1.4107 val_loss=2.1487 val_acc=0.3345 tta_val_acc=0.3376 schedule=0.16,0.2,0.1024,0.065536
+7. r69 point=(0, 0, 2, 5) train_loss=1.4119 val_loss=2.1445 val_acc=0.3356 tta_val_acc=0.3395 schedule=0.2,0.2,0.128,0.065536
+8. r83 point=(1, 0, 2, 4) train_loss=1.4124 val_loss=2.1451 val_acc=0.33 tta_val_acc=0.3322 schedule=0.16,0.2,0.128,0.08192
+9. r66 point=(0, 1, 2, 5) train_loss=1.4135 val_loss=2.1507 val_acc=0.3309 tta_val_acc=0.3389 schedule=0.2,0.16,0.128,0.065536
+10. r62 point=(1, 1, 2, 4) train_loss=1.4139 val_loss=2.1536 val_acc=0.325 tta_val_acc=0.3258 schedule=0.16,0.16,0.128,0.08192
+11. r75 point=(1, 2, 2, 5) train_loss=1.4142 val_loss=2.1556 val_acc=0.3277 tta_val_acc=0.3302 schedule=0.16,0.128,0.128,0.065536
+12. r63 point=(0, 0, 2, 4) train_loss=1.4164 val_loss=2.1512 val_acc=0.327 tta_val_acc=0.3317 schedule=0.2,0.2,0.128,0.08192
+
+Top runs, train_steps=4, batch_size=2000
+--------------------------------------------------------
+1. r243 point=(1, 2, 2, 5) train_loss=1.7839 val_loss=2.0862 val_acc=0.3697 tta_val_acc=0.3762 schedule=0.16,0.128,0.128,0.065536
+2. r239 point=(1, 1, 2, 5) train_loss=1.786 val_loss=2.0728 val_acc=0.3819 tta_val_acc=0.3892 schedule=0.16,0.16,0.128,0.065536
+3. r247 point=(2, 2, 2, 5) train_loss=1.7862 val_loss=2.0842 val_acc=0.377 tta_val_acc=0.3815 schedule=0.128,0.128,0.128,0.065536
+4. r250 point=(1, 2, 3, 5) train_loss=1.7864 val_loss=2.1004 val_acc=0.358 tta_val_acc=0.3631 schedule=0.16,0.128,0.1024,0.065536
+5. r236 point=(1, 2, 2, 4) train_loss=1.7883 val_loss=2.0922 val_acc=0.3523 tta_val_acc=0.3559 schedule=0.16,0.128,0.128,0.08192
+6. r232 point=(1, 1, 2, 4) train_loss=1.7884 val_loss=2.0789 val_acc=0.3698 tta_val_acc=0.3733 schedule=0.16,0.16,0.128,0.08192
+7. r251 point=(1, 2, 2, 6) train_loss=1.7888 val_loss=2.0834 val_acc=0.3803 tta_val_acc=0.3885 schedule=0.16,0.128,0.128,0.0524288
+8. r222 point=(1, 1, 1, 4) train_loss=1.7891 val_loss=2.0596 val_acc=0.3771 tta_val_acc=0.3829 schedule=0.16,0.16,0.16,0.08192
+9. r244 point=(1, 1, 3, 5) train_loss=1.7895 val_loss=2.0882 val_acc=0.3724 tta_val_acc=0.3772 schedule=0.16,0.16,0.1024,0.065536
+10. r240 point=(0, 1, 2, 5) train_loss=1.7902 val_loss=2.0736 val_acc=0.3757 tta_val_acc=0.3829 schedule=0.2,0.16,0.128,0.065536
+11. r241 point=(2, 1, 2, 5) train_loss=1.7903 val_loss=2.0691 val_acc=0.3805 tta_val_acc=0.3879 schedule=0.128,0.16,0.128,0.065536
+12. r230 point=(1, 2, 1, 4) train_loss=1.7909 val_loss=2.0736 val_acc=0.3653 tta_val_acc=0.3721 schedule=0.16,0.128,0.16,0.08192
+
+Top runs, train_steps=4, batch_size=5000
+--------------------------------------------------------
+1. r485 point=(0, 3, 0, 3) train_loss=1.9114 val_loss=2.0349 val_acc=0.405 tta_val_acc=0.4123 schedule=0.2,0.1024,0.2,0.1024
+2. r488 point=(0, 3, 1, 4) train_loss=1.9137 val_loss=2.0534 val_acc=0.4027 tta_val_acc=0.4086 schedule=0.2,0.1024,0.16,0.08192
+3. r494 point=(0, 3, 0, 4) train_loss=1.9139 val_loss=2.0349 val_acc=0.4072 tta_val_acc=0.4161 schedule=0.2,0.1024,0.2,0.08192
+4. r478 point=(0, 3, 1, 3) train_loss=1.9146 val_loss=2.0567 val_acc=0.397 tta_val_acc=0.4022 schedule=0.2,0.1024,0.16,0.1024
+5. r491 point=(0, 4, 0, 3) train_loss=1.9146 val_loss=2.0359 val_acc=0.3975 tta_val_acc=0.4054 schedule=0.2,0.08192,0.2,0.1024
+6. r484 point=(0, 4, 1, 3) train_loss=1.9155 val_loss=2.0592 val_acc=0.3909 tta_val_acc=0.3972 schedule=0.2,0.08192,0.16,0.1024
+7. r493 point=(0, 3, 0, 2) train_loss=1.9159 val_loss=2.0376 val_acc=0.3953 tta_val_acc=0.403 schedule=0.2,0.1024,0.2,0.128
+8. r479 point=(0, 2, 0, 3) train_loss=1.9162 val_loss=2.0361 val_acc=0.3898 tta_val_acc=0.3937 schedule=0.2,0.128,0.2,0.1024
+9. r492 point=(0, 3, -1, 3) train_loss=1.9163 val_loss=2.0151 val_acc=0.4072 tta_val_acc=0.4166 schedule=0.2,0.1024,0.25,0.1024
+10. r481 point=(0, 2, 1, 4) train_loss=1.9165 val_loss=2.0519 val_acc=0.3937 tta_val_acc=0.3977 schedule=0.2,0.128,0.16,0.08192
+11. r490 point=(1, 3, 0, 3) train_loss=1.9189 val_loss=2.0384 val_acc=0.389 tta_val_acc=0.3952 schedule=0.16,0.1024,0.2,0.1024
+12. r472 point=(0, 2, 1, 3) train_loss=1.9196 val_loss=2.0585 val_acc=0.3821 tta_val_acc=0.385 schedule=0.2,0.128,0.16,0.1024
+
+Top runs, train_steps=4, batch_size=10000
+--------------------------------------------------------
+1. r722 point=(0, 2, 0, 3) train_loss=1.9341 val_loss=2.0047 val_acc=0.3964 tta_val_acc=0.4041 schedule=0.2,0.128,0.2,0.1024
+2. r728 point=(0, 2, -1, 3) train_loss=1.9345 val_loss=1.987 val_acc=0.4002 tta_val_acc=0.4091 schedule=0.2,0.128,0.25,0.1024
+3. r727 point=(0, 3, 0, 3) train_loss=1.9355 val_loss=2.0115 val_acc=0.3922 tta_val_acc=0.3998 schedule=0.2,0.1024,0.2,0.1024
+4. r730 point=(0, 2, 0, 4) train_loss=1.9355 val_loss=2.0049 val_acc=0.4051 tta_val_acc=0.4141 schedule=0.2,0.128,0.2,0.08192
+5. r724 point=(0, 2, 1, 4) train_loss=1.9369 val_loss=2.021 val_acc=0.3987 tta_val_acc=0.4073 schedule=0.2,0.128,0.16,0.08192
+6. r715 point=(0, 2, 1, 3) train_loss=1.9374 val_loss=2.0231 val_acc=0.3887 tta_val_acc=0.3977 schedule=0.2,0.128,0.16,0.1024
+7. r721 point=(0, 3, 1, 3) train_loss=1.9386 val_loss=2.0301 val_acc=0.3868 tta_val_acc=0.3953 schedule=0.2,0.1024,0.16,0.1024
+8. r729 point=(0, 2, 0, 2) train_loss=1.9387 val_loss=2.0073 val_acc=0.3841 tta_val_acc=0.3917 schedule=0.2,0.128,0.2,0.128
+9. r716 point=(0, 1, 0, 3) train_loss=1.9391 val_loss=1.9984 val_acc=0.3961 tta_val_acc=0.4004 schedule=0.2,0.16,0.2,0.1024
+10. r718 point=(0, 1, 1, 4) train_loss=1.94 val_loss=2.0114 val_acc=0.3966 tta_val_acc=0.4043 schedule=0.2,0.16,0.16,0.08192
+11. r725 point=(-1, 2, 0, 3) train_loss=1.9404 val_loss=2.0182 val_acc=0.3877 tta_val_acc=0.3948 schedule=0.25,0.128,0.2,0.1024
+12. r711 point=(0, 1, 1, 3) train_loss=1.9407 val_loss=2.0142 val_acc=0.3883 tta_val_acc=0.3922 schedule=0.2,0.16,0.16,0.1024
+
+Top runs, train_steps=10, batch_size=500
+--------------------------------------------------------
+1. r127 point=(0, 0, 2, 2, 3, 3, 4, 5, 7, 10) train_loss=0.8803 val_loss=1.9908 val_acc=0.4155 tta_val_acc=0.4477 schedule=0.2,0.2,0.128,0.128,0.1024,0.1024,0.08192,0.065536,0.04194304,0.021474836
+2. r132 point=(0, 1, 2, 2, 4, 3, 4, 5, 7, 10) train_loss=0.8803 val_loss=1.9872 val_acc=0.4184 tta_val_acc=0.4468 schedule=0.2,0.16,0.128,0.128,0.08192,0.1024,0.08192,0.065536,0.04194304,0.021474836
+3. r150 point=(0, 0, 2, 2, 4, 3, 4, 5, 7, 10) train_loss=0.8804 val_loss=1.982 val_acc=0.4188 tta_val_acc=0.4509 schedule=0.2,0.2,0.128,0.128,0.08192,0.1024,0.08192,0.065536,0.04194304,0.021474836
+4. r111 point=(0, 1, 2, 2, 3, 3, 4, 5, 7, 10) train_loss=0.8806 val_loss=1.9926 val_acc=0.4124 tta_val_acc=0.4458 schedule=0.2,0.16,0.128,0.128,0.1024,0.1024,0.08192,0.065536,0.04194304,0.021474836
+5. r147 point=(0, 0, 2, 1, 3, 3, 4, 5, 7, 10) train_loss=0.8806 val_loss=1.9928 val_acc=0.4141 tta_val_acc=0.4516 schedule=0.2,0.2,0.128,0.16,0.1024,0.1024,0.08192,0.065536,0.04194304,0.021474836
+6. r128 point=(0, 2, 2, 2, 3, 3, 4, 5, 7, 10) train_loss=0.8807 val_loss=1.9936 val_acc=0.4191 tta_val_acc=0.4556 schedule=0.2,0.128,0.128,0.128,0.1024,0.1024,0.08192,0.065536,0.04194304,0.021474836
+7. r129 point=(0, 1, 3, 2, 3, 3, 4, 5, 7, 10) train_loss=0.8807 val_loss=2.0021 val_acc=0.3988 tta_val_acc=0.4318 schedule=0.2,0.16,0.1024,0.128,0.1024,0.1024,0.08192,0.065536,0.04194304,0.021474836
+8. r145 point=(0, -1, 2, 2, 3, 3, 4, 5, 7, 10) train_loss=0.8807 val_loss=1.9894 val_acc=0.4123 tta_val_acc=0.4444 schedule=0.2,0.25,0.128,0.128,0.1024,0.1024,0.08192,0.065536,0.04194304,0.021474836
+9. r149 point=(0, 0, 2, 2, 2, 3, 4, 5, 7, 10) train_loss=0.8807 val_loss=1.9993 val_acc=0.4015 tta_val_acc=0.4333 schedule=0.2,0.2,0.128,0.128,0.128,0.1024,0.08192,0.065536,0.04194304,0.021474836
+10. r112 point=(0, 1, 1, 1, 3, 3, 4, 5, 7, 10) train_loss=0.8808 val_loss=1.9895 val_acc=0.4207 tta_val_acc=0.4489 schedule=0.2,0.16,0.16,0.16,0.1024,0.1024,0.08192,0.065536,0.04194304,0.021474836
+11. r154 point=(0, 0, 2, 2, 3, 3, 5, 5, 7, 10) train_loss=0.8808 val_loss=1.9846 val_acc=0.4153 tta_val_acc=0.4485 schedule=0.2,0.2,0.128,0.128,0.1024,0.1024,0.065536,0.065536,0.04194304,0.021474836
+12. r95 point=(0, 1, 1, 2, 3, 3, 4, 5, 7, 10) train_loss=0.8809 val_loss=1.995 val_acc=0.4151 tta_val_acc=0.4509 schedule=0.2,0.16,0.16,0.128,0.1024,0.1024,0.08192,0.065536,0.04194304,0.021474836
+
+Top runs, train_steps=10, batch_size=2000
+--------------------------------------------------------
+1. r418 point=(0, 1, 1, 3, 2, 3, 3, 6, 4, 7) train_loss=1.0648 val_loss=1.8363 val_acc=0.5201 tta_val_acc=0.5425 schedule=0.2,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.0524288,0.08192,0.04194304
+2. r398 point=(0, 1, 1, 3, 2, 3, 3, 6, 4, 8) train_loss=1.0658 val_loss=1.847 val_acc=0.5258 tta_val_acc=0.5481 schedule=0.2,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.0524288,0.08192,0.033554432
+3. r433 point=(0, 1, 1, 3, 2, 3, 3, 5, 4, 7) train_loss=1.0684 val_loss=1.8285 val_acc=0.5218 tta_val_acc=0.5414 schedule=0.2,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.065536,0.08192,0.04194304
+4. r381 point=(0, 1, 1, 3, 2, 3, 3, 6, 5, 8) train_loss=1.0696 val_loss=1.8264 val_acc=0.5318 tta_val_acc=0.5515 schedule=0.2,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.0524288,0.065536,0.033554432
+5. r362 point=(0, 1, 1, 3, 2, 3, 3, 6, 5, 9) train_loss=1.07 val_loss=1.8323 val_acc=0.5369 tta_val_acc=0.5604 schedule=0.2,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.0524288,0.065536,0.026843546
+6. r416 point=(0, 1, 1, 3, 2, 3, 3, 7, 4, 8) train_loss=1.0703 val_loss=1.8372 val_acc=0.533 tta_val_acc=0.5573 schedule=0.2,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.04194304,0.08192,0.033554432
+7. r435 point=(0, 1, 1, 3, 2, 3, 3, 6, 3, 7) train_loss=1.0712 val_loss=1.8663 val_acc=0.5124 tta_val_acc=0.538 schedule=0.2,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.0524288,0.1024,0.04194304
+8. r434 point=(0, 1, 1, 3, 2, 3, 3, 7, 4, 7) train_loss=1.072 val_loss=1.8278 val_acc=0.5253 tta_val_acc=0.5465 schedule=0.2,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.04194304,0.08192,0.04194304
+9. r396 point=(0, 1, 1, 3, 2, 3, 3, 5, 5, 8) train_loss=1.073 val_loss=1.8209 val_acc=0.5345 tta_val_acc=0.5559 schedule=0.2,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.065536,0.065536,0.033554432
+10. r380 point=(0, 1, 1, 3, 2, 3, 3, 6, 4, 9) train_loss=1.0734 val_loss=1.8588 val_acc=0.5236 tta_val_acc=0.5535 schedule=0.2,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.0524288,0.08192,0.026843546
+11. r430 point=(0, 1, 1, 3, 2, 4, 3, 6, 4, 7) train_loss=1.0736 val_loss=1.8201 val_acc=0.5441 tta_val_acc=0.5769 schedule=0.2,0.16,0.16,0.1024,0.128,0.08192,0.1024,0.0524288,0.08192,0.04194304
+12. r413 point=(0, 1, 1, 3, 2, 3, 2, 6, 4, 8) train_loss=1.0744 val_loss=1.8191 val_acc=0.5369 tta_val_acc=0.5619 schedule=0.2,0.16,0.16,0.1024,0.128,0.1024,0.128,0.0524288,0.08192,0.033554432
+
+Top runs, train_steps=10, batch_size=5000
+--------------------------------------------------------
+1. r660 point=(1, 1, 1, 2, 2, 3, 3, 6, 4, 7) train_loss=1.3232 val_loss=1.6838 val_acc=0.6182 tta_val_acc=0.6304 schedule=0.16,0.16,0.16,0.128,0.128,0.1024,0.1024,0.0524288,0.08192,0.04194304
+2. r672 point=(1, 1, 1, 2, 2, 4, 3, 6, 4, 7) train_loss=1.3269 val_loss=1.6799 val_acc=0.6153 tta_val_acc=0.6272 schedule=0.16,0.16,0.16,0.128,0.128,0.08192,0.1024,0.0524288,0.08192,0.04194304
+3. r641 point=(1, 1, 1, 2, 2, 3, 3, 6, 4, 8) train_loss=1.3275 val_loss=1.6962 val_acc=0.6171 tta_val_acc=0.6351 schedule=0.16,0.16,0.16,0.128,0.128,0.1024,0.1024,0.0524288,0.08192,0.033554432
+4. r636 point=(1, 1, 1, 2, 2, 4, 3, 6, 5, 8) train_loss=1.3286 val_loss=1.6798 val_acc=0.6173 tta_val_acc=0.6302 schedule=0.16,0.16,0.16,0.128,0.128,0.08192,0.1024,0.0524288,0.065536,0.033554432
+5. r624 point=(1, 1, 1, 2, 2, 3, 3, 6, 5, 8) train_loss=1.3288 val_loss=1.6847 val_acc=0.6173 tta_val_acc=0.6327 schedule=0.16,0.16,0.16,0.128,0.128,0.1024,0.1024,0.0524288,0.065536,0.033554432
+6. r667 point=(1, 1, 1, 1, 2, 3, 3, 6, 4, 7) train_loss=1.3289 val_loss=1.7079 val_acc=0.6099 tta_val_acc=0.6245 schedule=0.16,0.16,0.16,0.16,0.128,0.1024,0.1024,0.0524288,0.08192,0.04194304
+7. r668 point=(1, 1, 1, 3, 2, 3, 3, 6, 4, 7) train_loss=1.3292 val_loss=1.6886 val_acc=0.6141 tta_val_acc=0.6239 schedule=0.16,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.0524288,0.08192,0.04194304
+8. r664 point=(1, 2, 1, 2, 2, 3, 3, 6, 4, 7) train_loss=1.3293 val_loss=1.7016 val_acc=0.6107 tta_val_acc=0.6296 schedule=0.16,0.128,0.16,0.128,0.128,0.1024,0.1024,0.0524288,0.08192,0.04194304
+9. r647 point=(1, 1, 0, 2, 2, 3, 3, 6, 4, 8) train_loss=1.3294 val_loss=1.6926 val_acc=0.615 tta_val_acc=0.635 schedule=0.16,0.16,0.2,0.128,0.128,0.1024,0.1024,0.0524288,0.08192,0.033554432
+10. r665 point=(1, 1, 0, 2, 2, 3, 3, 6, 4, 7) train_loss=1.3296 val_loss=1.6849 val_acc=0.614 tta_val_acc=0.6307 schedule=0.16,0.16,0.2,0.128,0.128,0.1024,0.1024,0.0524288,0.08192,0.04194304
+11. r675 point=(1, 1, 1, 2, 2, 3, 3, 5, 4, 7) train_loss=1.3297 val_loss=1.6942 val_acc=0.6085 tta_val_acc=0.6198 schedule=0.16,0.16,0.16,0.128,0.128,0.1024,0.1024,0.065536,0.08192,0.04194304
+12. r678 point=(1, 1, 1, 2, 2, 3, 3, 6, 4, 6) train_loss=1.3301 val_loss=1.6768 val_acc=0.6084 tta_val_acc=0.6212 schedule=0.16,0.16,0.16,0.128,0.128,0.1024,0.1024,0.0524288,0.08192,0.0524288
+
+Top runs, train_steps=10, batch_size=10000
+--------------------------------------------------------
+1. r893 point=(0, 2, 1, 2, 2, 4, 2, 4, 5, 8) train_loss=1.4389 val_loss=1.6336 val_acc=0.6363 tta_val_acc=0.6516 schedule=0.2,0.128,0.16,0.128,0.128,0.08192,0.128,0.08192,0.065536,0.033554432
+2. r878 point=(0, 2, 1, 2, 2, 4, 2, 5, 5, 8) train_loss=1.4397 val_loss=1.6366 val_acc=0.6343 tta_val_acc=0.6478 schedule=0.2,0.128,0.16,0.128,0.128,0.08192,0.128,0.065536,0.065536,0.033554432
+3. r903 point=(0, 2, 1, 1, 2, 4, 2, 4, 5, 8) train_loss=1.4401 val_loss=1.6352 val_acc=0.6339 tta_val_acc=0.6471 schedule=0.2,0.128,0.16,0.16,0.128,0.08192,0.128,0.08192,0.065536,0.033554432
+4. r907 point=(0, 2, 1, 2, 2, 3, 2, 4, 5, 8) train_loss=1.4403 val_loss=1.6399 val_acc=0.6368 tta_val_acc=0.652 schedule=0.2,0.128,0.16,0.128,0.128,0.1024,0.128,0.08192,0.065536,0.033554432
+5. r859 point=(0, 2, 1, 2, 2, 4, 2, 5, 5, 9) train_loss=1.4408 val_loss=1.6383 val_acc=0.6362 tta_val_acc=0.6518 schedule=0.2,0.128,0.16,0.128,0.128,0.08192,0.128,0.065536,0.065536,0.026843546
+6. r898 point=(1, 2, 1, 2, 2, 4, 2, 4, 5, 8) train_loss=1.4415 val_loss=1.6278 val_acc=0.6392 tta_val_acc=0.6536 schedule=0.16,0.128,0.16,0.128,0.128,0.08192,0.128,0.08192,0.065536,0.033554432
+7. r914 point=(0, 2, 1, 2, 2, 4, 2, 4, 5, 7) train_loss=1.4415 val_loss=1.6414 val_acc=0.626 tta_val_acc=0.6385 schedule=0.2,0.128,0.16,0.128,0.128,0.08192,0.128,0.08192,0.065536,0.04194304
+8. r875 point=(0, 2, 1, 2, 2, 4, 2, 4, 5, 9) train_loss=1.4418 val_loss=1.6321 val_acc=0.6374 tta_val_acc=0.6533 schedule=0.2,0.128,0.16,0.128,0.128,0.08192,0.128,0.08192,0.065536,0.026843546
+9. r880 point=(1, 2, 1, 2, 2, 4, 2, 5, 5, 8) train_loss=1.4418 val_loss=1.633 val_acc=0.6408 tta_val_acc=0.6548 schedule=0.16,0.128,0.16,0.128,0.128,0.08192,0.128,0.065536,0.065536,0.033554432
+10. r895 point=(0, 2, 1, 2, 2, 4, 2, 5, 4, 8) train_loss=1.442 val_loss=1.6387 val_acc=0.6277 tta_val_acc=0.6451 schedule=0.2,0.128,0.16,0.128,0.128,0.08192,0.128,0.065536,0.08192,0.033554432
+11. r857 point=(0, 2, 1, 2, 2, 4, 2, 4, 6, 9) train_loss=1.4422 val_loss=1.635 val_acc=0.6385 tta_val_acc=0.6543 schedule=0.2,0.128,0.16,0.128,0.128,0.08192,0.128,0.08192,0.0524288,0.026843546
+12. r892 point=(0, 2, 1, 2, 2, 4, 3, 5, 5, 8) train_loss=1.4423 val_loss=1.6408 val_acc=0.6336 tta_val_acc=0.6482 schedule=0.2,0.128,0.16,0.128,0.128,0.08192,0.1024,0.065536,0.065536,0.033554432
+
