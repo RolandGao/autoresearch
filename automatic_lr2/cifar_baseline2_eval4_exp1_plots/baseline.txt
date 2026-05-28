@@ -1,0 +1,23 @@
+bs=500
+constant rank: 70/100
+constant loss: 0.8845
+best: s099, loss 0.8761
+improvement: 0.0084
+
+bs=2000
+constant rank: 73/100
+constant loss: 1.1288
+best: s054, loss 1.0486
+improvement: 0.0802
+
+bs=5000
+constant rank: 50/100
+constant loss: 1.3833
+best: s036, loss 1.3343
+improvement: 0.0490
+
+bs=10000
+constant rank: 35/100
+constant loss: 1.4792
+best: s018, loss 1.4376
+improvement: 0.0416
