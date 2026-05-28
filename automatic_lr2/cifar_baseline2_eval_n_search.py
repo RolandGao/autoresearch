@@ -371,6 +371,25 @@ def log_step_train_loss(step, total_steps, name, train_loss):
     )
 
 
+def log_search_train_loss(
+    run,
+    interval,
+    train_step,
+    candidate_step,
+    candidate_steps,
+    k,
+    lr,
+    train_loss,
+):
+    print(
+        "n_search_train_loss "
+        f"run={run} interval={interval} train_step={train_step} "
+        f"candidate_step={candidate_step}/{candidate_steps} "
+        f"k={k} lr={lr:.8g} train_loss={repr(float(train_loss))}",
+        flush=True,
+    )
+
+
 def log_eval(run, epoch, val_acc, time_seconds):
     run_info = f" run={run}" if run is not None else ""
     print(
@@ -1081,7 +1100,12 @@ def best_lr_scheduler_multiplier(step, total_steps, steps_per_epoch, best_lr_sch
 ############################################
 
 OVERFIT_BATCH_SIZES = [500, 2000, 5000, 10000]
+OVERFIT_INTERVAL_STEPS_LIST = [1, 2, 5, 10, 20]
 OVERFIT_TRAIN_STEPS = 100
+OVERFIT_INITIAL_LR_K = 0
+OVERFIT_BASE_LR = 0.2
+OVERFIT_LR_FACTOR = 0.6
+OVERFIT_MAX_LR_SEARCH_MOVES = 40
 OVERFIT_MUON_MOMENTUM = 0.6
 OVERFIT_SGD_LR_MULT = 1.0
 
@@ -1092,22 +1116,43 @@ def round_sigfigs(value, sigfigs=2):
     return round(value, sigfigs - 1 - floor(log10(abs(value))))
 
 
-OVERFIT_MUON_LRS = [round_sigfigs(0.2 * (0.6**k), 2) for k in range(-5, 6)]
+def lr_from_k(k):
+    return round_sigfigs(OVERFIT_BASE_LR * (OVERFIT_LR_FACTOR**k), 2)
 
 
 def lr_label(lr):
     return ("%.8g" % lr).replace("-", "m").replace(".", "p")
 
 
-def overfit_run_config(batch_size, muon_lr):
+def overfit_run_config(batch_size, interval_steps):
     return dict(
-        name=f"constant_lr_bs{batch_size}_lr{lr_label(muon_lr)}",
+        name=f"n_search_bs{batch_size}_N{interval_steps}",
         batch_size=batch_size,
         train_steps=OVERFIT_TRAIN_STEPS,
-        muon_lr=muon_lr,
+        interval_steps=interval_steps,
+        initial_lr_k=OVERFIT_INITIAL_LR_K,
         muon_momentum=OVERFIT_MUON_MOMENTUM,
         sgd_lr_mult=OVERFIT_SGD_LR_MULT,
     )
+
+
+def train_one_step(
+    model,
+    optimizers,
+    muon_optimizer,
+    inputs,
+    labels,
+    whiten_bias_grad,
+    muon_lr,
+):
+    set_muon_lr(muon_optimizer, muon_lr)
+    model.train()
+    outputs = model(inputs, whiten_bias_grad=whiten_bias_grad)
+    loss = F.cross_entropy(outputs, labels, label_smoothing=0.2, reduction="mean")
+    loss.backward()
+    for opt in optimizers:
+        opt.step()
+    model.zero_grad(set_to_none=True)
 
 
 def main(
@@ -1116,7 +1161,8 @@ def main(
     name,
     batch_size,
     train_steps,
-    muon_lr,
+    interval_steps,
+    initial_lr_k,
     muon_momentum,
     sgd_lr_mult=None,
 ):
@@ -1157,7 +1203,7 @@ def main(
     )
     optimizer2 = Muon(
         filter_params,
-        lr=muon_lr,
+        lr=lr_from_k(initial_lr_k),
         momentum=muon_momentum,
         nesterov=muon_momentum > 0,
     )
@@ -1196,75 +1242,192 @@ def main(
     loss_log_steps = set(loss_log_steps_list)
     training_batch_loss_logs = []
     step_train_loss_logs = []
+    interval_search_logs = []
+    selected_lrs = []
+    selected_lr_ks = []
+    inputs, labels = training_batches[0]
+    current_k = initial_lr_k
+    interval_index = 0
 
-    for epoch in range(ceil(total_train_steps / len(train_loader))):
-        ####################
-        #     Training     #
-        ####################
+    while step < total_train_steps:
+        interval_index += 1
+        interval_start_step = step
+        steps_this_interval = min(interval_steps, total_train_steps - step)
+        interval_start_state = capture_training_state(model, optimizers)
+        candidate_cache = {}
 
-        start_timer()
-        model.train()
-        epoch_start = epoch * len(train_loader)
-        epoch_batches = training_batches[epoch_start : epoch_start + len(train_loader)]
-        for inputs, labels in epoch_batches:
-            whiten_bias_grad = step < whiten_bias_train_steps
-            outputs = model(inputs, whiten_bias_grad=whiten_bias_grad)
-            loss = F.cross_entropy(
-                outputs, labels, label_smoothing=0.2, reduction="mean"
-            )
-            loss.backward()
-            if LOG_PRE_UPDATE_LOSSES and step + 1 in loss_log_steps:
-                stop_timer()
-                pre_update_losses = evaluate_training_batch_losses(
-                    model, training_batches
+        def evaluate_candidate(k):
+            lr = lr_from_k(k)
+            if lr in candidate_cache:
+                cached = candidate_cache[lr]
+                print(
+                    "n_search cache_hit run=%s interval=%d start_step=%d "
+                    "N=%d k=%d lr=%.8g train_loss=%s"
+                    % (
+                        run_id,
+                        interval_index,
+                        interval_start_step,
+                        steps_this_interval,
+                        k,
+                        lr,
+                        repr(float(cached["train_loss"])),
+                    ),
+                    flush=True,
                 )
-                training_batch_loss_logs.append(
-                    dict(step=step + 1, update="pre", losses=pre_update_losses)
+                cached_for_k = dict(cached)
+                cached_for_k["k"] = k
+                return cached_for_k
+
+            restore_training_state(model, optimizers, interval_start_state)
+            local_losses = []
+            start_timer()
+            for offset in range(steps_this_interval):
+                global_step = interval_start_step + offset
+                train_one_step(
+                    model,
+                    optimizers,
+                    optimizer2,
+                    inputs,
+                    labels,
+                    global_step < whiten_bias_train_steps,
+                    lr,
                 )
-                log_training_batch_losses(
-                    step + 1, total_train_steps, "pre", pre_update_losses
+                train_loss = evaluate_training_batch_losses(model, [(inputs, labels)])[0]
+                local_losses.append(train_loss)
+                log_search_train_loss(
+                    run_id,
+                    interval_index,
+                    global_step + 1,
+                    offset + 1,
+                    steps_this_interval,
+                    k,
+                    lr,
+                    train_loss,
                 )
-                start_timer()
-            applied_muon_lr = optimizer2.param_groups[0]["lr"]
-            log_applied_lr(step + 1, total_train_steps, name, applied_muon_lr)
-            for opt in optimizers:
-                opt.step()
-            model.zero_grad(set_to_none=True)
-            step += 1
             stop_timer()
-            post_step_train_loss = evaluate_training_batch_losses(
-                model, [(inputs, labels)]
-            )[0]
+            train_loss = local_losses[-1]
+            candidate_state = capture_training_state(model, optimizers)
+            candidate = dict(
+                k=k,
+                lr=lr,
+                train_loss=train_loss,
+                step_train_losses=local_losses,
+                state=candidate_state,
+            )
+            candidate_cache[lr] = candidate
+            print(
+                "n_search candidate run=%s interval=%d start_step=%d "
+                "steps=%d k=%d lr=%.8g train_loss=%s"
+                % (
+                    run_id,
+                    interval_index,
+                    interval_start_step,
+                    steps_this_interval,
+                    k,
+                    lr,
+                    repr(float(train_loss)),
+                ),
+                flush=True,
+            )
+            return candidate
+
+        search_moves = 0
+        while True:
+            search_moves += 1
+            if search_moves > OVERFIT_MAX_LR_SEARCH_MOVES:
+                raise RuntimeError(
+                    "LR interval search did not converge: "
+                    f"run={run_id} interval={interval_index} center_k={current_k}"
+                )
+            center = evaluate_candidate(current_k)
+            lower_lr = evaluate_candidate(current_k + 1)
+            higher_lr = evaluate_candidate(current_k - 1)
+            candidates = [center, lower_lr, higher_lr]
+            best = min(candidates, key=lambda candidate: candidate["train_loss"])
+            print(
+                "n_search step run=%s interval=%d center_k=%d center_lr=%.8g "
+                "center_loss=%s best_k=%d best_lr=%.8g best_loss=%s"
+                % (
+                    run_id,
+                    interval_index,
+                    current_k,
+                    center["lr"],
+                    repr(float(center["train_loss"])),
+                    best["k"],
+                    best["lr"],
+                    repr(float(best["train_loss"])),
+                ),
+                flush=True,
+            )
+            if best["k"] == current_k:
+                selected = center
+                break
+            current_k = best["k"]
+
+        restore_training_state(model, optimizers, selected["state"])
+        for offset, train_loss_value in enumerate(selected["step_train_losses"], start=1):
+            committed_step = interval_start_step + offset
+            log_applied_lr(committed_step, total_train_steps, name, selected["lr"])
             step_train_loss_logs.append(
-                dict(step=step, train_loss=post_step_train_loss)
+                dict(
+                    step=committed_step,
+                    train_loss=train_loss_value,
+                    interval=interval_index,
+                    lr=selected["lr"],
+                    lr_k=selected["k"],
+                )
             )
             log_step_train_loss(
-                step, total_train_steps, name, post_step_train_loss
+                committed_step, total_train_steps, name, train_loss_value
             )
-            start_timer()
-            if LOG_POST_UPDATE_LOSSES and step in loss_log_steps:
-                stop_timer()
-                post_update_losses = evaluate_training_batch_losses(
-                    model, training_batches
-                )
-                training_batch_loss_logs.append(
-                    dict(step=step, update="post", losses=post_update_losses)
-                )
-                log_training_batch_losses(
-                    step, total_train_steps, "post", post_update_losses
-                )
-                start_timer()
-            if step >= total_train_steps:
-                break
-        stop_timer()
 
-        ####################
-        #    Evaluation    #
-        ####################
+        step += steps_this_interval
+        selected_lrs.append(selected["lr"])
+        selected_lr_ks.append(selected["k"])
+        interval_log = dict(
+            interval=interval_index,
+            start_step=interval_start_step + 1,
+            end_step=step,
+            interval_steps=steps_this_interval,
+            selected_k=selected["k"],
+            selected_lr=selected["lr"],
+            train_loss=selected["train_loss"],
+            evaluated_candidates=sorted(
+                (
+                    dict(
+                        k=value["k"],
+                        lr=lr,
+                        train_loss=value["train_loss"],
+                        step_train_losses=value["step_train_losses"],
+                    )
+                    for lr, value in candidate_cache.items()
+                ),
+                key=lambda row: row["k"],
+            ),
+        )
+        interval_search_logs.append(interval_log)
+        print(
+            "n_search interval_selected run=%s interval=%d steps=%d-%d "
+            "N=%d selected_k=%d selected_lr=%.8g train_loss=%s "
+            "evaluated_candidates=%d"
+            % (
+                run_id,
+                interval_index,
+                interval_log["start_step"],
+                interval_log["end_step"],
+                steps_this_interval,
+                selected["k"],
+                selected["lr"],
+                repr(float(selected["train_loss"])),
+                len(candidate_cache),
+            ),
+            flush=True,
+        )
 
-        val_acc = evaluate(model, test_loader, tta_level=0)
-        log_eval(run, epoch, val_acc, time_seconds)
-        run = None  # Only print the run number once
+        if step % len(train_loader) == 0 or step >= total_train_steps:
+            val_acc = evaluate(model, test_loader, tta_level=0)
+            log_eval(run, (step - 1) // len(train_loader), val_acc, time_seconds)
+            run = None
 
     ####################
     #  TTA Evaluation  #
@@ -1288,11 +1451,16 @@ def main(
         name=name,
         batch_size=batch_size,
         train_steps=train_steps,
-        muon_lr=muon_lr,
+        interval_steps=interval_steps,
+        initial_lr_k=initial_lr_k,
+        initial_lr=lr_from_k(initial_lr_k),
+        selected_lr_ks=selected_lr_ks,
+        selected_lrs=selected_lrs,
         muon_momentum=muon_momentum,
-        muon_lr_schedule="constant",
+        muon_lr_schedule="n_search",
         sgd_lr_mult=SGD_LR_MULT,
         sgd_lr_schedule="constant",
+        interval_search_logs=interval_search_logs,
         training_batch_loss_logs=training_batch_loss_logs,
         training_batch_loss_log_steps=loss_log_steps_list,
         step_train_loss_logs=step_train_loss_logs,
@@ -1310,18 +1478,20 @@ if __name__ == "__main__":
     results = []
     run_index = [0]
 
-    def evaluate_config(batch_size, muon_lr):
-        config = overfit_run_config(batch_size, muon_lr)
+    def evaluate_config(batch_size, interval_steps):
+        config = overfit_run_config(batch_size, interval_steps)
         print(
             "cifar_baseline2 run=%d train_steps=%d batch_size=%d "
-            "muon_lr=%.8g muon_momentum=%.6g "
-            "sgd_lr_mult=%.6g name=%s search=False "
-            "muon_lr_schedule=constant sgd_lr_schedule=constant"
+            "N=%d initial_lr=%.8g initial_lr_k=%d muon_momentum=%.6g "
+            "sgd_lr_mult=%.6g name=%s search=True "
+            "muon_lr_schedule=n_search sgd_lr_schedule=constant"
             % (
                 run_index[0],
                 config["train_steps"],
                 config["batch_size"],
-                config["muon_lr"],
+                config["interval_steps"],
+                lr_from_k(config["initial_lr_k"]),
+                config["initial_lr_k"],
                 config["muon_momentum"],
                 config["sgd_lr_mult"],
                 config["name"],
@@ -1335,12 +1505,17 @@ if __name__ == "__main__":
         print("Name:               %s" % result["name"])
         print("Train steps:        %d" % result["train_steps"])
         print("Batch size:         %d" % result["batch_size"])
-        print("Muon lr:            %.6g" % result["muon_lr"])
+        print("Interval steps:     %d" % result["interval_steps"])
+        print("Initial Muon lr:    %.6g" % result["initial_lr"])
         print("Muon momentum:      %.6g" % result["muon_momentum"])
         print("SGD lr mult:        %.6g" % result["sgd_lr_mult"])
-        print("Search:             False")
-        print("Muon LR schedule:   constant")
+        print("Search:             True")
+        print("Muon LR schedule:   n_search")
         print("SGD LR schedule:    constant")
+        print(
+            "Selected Muon lrs:  %s"
+            % ",".join("%.8g" % value for value in result["selected_lrs"])
+        )
         print("Train loss:         %.4f" % result["train_loss"])
         print("Val loss:           %.4f" % result["val_loss"])
         print("Train acc:          %.4f" % result["train_acc"])
@@ -1350,24 +1525,26 @@ if __name__ == "__main__":
 
     run_summaries = []
     for batch_size in OVERFIT_BATCH_SIZES:
-        for muon_lr in OVERFIT_MUON_LRS:
-            result = evaluate_config(batch_size, muon_lr)
+        for interval_steps in OVERFIT_INTERVAL_STEPS_LIST:
+            result = evaluate_config(batch_size, interval_steps)
             run_summaries.append(
                 dict(
                     batch_size=batch_size,
-                    muon_lr=muon_lr,
+                    interval_steps=interval_steps,
+                    selected_lr_ks=result["selected_lr_ks"],
+                    selected_lrs=result["selected_lrs"],
                     muon_momentum=OVERFIT_MUON_MOMENTUM,
                     result=result,
                 )
             )
             print(
-                "constant_lr_run complete train_steps=%d batch_size=%d "
-                "muon_lr=%.8g muon_momentum=%.6g train_loss=%.4f "
+                "n_search_run complete train_steps=%d batch_size=%d N=%d "
+                "muon_momentum=%.6g train_loss=%.4f "
                 "val_acc=%.4f tta_val_acc=%.4f"
                 % (
                     OVERFIT_TRAIN_STEPS,
                     batch_size,
-                    muon_lr,
+                    interval_steps,
                     OVERFIT_MUON_MOMENTUM,
                     result["train_loss"],
                     result["val_acc"],
@@ -1385,7 +1562,11 @@ if __name__ == "__main__":
             results=results,
             run_summaries=run_summaries,
             batch_sizes=OVERFIT_BATCH_SIZES,
-            muon_lrs=OVERFIT_MUON_LRS,
+            interval_steps_list=OVERFIT_INTERVAL_STEPS_LIST,
+            initial_lr_k=OVERFIT_INITIAL_LR_K,
+            initial_lr=lr_from_k(OVERFIT_INITIAL_LR_K),
+            base_lr=OVERFIT_BASE_LR,
+            lr_factor=OVERFIT_LR_FACTOR,
             muon_momentum=OVERFIT_MUON_MOMENTUM,
             train_steps=OVERFIT_TRAIN_STEPS,
         ),

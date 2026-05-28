@@ -1,0 +1,67 @@
+CIFAR Baseline2 Constant LR Sweep
+======================================
+
+Runs: 44
+Batch sizes: 500, 2000, 5000, 10000
+Muon LRs: 0.2, 0.16, 0.13, 0.1, 0.082, 0.066, 0.052, 0.042, 0.034, 0.027, 0.021
+
+batch_size=500
+----------------------------------------
+best_lr=0.027 final_step_train_loss=0.87361974 eval_train_loss=0.8736
+lr=0.2 run=0 final_step_train_loss=0.91859365 eval_train_loss=0.9186 steps_logged=100
+lr=0.16 run=1 final_step_train_loss=0.89491087 eval_train_loss=0.8949 steps_logged=100
+lr=0.13 run=2 final_step_train_loss=0.88966829 eval_train_loss=0.8897 steps_logged=100
+lr=0.1 run=3 final_step_train_loss=0.88676476 eval_train_loss=0.8868 steps_logged=100
+lr=0.082 run=4 final_step_train_loss=0.88680607 eval_train_loss=0.8868 steps_logged=100
+lr=0.066 run=5 final_step_train_loss=0.87847614 eval_train_loss=0.8785 steps_logged=100
+lr=0.052 run=6 final_step_train_loss=0.87616795 eval_train_loss=0.8762 steps_logged=100
+lr=0.042 run=7 final_step_train_loss=0.87484884 eval_train_loss=0.8748 steps_logged=100
+lr=0.034 run=8 final_step_train_loss=0.87464803 eval_train_loss=0.8746 steps_logged=100
+lr=0.027 run=9 final_step_train_loss=0.87361974 eval_train_loss=0.8736 steps_logged=100
+lr=0.021 run=10 final_step_train_loss=0.87379259 eval_train_loss=0.8738 steps_logged=100
+
+batch_size=2000
+----------------------------------------
+best_lr=0.034 final_step_train_loss=0.87438178 eval_train_loss=0.8744
+lr=0.2 run=11 final_step_train_loss=0.92771447 eval_train_loss=0.9277 steps_logged=100
+lr=0.16 run=12 final_step_train_loss=0.89546055 eval_train_loss=0.8955 steps_logged=100
+lr=0.13 run=13 final_step_train_loss=0.88698 eval_train_loss=0.887 steps_logged=100
+lr=0.1 run=14 final_step_train_loss=0.88088065 eval_train_loss=0.8809 steps_logged=100
+lr=0.082 run=15 final_step_train_loss=0.88294399 eval_train_loss=0.8829 steps_logged=100
+lr=0.066 run=16 final_step_train_loss=0.88590896 eval_train_loss=0.8859 steps_logged=100
+lr=0.052 run=17 final_step_train_loss=0.87847692 eval_train_loss=0.8785 steps_logged=100
+lr=0.042 run=18 final_step_train_loss=0.87578058 eval_train_loss=0.8758 steps_logged=100
+lr=0.034 run=19 final_step_train_loss=0.87438178 eval_train_loss=0.8744 steps_logged=100
+lr=0.027 run=20 final_step_train_loss=0.87442988 eval_train_loss=0.8744 steps_logged=100
+lr=0.021 run=21 final_step_train_loss=0.87454498 eval_train_loss=0.8745 steps_logged=100
+
+batch_size=5000
+----------------------------------------
+best_lr=0.034 final_step_train_loss=0.87525159 eval_train_loss=0.8753
+lr=0.2 run=22 final_step_train_loss=0.90687448 eval_train_loss=0.9069 steps_logged=100
+lr=0.16 run=23 final_step_train_loss=0.92348593 eval_train_loss=0.9235 steps_logged=100
+lr=0.13 run=24 final_step_train_loss=0.89247561 eval_train_loss=0.8925 steps_logged=100
+lr=0.1 run=25 final_step_train_loss=0.88674188 eval_train_loss=0.8867 steps_logged=100
+lr=0.082 run=26 final_step_train_loss=0.88124055 eval_train_loss=0.8812 steps_logged=100
+lr=0.066 run=27 final_step_train_loss=0.87968457 eval_train_loss=0.8797 steps_logged=100
+lr=0.052 run=28 final_step_train_loss=0.88039917 eval_train_loss=0.8804 steps_logged=100
+lr=0.042 run=29 final_step_train_loss=0.87739563 eval_train_loss=0.8774 steps_logged=100
+lr=0.034 run=30 final_step_train_loss=0.87525159 eval_train_loss=0.8753 steps_logged=100
+lr=0.027 run=31 final_step_train_loss=0.87598038 eval_train_loss=0.876 steps_logged=100
+lr=0.021 run=32 final_step_train_loss=0.87583745 eval_train_loss=0.8758 steps_logged=100
+
+batch_size=10000
+----------------------------------------
+best_lr=0.027 final_step_train_loss=0.87873328 eval_train_loss=0.8787
+lr=0.2 run=33 final_step_train_loss=0.98297489 eval_train_loss=0.983 steps_logged=100
+lr=0.16 run=34 final_step_train_loss=0.89954644 eval_train_loss=0.8995 steps_logged=100
+lr=0.13 run=35 final_step_train_loss=0.90336531 eval_train_loss=0.9034 steps_logged=100
+lr=0.1 run=36 final_step_train_loss=0.88905454 eval_train_loss=0.8891 steps_logged=100
+lr=0.082 run=37 final_step_train_loss=0.89505363 eval_train_loss=0.8951 steps_logged=100
+lr=0.066 run=38 final_step_train_loss=0.88139647 eval_train_loss=0.8814 steps_logged=100
+lr=0.052 run=39 final_step_train_loss=0.88153672 eval_train_loss=0.8815 steps_logged=100
+lr=0.042 run=40 final_step_train_loss=0.87941468 eval_train_loss=0.8794 steps_logged=100
+lr=0.034 run=41 final_step_train_loss=0.88070774 eval_train_loss=0.8807 steps_logged=100
+lr=0.027 run=42 final_step_train_loss=0.87873328 eval_train_loss=0.8787 steps_logged=100
+lr=0.021 run=43 final_step_train_loss=0.87945133 eval_train_loss=0.8795 steps_logged=100
+
