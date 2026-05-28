@@ -1,0 +1,124 @@
+CIFAR Baseline Eval5 No-Multiplier min_loss Runs
+=======================================================
+
+Evaluated runs: 32
+Multiplier scheduler: constant
+Multiplier: 1
+
+batch_size=500, train_steps=2
+------------------------------------------------
+m=0 r0 train_loss=1.8879 val_loss=2.2292 train_acc=0.666 val_acc=0.2401 tta_val_acc=0.2421 applied_lr=0.1216,0.0797696
+m=0.6 r1 train_loss=1.8843 val_loss=2.2224 train_acc=0.658 val_acc=0.2427 tta_val_acc=0.2426 applied_lr=0.1216,0.099712
+best_train_loss: m=0.6 loss=1.8843
+best_tta_val_acc: m=0.6 tta=0.2426
+
+batch_size=500, train_steps=3
+------------------------------------------------
+m=0 r2 train_loss=1.68 val_loss=2.2051 train_acc=0.828 val_acc=0.278 tta_val_acc=0.277 applied_lr=0.1216,0.0797696,0.060305818
+m=0.6 r3 train_loss=1.6535 val_loss=2.1944 train_acc=0.816 val_acc=0.2776 tta_val_acc=0.2784 applied_lr=0.1216,0.099712,0.065411072
+best_train_loss: m=0.6 loss=1.6535
+best_tta_val_acc: m=0.6 tta=0.2784
+
+batch_size=500, train_steps=4
+------------------------------------------------
+m=0 r4 train_loss=1.4752 val_loss=2.1766 train_acc=0.886 val_acc=0.3081 tta_val_acc=0.3138 applied_lr=0.1216,0.0797696,0.060305818,0.045591198
+m=0.6 r5 train_loss=1.4333 val_loss=2.1741 train_acc=0.904 val_acc=0.3255 tta_val_acc=0.3295 applied_lr=0.1216,0.099712,0.065411072,0.061813463
+best_train_loss: m=0.6 loss=1.4333
+best_tta_val_acc: m=0.6 tta=0.3295
+
+batch_size=500, train_steps=10
+------------------------------------------------
+m=0 r6 train_loss=0.9061 val_loss=2.0141 train_acc=1 val_acc=0.3951 tta_val_acc=0.4236 applied_lr=0.1216,0.0797696,0.048244654,0.04250354,0.040165846,0.032935993,0.033759393,0.01944541,0.01470073,0.011113752
+m=0.6 r7 train_loss=0.8838 val_loss=2.0282 train_acc=1 val_acc=0.402 tta_val_acc=0.4379 applied_lr=0.1216,0.099712,0.065411072,0.061813463,0.05068704,0.041563373,0.034081965,0.022357769,0.016902474,0.01277827
+best_train_loss: m=0.6 loss=0.8838
+best_tta_val_acc: m=0.6 tta=0.4379
+
+batch_size=2000, train_steps=2
+------------------------------------------------
+m=0 r8 train_loss=2.0819 val_loss=2.2273 train_acc=0.336 val_acc=0.2301 tta_val_acc=0.2327 applied_lr=0.1216,0.0797696
+m=0.6 r9 train_loss=2.0812 val_loss=2.2256 train_acc=0.33 val_acc=0.2321 tta_val_acc=0.2327 applied_lr=0.1216,0.0797696
+best_train_loss: m=0.6 loss=2.0812
+best_tta_val_acc: m=0 tta=0.2327
+
+batch_size=2000, train_steps=3
+------------------------------------------------
+m=0 r10 train_loss=1.9469 val_loss=2.1661 train_acc=0.5535 val_acc=0.2882 tta_val_acc=0.2914 applied_lr=0.1216,0.0797696,0.075382272
+m=0.6 r11 train_loss=1.9384 val_loss=2.1549 train_acc=0.547 val_acc=0.2965 tta_val_acc=0.3015 applied_lr=0.1216,0.0797696,0.075382272
+best_train_loss: m=0.6 loss=1.9384
+best_tta_val_acc: m=0.6 tta=0.3015
+
+batch_size=2000, train_steps=4
+------------------------------------------------
+m=0 r12 train_loss=1.8176 val_loss=2.1306 train_acc=0.648 val_acc=0.3559 tta_val_acc=0.3604 applied_lr=0.1216,0.0797696,0.060305818,0.045591198
+m=0.6 r13 train_loss=1.7931 val_loss=2.1127 train_acc=0.6525 val_acc=0.3614 tta_val_acc=0.3672 applied_lr=0.1216,0.0797696,0.075382272,0.061813463
+best_train_loss: m=0.6 loss=1.7931
+best_tta_val_acc: m=0.6 tta=0.3672
+
+batch_size=2000, train_steps=10
+------------------------------------------------
+m=0 r14 train_loss=1.238 val_loss=1.9033 train_acc=0.9265 val_acc=0.4778 tta_val_acc=0.4996 applied_lr=0.1216,0.06381568,0.056221614,0.04250354,0.032132676,0.024292303,0.022956227,0.018824106,0.015435767,0.015821661
+m=0.6 r15 train_loss=1.1353 val_loss=1.8855 train_acc=0.9645 val_acc=0.5011 tta_val_acc=0.5278 applied_lr=0.1216,0.0797696,0.075382272,0.04945077,0.037384782,0.028262896,0.026708436,0.021900918,0.022448441,0.020203597
+best_train_loss: m=0.6 loss=1.1353
+best_tta_val_acc: m=0.6 tta=0.5278
+
+batch_size=5000, train_steps=2
+------------------------------------------------
+m=0 r16 train_loss=2.1712 val_loss=2.2494 train_acc=0.3162 val_acc=0.2481 tta_val_acc=0.2526 applied_lr=0.152,0.087552
+m=0.6 r17 train_loss=2.1715 val_loss=2.258 train_acc=0.3122 val_acc=0.248 tta_val_acc=0.2531 applied_lr=0.152,0.10944
+best_train_loss: m=0 loss=2.1712
+best_tta_val_acc: m=0.6 tta=0.2531
+
+batch_size=5000, train_steps=3
+------------------------------------------------
+m=0 r18 train_loss=2.0527 val_loss=2.1326 train_acc=0.421 val_acc=0.3438 tta_val_acc=0.3548 applied_lr=0.152,0.087552,0.129276
+m=0.6 r19 train_loss=2.0511 val_loss=2.108 train_acc=0.4146 val_acc=0.3441 tta_val_acc=0.354 applied_lr=0.152,0.087552,0.161595
+best_train_loss: m=0.6 loss=2.0511
+best_tta_val_acc: m=0 tta=0.3548
+
+batch_size=5000, train_steps=4
+------------------------------------------------
+m=0 r20 train_loss=1.9233 val_loss=2.0816 train_acc=0.5002 val_acc=0.3776 tta_val_acc=0.3837 applied_lr=0.152,0.087552,0.129276,0.08273664
+m=0.6 r21 train_loss=1.9214 val_loss=2.0422 train_acc=0.5046 val_acc=0.3882 tta_val_acc=0.3947 applied_lr=0.152,0.087552,0.161595,0.09307872
+best_train_loss: m=0.6 loss=1.9214
+best_tta_val_acc: m=0.6 tta=0.3947
+
+batch_size=5000, train_steps=10
+------------------------------------------------
+m=0 r22 train_loss=1.4233 val_loss=1.7627 train_acc=0.8064 val_acc=0.5543 tta_val_acc=0.5779 applied_lr=0.152,0.087552,0.129276,0.08273664,0.043420189,0.030602549,0.026960846,0.020382399,0.019261367,0.015794321
+m=0.6 r23 train_loss=1.3935 val_loss=1.7426 train_acc=0.8222 val_acc=0.5774 tta_val_acc=0.5965 applied_lr=0.152,0.087552,0.161595,0.09307872,0.048847712,0.034427868,0.030330951,0.028662749,0.023503454,0.024091041
+best_train_loss: m=0.6 loss=1.3935
+best_tta_val_acc: m=0.6 tta=0.5965
+
+batch_size=10000, train_steps=2
+------------------------------------------------
+m=0 r24 train_loss=2.1748 val_loss=2.24 train_acc=0.3264 val_acc=0.2578 tta_val_acc=0.2594 applied_lr=0.19,0.1216
+m=0.6 r25 train_loss=2.1753 val_loss=2.2523 train_acc=0.322 val_acc=0.2555 tta_val_acc=0.2576 applied_lr=0.19,0.1216
+best_train_loss: m=0 loss=2.1748
+best_tta_val_acc: m=0 tta=0.2594
+
+batch_size=10000, train_steps=3
+------------------------------------------------
+m=0 r26 train_loss=2.0518 val_loss=2.0859 train_acc=0.4192 val_acc=0.3673 tta_val_acc=0.3767 applied_lr=0.19,0.1216,0.1558
+m=0.6 r27 train_loss=2.0521 val_loss=2.0614 train_acc=0.4156 val_acc=0.3671 tta_val_acc=0.3741 applied_lr=0.19,0.1216,0.19475
+best_train_loss: m=0 loss=2.0518
+best_tta_val_acc: m=0 tta=0.3767
+
+batch_size=10000, train_steps=4
+------------------------------------------------
+m=0 r28 train_loss=1.9378 val_loss=2.0221 train_acc=0.4622 val_acc=0.3879 tta_val_acc=0.3971 applied_lr=0.19,0.1216,0.1558,0.099712
+m=0.6 r29 train_loss=1.9358 val_loss=1.989 train_acc=0.4703 val_acc=0.3871 tta_val_acc=0.3929 applied_lr=0.19,0.1216,0.19475,0.112176
+best_train_loss: m=0.6 loss=1.9358
+best_tta_val_acc: m=0 tta=0.3971
+
+batch_size=10000, train_steps=10
+------------------------------------------------
+m=0 r30 train_loss=1.5202 val_loss=1.6956 train_acc=0.7134 val_acc=0.5921 tta_val_acc=0.6029 applied_lr=0.19,0.1216,0.1558,0.099712,0.041863086,0.043422486,0.02626192,0.023136751,0.02186423,0.017928668
+m=0.6 r31 train_loss=1.486 val_loss=1.682 train_acc=0.7336 val_acc=0.6156 tta_val_acc=0.6324 applied_lr=0.19,0.1216,0.19475,0.112176,0.058869965,0.041491551,0.036554057,0.034543583,0.028325738,0.029033882
+best_train_loss: m=0.6 loss=1.486
+best_tta_val_acc: m=0.6 tta=0.6324
+
+Overall Best
+------------------------------------------------
+train_loss: bs=500 steps=10 m=0.6 loss=0.8838
+tta_val_acc: bs=10000 steps=10 m=0.6 tta=0.6324
+

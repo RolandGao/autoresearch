@@ -1,0 +1,126 @@
+CIFAR Baseline Eval5 Combined LR Schedulers
+===============================================
+
+Curves per subplot:
+schedule_search_m0.6: selected schedule search result from exp2 for bs=500, exp3 otherwise
+schedule_search_m0: selected schedule search result from no_momentum
+min_loss_m0: no_multiplier direct min_loss run with Muon momentum 0
+min_loss_m0.6: no_multiplier direct min_loss run with Muon momentum 0.6
+
+Per-step train-loss traces are available for min_loss curves only.
+Schedule-search logs record selected final train loss, not per-step train loss.
+
+Total selected curves: 64
+
+batch_size=500, train_steps=2
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=0 train_loss=1.8879 lrs=0.1216,0.0797696 step_train_losses=2.108765,1.887931 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=1 train_loss=1.8843 lrs=0.1216,0.099712 step_train_losses=2.108708,1.884323 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=9 train_loss=1.879 lrs=0.16,0.1024 step_train_losses=NA selected_point=(1, 3)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp2.log run=10 train_loss=1.8826 lrs=0.128,0.1024 step_train_losses=NA selected_point=(2, 3)
+
+batch_size=500, train_steps=3
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=2 train_loss=1.68 lrs=0.1216,0.0797696,0.060305818 step_train_losses=2.108765,1.883016,1.680019 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=3 train_loss=1.6535 lrs=0.1216,0.099712,0.065411072 step_train_losses=2.108708,1.879546,1.653526 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=30 train_loss=1.6431 lrs=0.16,0.16,0.08192 step_train_losses=NA selected_point=(1, 1, 4)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp2.log run=35 train_loss=1.6373 lrs=0.128,0.16,0.08192 step_train_losses=NA selected_point=(2, 1, 4)
+
+batch_size=500, train_steps=4
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=4 train_loss=1.4752 lrs=0.1216,0.0797696,0.060305818,0.045591198 step_train_losses=2.108765,1.882512,1.651501,1.475216 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=5 train_loss=1.4333 lrs=0.1216,0.099712,0.065411072,0.061813463 step_train_losses=2.108708,1.879101,1.623665,1.43328 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=74 train_loss=1.4085 lrs=0.16,0.2,0.128,0.065536 step_train_losses=NA selected_point=(1, 0, 2, 5)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp2.log run=79 train_loss=1.3893 lrs=0.128,0.2,0.128,0.08192 step_train_losses=NA selected_point=(2, 0, 2, 4)
+
+batch_size=500, train_steps=10
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=6 train_loss=0.9061 lrs=0.1216,0.0797696,0.048244654,0.04250354,0.040165846,0.032935993,0.033759393,0.01944541,0.01470073,0.011113752 step_train_losses=2.108765,1.884585,1.624349,1.405015,1.233707,1.089435,1.002825,0.946617,0.919943,0.906138 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=7 train_loss=0.8838 lrs=0.1216,0.099712,0.065411072,0.061813463,0.05068704,0.041563373,0.034081965,0.022357769,0.016902474,0.01277827 step_train_losses=2.108708,1.881218,1.592975,1.336395,1.147787,1.013172,0.945855,0.909332,0.893031,0.883801 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=127 train_loss=0.8803 lrs=0.2,0.2,0.128,0.128,0.1024,0.1024,0.08192,0.065536,0.04194304,0.021474836 step_train_losses=NA selected_point=(0, 0, 2, 2, 3, 3, 4, 5, 7, 10)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp2.log run=110 train_loss=0.8773 lrs=0.2,0.16,0.16,0.128,0.128,0.1024,0.08192,0.065536,0.04194304,0.017179869 step_train_losses=NA selected_point=(0, 1, 1, 2, 2, 3, 4, 5, 7, 11)
+
+batch_size=2000, train_steps=2
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=8 train_loss=2.0819 lrs=0.1216,0.0797696 step_train_losses=2.226814,2.08187 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=9 train_loss=2.0812 lrs=0.1216,0.0797696 step_train_losses=2.226753,2.081214 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=173 train_loss=2.0796 lrs=0.16,0.08192 step_train_losses=NA selected_point=(1, 4)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp3.log run=13 train_loss=2.081 lrs=0.128,0.08192 step_train_losses=NA selected_point=(2, 4)
+
+batch_size=2000, train_steps=3
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=10 train_loss=1.9469 lrs=0.1216,0.0797696,0.075382272 step_train_losses=2.226814,2.106313,1.946864 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=11 train_loss=1.9384 lrs=0.1216,0.0797696,0.075382272 step_train_losses=2.226753,2.104722,1.938414 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=200 train_loss=1.9356 lrs=0.16,0.128,0.08192 step_train_losses=NA selected_point=(1, 2, 4)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp3.log run=39 train_loss=1.9335 lrs=0.16,0.1024,0.1024 step_train_losses=NA selected_point=(1, 3, 3)
+
+batch_size=2000, train_steps=4
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=12 train_loss=1.8176 lrs=0.1216,0.0797696,0.060305818,0.045591198 step_train_losses=2.226814,2.122667,1.931774,1.817641 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=13 train_loss=1.7931 lrs=0.1216,0.0797696,0.075382272,0.061813463 step_train_losses=2.226753,2.120603,1.923814,1.793077 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=243 train_loss=1.7839 lrs=0.16,0.128,0.128,0.065536 step_train_losses=NA selected_point=(1, 2, 2, 5)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp3.log run=91 train_loss=1.7794 lrs=0.16,0.1024,0.128,0.065536 step_train_losses=NA selected_point=(1, 3, 2, 5)
+
+batch_size=2000, train_steps=10
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=14 train_loss=1.238 lrs=0.1216,0.06381568,0.056221614,0.04250354,0.032132676,0.024292303,0.022956227,0.018824106,0.015435767,0.015821661 step_train_losses=2.226814,2.157377,1.937944,1.803972,1.649885,1.530902,1.433348,1.348466,1.285052,1.238018 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=15 train_loss=1.1353 lrs=0.1216,0.0797696,0.075382272,0.04945077,0.037384782,0.028262896,0.026708436,0.021900918,0.022448441,0.020203597 step_train_losses=2.226753,2.154481,1.919922,1.758885,1.597409,1.463909,1.352021,1.262211,1.190022,1.135279 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=418 train_loss=1.0648 lrs=0.2,0.16,0.16,0.1024,0.128,0.1024,0.1024,0.0524288,0.08192,0.04194304 step_train_losses=NA selected_point=(0, 1, 1, 3, 2, 3, 3, 6, 4, 7)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp3.log run=317 train_loss=1.0082 lrs=0.16,0.16,0.16,0.1024,0.128,0.08192,0.08192,0.0524288,0.1024,0.0524288 step_train_losses=NA selected_point=(1, 1, 1, 3, 2, 4, 4, 6, 3, 6)
+
+batch_size=5000, train_steps=2
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=16 train_loss=2.1712 lrs=0.152,0.087552 step_train_losses=2.272139,2.171234 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=17 train_loss=2.1715 lrs=0.152,0.10944 step_train_losses=2.27216,2.171514 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=444 train_loss=2.1688 lrs=0.2,0.1024 step_train_losses=NA selected_point=(0, 3)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp3.log run=343 train_loss=2.1703 lrs=0.2,0.1024 step_train_losses=NA selected_point=(0, 3)
+
+batch_size=5000, train_steps=3
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=18 train_loss=2.0527 lrs=0.152,0.087552,0.129276 step_train_losses=2.272139,2.20547,2.052732 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=19 train_loss=2.0511 lrs=0.152,0.087552,0.161595 step_train_losses=2.27216,2.205219,2.051148 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=452 train_loss=2.0434 lrs=0.2,0.128,0.16 step_train_losses=NA selected_point=(0, 2, 1)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp3.log run=352 train_loss=2.0436 lrs=0.2,0.16,0.2 step_train_losses=NA selected_point=(0, 1, 0)
+
+batch_size=5000, train_steps=4
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=20 train_loss=1.9233 lrs=0.152,0.087552,0.129276,0.08273664 step_train_losses=2.272139,2.224893,2.046011,1.923276 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=21 train_loss=1.9214 lrs=0.152,0.087552,0.161595,0.09307872 step_train_losses=2.27216,2.224296,2.044394,1.921427 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=485 train_loss=1.9114 lrs=0.2,0.1024,0.2,0.1024 step_train_losses=NA selected_point=(0, 3, 0, 3)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp3.log run=380 train_loss=1.9169 lrs=0.2,0.128,0.2,0.1024 step_train_losses=NA selected_point=(0, 2, 0, 3)
+
+batch_size=5000, train_steps=10
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=22 train_loss=1.4233 lrs=0.152,0.087552,0.129276,0.08273664,0.043420189,0.030602549,0.026960846,0.020382399,0.019261367,0.015794321 step_train_losses=2.272139,2.262687,2.03664,1.866085,1.75198,1.652518,1.574888,1.509125,1.462276,1.423251 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=23 train_loss=1.3935 lrs=0.152,0.087552,0.161595,0.09307872,0.048847712,0.034427868,0.030330951,0.028662749,0.023503454,0.024091041 step_train_losses=2.27216,2.261421,2.035029,1.864498,1.748444,1.6528,1.570553,1.500029,1.439912,1.393498 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=660 train_loss=1.3232 lrs=0.16,0.16,0.16,0.128,0.128,0.1024,0.1024,0.0524288,0.08192,0.04194304 step_train_losses=NA selected_point=(1, 1, 1, 2, 2, 3, 3, 6, 4, 7)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp3.log run=590 train_loss=1.2811 lrs=0.16,0.128,0.128,0.128,0.128,0.08192,0.08192,0.0524288,0.08192,0.04194304 step_train_losses=NA selected_point=(1, 2, 2, 2, 2, 4, 4, 6, 4, 7)
+
+batch_size=10000, train_steps=2
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=24 train_loss=2.1748 lrs=0.19,0.1216 step_train_losses=2.279536,2.174818 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=25 train_loss=2.1753 lrs=0.19,0.1216 step_train_losses=2.279539,2.175285 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=683 train_loss=2.1743 lrs=0.2,0.128 step_train_losses=NA selected_point=(0, 2)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp3.log run=613 train_loss=2.1749 lrs=0.2,0.128 step_train_losses=NA selected_point=(0, 2)
+
+batch_size=10000, train_steps=3
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=26 train_loss=2.0518 lrs=0.19,0.1216,0.1558 step_train_losses=2.279536,2.20212,2.051759 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=27 train_loss=2.0521 lrs=0.19,0.1216,0.19475 step_train_losses=2.279539,2.201976,2.052103 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=697 train_loss=2.0464 lrs=0.25,0.16,0.2 step_train_losses=NA selected_point=(-1, 1, 0)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp3.log run=624 train_loss=2.0483 lrs=0.25,0.16,0.2 step_train_losses=NA selected_point=(-1, 1, 0)
+
+batch_size=10000, train_steps=4
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=28 train_loss=1.9378 lrs=0.19,0.1216,0.1558,0.099712 step_train_losses=2.279536,2.217835,2.044678,1.937839 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=29 train_loss=1.9358 lrs=0.19,0.1216,0.19475,0.112176 step_train_losses=2.279539,2.217357,2.04468,1.935765 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=722 train_loss=1.9341 lrs=0.2,0.128,0.2,0.1024 step_train_losses=NA selected_point=(0, 2, 0, 3)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp3.log run=648 train_loss=1.9368 lrs=0.2,0.16,0.2,0.1024 step_train_losses=NA selected_point=(0, 1, 0, 3)
+
+batch_size=10000, train_steps=10
+--------------------------------------------------------
+min_loss_m0: source=cifar_baseline2_eval5_no_multiplier.log run=30 train_loss=1.5202 lrs=0.19,0.1216,0.1558,0.099712,0.041863086,0.043422486,0.02626192,0.023136751,0.02186423,0.017928668 step_train_losses=2.279536,2.248752,2.034708,1.88754,1.783957,1.705541,1.638865,1.589531,1.551271,1.520221 momentum=0, multiplier=1
+min_loss_m0.6: source=cifar_baseline2_eval5_no_multiplier.log run=31 train_loss=1.486 lrs=0.19,0.1216,0.19475,0.112176,0.058869965,0.041491551,0.036554057,0.034543583,0.028325738,0.029033882 step_train_losses=2.279539,2.247628,2.034597,1.882915,1.777897,1.695023,1.628394,1.570481,1.524451,1.486048 momentum=0.6, multiplier=1
+schedule_search_m0: source=cifar_baseline2_eval5_no_momentum.log run=893 train_loss=1.4389 lrs=0.2,0.128,0.16,0.128,0.128,0.08192,0.128,0.08192,0.065536,0.033554432 step_train_losses=NA selected_point=(0, 2, 1, 2, 2, 4, 2, 4, 5, 8)
+schedule_search_m0.6: source=cifar_baseline2_eval5_exp3.log run=855 train_loss=1.4062 lrs=0.16,0.16,0.16,0.16,0.1024,0.08192,0.1024,0.065536,0.08192,0.04194304 step_train_losses=NA selected_point=(1, 1, 1, 1, 3, 4, 3, 5, 4, 7)
+
