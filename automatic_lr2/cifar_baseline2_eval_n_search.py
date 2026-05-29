@@ -18,7 +18,7 @@ with open(sys.argv[0]) as f:
 from collections import Counter
 import json
 import uuid
-from math import ceil, floor, isfinite, log10
+from math import ceil, floor, isfinite, log, log10
 
 import torch
 from torch import nn
@@ -1105,6 +1105,8 @@ OVERFIT_TRAIN_STEPS = 100
 OVERFIT_INITIAL_LR_K = 0
 OVERFIT_BASE_LR = 0.2
 OVERFIT_LR_FACTOR = 0.6
+OVERFIT_LR_SEARCH_EMAS = [0.9, 0.5]
+OVERFIT_APPLIED_LR_SOURCES = ["selected_lr", "next_initial_lr"]
 OVERFIT_MAX_LR_SEARCH_MOVES = 40
 OVERFIT_MUON_MOMENTUM = 0.6
 OVERFIT_SGD_LR_MULT = 1.0
@@ -1120,17 +1122,36 @@ def lr_from_k(k):
     return round_sigfigs(OVERFIT_BASE_LR * (OVERFIT_LR_FACTOR**k), 2)
 
 
+def nearest_lr_k(lr):
+    if lr <= 0:
+        raise ValueError(f"LR must be positive, got {lr}")
+    return int(round(log(lr / OVERFIT_BASE_LR) / log(OVERFIT_LR_FACTOR)))
+
+
 def lr_label(lr):
     return ("%.8g" % lr).replace("-", "m").replace(".", "p")
 
 
-def overfit_run_config(batch_size, interval_steps):
+def ema_label(ema):
+    return ("%.8g" % ema).replace("-", "m").replace(".", "p")
+
+
+def applied_lr_source_label(applied_lr_source):
+    return applied_lr_source.replace("_", "")
+
+
+def overfit_run_config(batch_size, interval_steps, lr_search_ema, applied_lr_source):
     return dict(
-        name=f"n_search_bs{batch_size}_N{interval_steps}",
+        name=(
+            f"n_search_bs{batch_size}_N{interval_steps}_ema{ema_label(lr_search_ema)}"
+            f"_apply{applied_lr_source_label(applied_lr_source)}"
+        ),
         batch_size=batch_size,
         train_steps=OVERFIT_TRAIN_STEPS,
         interval_steps=interval_steps,
         initial_lr_k=OVERFIT_INITIAL_LR_K,
+        lr_search_ema=lr_search_ema,
+        applied_lr_source=applied_lr_source,
         muon_momentum=OVERFIT_MUON_MOMENTUM,
         sgd_lr_mult=OVERFIT_SGD_LR_MULT,
     )
@@ -1163,6 +1184,8 @@ def main(
     train_steps,
     interval_steps,
     initial_lr_k,
+    lr_search_ema,
+    applied_lr_source,
     muon_momentum,
     sgd_lr_mult=None,
 ):
@@ -1245,8 +1268,10 @@ def main(
     interval_search_logs = []
     selected_lrs = []
     selected_lr_ks = []
+    applied_lrs = []
+    applied_lr_ks = []
     inputs, labels = training_batches[0]
-    current_k = initial_lr_k
+    current_initial_lr = OVERFIT_BASE_LR * (OVERFIT_LR_FACTOR**initial_lr_k)
     interval_index = 0
 
     while step < total_train_steps:
@@ -1255,6 +1280,23 @@ def main(
         steps_this_interval = min(interval_steps, total_train_steps - step)
         interval_start_state = capture_training_state(model, optimizers)
         candidate_cache = {}
+        current_k = nearest_lr_k(current_initial_lr)
+        search_start_k = current_k
+        search_start_lr = lr_from_k(search_start_k)
+        print(
+            "n_search interval_start run=%s interval=%d start_step=%d "
+            "initial_lr=%.16g snapped_k=%d snapped_lr=%.8g ema=%.6g"
+            % (
+                run_id,
+                interval_index,
+                interval_start_step,
+                current_initial_lr,
+                search_start_k,
+                search_start_lr,
+                lr_search_ema,
+            ),
+            flush=True,
+        )
 
         def evaluate_candidate(k):
             lr = lr_from_k(k)
@@ -1364,34 +1406,63 @@ def main(
                 break
             current_k = best["k"]
 
-        restore_training_state(model, optimizers, selected["state"])
-        for offset, train_loss_value in enumerate(selected["step_train_losses"], start=1):
+        step += steps_this_interval
+        selected_lrs.append(selected["lr"])
+        selected_lr_ks.append(selected["k"])
+        next_initial_lr = (
+            lr_search_ema * current_initial_lr
+            + (1.0 - lr_search_ema) * selected["lr"]
+        )
+        if applied_lr_source == "selected_lr":
+            applied = selected
+            applied_initial_lr = selected["lr"]
+        elif applied_lr_source == "next_initial_lr":
+            applied_k = nearest_lr_k(next_initial_lr)
+            applied = evaluate_candidate(applied_k)
+            applied_initial_lr = next_initial_lr
+        else:
+            raise ValueError(f"Unknown applied_lr_source: {applied_lr_source}")
+
+        restore_training_state(model, optimizers, applied["state"])
+        for offset, train_loss_value in enumerate(applied["step_train_losses"], start=1):
             committed_step = interval_start_step + offset
-            log_applied_lr(committed_step, total_train_steps, name, selected["lr"])
+            log_applied_lr(committed_step, total_train_steps, name, applied["lr"])
             step_train_loss_logs.append(
                 dict(
                     step=committed_step,
                     train_loss=train_loss_value,
                     interval=interval_index,
-                    lr=selected["lr"],
-                    lr_k=selected["k"],
+                    lr=applied["lr"],
+                    lr_k=applied["k"],
+                    search_selected_lr=selected["lr"],
+                    search_selected_k=selected["k"],
+                    applied_lr_source=applied_lr_source,
                 )
             )
             log_step_train_loss(
                 committed_step, total_train_steps, name, train_loss_value
             )
+        applied_lrs.append(applied["lr"])
+        applied_lr_ks.append(applied["k"])
 
-        step += steps_this_interval
-        selected_lrs.append(selected["lr"])
-        selected_lr_ks.append(selected["k"])
         interval_log = dict(
             interval=interval_index,
             start_step=interval_start_step + 1,
             end_step=step,
             interval_steps=steps_this_interval,
+            initial_lr=current_initial_lr,
+            snapped_k=search_start_k,
+            snapped_lr=search_start_lr,
             selected_k=selected["k"],
             selected_lr=selected["lr"],
-            train_loss=selected["train_loss"],
+            next_initial_lr=next_initial_lr,
+            lr_search_ema=lr_search_ema,
+            applied_lr_source=applied_lr_source,
+            applied_initial_lr=applied_initial_lr,
+            applied_k=applied["k"],
+            applied_lr=applied["lr"],
+            train_loss=applied["train_loss"],
+            search_selected_train_loss=selected["train_loss"],
             evaluated_candidates=sorted(
                 (
                     dict(
@@ -1408,21 +1479,29 @@ def main(
         interval_search_logs.append(interval_log)
         print(
             "n_search interval_selected run=%s interval=%d steps=%d-%d "
-            "N=%d selected_k=%d selected_lr=%.8g train_loss=%s "
-            "evaluated_candidates=%d"
+            "N=%d initial_lr=%.16g selected_k=%d selected_lr=%.8g "
+            "next_initial_lr=%.16g ema=%.6g applied_lr_source=%s "
+            "applied_k=%d applied_lr=%.8g train_loss=%s evaluated_candidates=%d"
             % (
                 run_id,
                 interval_index,
                 interval_log["start_step"],
                 interval_log["end_step"],
                 steps_this_interval,
+                current_initial_lr,
                 selected["k"],
                 selected["lr"],
-                repr(float(selected["train_loss"])),
+                next_initial_lr,
+                lr_search_ema,
+                applied_lr_source,
+                applied["k"],
+                applied["lr"],
+                repr(float(applied["train_loss"])),
                 len(candidate_cache),
             ),
             flush=True,
         )
+        current_initial_lr = next_initial_lr
 
         if step % len(train_loader) == 0 or step >= total_train_steps:
             val_acc = evaluate(model, test_loader, tta_level=0)
@@ -1453,9 +1532,13 @@ def main(
         train_steps=train_steps,
         interval_steps=interval_steps,
         initial_lr_k=initial_lr_k,
-        initial_lr=lr_from_k(initial_lr_k),
+        initial_lr=OVERFIT_BASE_LR * (OVERFIT_LR_FACTOR**initial_lr_k),
+        lr_search_ema=lr_search_ema,
+        applied_lr_source=applied_lr_source,
         selected_lr_ks=selected_lr_ks,
         selected_lrs=selected_lrs,
+        applied_lr_ks=applied_lr_ks,
+        applied_lrs=applied_lrs,
         muon_momentum=muon_momentum,
         muon_lr_schedule="n_search",
         sgd_lr_mult=SGD_LR_MULT,
@@ -1478,23 +1561,28 @@ if __name__ == "__main__":
     results = []
     run_index = [0]
 
-    def evaluate_config(batch_size, interval_steps):
-        config = overfit_run_config(batch_size, interval_steps)
+    def evaluate_config(batch_size, interval_steps, lr_search_ema, applied_lr_source):
+        config = overfit_run_config(
+            batch_size, interval_steps, lr_search_ema, applied_lr_source
+        )
         print(
             "cifar_baseline2 run=%d train_steps=%d batch_size=%d "
             "N=%d initial_lr=%.8g initial_lr_k=%d muon_momentum=%.6g "
             "sgd_lr_mult=%.6g name=%s search=True "
-            "muon_lr_schedule=n_search sgd_lr_schedule=constant"
+            "muon_lr_schedule=n_search sgd_lr_schedule=constant ema=%.6g "
+            "applied_lr_source=%s"
             % (
                 run_index[0],
                 config["train_steps"],
                 config["batch_size"],
                 config["interval_steps"],
-                lr_from_k(config["initial_lr_k"]),
+                OVERFIT_BASE_LR * (OVERFIT_LR_FACTOR**config["initial_lr_k"]),
                 config["initial_lr_k"],
                 config["muon_momentum"],
                 config["sgd_lr_mult"],
                 config["name"],
+                config["lr_search_ema"],
+                config["applied_lr_source"],
             ),
             flush=True,
         )
@@ -1507,6 +1595,8 @@ if __name__ == "__main__":
         print("Batch size:         %d" % result["batch_size"])
         print("Interval steps:     %d" % result["interval_steps"])
         print("Initial Muon lr:    %.6g" % result["initial_lr"])
+        print("LR search ema:      %.6g" % result["lr_search_ema"])
+        print("Applied LR source:  %s" % result["applied_lr_source"])
         print("Muon momentum:      %.6g" % result["muon_momentum"])
         print("SGD lr mult:        %.6g" % result["sgd_lr_mult"])
         print("Search:             True")
@@ -1516,6 +1606,10 @@ if __name__ == "__main__":
             "Selected Muon lrs:  %s"
             % ",".join("%.8g" % value for value in result["selected_lrs"])
         )
+        print(
+            "Applied Muon lrs:   %s"
+            % ",".join("%.8g" % value for value in result["applied_lrs"])
+        )
         print("Train loss:         %.4f" % result["train_loss"])
         print("Val loss:           %.4f" % result["val_loss"])
         print("Train acc:          %.4f" % result["train_acc"])
@@ -1524,34 +1618,44 @@ if __name__ == "__main__":
         return result
 
     run_summaries = []
-    for batch_size in OVERFIT_BATCH_SIZES:
-        for interval_steps in OVERFIT_INTERVAL_STEPS_LIST:
-            result = evaluate_config(batch_size, interval_steps)
-            run_summaries.append(
-                dict(
-                    batch_size=batch_size,
-                    interval_steps=interval_steps,
-                    selected_lr_ks=result["selected_lr_ks"],
-                    selected_lrs=result["selected_lrs"],
-                    muon_momentum=OVERFIT_MUON_MOMENTUM,
-                    result=result,
-                )
-            )
-            print(
-                "n_search_run complete train_steps=%d batch_size=%d N=%d "
-                "muon_momentum=%.6g train_loss=%.4f "
-                "val_acc=%.4f tta_val_acc=%.4f"
-                % (
-                    OVERFIT_TRAIN_STEPS,
-                    batch_size,
-                    interval_steps,
-                    OVERFIT_MUON_MOMENTUM,
-                    result["train_loss"],
-                    result["val_acc"],
-                    result["tta_val_acc"],
-                ),
-                flush=True,
-            )
+    for lr_search_ema in OVERFIT_LR_SEARCH_EMAS:
+        for applied_lr_source in OVERFIT_APPLIED_LR_SOURCES:
+            for batch_size in OVERFIT_BATCH_SIZES:
+                for interval_steps in OVERFIT_INTERVAL_STEPS_LIST:
+                    result = evaluate_config(
+                        batch_size, interval_steps, lr_search_ema, applied_lr_source
+                    )
+                    run_summaries.append(
+                        dict(
+                            batch_size=batch_size,
+                            interval_steps=interval_steps,
+                            lr_search_ema=lr_search_ema,
+                            applied_lr_source=applied_lr_source,
+                            selected_lr_ks=result["selected_lr_ks"],
+                            selected_lrs=result["selected_lrs"],
+                            applied_lr_ks=result["applied_lr_ks"],
+                            applied_lrs=result["applied_lrs"],
+                            muon_momentum=OVERFIT_MUON_MOMENTUM,
+                            result=result,
+                        )
+                    )
+                    print(
+                        "n_search_run complete train_steps=%d batch_size=%d N=%d "
+                        "ema=%.6g applied_lr_source=%s muon_momentum=%.6g "
+                        "train_loss=%.4f val_acc=%.4f tta_val_acc=%.4f"
+                        % (
+                            OVERFIT_TRAIN_STEPS,
+                            batch_size,
+                            interval_steps,
+                            lr_search_ema,
+                            applied_lr_source,
+                            OVERFIT_MUON_MOMENTUM,
+                            result["train_loss"],
+                            result["val_acc"],
+                            result["tta_val_acc"],
+                        ),
+                        flush=True,
+                    )
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
@@ -1563,8 +1667,10 @@ if __name__ == "__main__":
             run_summaries=run_summaries,
             batch_sizes=OVERFIT_BATCH_SIZES,
             interval_steps_list=OVERFIT_INTERVAL_STEPS_LIST,
+            lr_search_emas=OVERFIT_LR_SEARCH_EMAS,
+            applied_lr_sources=OVERFIT_APPLIED_LR_SOURCES,
             initial_lr_k=OVERFIT_INITIAL_LR_K,
-            initial_lr=lr_from_k(OVERFIT_INITIAL_LR_K),
+            initial_lr=OVERFIT_BASE_LR * (OVERFIT_LR_FACTOR**OVERFIT_INITIAL_LR_K),
             base_lr=OVERFIT_BASE_LR,
             lr_factor=OVERFIT_LR_FACTOR,
             muon_momentum=OVERFIT_MUON_MOMENTUM,
