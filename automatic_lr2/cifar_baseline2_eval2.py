@@ -1113,10 +1113,32 @@ BASE_RUN_CONFIGS = [
     dict(batch_size=5000, muon_lr=0.371094, sgd_lr_mult=0.64),
     dict(batch_size=10000, muon_lr=0.296875, sgd_lr_mult=0.8),
 ]
-N_SEARCH_INTERVAL_STEPS = 5
+N_SEARCH_INTERVAL_STEPS_LIST = [1, 5, 10]
 N_SEARCH_INITIAL_LR_EMA = 0.0
 N_SEARCH_LR_FACTOR = 0.6
 N_SEARCH_MAX_MOVES = 40
+
+
+def n_search_interval_ranges(total_steps, interval_steps):
+    if interval_steps <= 0:
+        raise ValueError(f"interval_steps must be positive, got {interval_steps}")
+    if total_steps <= 0:
+        return []
+
+    remainder = total_steps % interval_steps
+    if remainder == 0:
+        return [
+            (start, start + interval_steps)
+            for start in range(0, total_steps, interval_steps)
+        ]
+
+    final_start = max(0, total_steps - interval_steps - remainder)
+    ranges = [
+        (start, start + interval_steps)
+        for start in range(0, final_start, interval_steps)
+    ]
+    ranges.append((final_start, total_steps))
+    return ranges
 
 
 def round_sigfigs(value, sigfigs=2):
@@ -1143,25 +1165,30 @@ def fixed_muon_run_config(config):
     )
 
 
-def n_search_run_config(config):
+def n_search_run_config(config, interval_steps):
     config = round_run_hparams(config)
     return dict(
         name=(
             f"n_search_bs{config['batch_size']}"
             f"_lr{config['muon_lr']:.6g}_sgd{config['sgd_lr_mult']:.6g}"
-            f"_N{N_SEARCH_INTERVAL_STEPS}_ema{N_SEARCH_INITIAL_LR_EMA:.6g}"
+            f"_N{interval_steps}_ema{N_SEARCH_INITIAL_LR_EMA:.6g}"
         ),
         batch_size=config["batch_size"],
         muon_lr=config["muon_lr"],
         sgd_lr_mult=config["sgd_lr_mult"],
         best_lr_strategy="n_search",
         best_lr_scheduler="constant",
+        n_search_interval_steps=interval_steps,
     )
 
 
 RUN_CONFIGS = (
     [fixed_muon_run_config(config) for config in BASE_RUN_CONFIGS]
-    + [n_search_run_config(config) for config in BASE_RUN_CONFIGS]
+    + [
+        n_search_run_config(config, interval_steps)
+        for config in BASE_RUN_CONFIGS
+        for interval_steps in N_SEARCH_INTERVAL_STEPS_LIST
+    ]
 )
 
 
@@ -1176,6 +1203,7 @@ def main(
     best_lr_rel_diff_threshold=BEST_LR_REL_DIFF_THRESHOLD,
     best_lr_linear_decay=False,
     best_lr_scheduler=None,
+    n_search_interval_steps=None,
 ):
     run_id = run
     run_wall_start = time.perf_counter()
@@ -1416,17 +1444,23 @@ def main(
             log_eval(run, epoch, val_acc, time_seconds)
             run = None
 
-    interval_index = 0
     current_initial_lr = muon_lr
+    if best_lr_strategy == "n_search":
+        n_search_interval_steps = (
+            n_search_interval_steps or N_SEARCH_INTERVAL_STEPS_LIST[0]
+        )
+        interval_ranges = n_search_interval_ranges(
+            total_train_steps, n_search_interval_steps
+        )
+    else:
+        interval_ranges = []
 
-    while step < total_train_steps:
-        interval_index += 1
-        interval_start_step = step
-        steps_this_interval = min(N_SEARCH_INTERVAL_STEPS, total_train_steps - step)
-        interval_batches = training_batches[
-            interval_start_step : interval_start_step + steps_this_interval
-        ]
-        eval_batch = interval_batches[-1]
+    for interval_index, (interval_start_step, interval_end_step) in enumerate(
+        interval_ranges, start=1
+    ):
+        step = interval_start_step
+        steps_this_interval = interval_end_step - interval_start_step
+        interval_batches = training_batches[interval_start_step:interval_end_step]
         interval_start_state = capture_training_state(model, optimizers)
         candidate_cache = {}
 
@@ -1456,8 +1490,8 @@ def main(
             for offset, batch in enumerate(interval_batches):
                 global_step = interval_start_step + offset
                 train_one_batch(global_step, batch, lr)
-                train_loss = evaluate_training_batch_losses(model, [eval_batch])[0]
-                local_losses.append(train_loss)
+                step_train_loss = evaluate_training_batch_losses(model, [batch])[0]
+                local_losses.append(step_train_loss)
                 log_search_train_loss(
                     run_id,
                     interval_index,
@@ -1466,14 +1500,16 @@ def main(
                     steps_this_interval,
                     k,
                     lr,
-                    train_loss,
+                    step_train_loss,
                 )
+            metric_losses = evaluate_training_batch_losses(model, interval_batches)
             stop_timer()
-            train_loss = local_losses[-1]
+            train_loss = sum(metric_losses) / len(metric_losses)
             candidate = dict(
                 k=k,
                 lr=lr,
                 train_loss=train_loss,
+                metric_losses=metric_losses,
                 step_train_losses=local_losses,
                 state=capture_training_state(model, optimizers),
             )
@@ -1546,7 +1582,7 @@ def main(
                 committed_step, total_train_steps, name, train_loss_value
             )
 
-        step += steps_this_interval
+        step = interval_end_step
         next_initial_lr = (
             N_SEARCH_INITIAL_LR_EMA * current_initial_lr
             + (1 - N_SEARCH_INITIAL_LR_EMA) * selected["lr"]
@@ -1566,6 +1602,7 @@ def main(
                 best_lr_scheduler=best_lr_scheduler,
                 interval=interval_index,
                 interval_steps=steps_this_interval,
+                configured_interval_steps=n_search_interval_steps,
                 ema=N_SEARCH_INITIAL_LR_EMA,
                 best_loss=selected["train_loss"],
                 losses_by_lr=format_lr_loss_map(
@@ -1578,6 +1615,7 @@ def main(
             start_step=interval_start_step + 1,
             end_step=step,
             interval_steps=steps_this_interval,
+            configured_interval_steps=n_search_interval_steps,
             initial_lr=current_initial_lr,
             selected_k=selected["k"],
             selected_lr=selected["lr"],
@@ -1590,6 +1628,7 @@ def main(
                         k=value["k"],
                         lr=value["lr"],
                         train_loss=value["train_loss"],
+                        metric_losses=value["metric_losses"],
                         step_train_losses=value["step_train_losses"],
                     )
                     for value in candidate_cache.values()
@@ -1669,7 +1708,7 @@ def main(
         selected_lrs=selected_lrs,
         interval_search_logs=interval_search_logs,
         step_train_loss_logs=step_train_loss_logs,
-        n_search_interval_steps=N_SEARCH_INTERVAL_STEPS,
+        n_search_interval_steps=n_search_interval_steps,
         n_search_initial_lr_ema=N_SEARCH_INITIAL_LR_EMA,
         sgd_lr_mult=SGD_LR_MULT,
         training_batch_loss_logs=training_batch_loss_logs,
