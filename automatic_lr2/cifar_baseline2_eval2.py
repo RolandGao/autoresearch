@@ -1113,7 +1113,11 @@ BASE_RUN_CONFIGS = [
     dict(batch_size=5000, muon_lr=0.371094, sgd_lr_mult=0.64),
     dict(batch_size=10000, muon_lr=0.296875, sgd_lr_mult=0.8),
 ]
+N_SEARCH_RUN_CONFIGS = [
+    dict(batch_size=5000, muon_lr=0.371094, sgd_lr_mult=0.64),
+]
 N_SEARCH_INTERVAL_STEPS_LIST = [1, 5, 10]
+N_SEARCH_METRIC_BATCHES_LIST = [1, 5, 10]
 N_SEARCH_INITIAL_LR_EMA = 0.0
 N_SEARCH_LR_FACTOR = 0.6
 N_SEARCH_MAX_MOVES = 40
@@ -1165,13 +1169,14 @@ def fixed_muon_run_config(config):
     )
 
 
-def n_search_run_config(config, interval_steps):
+def n_search_run_config(config, interval_steps, metric_batches):
     config = round_run_hparams(config)
     return dict(
         name=(
             f"n_search_bs{config['batch_size']}"
             f"_lr{config['muon_lr']:.6g}_sgd{config['sgd_lr_mult']:.6g}"
-            f"_N{interval_steps}_ema{N_SEARCH_INITIAL_LR_EMA:.6g}"
+            f"_N{interval_steps}_M{metric_batches}"
+            f"_ema{N_SEARCH_INITIAL_LR_EMA:.6g}"
         ),
         batch_size=config["batch_size"],
         muon_lr=config["muon_lr"],
@@ -1179,17 +1184,16 @@ def n_search_run_config(config, interval_steps):
         best_lr_strategy="n_search",
         best_lr_scheduler="constant",
         n_search_interval_steps=interval_steps,
+        n_search_metric_batches=metric_batches,
     )
 
 
-RUN_CONFIGS = (
-    [fixed_muon_run_config(config) for config in BASE_RUN_CONFIGS]
-    + [
-        n_search_run_config(config, interval_steps)
-        for config in BASE_RUN_CONFIGS
-        for interval_steps in N_SEARCH_INTERVAL_STEPS_LIST
-    ]
-)
+RUN_CONFIGS = [
+    n_search_run_config(config, interval_steps, metric_batches)
+    for config in N_SEARCH_RUN_CONFIGS
+    for interval_steps in N_SEARCH_INTERVAL_STEPS_LIST
+    for metric_batches in N_SEARCH_METRIC_BATCHES_LIST
+]
 
 
 def main(
@@ -1204,6 +1208,7 @@ def main(
     best_lr_linear_decay=False,
     best_lr_scheduler=None,
     n_search_interval_steps=None,
+    n_search_metric_batches=None,
 ):
     run_id = run
     run_wall_start = time.perf_counter()
@@ -1449,10 +1454,14 @@ def main(
         n_search_interval_steps = (
             n_search_interval_steps or N_SEARCH_INTERVAL_STEPS_LIST[0]
         )
+        n_search_metric_batches = (
+            n_search_metric_batches or N_SEARCH_METRIC_BATCHES_LIST[0]
+        )
         interval_ranges = n_search_interval_ranges(
             total_train_steps, n_search_interval_steps
         )
     else:
+        n_search_metric_batches = None
         interval_ranges = []
 
     for interval_index, (interval_start_step, interval_end_step) in enumerate(
@@ -1461,6 +1470,8 @@ def main(
         step = interval_start_step
         steps_this_interval = interval_end_step - interval_start_step
         interval_batches = training_batches[interval_start_step:interval_end_step]
+        metric_start_step = max(0, interval_end_step - n_search_metric_batches)
+        metric_batches = training_batches[metric_start_step:interval_end_step]
         interval_start_state = capture_training_state(model, optimizers)
         candidate_cache = {}
 
@@ -1470,12 +1481,13 @@ def main(
                 cached = candidate_cache[k]
                 print(
                     "n_search cache_hit run=%s interval=%d start_step=%d "
-                    "N=%d k=%d lr=%.8g train_loss=%s"
+                    "N=%d M=%d k=%d lr=%.8g train_loss=%s"
                     % (
                         run_id,
                         interval_index,
                         interval_start_step,
                         steps_this_interval,
+                        len(metric_batches),
                         k,
                         lr,
                         repr(float(cached["train_loss"])),
@@ -1502,7 +1514,7 @@ def main(
                     lr,
                     step_train_loss,
                 )
-            metric_losses = evaluate_training_batch_losses(model, interval_batches)
+            metric_losses = evaluate_training_batch_losses(model, metric_batches)
             stop_timer()
             train_loss = sum(metric_losses) / len(metric_losses)
             candidate = dict(
@@ -1516,12 +1528,13 @@ def main(
             candidate_cache[k] = candidate
             print(
                 "n_search candidate run=%s interval=%d start_step=%d "
-                "steps=%d k=%d lr=%.8g train_loss=%s"
+                "steps=%d M=%d k=%d lr=%.8g train_loss=%s"
                 % (
                     run_id,
                     interval_index,
                     interval_start_step,
                     steps_this_interval,
+                    len(metric_batches),
                     k,
                     lr,
                     repr(float(train_loss)),
@@ -1603,6 +1616,8 @@ def main(
                 interval=interval_index,
                 interval_steps=steps_this_interval,
                 configured_interval_steps=n_search_interval_steps,
+                metric_batches=len(metric_batches),
+                configured_metric_batches=n_search_metric_batches,
                 ema=N_SEARCH_INITIAL_LR_EMA,
                 best_loss=selected["train_loss"],
                 losses_by_lr=format_lr_loss_map(
@@ -1616,6 +1631,9 @@ def main(
             end_step=step,
             interval_steps=steps_this_interval,
             configured_interval_steps=n_search_interval_steps,
+            metric_start_step=metric_start_step + 1,
+            metric_batches=len(metric_batches),
+            configured_metric_batches=n_search_metric_batches,
             initial_lr=current_initial_lr,
             selected_k=selected["k"],
             selected_lr=selected["lr"],
@@ -1640,7 +1658,8 @@ def main(
         print(
             "n_search interval_selected run=%s interval=%d steps=%d-%d "
             "N=%d initial_lr=%.16g selected_k=%d selected_lr=%.8g "
-            "next_initial_lr=%.16g ema=%.6g train_loss=%s evaluated_candidates=%d"
+            "next_initial_lr=%.16g ema=%.6g train_loss=%s evaluated_candidates=%d "
+            "metric_steps=%d-%d M=%d"
             % (
                 run_id,
                 interval_index,
@@ -1654,6 +1673,9 @@ def main(
                 N_SEARCH_INITIAL_LR_EMA,
                 repr(float(selected["train_loss"])),
                 len(candidate_cache),
+                metric_start_step + 1,
+                interval_end_step,
+                len(metric_batches),
             ),
             flush=True,
         )
@@ -1709,6 +1731,7 @@ def main(
         interval_search_logs=interval_search_logs,
         step_train_loss_logs=step_train_loss_logs,
         n_search_interval_steps=n_search_interval_steps,
+        n_search_metric_batches=n_search_metric_batches,
         n_search_initial_lr_ema=N_SEARCH_INITIAL_LR_EMA,
         sgd_lr_mult=SGD_LR_MULT,
         training_batch_loss_logs=training_batch_loss_logs,
