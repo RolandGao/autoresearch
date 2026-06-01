@@ -333,6 +333,27 @@ def lr_schedule_xy(run, x_axis="progress"):
     return xs, lrs
 
 
+def step_train_loss_xy(run, x_axis="progress"):
+    steps = [row[0] for row in run.step_train_losses]
+    total = max(row[1] for row in run.step_train_losses)
+    if x_axis == "epoch":
+        xs = [step / total * 8 for step in steps]
+    else:
+        xs = [step / total for step in steps]
+    losses = [row[2] for row in run.step_train_losses]
+    return xs, losses
+
+
+def curve_label(run, default_label=None):
+    if run.strategy is None:
+        label = default_label or "baseline"
+    elif run.lr_multiplier is not None:
+        label = f"mult={fmt(run.lr_multiplier)}"
+    else:
+        label = default_label or run.label
+    return f"{label}, TTA={fmt3(run.tta_val_acc)}"
+
+
 def preclip_lr_schedule_xy(run, x_axis="progress"):
     if not run.interval_selections or run.lr_multiplier is None or not run.applied_lrs:
         return [], []
@@ -496,26 +517,51 @@ def plot_lr_schedules(runs, output_path):
     n_values = sorted({run.interval_n for run in runs if run.interval_n is not None})
     has_multipliers = any(run.lr_multiplier is not None for run in runs)
     if len(n_values) > 1 and has_multipliers:
-        fig, axes, batch_sizes, n_values = n_search_panel_grid(runs)
+        fig, axes = plt.subplots(
+            len(batch_sizes) * 2,
+            len(n_values),
+            figsize=(4.7 * len(n_values), 3.0 * len(batch_sizes) * 2),
+            squeeze=False,
+            sharex=True,
+        )
         all_lrs = [lr for run in runs for _, _, lr in run.applied_lrs]
-        for row, batch_size in enumerate(batch_sizes):
+        all_losses = [
+            loss for run in runs for _, _, loss in run.step_train_losses
+        ]
+        for batch_row, batch_size in enumerate(batch_sizes):
+            lr_row = batch_row * 2
+            loss_row = lr_row + 1
             batch_runs = runs_for_batch(runs, batch_size)
             baseline_runs = [
                 run for run in batch_runs if run.strategy is None and run.applied_lrs
             ]
             for col, interval_n in enumerate(n_values):
-                ax = axes[row][col]
+                lr_ax = axes[lr_row][col]
+                loss_ax = axes[loss_row][col]
                 for run in baseline_runs:
                     progress, lrs = lr_schedule_xy(run, x_axis="epoch")
-                    ax.plot(
+                    lr_ax.plot(
                         progress,
                         lrs,
                         color=color_for_run(run),
                         linestyle=":",
                         linewidth=2.4,
-                        label="baseline",
+                        label=curve_label(run, "baseline"),
                         zorder=1,
                     )
+                    if run.step_train_losses:
+                        loss_progress, losses = step_train_loss_xy(
+                            run, x_axis="epoch"
+                        )
+                        loss_ax.plot(
+                            loss_progress,
+                            losses,
+                            color=color_for_run(run),
+                            linestyle=":",
+                            linewidth=1.8,
+                            label=curve_label(run, "baseline"),
+                            zorder=1,
+                        )
                 for run in [
                     entry
                     for entry in batch_runs
@@ -524,7 +570,7 @@ def plot_lr_schedules(runs, output_path):
                     progress, lrs = lr_schedule_xy(run, x_axis="epoch")
                     linestyle = "-" if run.lr_multiplier == 1.0 else "--"
                     marker = "o" if run.lr_multiplier == 1.0 else "s"
-                    ax.plot(
+                    lr_ax.plot(
                         progress,
                         lrs,
                         color=multiplier_color(run),
@@ -533,20 +579,38 @@ def plot_lr_schedules(runs, output_path):
                         marker=marker,
                         markersize=3,
                         markevery=max(1, len(progress) // 12),
-                        label=f"mult={fmt(run.lr_multiplier)}",
+                        label=curve_label(run),
                         zorder=2,
                     )
-                ax.set_title(f"bs={batch_size}, N={interval_n}")
-                ax.set_xticks(range(0, 9))
-                ax.grid(True, alpha=0.25)
+                    if run.step_train_losses:
+                        loss_progress, losses = step_train_loss_xy(
+                            run, x_axis="epoch"
+                        )
+                        loss_ax.plot(
+                            loss_progress,
+                            losses,
+                            color=multiplier_color(run),
+                            linestyle=linestyle,
+                            linewidth=1.3,
+                            label=curve_label(run),
+                            zorder=2,
+                        )
+                lr_ax.set_title(f"bs={batch_size}, N={interval_n}")
+                lr_ax.set_xticks(range(0, 9))
+                lr_ax.grid(True, alpha=0.25)
                 if all_lrs:
-                    ax.set_ylim(min(all_lrs) * 0.95, max(all_lrs) * 1.05)
-                ax.legend(fontsize=8)
-        for ax in axes[:, 0]:
-            ax.set_ylabel("applied Muon LR")
+                    lr_ax.set_ylim(min(all_lrs) * 0.95, max(all_lrs) * 1.05)
+                lr_ax.legend(fontsize=7)
+                loss_ax.set_xticks(range(0, 9))
+                loss_ax.grid(True, alpha=0.25)
+                if all_losses:
+                    loss_ax.set_ylim(min(all_losses) * 0.95, max(all_losses) * 1.05)
+                if col == 0:
+                    lr_ax.set_ylabel(f"bs={batch_size}\napplied Muon LR")
+                    loss_ax.set_ylabel(f"bs={batch_size}\ntrain loss")
         for ax in axes[-1, :]:
             ax.set_xlabel("epoch")
-        fig.suptitle("Applied Muon LR Schedules by N", y=0.995)
+        fig.suptitle("Applied Muon LR Schedules and Train Loss by N", y=0.995)
         fig.tight_layout()
         fig.savefig(output_path, dpi=180)
         plt.close(fig)
@@ -567,7 +631,7 @@ def plot_lr_schedules(runs, output_path):
                 lrs,
                 color=color_for_run(run),
                 linewidth=1.3,
-                label=run.label,
+                label=curve_label(run, run.label),
             )
         ax.set_title(f"bs={batch_size}")
         ax.set_xlabel("epoch")
