@@ -337,58 +337,68 @@ class CifarNet(nn.Module):
 #                 Logging                  #
 ############################################
 
+LOG_BUFFER = None
+
+
+def emit_log(line):
+    if LOG_BUFFER is None:
+        print(line)
+    else:
+        LOG_BUFFER.append(line)
+
+
+def flush_log_buffer():
+    global LOG_BUFFER
+    if LOG_BUFFER:
+        print("\n".join(LOG_BUFFER))
+    LOG_BUFFER = None
+
 
 def log_training_batch_losses(step, total_steps, update, losses):
-    print(
+    emit_log(
         "training_batch_losses "
-        f"step={step}/{total_steps} update={update} losses={json.dumps(losses)}",
-        flush=True,
+        f"step={step}/{total_steps} update={update} losses={json.dumps(losses)}"
     )
 
 
 def log_best_lr(step, init_lr, best_lr, best_lr_ema, best_loss, losses_by_lr):
-    print(
+    emit_log(
         "best_lr "
         f"step={step} init_lr={init_lr:.8g} best_lr={best_lr:.8g} "
         f"best_lr_ema={best_lr_ema:.8g} best_loss={best_loss:.6f} "
-        f"losses={json.dumps(format_lr_loss_map(losses_by_lr))}",
-        flush=True,
+        f"losses={json.dumps(format_lr_loss_map(losses_by_lr))}"
     )
 
 
 def log_applied_lr(step, total_steps, name, lr):
-    print(
-        f"applied_lr step={step}/{total_steps} name={name} muon_lr={lr:.8g}",
-        flush=True,
+    emit_log(
+        f"applied_lr step={step}/{total_steps} name={name} muon_lr={lr:.8g}"
     )
 
 
 def log_step_train_loss(step, total_steps, name, train_loss):
-    print(
+    emit_log(
         f"step_train_loss step={step}/{total_steps} name={name} "
-        f"train_loss={repr(float(train_loss))}",
-        flush=True,
+        f"train_loss={repr(float(train_loss))}"
     )
 
 
 def log_search_train_loss(
     run, interval, train_step, candidate_step, candidate_steps, k, lr, train_loss
 ):
-    print(
+    emit_log(
         "n_search_train_loss "
         f"run={run} interval={interval} train_step={train_step} "
         f"candidate_step={candidate_step}/{candidate_steps} k={k} lr={lr:.8g} "
-        f"train_loss={repr(float(train_loss))}",
-        flush=True,
+        f"train_loss={repr(float(train_loss))}"
     )
 
 
 def log_eval(run, epoch, val_acc, time_seconds):
     run_info = f" run={run}" if run is not None else ""
-    print(
+    emit_log(
         f"eval{run_info} epoch={epoch} val_acc={val_acc:.4f} "
-        f"time_seconds={time_seconds:.4f}",
-        flush=True,
+        f"time_seconds={time_seconds:.4f}"
     )
 
 
@@ -400,21 +410,32 @@ def log_final_eval(
     tta_val_acc,
     time_seconds,
 ):
-    print(
+    emit_log(
         f"eval epoch=final train_loss={train_loss:.4f} "
         f"val_loss={val_loss:.4f} train_acc={train_acc:.4f} "
         f"val_acc={val_acc:.4f} tta_val_acc={tta_val_acc:.4f} "
-        f"time_seconds={time_seconds:.4f}",
-        flush=True,
+        f"time_seconds={time_seconds:.4f}"
     )
 
 
-def log_run_time(run, name, wall_time_seconds, cuda_time_seconds):
-    print(
+def log_run_time(
+    run,
+    name,
+    wall_time_seconds,
+    cuda_time_seconds,
+    train_cuda_seconds=None,
+    eval_cuda_seconds=None,
+):
+    extra = ""
+    if train_cuda_seconds is not None and eval_cuda_seconds is not None:
+        extra = (
+            f" train_cuda_seconds={train_cuda_seconds:.4f} "
+            f"eval_cuda_seconds={eval_cuda_seconds:.4f}"
+        )
+    emit_log(
         f"run_time run={run} name={name} "
         f"wall_time_seconds={wall_time_seconds:.4f} "
-        f"cuda_time_seconds={cuda_time_seconds:.4f}",
-        flush=True,
+        f"cuda_time_seconds={cuda_time_seconds:.4f}{extra}"
     )
 
 
@@ -609,9 +630,9 @@ PEAK_LR_INITIAL_SIDE_STEPS = (
     + PEAK_LR_LOCAL_NEIGHBOR_DISTANCE
     + PEAK_LR_DISCARDED_EDGE_STEPS
 )
-LOG_PRE_POST_LOSSES = True
+LOG_PRE_POST_LOSSES = False
 LOG_PRE_UPDATE_LOSSES = False
-LOG_POST_UPDATE_LOSSES = True
+LOG_POST_UPDATE_LOSSES = False
 LOG_BEST_LR = True
 
 
@@ -1114,9 +1135,10 @@ BASE_RUN_CONFIGS = [
     dict(batch_size=10000, muon_lr=0.296875, sgd_lr_mult=0.8),
 ]
 N_SEARCH_RUN_CONFIGS = [
-    dict(batch_size=5000, muon_lr=0.371094, sgd_lr_mult=0.64),
+    dict(batch_size=125, muon_lr=0.062, sgd_lr_mult=0.51),
+    dict(batch_size=2000, muon_lr=0.2375, sgd_lr_mult=0.8),
 ]
-N_SEARCH_INTERVAL_STEPS_LIST = [1, 3, 5, 7, 9]
+N_SEARCH_INTERVAL_STEPS_LIST = [1, 5, 10, 20, 30, 40]
 N_SEARCH_METRIC_BATCHES_LIST = [1]
 N_SEARCH_LR_MULTIPLIERS = [1.0, 2.0]
 N_SEARCH_INITIAL_LR_EMA = 0.0
@@ -1215,6 +1237,8 @@ def main(
     n_search_metric_batches=None,
     n_search_lr_multiplier=1.0,
 ):
+    global LOG_BUFFER
+    LOG_BUFFER = []
     run_id = run
     run_wall_start = time.perf_counter()
     set_training_seed()
@@ -1265,15 +1289,25 @@ def main(
     starter = torch.cuda.Event(enable_timing=True)
     ender = torch.cuda.Event(enable_timing=True)
     time_seconds = 0.0
+    train_cuda_seconds = 0.0
+    eval_cuda_seconds = 0.0
+    active_timer_bucket = "train"
 
-    def start_timer():
+    def start_timer(bucket="train"):
+        nonlocal active_timer_bucket
+        active_timer_bucket = bucket
         starter.record()
 
     def stop_timer():
         ender.record()
         torch.cuda.synchronize()
-        nonlocal time_seconds
-        time_seconds += 1e-3 * starter.elapsed_time(ender)
+        nonlocal time_seconds, train_cuda_seconds, eval_cuda_seconds
+        elapsed = 1e-3 * starter.elapsed_time(ender)
+        time_seconds += elapsed
+        if active_timer_bucket == "eval":
+            eval_cuda_seconds += elapsed
+        else:
+            train_cuda_seconds += elapsed
 
     model.reset()
     step = 0
@@ -1291,6 +1325,7 @@ def main(
     best_lr_ema = muon_lr
     best_lr_logs = []
     step_train_loss_logs = []
+    pending_step_train_loss_logs = []
     interval_search_logs = []
     selected_lrs = []
     selected_lr_ks = []
@@ -1321,11 +1356,15 @@ def main(
     def lr_from_relative_k(center_lr, k):
         return center_lr * (N_SEARCH_LR_FACTOR**k)
 
-    def baseline_muon_lr(global_step):
-        return muon_lr * (1 - global_step / total_train_steps)
+    def n_search_applied_lr(searched_lr):
+        return searched_lr * n_search_lr_multiplier
 
-    def clipped_n_search_lr(searched_lr, global_step):
-        return min(searched_lr * n_search_lr_multiplier, baseline_muon_lr(global_step))
+    def n_search_decay_lr(decay_start_lr, global_step, decay_start_step):
+        decay_steps = total_train_steps - decay_start_step
+        if decay_steps <= 0:
+            return decay_start_lr
+        decay_step = global_step - decay_start_step
+        return decay_start_lr * (1 - decay_step / decay_steps)
 
     if best_lr_strategy != "n_search":
         for epoch in range(ceil(total_train_steps / len(train_loader))):
@@ -1340,6 +1379,13 @@ def main(
                 outputs = model(inputs, whiten_bias_grad=whiten_bias_grad)
                 loss = F.cross_entropy(
                     outputs, labels, label_smoothing=0.2, reduction="mean"
+                )
+                pending_step_train_loss_logs.append(
+                    (
+                        step + 1,
+                        optimizer2.param_groups[0]["lr"],
+                        loss.detach(),
+                    )
                 )
                 loss.backward()
                 set_sgd_lrs(step)
@@ -1456,11 +1502,31 @@ def main(
                     break
             stop_timer()
 
-            val_acc = evaluate(model, test_loader, tta_level=0)
-            log_eval(run, epoch, val_acc, time_seconds)
-            run = None
+        if pending_step_train_loss_logs:
+            loss_values = (
+                torch.stack([row[2].float() for row in pending_step_train_loss_logs])
+                .cpu()
+                .tolist()
+            )
+            for (loss_step, logged_lr, _), train_loss_value in zip(
+                pending_step_train_loss_logs, loss_values
+            ):
+                log_step_train_loss(
+                    loss_step, total_train_steps, name, train_loss_value
+                )
+                step_train_loss_logs.append(
+                    dict(
+                        step=loss_step,
+                        train_loss=train_loss_value,
+                        interval=None,
+                        lr=logged_lr,
+                        update="pre",
+                    )
+                )
 
     current_initial_lr = muon_lr
+    n_search_steps = min(total_train_steps, 6 * len(train_loader))
+    last_n_search_applied_lr = None
     if best_lr_strategy == "n_search":
         n_search_interval_steps = (
             n_search_interval_steps or N_SEARCH_INTERVAL_STEPS_LIST[0]
@@ -1469,7 +1535,7 @@ def main(
             n_search_metric_batches or N_SEARCH_METRIC_BATCHES_LIST[0]
         )
         interval_ranges = n_search_interval_ranges(
-            total_train_steps, n_search_interval_steps
+            n_search_steps, n_search_interval_steps
         )
     else:
         n_search_metric_batches = None
@@ -1490,7 +1556,7 @@ def main(
             lr = lr_from_relative_k(current_initial_lr, k)
             if k in candidate_cache:
                 cached = candidate_cache[k]
-                print(
+                emit_log(
                     "n_search cache_hit run=%s interval=%d start_step=%d "
                     "N=%d M=%d k=%d lr=%.8g train_loss=%s"
                     % (
@@ -1503,7 +1569,6 @@ def main(
                         lr,
                         repr(float(cached["train_loss"])),
                     ),
-                    flush=True,
                 )
                 return cached
 
@@ -1536,7 +1601,7 @@ def main(
                 step_train_losses=local_losses,
             )
             candidate_cache[k] = candidate
-            print(
+            emit_log(
                 "n_search candidate run=%s interval=%d start_step=%d "
                 "steps=%d M=%d k=%d lr=%.8g train_loss=%s"
                 % (
@@ -1549,7 +1614,6 @@ def main(
                     lr,
                     repr(float(train_loss)),
                 ),
-                flush=True,
             )
             return candidate
 
@@ -1567,7 +1631,7 @@ def main(
             higher_lr = evaluate_candidate(current_k - 1)
             candidates = [center, lower_lr, higher_lr]
             selected = min(candidates, key=lambda candidate: candidate["train_loss"])
-            print(
+            emit_log(
                 "n_search step run=%s interval=%d center_k=%d center_lr=%.8g "
                 "center_loss=%s best_k=%d best_lr=%.8g best_loss=%s"
                 % (
@@ -1580,7 +1644,6 @@ def main(
                     selected["lr"],
                     repr(float(selected["train_loss"])),
                 ),
-                flush=True,
             )
             if selected["k"] == current_k:
                 break
@@ -1592,12 +1655,13 @@ def main(
         start_timer()
         for offset, batch in enumerate(interval_batches):
             global_step = interval_start_step + offset
-            applied_lr = clipped_n_search_lr(selected["lr"], global_step)
+            applied_lr = n_search_applied_lr(selected["lr"])
             train_one_batch(global_step, batch, applied_lr)
             committed_applied_lrs.append(applied_lr)
             train_loss_value = evaluate_training_batch_losses(model, [batch])[0]
             committed_losses.append(train_loss_value)
         stop_timer()
+        last_n_search_applied_lr = committed_applied_lrs[-1]
         for offset, (train_loss_value, applied_lr) in enumerate(
             zip(committed_losses, committed_applied_lrs), start=1
         ):
@@ -1682,7 +1746,7 @@ def main(
             ),
         )
         interval_search_logs.append(interval_log)
-        print(
+        emit_log(
             "n_search interval_selected run=%s interval=%d steps=%d-%d "
             "N=%d initial_lr=%.16g selected_k=%d selected_lr=%.8g "
             "next_initial_lr=%.16g ema=%.6g train_loss=%s evaluated_candidates=%d "
@@ -1708,7 +1772,6 @@ def main(
                 min(committed_applied_lrs),
                 max(committed_applied_lrs),
             ),
-            flush=True,
         )
         current_initial_lr = next_initial_lr
 
@@ -1723,23 +1786,74 @@ def main(
                 step, total_train_steps, "post", post_update_losses
             )
 
-        if step % len(train_loader) == 0 or step >= total_train_steps:
-            val_acc = evaluate(model, test_loader, tta_level=0)
-            log_eval(run, (step - 1) // len(train_loader), val_acc, time_seconds)
-            run = None
+    if best_lr_strategy == "n_search" and step < total_train_steps:
+        decay_start_step = step
+        decay_start_lr = (
+            last_n_search_applied_lr
+            if last_n_search_applied_lr is not None
+            else n_search_applied_lr(muon_lr)
+        )
+        emit_log(
+            "n_search linear_decay run=%s steps=%d-%d start_lr=%.8g "
+            "end_lr_exclusive=0"
+            % (run_id, decay_start_step + 1, total_train_steps, decay_start_lr)
+        )
+        decay_losses = []
+        decay_applied_lrs = []
+        start_timer()
+        for global_step in range(decay_start_step, total_train_steps):
+            batch = training_batches[global_step]
+            applied_lr = n_search_decay_lr(
+                decay_start_lr, global_step, decay_start_step
+            )
+            train_one_batch(global_step, batch, applied_lr)
+            decay_applied_lrs.append(applied_lr)
+            train_loss_value = evaluate_training_batch_losses(model, [batch])[0]
+            decay_losses.append(train_loss_value)
+        stop_timer()
+        for offset, (train_loss_value, applied_lr) in enumerate(
+            zip(decay_losses, decay_applied_lrs), start=1
+        ):
+            committed_step = decay_start_step + offset
+            log_applied_lr(committed_step, total_train_steps, name, applied_lr)
+            step_train_loss_logs.append(
+                dict(
+                    step=committed_step,
+                    train_loss=train_loss_value,
+                    interval=None,
+                    lr=decay_start_lr,
+                    applied_lr=applied_lr,
+                    lr_k=None,
+                    lr_multiplier=n_search_lr_multiplier,
+                    update="linear_decay",
+                )
+            )
+            log_step_train_loss(
+                committed_step, total_train_steps, name, train_loss_value
+            )
+        step = total_train_steps
 
     ####################
     #  TTA Evaluation  #
     ####################
 
-    start_timer()
-    train_loss, train_acc = evaluate_training_loss_and_accuracy(model, training_batches)
+    train_loss = float("nan")
+    train_acc = float("nan")
+    start_timer("eval")
     val_loss, val_acc = evaluate_loader_loss_and_accuracy(model, test_loader)
     tta_val_acc = evaluate(model, test_loader, tta_level=2)
     stop_timer()
     log_final_eval(train_loss, val_loss, train_acc, val_acc, tta_val_acc, time_seconds)
     wall_time_seconds = time.perf_counter() - run_wall_start
-    log_run_time(run_id, name, wall_time_seconds, time_seconds)
+    log_run_time(
+        run_id,
+        name,
+        wall_time_seconds,
+        time_seconds,
+        train_cuda_seconds,
+        eval_cuda_seconds,
+    )
+    flush_log_buffer()
 
     return dict(
         train_loss=train_loss,
@@ -1770,6 +1884,8 @@ def main(
         training_batch_loss_log_steps=loss_log_steps_list,
         wall_time_seconds=wall_time_seconds,
         cuda_time_seconds=time_seconds,
+        train_cuda_seconds=train_cuda_seconds,
+        eval_cuda_seconds=eval_cuda_seconds,
     )
 
 
@@ -1799,7 +1915,6 @@ if __name__ == "__main__":
                     config.get("best_lr_linear_decay", False),
                 ),
             ),
-            flush=True,
         )
         result = main(run, model, **config)
         results.append(result)

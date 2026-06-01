@@ -50,6 +50,8 @@ RUN_TIME_RE = re.compile(
     r"^run_time run=(?P<run>\d+) name=(?P<name>\S+) "
     r"wall_time_seconds=(?P<wall_time_seconds>\S+) "
     r"cuda_time_seconds=(?P<cuda_time_seconds>\S+)"
+    r"(?: train_cuda_seconds=(?P<train_cuda_seconds>\S+) "
+    r"eval_cuda_seconds=(?P<eval_cuda_seconds>\S+))?"
 )
 NAME_N_M_RE = re.compile(
     r"_N(?P<N>\d+)(?:_M(?P<M>\d+))?(?:_mult(?P<mult>[0-9.]+))?_ema"
@@ -76,6 +78,8 @@ class Run:
     tta_val_acc: float | None = None
     wall_time_seconds: float | None = None
     cuda_time_seconds: float | None = None
+    train_cuda_seconds: float | None = None
+    eval_cuda_seconds: float | None = None
 
     @property
     def kind(self):
@@ -260,6 +264,13 @@ def parse_log(path):
                 current.train_acc = float(match.group("train_acc"))
                 current.val_acc = float(match.group("val_acc"))
                 current.tta_val_acc = float(match.group("tta_val_acc"))
+                current.eval_logs.append(
+                    (
+                        8,
+                        float(match.group("val_acc")),
+                        float(match.group("time_seconds")),
+                    )
+                )
                 continue
 
             match = RUN_TIME_RE.match(line)
@@ -268,6 +279,12 @@ def parse_log(path):
                 if run is not None:
                     run.wall_time_seconds = float(match.group("wall_time_seconds"))
                     run.cuda_time_seconds = float(match.group("cuda_time_seconds"))
+                    if match.group("train_cuda_seconds") is not None:
+                        run.train_cuda_seconds = float(
+                            match.group("train_cuda_seconds")
+                        )
+                    if match.group("eval_cuda_seconds") is not None:
+                        run.eval_cuda_seconds = float(match.group("eval_cuda_seconds"))
 
     if not runs:
         raise ValueError(f"No runs found in {path}")
@@ -298,33 +315,39 @@ def runs_for_batch(runs, batch_size):
 
 def color_for_run(run):
     if run.strategy is None:
-        return "tab:gray"
+        return "black"
     if run.interval_n is None:
         return "tab:purple"
     colors = plt.get_cmap("tab10").colors
     return colors[(run.interval_n - 1) % len(colors)]
 
 
-def lr_schedule_xy(run):
+def lr_schedule_xy(run, x_axis="progress"):
     steps = [row[0] for row in run.applied_lrs]
     total = max(row[1] for row in run.applied_lrs)
-    progress = [step / total for step in steps]
+    if x_axis == "epoch":
+        xs = [step / total * 8 for step in steps]
+    else:
+        xs = [step / total for step in steps]
     lrs = [row[2] for row in run.applied_lrs]
-    return progress, lrs
+    return xs, lrs
 
 
-def preclip_lr_schedule_xy(run):
+def preclip_lr_schedule_xy(run, x_axis="progress"):
     if not run.interval_selections or run.lr_multiplier is None or not run.applied_lrs:
         return [], []
     total = max(row[1] for row in run.applied_lrs)
-    progress = []
+    xs = []
     lrs = []
     for interval in run.interval_selections:
         preclip_lr = interval["selected_lr"] * run.lr_multiplier
         for step in range(interval["start_step"], interval["end_step"] + 1):
-            progress.append(step / total)
+            if x_axis == "epoch":
+                xs.append(step / total * 8)
+            else:
+                xs.append(step / total)
             lrs.append(preclip_lr)
-    return progress, lrs
+    return xs, lrs
 
 
 def multiplier_color(run):
@@ -333,6 +356,20 @@ def multiplier_color(run):
     if run.lr_multiplier == 2.0:
         return "tab:orange"
     return "tab:purple"
+
+
+def n_search_panel_grid(runs, panel_width=4.6, panel_height=3.3):
+    batch_sizes = sorted_batch_sizes(runs)
+    n_values = sorted({run.interval_n for run in runs if run.interval_n is not None})
+    fig, axes = plt.subplots(
+        len(batch_sizes),
+        len(n_values),
+        figsize=(panel_width * len(n_values), panel_height * len(batch_sizes)),
+        squeeze=False,
+        sharex=True,
+        sharey=True,
+    )
+    return fig, axes, batch_sizes, n_values
 
 
 def plot_final_metrics(runs, output_path):
@@ -371,6 +408,61 @@ def plot_final_metrics(runs, output_path):
 
 def plot_eval_curves(runs, output_path):
     batch_sizes = sorted_batch_sizes(runs)
+    n_values = sorted({run.interval_n for run in runs if run.interval_n is not None})
+    has_multipliers = any(run.lr_multiplier is not None for run in runs)
+    if len(n_values) > 1 and has_multipliers:
+        fig, axes, batch_sizes, n_values = n_search_panel_grid(runs)
+        for row, batch_size in enumerate(batch_sizes):
+            batch_runs = runs_for_batch(runs, batch_size)
+            baseline_runs = [
+                run for run in batch_runs if run.strategy is None and run.eval_logs
+            ]
+            for col, interval_n in enumerate(n_values):
+                ax = axes[row][col]
+                for run in baseline_runs:
+                    epochs = [entry[0] for entry in run.eval_logs]
+                    vals = [entry[1] for entry in run.eval_logs]
+                    ax.plot(
+                        epochs,
+                        vals,
+                        color=color_for_run(run),
+                        linestyle=":",
+                        marker="o",
+                        linewidth=2.2,
+                        label="baseline",
+                    )
+                for run in [
+                    entry
+                    for entry in batch_runs
+                    if entry.interval_n == interval_n and entry.eval_logs
+                ]:
+                    epochs = [entry[0] for entry in run.eval_logs]
+                    vals = [entry[1] for entry in run.eval_logs]
+                    linestyle = "-" if run.lr_multiplier == 1.0 else "--"
+                    marker = "o" if run.lr_multiplier == 1.0 else "s"
+                    ax.plot(
+                        epochs,
+                        vals,
+                        color=multiplier_color(run),
+                        linestyle=linestyle,
+                        marker=marker,
+                        linewidth=1.6,
+                        label=f"mult={fmt(run.lr_multiplier)}",
+                    )
+                ax.set_title(f"bs={batch_size}, N={interval_n}")
+                ax.set_xticks(range(0, 9))
+                ax.grid(True, alpha=0.25)
+                ax.legend(fontsize=8)
+        for ax in axes[:, 0]:
+            ax.set_ylabel("val acc")
+        for ax in axes[-1, :]:
+            ax.set_xlabel("epoch")
+        fig.suptitle("Validation Accuracy During Training by N", y=0.995)
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=180)
+        plt.close(fig)
+        return
+
     fig, axes = plt.subplots(
         1, len(batch_sizes), figsize=(4.8 * len(batch_sizes), 4.0), squeeze=False
     )
@@ -380,7 +472,14 @@ def plot_eval_curves(runs, output_path):
                 continue
             epochs = [row[0] for row in run.eval_logs]
             vals = [row[1] for row in run.eval_logs]
-            ax.plot(epochs, vals, marker="o", linewidth=1.4, label=run.label)
+            ax.plot(
+                epochs,
+                vals,
+                color=color_for_run(run),
+                marker="o",
+                linewidth=1.4,
+                label=run.label,
+            )
         ax.set_title(f"bs={batch_size}")
         ax.set_xlabel("epoch")
         ax.set_ylabel("val acc")
@@ -396,67 +495,57 @@ def plot_lr_schedules(runs, output_path):
     batch_sizes = sorted_batch_sizes(runs)
     n_values = sorted({run.interval_n for run in runs if run.interval_n is not None})
     has_multipliers = any(run.lr_multiplier is not None for run in runs)
-    if len(batch_sizes) == 1 and len(n_values) > 1 and has_multipliers:
-        batch_size = batch_sizes[0]
-        batch_runs = runs_for_batch(runs, batch_size)
-        baseline_runs = [
-            run for run in batch_runs if run.strategy is None and run.applied_lrs
-        ]
-        n_cols = min(3, len(n_values))
-        n_rows = int(np.ceil(len(n_values) / n_cols))
-        fig, axes = plt.subplots(
-            n_rows,
-            n_cols,
-            figsize=(4.7 * n_cols, 3.4 * n_rows),
-            squeeze=False,
-            sharex=True,
-            sharey=True,
-        )
-        all_lrs = [
-            lr for run in batch_runs for _, _, lr in run.applied_lrs
-        ]
-        for ax in axes.ravel()[len(n_values) :]:
-            ax.axis("off")
-        for ax, interval_n in zip(axes.ravel(), n_values):
-            for run in baseline_runs:
-                progress, lrs = lr_schedule_xy(run)
-                ax.plot(
-                    progress,
-                    lrs,
-                    color="0.35",
-                    linestyle=":",
-                    linewidth=2.4,
-                    label="baseline",
-                    zorder=1,
-                )
-            for run in [
-                row
-                for row in batch_runs
-                if row.interval_n == interval_n and row.applied_lrs
-            ]:
-                progress, lrs = lr_schedule_xy(run)
-                linestyle = "-" if run.lr_multiplier == 1.0 else "--"
-                marker = "o" if run.lr_multiplier == 1.0 else "s"
-                ax.plot(
-                    progress,
-                    lrs,
-                    color=color_for_run(run),
-                    linestyle=linestyle,
-                    linewidth=1.5,
-                    marker=marker,
-                    markersize=3,
-                    markevery=max(1, len(progress) // 12),
-                    label=f"mult={fmt(run.lr_multiplier)}",
-                    zorder=2,
-                )
-            ax.set_title(f"bs={batch_size}, N={interval_n}")
-            ax.set_xlabel("training progress")
-            ax.grid(True, alpha=0.25)
-            if all_lrs:
-                ax.set_ylim(min(all_lrs) * 0.95, max(all_lrs) * 1.05)
-            ax.legend(fontsize=8)
+    if len(n_values) > 1 and has_multipliers:
+        fig, axes, batch_sizes, n_values = n_search_panel_grid(runs)
+        all_lrs = [lr for run in runs for _, _, lr in run.applied_lrs]
+        for row, batch_size in enumerate(batch_sizes):
+            batch_runs = runs_for_batch(runs, batch_size)
+            baseline_runs = [
+                run for run in batch_runs if run.strategy is None and run.applied_lrs
+            ]
+            for col, interval_n in enumerate(n_values):
+                ax = axes[row][col]
+                for run in baseline_runs:
+                    progress, lrs = lr_schedule_xy(run, x_axis="epoch")
+                    ax.plot(
+                        progress,
+                        lrs,
+                        color=color_for_run(run),
+                        linestyle=":",
+                        linewidth=2.4,
+                        label="baseline",
+                        zorder=1,
+                    )
+                for run in [
+                    entry
+                    for entry in batch_runs
+                    if entry.interval_n == interval_n and entry.applied_lrs
+                ]:
+                    progress, lrs = lr_schedule_xy(run, x_axis="epoch")
+                    linestyle = "-" if run.lr_multiplier == 1.0 else "--"
+                    marker = "o" if run.lr_multiplier == 1.0 else "s"
+                    ax.plot(
+                        progress,
+                        lrs,
+                        color=multiplier_color(run),
+                        linestyle=linestyle,
+                        linewidth=1.5,
+                        marker=marker,
+                        markersize=3,
+                        markevery=max(1, len(progress) // 12),
+                        label=f"mult={fmt(run.lr_multiplier)}",
+                        zorder=2,
+                    )
+                ax.set_title(f"bs={batch_size}, N={interval_n}")
+                ax.set_xticks(range(0, 9))
+                ax.grid(True, alpha=0.25)
+                if all_lrs:
+                    ax.set_ylim(min(all_lrs) * 0.95, max(all_lrs) * 1.05)
+                ax.legend(fontsize=8)
         for ax in axes[:, 0]:
             ax.set_ylabel("applied Muon LR")
+        for ax in axes[-1, :]:
+            ax.set_xlabel("epoch")
         fig.suptitle("Applied Muon LR Schedules by N", y=0.995)
         fig.tight_layout()
         fig.savefig(output_path, dpi=180)
@@ -471,11 +560,18 @@ def plot_lr_schedules(runs, output_path):
         for run in runs_for_batch(runs, batch_size):
             if not run.applied_lrs:
                 continue
-            progress, lrs = lr_schedule_xy(run)
+            progress, lrs = lr_schedule_xy(run, x_axis="epoch")
             all_lrs.extend(lrs)
-            ax.plot(progress, lrs, linewidth=1.3, label=run.label)
+            ax.plot(
+                progress,
+                lrs,
+                color=color_for_run(run),
+                linewidth=1.3,
+                label=run.label,
+            )
         ax.set_title(f"bs={batch_size}")
-        ax.set_xlabel("training progress")
+        ax.set_xlabel("epoch")
+        ax.set_xticks(range(0, 9))
         ax.set_ylabel("applied Muon LR")
         ax.grid(True, alpha=0.25)
         ax.legend(fontsize=8)
@@ -492,79 +588,76 @@ def plot_lr_schedules_preclip_vs_applied(runs, output_path):
     if not n_values or not has_preclip:
         return
 
-    batch_size = batch_sizes[0]
-    batch_runs = runs_for_batch(runs, batch_size)
-    baseline_runs = [
-        run for run in batch_runs if run.strategy is None and run.applied_lrs
-    ]
-    n_cols = min(3, len(n_values))
-    n_rows = int(np.ceil(len(n_values) / n_cols))
-    fig, axes = plt.subplots(
-        n_rows,
-        n_cols,
-        figsize=(4.9 * n_cols, 3.5 * n_rows),
-        squeeze=False,
-        sharex=True,
-        sharey=True,
+    fig, axes, batch_sizes, n_values = n_search_panel_grid(
+        runs, panel_width=4.9, panel_height=3.5
     )
-
     all_lrs = []
-    for run in batch_runs:
+    for run in runs:
         all_lrs.extend(row[2] for row in run.applied_lrs)
         all_lrs.extend(preclip_lr_schedule_xy(run)[1])
 
-    for ax in axes.ravel()[len(n_values) :]:
-        ax.axis("off")
-    for ax, interval_n in zip(axes.ravel(), n_values):
-        for run in baseline_runs:
-            progress, lrs = lr_schedule_xy(run)
-            ax.plot(
-                progress,
-                lrs,
-                color="0.35",
-                linestyle=":",
-                linewidth=2.4,
-                label="baseline clip cap",
-                zorder=1,
-            )
-        for run in [
-            row for row in batch_runs if row.interval_n == interval_n and row.applied_lrs
-        ]:
-            progress, applied_lrs = lr_schedule_xy(run)
-            preclip_progress, preclip_lrs = preclip_lr_schedule_xy(run)
-            color = multiplier_color(run)
-            label_suffix = f"mult={fmt(run.lr_multiplier)}"
-            ax.step(
-                preclip_progress,
-                preclip_lrs,
-                where="post",
-                color=color,
-                linestyle="-.",
-                linewidth=1.4,
-                alpha=0.75,
-                label=f"preclip {label_suffix}",
-                zorder=2,
-            )
-            ax.plot(
-                progress,
-                applied_lrs,
-                color=color,
-                linestyle="-",
-                linewidth=1.7,
-                marker="o",
-                markersize=2.8,
-                markevery=max(1, len(progress) // 12),
-                label=f"applied {label_suffix}",
-                zorder=3,
-            )
-        ax.set_title(f"bs={batch_size}, N={interval_n}")
-        ax.set_xlabel("training progress")
-        ax.grid(True, alpha=0.25)
-        if all_lrs:
-            ax.set_ylim(min(all_lrs) * 0.95, max(all_lrs) * 1.05)
-        ax.legend(fontsize=7)
+    for row, batch_size in enumerate(batch_sizes):
+        batch_runs = runs_for_batch(runs, batch_size)
+        baseline_runs = [
+            run for run in batch_runs if run.strategy is None and run.applied_lrs
+        ]
+        for col, interval_n in enumerate(n_values):
+            ax = axes[row][col]
+            for run in baseline_runs:
+                progress, lrs = lr_schedule_xy(run, x_axis="epoch")
+                ax.plot(
+                    progress,
+                    lrs,
+                    color=color_for_run(run),
+                    linestyle=":",
+                    linewidth=2.4,
+                    label="baseline clip cap",
+                    zorder=1,
+                )
+            for run in [
+                entry
+                for entry in batch_runs
+                if entry.interval_n == interval_n and entry.applied_lrs
+            ]:
+                progress, applied_lrs = lr_schedule_xy(run, x_axis="epoch")
+                preclip_progress, preclip_lrs = preclip_lr_schedule_xy(
+                    run, x_axis="epoch"
+                )
+                color = multiplier_color(run)
+                label_suffix = f"mult={fmt(run.lr_multiplier)}"
+                ax.step(
+                    preclip_progress,
+                    preclip_lrs,
+                    where="post",
+                    color=color,
+                    linestyle="-.",
+                    linewidth=1.4,
+                    alpha=0.75,
+                    label=f"preclip {label_suffix}",
+                    zorder=2,
+                )
+                ax.plot(
+                    progress,
+                    applied_lrs,
+                    color=color,
+                    linestyle="-",
+                    linewidth=1.7,
+                    marker="o",
+                    markersize=2.8,
+                    markevery=max(1, len(progress) // 12),
+                    label=f"applied {label_suffix}",
+                    zorder=3,
+                )
+            ax.set_title(f"bs={batch_size}, N={interval_n}")
+            ax.set_xticks(range(0, 9))
+            ax.grid(True, alpha=0.25)
+            if all_lrs:
+                ax.set_ylim(min(all_lrs) * 0.95, max(all_lrs) * 1.05)
+            ax.legend(fontsize=7)
     for ax in axes[:, 0]:
         ax.set_ylabel("Muon LR")
+    for ax in axes[-1, :]:
+        ax.set_xlabel("epoch")
     fig.suptitle("Preclip vs Applied Muon LR Schedules", y=0.995)
     fig.tight_layout()
     fig.savefig(output_path, dpi=180)
@@ -637,6 +730,8 @@ def write_summary(runs, output_path):
             "val_acc",
             "tta",
             "wall_s",
+            "train_cuda_s",
+            "eval_cuda_s",
         )
     ]
     for run in sorted_runs(runs):
@@ -653,6 +748,8 @@ def write_summary(runs, output_path):
                 fmt3(run.val_acc),
                 fmt3(run.tta_val_acc),
                 fmt3(run.wall_time_seconds),
+                fmt3(run.train_cuda_seconds),
+                fmt3(run.eval_cuda_seconds),
             )
         )
     widths = [max(len(row[col]) for row in rows) for col in range(len(rows[0]))]
@@ -681,6 +778,8 @@ def write_csv(runs, output_path):
         "tta_val_acc",
         "wall_time_seconds",
         "cuda_time_seconds",
+        "train_cuda_seconds",
+        "eval_cuda_seconds",
         "applied_lr_steps",
         "step_train_loss_steps",
         "n_search_intervals",
@@ -707,6 +806,8 @@ def write_csv(runs, output_path):
                     "tta_val_acc": run.tta_val_acc,
                     "wall_time_seconds": run.wall_time_seconds,
                     "cuda_time_seconds": run.cuda_time_seconds,
+                    "train_cuda_seconds": run.train_cuda_seconds,
+                    "eval_cuda_seconds": run.eval_cuda_seconds,
                     "applied_lr_steps": len(run.applied_lrs),
                     "step_train_loss_steps": len(run.step_train_losses),
                     "n_search_intervals": len(run.interval_selections),
