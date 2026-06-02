@@ -61,6 +61,22 @@ def normalize_rows(G):
     return row_normalized * (min(G.shape) / G.size(0)) ** 0.5
 
 
+def normalize_rows_max(G):
+    assert len(G.shape) == 2
+    row_normalized = G / G.norm(dim=1, keepdim=True)
+    return row_normalized * (max(G.shape) / G.size(0)) ** 0.5
+
+
+def normalize_matrix(G):
+    assert len(G.shape) == 2
+    return G * (min(G.shape) ** 0.5 / G.norm())
+
+
+def normalize_matrix_max(G):
+    assert len(G.shape) == 2
+    return G * (max(G.shape) ** 0.5 / G.norm())
+
+
 def zeropower_via_newtonschulz5(G, steps=3, eps=0):
     r"""
     Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
@@ -86,9 +102,19 @@ def zeropower_via_newtonschulz5(G, steps=3, eps=0):
     return X
 
 
+def zeropower_via_newtonschulz5_max(G, steps=3, eps=0):
+    assert len(G.shape) == 2
+    scale = (max(G.shape) / min(G.shape)) ** 0.5
+    return zeropower_via_newtonschulz5(G, steps=steps, eps=eps) * scale
+
+
 if USE_COMPILED_MUON:
     normalize_rows = torch.compile(normalize_rows)
+    normalize_rows_max = torch.compile(normalize_rows_max)
+    normalize_matrix = torch.compile(normalize_matrix)
     zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
+    normalize_matrix_max = torch.compile(normalize_matrix_max)
+    zeropower_via_newtonschulz5_max = torch.compile(zeropower_via_newtonschulz5_max)
 
 
 class Muon(torch.optim.Optimizer):
@@ -440,23 +466,191 @@ def evaluate_train_loss(model, batches):
 ############################################
 
 TRAIN_EVAL_BATCHES = 25
+LR_SEARCH_FACTOR = 0.8
+LR_SEARCH_SIG_FIGS = 2
 BATCH_CONFIGS = [
-    dict(batch_size=125, muon_lr=0.04),
-    dict(batch_size=500, muon_lr=0.079),
-    dict(batch_size=2000, muon_lr=0.19),
+    dict(batch_size=125),
+    dict(batch_size=500),
+    dict(batch_size=2000),
 ]
 UPDATE_CONFIGS = [
     dict(update_name="row_norm", update_fn=normalize_rows),
+    dict(update_name="row_norm_max", update_fn=normalize_rows_max),
+    dict(update_name="matrix_norm", update_fn=normalize_matrix),
+    dict(update_name="matrix_norm_max", update_fn=normalize_matrix_max),
     dict(
         update_name="zeropower_via_newtonschulz5",
         update_fn=zeropower_via_newtonschulz5,
     ),
+    dict(
+        update_name="zeropower_via_newtonschulz5_max",
+        update_fn=zeropower_via_newtonschulz5_max,
+    ),
 ]
+MANUAL_MUON_LRS = {
+    "row_norm": {
+        125: 0.04,
+        500: 0.084,
+        2000: 0.061,
+    },
+    "row_norm_max": {
+        125: 0.04,
+        500: 0.084,
+        2000: 0.061,
+    },
+    "matrix_norm": {
+        125: 0.04,
+        500: 0.084,
+        2000: 0.061,
+    },
+    "matrix_norm_max": {
+        125: 0.04,
+        500: 0.084,
+        2000: 0.061,
+    },
+    "zeropower_via_newtonschulz5": {
+        125: 0.062,
+        500: 0.099,
+        2000: 0.22,
+    },
+    "zeropower_via_newtonschulz5_max": {
+        125: 0.062,
+        500: 0.099,
+        2000: 0.22,
+    },
+}
 RUN_CONFIGS = [
-    dict(**batch_config, **update_config)
+    dict(
+        **batch_config,
+        **update_config,
+        muon_lr=MANUAL_MUON_LRS[update_config["update_name"]][
+            batch_config["batch_size"]
+        ],
+    )
     for batch_config in BATCH_CONFIGS
     for update_config in UPDATE_CONFIGS
 ]
+
+
+def rounded_lr(value):
+    return float(f"{value:.{LR_SEARCH_SIG_FIGS}g}")
+
+
+def lr_key(value):
+    return f"{rounded_lr(value):.{LR_SEARCH_SIG_FIGS}g}"
+
+
+def lr_at_offset(initial_lr, offset):
+    return rounded_lr(initial_lr * LR_SEARCH_FACTOR**offset)
+
+
+def best_offset(offsets, results_by_offset):
+    return max(
+        offsets,
+        key=lambda offset: (
+            results_by_offset[offset]["tta_val_acc"],
+            -abs(offset),
+        ),
+    )
+
+
+def find_integer_middle(evaluate):
+    offsets = [-1.0, 0.0, 1.0]
+    for offset in offsets:
+        evaluate(offset)
+
+    middle = best_offset(offsets, evaluate.results_by_offset)
+    if middle == 0.0:
+        return middle
+
+    direction = 1.0 if middle > 0.0 else -1.0
+    while True:
+        next_offset = middle + direction
+        evaluate(next_offset)
+        candidates = [middle - direction, middle, next_offset]
+        new_middle = best_offset(candidates, evaluate.results_by_offset)
+        if new_middle == middle:
+            return middle
+        middle = new_middle
+
+
+def search_initial_lr(search_index, model, config):
+    cache = {}
+    results_by_offset = {}
+    evaluations = []
+
+    def evaluate(offset):
+        lr = lr_at_offset(config["muon_lr"], offset)
+        key = lr_key(lr)
+        if key not in cache:
+            run_name = (
+                "search%d_bs%d_update_%s_k%g_lr%s"
+                % (
+                    search_index,
+                    config["batch_size"],
+                    config["update_name"],
+                    offset,
+                    key,
+                )
+            )
+            print(
+                "lr_search_eval %s initial_lr=%.6g rounded_lr=%s"
+                % (run_name, config["muon_lr"], key),
+                flush=True,
+            )
+            cache[key] = main(
+                run_name,
+                model,
+                config["batch_size"],
+                lr,
+                config["update_name"],
+                config["update_fn"],
+            )
+            cache[key]["search_offset"] = offset
+            cache[key]["rounded_muon_lr"] = lr
+            evaluations.append(cache[key])
+        else:
+            print(
+                "lr_search_cache_hit search=%d batch_size=%d update=%s "
+                "k=%g rounded_lr=%s"
+                % (
+                    search_index,
+                    config["batch_size"],
+                    config["update_name"],
+                    offset,
+                    key,
+                ),
+                flush=True,
+            )
+        results_by_offset[offset] = cache[key]
+        return cache[key]
+
+    evaluate.results_by_offset = results_by_offset
+
+    best_final = find_integer_middle(evaluate)
+    best_result = results_by_offset[best_final]
+    evaluation_snapshots = [dict(result) for result in evaluations]
+    best_result["best_search_offset"] = best_final
+    best_result["initial_muon_lr"] = config["muon_lr"]
+    best_result["search_evaluations"] = evaluation_snapshots
+
+    print(
+        "lr_search_complete search=%d batch_size=%d update=%s "
+        "initial_lr=%.6g best_k=%g best_lr=%.6g tta_val_acc=%.4f "
+        "evaluated_lrs=%d"
+        % (
+            search_index,
+            config["batch_size"],
+            config["update_name"],
+            config["muon_lr"],
+            best_final,
+            best_result["muon_lr"],
+            best_result["tta_val_acc"],
+            len(cache),
+        ),
+        flush=True,
+    )
+    return best_result
 
 
 def main(run, model, batch_size, muon_lr, update_name, update_fn):
@@ -600,7 +794,8 @@ if __name__ == "__main__":
     results = []
     for run, config in enumerate(RUN_CONFIGS):
         print(
-            "cifar_baseline2 run=%d batch_size=%d muon_lr=%.6g update=%s"
+            "cifar_baseline2_lr_search search=%d batch_size=%d "
+            "initial_muon_lr=%.6g update=%s"
             % (
                 run,
                 config["batch_size"],
@@ -609,22 +804,17 @@ if __name__ == "__main__":
             ),
             flush=True,
         )
-        result = main(
-            run,
-            model,
-            config["batch_size"],
-            config["muon_lr"],
-            config["update_name"],
-            config["update_fn"],
-        )
+        result = search_initial_lr(run, model, config)
         results.append(result)
-        print("Batch size:         %d" % result["batch_size"])
-        print("Muon lr:            %.6g" % result["muon_lr"])
-        print("SGD lr mult:        %.6g" % result["sgd_lr_mult"])
-        print("Update:             %s" % result["update_name"])
-        print("25batch train loss: %.4f" % result["train25_loss"])
-        print("Val acc:            %.4f" % result["val_acc"])
-        print("TTA val:            %.4f" % result["tta_val_acc"])
+        print("Batch size:          %d" % result["batch_size"])
+        print("Initial Muon lr:     %.6g" % result["initial_muon_lr"])
+        print("Best Muon lr:        %.6g" % result["muon_lr"])
+        print("Best search k:       %.6g" % result["best_search_offset"])
+        print("SGD lr mult:         %.6g" % result["sgd_lr_mult"])
+        print("Update:              %s" % result["update_name"])
+        print("25batch train loss:  %.4f" % result["train25_loss"])
+        print("Val acc:             %.4f" % result["val_acc"])
+        print("TTA val:             %.4f" % result["tta_val_acc"])
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
