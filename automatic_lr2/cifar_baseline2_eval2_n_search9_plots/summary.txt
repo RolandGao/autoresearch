@@ -1,0 +1,27 @@
+  bs               kind   N   M  mult  muon_lr  sgd_mult  train_loss  val_acc    tta        decay  end_lr_p  wall_s  train_cuda_s  eval_cuda_s
+ 125           baseline  NA  NA    NA    0.062      0.51       0.926    0.927  0.939           NA        NA    33.6            NA           NA
+ 125   N=1, M=1, mult=1   1   1     1    0.062      0.51         nan    0.914  0.923  exponential      0.05     249           228          4.6
+ 125   N=1, M=1, mult=2   1   1     2    0.062      0.51         nan     0.85  0.869   reciprocal     0.025     285           262         6.21
+ 125   N=5, M=1, mult=1   5   1     1    0.062      0.51         nan    0.917  0.928  exponential     0.025     201           193         4.27
+ 125   N=5, M=1, mult=2   5   1     2    0.062      0.51         nan    0.848  0.864   reciprocal     0.025     236           227         5.55
+ 125  N=10, M=1, mult=1  10   1     1    0.062      0.51         nan    0.921  0.928  exponential      0.05     234           227         5.23
+ 125  N=10, M=1, mult=2  10   1     2    0.062      0.51         nan    0.871  0.885   reciprocal      0.05     226           219         5.24
+ 125  N=20, M=1, mult=1  20   1     1    0.062      0.51         nan    0.926  0.932   reciprocal       0.1     173           169          3.3
+ 125  N=20, M=1, mult=2  20   1     2    0.062      0.51         nan     0.88  0.891   reciprocal     0.025     259           251         6.54
+ 125  N=30, M=1, mult=1  30   1     1    0.062      0.51         nan    0.923  0.932       linear     0.025     214           209         4.26
+ 125  N=30, M=1, mult=2  30   1     2    0.062      0.51         nan    0.885  0.897   reciprocal      0.05     222           216         4.91
+ 125  N=40, M=1, mult=1  40   1     1    0.062      0.51         nan    0.923  0.932       linear     0.025     207           202         4.27
+ 125  N=40, M=1, mult=2  40   1     2    0.062      0.51         nan    0.884  0.896   reciprocal      0.05     235           229         5.24
+2000           baseline  NA  NA    NA   0.2375       0.8       0.909    0.928  0.942           NA        NA    15.3            NA           NA
+2000   N=1, M=1, mult=1   1   1     1   0.2375       0.8         nan    0.922  0.932  exponential      0.05    82.5          77.6         3.71
+2000   N=1, M=1, mult=2   1   1     2   0.2375       0.8         nan    0.917  0.927   reciprocal       0.1    91.2          85.3         4.71
+2000   N=5, M=1, mult=1   5   1     1   0.2375       0.8         nan    0.911  0.926       linear       0.1    84.6          80.1         4.04
+2000   N=5, M=1, mult=2   5   1     2   0.2375       0.8         nan    0.927  0.936  exponential       0.1    75.7          71.9         3.37
+2000  N=10, M=1, mult=1  10   1     1   0.2375       0.8         nan     0.92  0.931   reciprocal       0.2    87.1          82.4         4.37
+2000  N=10, M=1, mult=2  10   1     2   0.2375       0.8         nan    0.928  0.938  exponential       0.1    82.5          78.2         4.03
+2000  N=20, M=1, mult=1  20   1     1   0.2375       0.8         nan    0.923  0.935  exponential       0.1    81.1          77.5         3.38
+2000  N=20, M=1, mult=2  20   1     2   0.2375       0.8         nan     0.93  0.939  exponential       0.1    83.1          79.1         3.72
+2000  N=30, M=1, mult=1  30   1     1   0.2375       0.8         nan    0.921  0.934  exponential       0.1    92.1          87.8         4.05
+2000  N=30, M=1, mult=2  30   1     2   0.2375       0.8         nan    0.931  0.939  exponential      0.05    85.1          81.1         3.71
+2000  N=40, M=1, mult=1  40   1     1   0.2375       0.8         nan    0.928  0.939       linear    0.0125     101          96.8         4.36
+2000  N=40, M=1, mult=2  40   1     2   0.2375       0.8         nan    0.925  0.935  exponential      0.05      93          88.4         4.38

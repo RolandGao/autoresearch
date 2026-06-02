@@ -57,7 +57,8 @@ def set_training_seed():
 
 def normalize_rows(G):
     assert len(G.shape) == 2
-    return G / G.norm(dim=1, keepdim=True)
+    row_normalized = G / G.norm(dim=1, keepdim=True)
+    return row_normalized * (min(G.shape) / G.size(0)) ** 0.5
 
 
 if USE_COMPILED_MUON:

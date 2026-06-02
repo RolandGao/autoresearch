@@ -1144,6 +1144,10 @@ N_SEARCH_LR_MULTIPLIERS = [1.0, 2.0]
 N_SEARCH_INITIAL_LR_EMA = 0.0
 N_SEARCH_LR_FACTOR = 0.8
 N_SEARCH_MAX_MOVES = 40
+N_SEARCH_DECAY_SCHEDULES = ("linear", "exponential", "reciprocal")
+N_SEARCH_DECAY_INITIAL_END_LR_P = 0.1
+N_SEARCH_DECAY_FACTOR = 0.5
+N_SEARCH_DECAY_MAX_MOVES = 40
 
 
 def n_search_interval_ranges(total_steps, interval_steps):
@@ -1327,6 +1331,7 @@ def main(
     step_train_loss_logs = []
     pending_step_train_loss_logs = []
     interval_search_logs = []
+    decay_search_logs = []
     selected_lrs = []
     selected_lr_ks = []
 
@@ -1359,12 +1364,28 @@ def main(
     def n_search_applied_lr(searched_lr):
         return searched_lr * n_search_lr_multiplier
 
-    def n_search_decay_lr(decay_start_lr, global_step, decay_start_step):
-        decay_steps = total_train_steps - decay_start_step
-        if decay_steps <= 0:
-            return decay_start_lr
-        decay_step = global_step - decay_start_step
-        return decay_start_lr * (1 - decay_step / decay_steps)
+    def n_search_decay_end_lr_p_from_k(k):
+        return N_SEARCH_DECAY_INITIAL_END_LR_P * (N_SEARCH_DECAY_FACTOR**k)
+
+    def n_search_decay_lr_p(schedule, t, tail_steps, end_lr_p):
+        if tail_steps <= 1:
+            return end_lr_p
+        if schedule == "linear":
+            progress = (t - 1) / (tail_steps - 1)
+            return 1 + (end_lr_p - 1) * progress
+        if schedule == "exponential":
+            progress = (t - 1) / (tail_steps - 1)
+            return end_lr_p**progress
+        if schedule == "reciprocal":
+            a = (1 / end_lr_p - 1) / (tail_steps - 1)
+            return 1 / (1 + (t - 1) * a)
+        raise ValueError(f"Unknown n_search decay schedule: {schedule}")
+
+    def n_search_decay_lr(decay_start_lr, schedule, end_lr_p, tail_index, tail_steps):
+        t = tail_index + 1
+        return decay_start_lr * n_search_decay_lr_p(
+            schedule, t, tail_steps, end_lr_p
+        )
 
     if best_lr_strategy != "n_search":
         for epoch in range(ceil(total_train_steps / len(train_loader))):
@@ -1793,24 +1814,195 @@ def main(
             if last_n_search_applied_lr is not None
             else n_search_applied_lr(muon_lr)
         )
-        emit_log(
-            "n_search linear_decay run=%s steps=%d-%d start_lr=%.8g "
-            "end_lr_exclusive=0"
-            % (run_id, decay_start_step + 1, total_train_steps, decay_start_lr)
-        )
-        decay_losses = []
-        decay_applied_lrs = []
-        start_timer()
-        for global_step in range(decay_start_step, total_train_steps):
-            batch = training_batches[global_step]
-            applied_lr = n_search_decay_lr(
-                decay_start_lr, global_step, decay_start_step
+        decay_start_state = capture_training_state(model, optimizers)
+        decay_batches = training_batches[decay_start_step:total_train_steps]
+        decay_steps = len(decay_batches)
+        decay_candidate_caches = {}
+
+        def train_decay_tail(schedule, end_lr_p, collect_losses):
+            losses = []
+            applied_lrs = []
+            start_timer()
+            for tail_index, batch in enumerate(decay_batches):
+                global_step = decay_start_step + tail_index
+                applied_lr = n_search_decay_lr(
+                    decay_start_lr, schedule, end_lr_p, tail_index, decay_steps
+                )
+                train_one_batch(global_step, batch, applied_lr)
+                applied_lrs.append(applied_lr)
+                if collect_losses:
+                    losses.append(evaluate_training_batch_losses(model, [batch])[0])
+            stop_timer()
+            return losses, applied_lrs
+
+        def evaluate_decay_candidate(schedule, k):
+            cache_key = (schedule, k)
+            end_lr_p = n_search_decay_end_lr_p_from_k(k)
+            if cache_key in decay_candidate_caches:
+                cached = decay_candidate_caches[cache_key]
+                emit_log(
+                    "n_search_decay cache_hit run=%s schedule=%s k=%d "
+                    "end_lr_p=%.8g tta_val_acc=%.4f"
+                    % (
+                        run_id,
+                        schedule,
+                        k,
+                        end_lr_p,
+                        cached["tta_val_acc"],
+                    ),
+                )
+                return cached
+
+            restore_training_state(model, optimizers, decay_start_state)
+            decay_losses, applied_lrs = train_decay_tail(
+                schedule, end_lr_p, collect_losses=True
             )
-            train_one_batch(global_step, batch, applied_lr)
-            decay_applied_lrs.append(applied_lr)
-            train_loss_value = evaluate_training_batch_losses(model, [batch])[0]
-            decay_losses.append(train_loss_value)
-        stop_timer()
+            start_timer("eval")
+            tta_val_acc_candidate = evaluate(model, test_loader, tta_level=2)
+            stop_timer()
+            candidate = dict(
+                schedule=schedule,
+                k=k,
+                end_lr_p=end_lr_p,
+                end_lr=decay_start_lr * end_lr_p,
+                tta_val_acc=tta_val_acc_candidate,
+                step_train_losses=decay_losses,
+                applied_lr_min=min(applied_lrs),
+                applied_lr_max=max(applied_lrs),
+            )
+            decay_candidate_caches[cache_key] = candidate
+            for tail_index, (train_loss_value, applied_lr) in enumerate(
+                zip(decay_losses, applied_lrs), start=1
+            ):
+                emit_log(
+                    "n_search_decay_train_loss run=%s schedule=%s k=%d "
+                    "end_lr_p=%.8g train_step=%d decay_step=%d/%d "
+                    "lr=%.8g train_loss=%s"
+                    % (
+                        run_id,
+                        schedule,
+                        k,
+                        end_lr_p,
+                        decay_start_step + tail_index,
+                        tail_index,
+                        decay_steps,
+                        applied_lr,
+                        repr(float(train_loss_value)),
+                    ),
+                )
+            emit_log(
+                "n_search_decay candidate run=%s schedule=%s steps=%d-%d "
+                "start_lr=%.8g k=%d end_lr_p=%.8g end_lr=%.8g "
+                "tta_val_acc=%.4f applied_lr_min=%.8g applied_lr_max=%.8g"
+                % (
+                    run_id,
+                    schedule,
+                    decay_start_step + 1,
+                    total_train_steps,
+                    decay_start_lr,
+                    k,
+                    end_lr_p,
+                    decay_start_lr * end_lr_p,
+                    tta_val_acc_candidate,
+                    min(applied_lrs),
+                    max(applied_lrs),
+                ),
+            )
+            return candidate
+
+        selected_decay_candidates = []
+        for schedule in N_SEARCH_DECAY_SCHEDULES:
+            current_k = 0
+            search_moves = 0
+            while True:
+                search_moves += 1
+                if search_moves > N_SEARCH_DECAY_MAX_MOVES:
+                    raise RuntimeError(
+                        "LR tail decay search did not converge: "
+                        f"run={run_id} schedule={schedule} center_k={current_k}"
+                    )
+                center = evaluate_decay_candidate(schedule, current_k)
+                lower_end_lr_p = evaluate_decay_candidate(schedule, current_k + 1)
+                higher_end_lr_p = evaluate_decay_candidate(schedule, current_k - 1)
+                candidates = [center, lower_end_lr_p, higher_end_lr_p]
+                selected_decay = max(
+                    candidates, key=lambda candidate: candidate["tta_val_acc"]
+                )
+                emit_log(
+                    "n_search_decay step run=%s schedule=%s center_k=%d "
+                    "center_end_lr_p=%.8g center_tta=%.4f best_k=%d "
+                    "best_end_lr_p=%.8g best_tta=%.4f"
+                    % (
+                        run_id,
+                        schedule,
+                        current_k,
+                        center["end_lr_p"],
+                        center["tta_val_acc"],
+                        selected_decay["k"],
+                        selected_decay["end_lr_p"],
+                        selected_decay["tta_val_acc"],
+                    ),
+                )
+                if selected_decay["k"] == current_k:
+                    break
+                current_k = selected_decay["k"]
+
+            selected_decay_candidates.append(selected_decay)
+            schedule_candidates = [
+                value
+                for (candidate_schedule, _), value in decay_candidate_caches.items()
+                if candidate_schedule == schedule
+            ]
+            decay_search_logs.append(
+                dict(
+                    schedule=schedule,
+                    selected=selected_decay,
+                    candidates=sorted(
+                        schedule_candidates, key=lambda candidate: candidate["k"]
+                    ),
+                )
+            )
+            emit_log(
+                "n_search_decay selected run=%s schedule=%s steps=%d-%d "
+                "start_lr=%.8g selected_k=%d end_lr_p=%.8g end_lr=%.8g "
+                "tta_val_acc=%.4f evaluated_candidates=%d"
+                % (
+                    run_id,
+                    schedule,
+                    decay_start_step + 1,
+                    total_train_steps,
+                    decay_start_lr,
+                    selected_decay["k"],
+                    selected_decay["end_lr_p"],
+                    selected_decay["end_lr"],
+                    selected_decay["tta_val_acc"],
+                    len(schedule_candidates),
+                ),
+            )
+
+        best_decay = max(
+            selected_decay_candidates,
+            key=lambda candidate: candidate["tta_val_acc"],
+        )
+        emit_log(
+            "n_search_decay final_selected run=%s schedule=%s steps=%d-%d "
+            "start_lr=%.8g end_lr_p=%.8g end_lr=%.8g tta_val_acc=%.4f"
+            % (
+                run_id,
+                best_decay["schedule"],
+                decay_start_step + 1,
+                total_train_steps,
+                decay_start_lr,
+                best_decay["end_lr_p"],
+                best_decay["end_lr"],
+                best_decay["tta_val_acc"],
+            )
+        )
+
+        restore_training_state(model, optimizers, decay_start_state)
+        decay_losses, decay_applied_lrs = train_decay_tail(
+            best_decay["schedule"], best_decay["end_lr_p"], collect_losses=True
+        )
         for offset, (train_loss_value, applied_lr) in enumerate(
             zip(decay_losses, decay_applied_lrs), start=1
         ):
@@ -1825,7 +2017,9 @@ def main(
                     applied_lr=applied_lr,
                     lr_k=None,
                     lr_multiplier=n_search_lr_multiplier,
-                    update="linear_decay",
+                    decay_schedule=best_decay["schedule"],
+                    decay_end_lr_p=best_decay["end_lr_p"],
+                    update="decay_search",
                 )
             )
             log_step_train_loss(
@@ -1874,6 +2068,7 @@ def main(
         selected_lr_ks=selected_lr_ks,
         selected_lrs=selected_lrs,
         interval_search_logs=interval_search_logs,
+        decay_search_logs=decay_search_logs,
         step_train_loss_logs=step_train_loss_logs,
         n_search_interval_steps=n_search_interval_steps,
         n_search_metric_batches=n_search_metric_batches,

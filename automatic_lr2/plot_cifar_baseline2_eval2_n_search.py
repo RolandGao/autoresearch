@@ -53,6 +53,32 @@ RUN_TIME_RE = re.compile(
     r"(?: train_cuda_seconds=(?P<train_cuda_seconds>\S+) "
     r"eval_cuda_seconds=(?P<eval_cuda_seconds>\S+))?"
 )
+DECAY_TRAIN_LOSS_RE = re.compile(
+    r"^n_search_decay_train_loss run=(?P<run>\d+) schedule=(?P<schedule>\S+) "
+    r"k=(?P<k>-?\d+) end_lr_p=(?P<end_lr_p>\S+) "
+    r"train_step=(?P<train_step>\d+) decay_step=(?P<decay_step>\d+)/(?P<decay_steps>\d+) "
+    r"lr=(?P<lr>\S+) train_loss=(?P<train_loss>\S+)"
+)
+DECAY_CANDIDATE_RE = re.compile(
+    r"^n_search_decay candidate run=(?P<run>\d+) schedule=(?P<schedule>\S+) "
+    r"steps=(?P<start_step>\d+)-(?P<end_step>\d+) start_lr=(?P<start_lr>\S+) "
+    r"k=(?P<k>-?\d+) end_lr_p=(?P<end_lr_p>\S+) end_lr=(?P<end_lr>\S+) "
+    r"tta_val_acc=(?P<tta_val_acc>\S+) applied_lr_min=(?P<applied_lr_min>\S+) "
+    r"applied_lr_max=(?P<applied_lr_max>\S+)"
+)
+DECAY_SELECTED_RE = re.compile(
+    r"^n_search_decay selected run=(?P<run>\d+) schedule=(?P<schedule>\S+) "
+    r"steps=(?P<start_step>\d+)-(?P<end_step>\d+) start_lr=(?P<start_lr>\S+) "
+    r"selected_k=(?P<selected_k>-?\d+) end_lr_p=(?P<end_lr_p>\S+) "
+    r"end_lr=(?P<end_lr>\S+) tta_val_acc=(?P<tta_val_acc>\S+) "
+    r"evaluated_candidates=(?P<evaluated_candidates>\d+)"
+)
+DECAY_FINAL_SELECTED_RE = re.compile(
+    r"^n_search_decay final_selected run=(?P<run>\d+) schedule=(?P<schedule>\S+) "
+    r"steps=(?P<start_step>\d+)-(?P<end_step>\d+) start_lr=(?P<start_lr>\S+) "
+    r"end_lr_p=(?P<end_lr_p>\S+) end_lr=(?P<end_lr>\S+) "
+    r"tta_val_acc=(?P<tta_val_acc>\S+)"
+)
 NAME_N_M_RE = re.compile(
     r"_N(?P<N>\d+)(?:_M(?P<M>\d+))?(?:_mult(?P<mult>[0-9.]+))?_ema"
 )
@@ -70,6 +96,9 @@ class Run:
     applied_lrs: list[tuple[int, int, float]] = field(default_factory=list)
     step_train_losses: list[tuple[int, int, float]] = field(default_factory=list)
     interval_selections: list[dict] = field(default_factory=list)
+    decay_candidates: list[dict] = field(default_factory=list)
+    decay_selections: list[dict] = field(default_factory=list)
+    decay_final_selection: dict | None = None
     eval_logs: list[tuple[int, float, float]] = field(default_factory=list)
     train_loss: float | None = None
     val_loss: float | None = None
@@ -158,6 +187,7 @@ def parse_log(path):
     runs = []
     by_name = {}
     by_index = {}
+    decay_loss_stats = {}
     current = None
 
     with Path(path).open() as f:
@@ -244,6 +274,89 @@ def parse_log(path):
                             ),
                         }
                     )
+                continue
+
+            match = DECAY_TRAIN_LOSS_RE.match(line)
+            if match:
+                key = (
+                    int(match.group("run")),
+                    match.group("schedule"),
+                    int(match.group("k")),
+                )
+                stats = decay_loss_stats.setdefault(
+                    key, {"count": 0, "sum": 0.0, "last": None}
+                )
+                train_loss = float(match.group("train_loss"))
+                stats["count"] += 1
+                stats["sum"] += train_loss
+                stats["last"] = train_loss
+                continue
+
+            match = DECAY_CANDIDATE_RE.match(line)
+            if match:
+                run_index = int(match.group("run"))
+                run = by_index.get(run_index)
+                if run is not None:
+                    k = int(match.group("k"))
+                    stats = decay_loss_stats.get(
+                        (run_index, match.group("schedule"), k), {}
+                    )
+                    count = stats.get("count", 0)
+                    run.decay_candidates.append(
+                        {
+                            "schedule": match.group("schedule"),
+                            "start_step": int(match.group("start_step")),
+                            "end_step": int(match.group("end_step")),
+                            "start_lr": float(match.group("start_lr")),
+                            "k": k,
+                            "end_lr_p": float(match.group("end_lr_p")),
+                            "end_lr": float(match.group("end_lr")),
+                            "tta_val_acc": float(match.group("tta_val_acc")),
+                            "applied_lr_min": float(match.group("applied_lr_min")),
+                            "applied_lr_max": float(match.group("applied_lr_max")),
+                            "mean_train_loss": (
+                                None if count == 0 else stats["sum"] / count
+                            ),
+                            "last_train_loss": stats.get("last"),
+                            "train_loss_steps": count,
+                        }
+                    )
+                continue
+
+            match = DECAY_SELECTED_RE.match(line)
+            if match:
+                run = by_index.get(int(match.group("run")))
+                if run is not None:
+                    run.decay_selections.append(
+                        {
+                            "schedule": match.group("schedule"),
+                            "start_step": int(match.group("start_step")),
+                            "end_step": int(match.group("end_step")),
+                            "start_lr": float(match.group("start_lr")),
+                            "selected_k": int(match.group("selected_k")),
+                            "end_lr_p": float(match.group("end_lr_p")),
+                            "end_lr": float(match.group("end_lr")),
+                            "tta_val_acc": float(match.group("tta_val_acc")),
+                            "evaluated_candidates": int(
+                                match.group("evaluated_candidates")
+                            ),
+                        }
+                    )
+                continue
+
+            match = DECAY_FINAL_SELECTED_RE.match(line)
+            if match:
+                run = by_index.get(int(match.group("run")))
+                if run is not None:
+                    run.decay_final_selection = {
+                        "schedule": match.group("schedule"),
+                        "start_step": int(match.group("start_step")),
+                        "end_step": int(match.group("end_step")),
+                        "start_lr": float(match.group("start_lr")),
+                        "end_lr_p": float(match.group("end_lr_p")),
+                        "end_lr": float(match.group("end_lr")),
+                        "tta_val_acc": float(match.group("tta_val_acc")),
+                    }
                 continue
 
             match = EVAL_RE.match(line)
@@ -351,6 +464,11 @@ def curve_label(run, default_label=None):
         label = f"mult={fmt(run.lr_multiplier)}"
     else:
         label = default_label or run.label
+    if run.decay_final_selection is not None:
+        label = (
+            f"{label}, {run.decay_final_selection['schedule']} "
+            f"p={fmt3(run.decay_final_selection['end_lr_p'])}"
+        )
     return f"{label}, TTA={fmt3(run.tta_val_acc)}"
 
 
@@ -780,6 +898,94 @@ def plot_n_search_selected_lrs(runs, output_path):
     plt.close(fig)
 
 
+def plot_decay_search_tta(runs, output_path):
+    decay_runs = [run for run in runs if run.decay_candidates]
+    if not decay_runs:
+        return
+    batch_sizes = sorted_batch_sizes(decay_runs)
+    n_values = sorted({run.interval_n for run in decay_runs if run.interval_n is not None})
+    schedule_colors = {
+        "linear": "tab:blue",
+        "exponential": "tab:green",
+        "reciprocal": "tab:red",
+    }
+    fig, axes = plt.subplots(
+        len(batch_sizes),
+        len(n_values),
+        figsize=(4.7 * len(n_values), 3.3 * len(batch_sizes)),
+        squeeze=False,
+        sharex=True,
+        sharey=True,
+    )
+    for row, batch_size in enumerate(batch_sizes):
+        batch_runs = runs_for_batch(decay_runs, batch_size)
+        baseline_tta = [
+            run.tta_val_acc
+            for run in batch_runs
+            if run.strategy is None and run.tta_val_acc is not None
+        ]
+        for col, interval_n in enumerate(n_values):
+            ax = axes[row][col]
+            if baseline_tta:
+                ax.axhline(
+                    baseline_tta[0],
+                    color="black",
+                    linestyle=":",
+                    linewidth=1.5,
+                    label=f"baseline TTA={fmt3(baseline_tta[0])}",
+                )
+            for run in [
+                item for item in batch_runs if item.interval_n == interval_n
+            ]:
+                schedules = sorted({row["schedule"] for row in run.decay_candidates})
+                for schedule in schedules:
+                    candidates = sorted(
+                        [
+                            candidate
+                            for candidate in run.decay_candidates
+                            if candidate["schedule"] == schedule
+                        ],
+                        key=lambda candidate: candidate["end_lr_p"],
+                    )
+                    xs = [candidate["end_lr_p"] for candidate in candidates]
+                    ys = [candidate["tta_val_acc"] for candidate in candidates]
+                    linestyle = "-" if run.lr_multiplier == 1.0 else "--"
+                    marker = "o" if run.lr_multiplier == 1.0 else "s"
+                    ax.plot(
+                        xs,
+                        ys,
+                        color=schedule_colors.get(schedule, "tab:purple"),
+                        linestyle=linestyle,
+                        marker=marker,
+                        linewidth=1.4,
+                        markersize=3,
+                        label=f"{schedule}, mult={fmt(run.lr_multiplier)}",
+                    )
+                if run.decay_final_selection is not None:
+                    final = run.decay_final_selection
+                    ax.scatter(
+                        [final["end_lr_p"]],
+                        [final["tta_val_acc"]],
+                        color=schedule_colors.get(final["schedule"], "tab:purple"),
+                        edgecolor="black",
+                        linewidth=0.7,
+                        s=48,
+                        zorder=4,
+                    )
+            ax.set_xscale("log")
+            ax.set_title(f"bs={batch_size}, N={interval_n}")
+            ax.grid(True, alpha=0.25)
+            ax.legend(fontsize=6)
+            if col == 0:
+                ax.set_ylabel("tail search TTA")
+    for ax in axes[-1, :]:
+        ax.set_xlabel("end_lr_p")
+    fig.suptitle("Tail Decay Search by End LR Fraction", y=0.995)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
 def write_summary(runs, output_path):
     rows = [
         (
@@ -793,6 +999,8 @@ def write_summary(runs, output_path):
             "train_loss",
             "val_acc",
             "tta",
+            "decay",
+            "end_lr_p",
             "wall_s",
             "train_cuda_s",
             "eval_cuda_s",
@@ -811,6 +1019,16 @@ def write_summary(runs, output_path):
                 fmt3(run.train_loss),
                 fmt3(run.val_acc),
                 fmt3(run.tta_val_acc),
+                (
+                    "NA"
+                    if run.decay_final_selection is None
+                    else run.decay_final_selection["schedule"]
+                ),
+                (
+                    "NA"
+                    if run.decay_final_selection is None
+                    else fmt3(run.decay_final_selection["end_lr_p"])
+                ),
                 fmt3(run.wall_time_seconds),
                 fmt3(run.train_cuda_seconds),
                 fmt3(run.eval_cuda_seconds),
@@ -840,6 +1058,10 @@ def write_csv(runs, output_path):
         "train_acc",
         "val_acc",
         "tta_val_acc",
+        "decay_schedule",
+        "decay_end_lr_p",
+        "decay_end_lr",
+        "decay_search_candidates",
         "wall_time_seconds",
         "cuda_time_seconds",
         "train_cuda_seconds",
@@ -868,6 +1090,22 @@ def write_csv(runs, output_path):
                     "train_acc": run.train_acc,
                     "val_acc": run.val_acc,
                     "tta_val_acc": run.tta_val_acc,
+                    "decay_schedule": (
+                        None
+                        if run.decay_final_selection is None
+                        else run.decay_final_selection["schedule"]
+                    ),
+                    "decay_end_lr_p": (
+                        None
+                        if run.decay_final_selection is None
+                        else run.decay_final_selection["end_lr_p"]
+                    ),
+                    "decay_end_lr": (
+                        None
+                        if run.decay_final_selection is None
+                        else run.decay_final_selection["end_lr"]
+                    ),
+                    "decay_search_candidates": len(run.decay_candidates),
                     "wall_time_seconds": run.wall_time_seconds,
                     "cuda_time_seconds": run.cuda_time_seconds,
                     "train_cuda_seconds": run.train_cuda_seconds,
