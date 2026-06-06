@@ -38,9 +38,14 @@ torch.backends.cudnn.allow_tf32 = USE_TF32
 torch.backends.cuda.matmul.allow_tf32 = USE_TF32
 
 TRAINING_SEED = 0
-TARGET_LAMBDA = 0.0
+TARGET_LAMBDA = float(os.environ.get("TARGET_LAMBDA", "1"))
+TARGET_HEAD_LAMBDA = float(os.environ.get("TARGET_HEAD_LAMBDA", "22000"))
+TARGET_X_LAMBDA = float(os.environ.get("TARGET_X_LAMBDA", "0.0001"))
 PINV_RTOL = 1e-5
 CONV_BATCH_CHUNK = int(os.environ.get("CONV_BATCH_CHUNK", "128"))
+OUTPUT_TARGET_RMS = float(os.environ.get("OUTPUT_TARGET_RMS", "1.25"))
+OUTPUT_TARGET_RMS_FIRST = float(os.environ.get("OUTPUT_TARGET_RMS_FIRST", "8"))
+INNER_TARGET_SWEEPS = int(os.environ.get("INNER_TARGET_SWEEPS", "1"))
 
 
 def set_training_seed():
@@ -240,6 +245,7 @@ class CifarNet(nn.Module):
             3, whiten_width, whiten_kernel_size, padding=0, bias=True
         )
         self.whiten.weight.requires_grad = False
+        self.whiten.bias.requires_grad = False
         self.layers = nn.Sequential(
             nn.ReLU(),
             ConvGroup(whiten_width, widths["block1"]),
@@ -278,10 +284,7 @@ class CifarNet(nn.Module):
         )
 
     def forward(self, x):
-        x = self.whiten(x)
-        x = self.layers(x)
-        x = x.view(len(x), -1)
-        return self.head(x) / x.size(-1)
+        return forward_no_cache(self, x)
 
 
 ############################################
@@ -300,19 +303,31 @@ def _safe_pinv(x):
     raise last_error
 
 
-def _ridge_delta(xtx, xtdy):
-    if TARGET_LAMBDA != 0:
+def _ridge_delta(xtx, xtdy, lambda_value=None):
+    if lambda_value is None:
+        lambda_value = TARGET_LAMBDA
+    if lambda_value != 0:
         eye = torch.eye(xtx.size(0), device=xtx.device, dtype=xtx.dtype)
-        xtx = xtx + TARGET_LAMBDA * eye
+        xtx = xtx + lambda_value * eye
     return _safe_pinv(xtx) @ xtdy.float()
 
 
-def _project_weight_(p):
+def _ridge_input_delta(dy, weight_eff):
+    weight_eff = weight_eff.float()
+    dy = dy.float()
+    if TARGET_X_LAMBDA == 0:
+        return dy @ _safe_pinv(weight_eff)
+    gram = weight_eff.T @ weight_eff
+    eye = torch.eye(gram.size(0), device=gram.device, dtype=gram.dtype)
+    return dy @ _safe_pinv(gram + TARGET_X_LAMBDA * eye) @ weight_eff.T
+
+
+def _project_weight_(p, max_rms=1.0):
     if p is None or not p.requires_grad:
         return
-    norm = p.data.norm()
-    if torch.isfinite(norm) and norm > 0:
-        p.data.mul_(len(p.data) ** 0.5 / norm)
+    rms = p.data.float().square().mean().sqrt()
+    if torch.isfinite(rms) and rms > max_rms:
+        p.data.mul_((max_rms / rms).to(dtype=p.data.dtype))
 
 
 def _project_bias_(p):
@@ -352,7 +367,20 @@ def _smooth_targets(labels, num_classes, smoothing, dtype):
     return targets
 
 
-def cross_entropy_loss_and_delta(logits, labels):
+def _low_loss_logit_targets(labels, num_classes, smoothing, dtype, target_rms):
+    probs = _smooth_targets(labels, num_classes, smoothing, torch.float32)
+    logits = probs.log()
+    logits = logits - logits.mean(dim=1, keepdim=True)
+    if target_rms <= 0:
+        return logits.to(dtype=dtype)
+    rms = logits.square().mean(dim=1, keepdim=True).sqrt()
+    scale = target_rms / rms.clamp_min(1e-12)
+    return logits.mul(scale).to(dtype=dtype)
+
+
+def cross_entropy_loss_and_delta(logits, labels, output_target_rms=None):
+    if output_target_rms is None:
+        output_target_rms = OUTPUT_TARGET_RMS
     logits_f = logits.float()
     loss = F.cross_entropy(
         logits_f,
@@ -360,9 +388,10 @@ def cross_entropy_loss_and_delta(logits, labels):
         label_smoothing=LABEL_SMOOTHING,
         reduction="mean",
     )
-    probs = logits_f.softmax(dim=1)
-    targets = _smooth_targets(labels, logits.size(1), LABEL_SMOOTHING, probs.dtype)
-    delta = (targets - probs) / len(labels)
+    targets = _low_loss_logit_targets(
+        labels, logits.size(1), LABEL_SMOOTHING, logits_f.dtype, output_target_rms
+    )
+    delta = targets - logits_f
     return loss, delta.to(dtype=logits.dtype)
 
 
@@ -442,30 +471,51 @@ def _forward_linear(module, x, cache, scale=1):
 
 def _forward_conv_group(group, x, cache):
     x = _forward_conv(group.conv1, x, cache)
+    x = _bound_sample_rms(x)
     x = _forward_pool(group.pool, x, cache)
+    x = _bound_sample_rms(x)
     x = _forward_batchnorm(group.norm1, x, cache)
+    x = _bound_sample_rms(x)
     x = _forward_relu(group.activ, x, cache)
+    x = _bound_sample_rms(x)
     x = _forward_conv(group.conv2, x, cache)
+    x = _bound_sample_rms(x)
     x = _forward_batchnorm(group.norm2, x, cache)
+    x = _bound_sample_rms(x)
     x = _forward_relu(group.activ, x, cache)
+    x = _bound_sample_rms(x)
     return x
 
 
-def forward_with_cache(model, x):
-    cache = []
+def _forward_impl(model, x, cache):
+    x = _bound_sample_rms(x)
     x = _forward_conv(model.whiten, x, cache)
+    x = _bound_sample_rms(x)
     for module in model.layers:
         if isinstance(module, ConvGroup):
             x = _forward_conv_group(module, x, cache)
         elif isinstance(module, nn.ReLU):
             x = _forward_relu(module, x, cache)
+            x = _bound_sample_rms(x)
         elif isinstance(module, nn.MaxPool2d):
             x = _forward_pool(module, x, cache)
+            x = _bound_sample_rms(x)
         else:
             raise TypeError(f"Unsupported module in manual forward: {type(module)}")
-    cache.append(dict(kind="flatten", input=x.detach(), shape=x.shape))
+    if cache is not None:
+        cache.append(dict(kind="flatten", input=x.detach(), shape=x.shape))
     x = x.view(len(x), -1)
+    x = _bound_sample_rms(x)
     return _forward_linear(model.head, x, cache, scale=x.size(-1)), cache
+
+
+def forward_no_cache(model, x):
+    outputs, _ = _forward_impl(model, x, None)
+    return outputs
+
+
+def forward_with_cache(model, x):
+    return _forward_impl(model, x, [])
 
 
 def _linear_target_backward(module, x, dy, scale):
@@ -475,26 +525,25 @@ def _linear_target_backward(module, x, dy, scale):
     if module.weight.requires_grad:
         xtx = x_mat.float().T @ x_mat.float()
         xtdy = x_mat.float().T @ dy_mat.float()
-        delta_eff = _ridge_delta(xtx, xtdy)
+        delta_eff = _ridge_delta(xtx, xtdy, TARGET_HEAD_LAMBDA)
         module.weight.data.add_((delta_eff * scale).T.to(dtype=module.weight.dtype))
-        _project_weight_(module.weight)
+        _project_weight_(module.weight, max_rms=scale)
 
     if module.bias is not None and module.bias.requires_grad:
         module.bias.data.add_(dy_mat.mean(dim=0).mul(scale).to(module.bias.dtype))
         _project_bias_(module.bias)
 
     weight_eff = module.weight.data.T.float() / scale
-    dx = dy_mat.float() @ _safe_pinv(weight_eff)
+    dx = _ridge_input_delta(dy_mat, weight_eff)
     dx = dx.to(dtype=x.dtype).reshape_as(x)
     return _bound_delta_to_sample_rms(x, dx)
 
 
-def _conv_weight_pinv(module, group, in_per_group, out_per_group):
+def _conv_weight_eff(module, group, in_per_group, out_per_group):
     kh, kw = _pair(module.kernel_size)
     patch_size = in_per_group * kh * kw
     out_slice = slice(group * out_per_group, (group + 1) * out_per_group)
-    weight_eff = module.weight.data[out_slice].reshape(out_per_group, patch_size).T
-    return _safe_pinv(weight_eff)
+    return module.weight.data[out_slice].reshape(out_per_group, patch_size).T
 
 
 def _conv_target_backward(module, x, dy):
@@ -557,8 +606,8 @@ def _conv_target_backward(module, x, dy):
         module.bias.data.add_(dy.mean(dim=(0, 2, 3)).to(module.bias.dtype))
         _project_bias_(module.bias)
 
-    weight_pinvs = [
-        _conv_weight_pinv(module, group, in_per_group, out_per_group)
+    weight_effs = [
+        _conv_weight_eff(module, group, in_per_group, out_per_group)
         for group in range(groups)
     ]
     dx = torch.zeros_like(x)
@@ -575,7 +624,7 @@ def _conv_target_backward(module, x, dy):
                 .reshape(-1, out_per_group)
                 .float()
             )
-            patch_delta = dy_group @ weight_pinvs[group]
+            patch_delta = _ridge_input_delta(dy_group, weight_effs[group])
             patch_delta = (
                 patch_delta.reshape(end - start, -1, patch_size)
                 .transpose(1, 2)
@@ -634,7 +683,7 @@ def _batchnorm_target_backward(module, x, x_hat, invstd, dy):
 def _relu_target_backward(x, dy):
     active = x > 0
     inactive_positive_target = (~active) & (dy > 0)
-    jump = torch.maximum(torch.ones_like(dy), dy - x)
+    jump = torch.minimum(torch.ones_like(dy), dy - x)
     dx = torch.where(active, dy, torch.zeros_like(dy))
     dx = torch.where(inactive_positive_target, jump, dx)
     return _bound_delta_to_sample_rms(x, dx)
@@ -686,14 +735,20 @@ def target_backward(cache, delta):
     return dy
 
 
-def target_train_step(model, inputs, labels):
+def target_train_step(model, inputs, labels, sweeps=1, output_target_rms=None):
     model.train()
     with torch.no_grad():
-        outputs, cache = forward_with_cache(model, inputs)
-        loss, delta = cross_entropy_loss_and_delta(outputs, labels)
-        if torch.isfinite(loss):
-            target_backward(cache, delta)
-    return loss.item()
+        first_loss = None
+        for _ in range(sweeps):
+            outputs, cache = forward_with_cache(model, inputs)
+            loss, delta = cross_entropy_loss_and_delta(
+                outputs, labels, output_target_rms
+            )
+            if first_loss is None:
+                first_loss = loss
+            if torch.isfinite(loss):
+                target_backward(cache, delta)
+    return first_loss.item()
 
 
 ############################################
@@ -845,7 +900,15 @@ def overfit_first_batch(
 
     start_timer()
     for step in range(OVERFIT_STEPS):
-        last_step_loss = target_train_step(model, inputs, labels)
+        output_target_rms = OUTPUT_TARGET_RMS_FIRST if step == 0 else OUTPUT_TARGET_RMS
+        target_train_step(
+            model,
+            inputs,
+            labels,
+            sweeps=INNER_TARGET_SWEEPS,
+            output_target_rms=output_target_rms,
+        )
+        last_step_loss = first_batch_loss(model, inputs, labels)
         print(
             "target_backprop_step step=%d/%d loss=%.6f"
             % (step + 1, OVERFIT_STEPS, last_step_loss),
@@ -861,7 +924,9 @@ def overfit_first_batch(
 
     print(
         "target_backprop_eval batch_size=%d steps=%d/%d "
-        "lambda=%.6g pinv_rtol=%.6g conv_batch_chunk=%d "
+        "lambda=%.6g head_lambda=%.6g lambda_x=%.6g "
+        "output_target_rms=%.6g first_output_target_rms=%.6g "
+        "inner_sweeps=%d pinv_rtol=%.6g conv_batch_chunk=%d "
         "initial_train_loss=%.6f last_step_loss=%.6f final_train_loss=%.6f "
         "time_seconds=%.4f"
         % (
@@ -869,6 +934,11 @@ def overfit_first_batch(
             completed_steps,
             OVERFIT_STEPS,
             TARGET_LAMBDA,
+            TARGET_HEAD_LAMBDA,
+            TARGET_X_LAMBDA,
+            OUTPUT_TARGET_RMS,
+            OUTPUT_TARGET_RMS_FIRST,
+            INNER_TARGET_SWEEPS,
             PINV_RTOL,
             CONV_BATCH_CHUNK,
             initial_loss,
@@ -887,6 +957,11 @@ def overfit_first_batch(
         last_step_loss=last_step_loss,
         final_train_loss=final_loss,
         target_lambda=TARGET_LAMBDA,
+        target_head_lambda=TARGET_HEAD_LAMBDA,
+        target_x_lambda=TARGET_X_LAMBDA,
+        output_target_rms=OUTPUT_TARGET_RMS,
+        output_target_rms_first=OUTPUT_TARGET_RMS_FIRST,
+        inner_target_sweeps=INNER_TARGET_SWEEPS,
         pinv_rtol=PINV_RTOL,
         conv_batch_chunk=CONV_BATCH_CHUNK,
         time_seconds=time_seconds,
@@ -901,11 +976,18 @@ def main():
 
     print(
         "target_backprop_start batch_size=%d steps=%d "
-        "lambda=%.6g pinv_rtol=%.6g conv_batch_chunk=%d"
+        "lambda=%.6g head_lambda=%.6g lambda_x=%.6g "
+        "output_target_rms=%.6g first_output_target_rms=%.6g "
+        "inner_sweeps=%d pinv_rtol=%.6g conv_batch_chunk=%d"
         % (
             OVERFIT_BATCH_SIZE,
             OVERFIT_STEPS,
             TARGET_LAMBDA,
+            TARGET_HEAD_LAMBDA,
+            TARGET_X_LAMBDA,
+            OUTPUT_TARGET_RMS,
+            OUTPUT_TARGET_RMS_FIRST,
+            INNER_TARGET_SWEEPS,
             PINV_RTOL,
             CONV_BATCH_CHUNK,
         ),
