@@ -45,15 +45,7 @@ CONV_BATCH_CHUNK = int(os.environ.get("CONV_BATCH_CHUNK", "128"))
 INNER_TARGET_SWEEPS = int(os.environ.get("INNER_TARGET_SWEEPS", "1"))
 
 
-DEBUG_TARGET_BACKPROP = False
-DEBUG_FORWARD_LOG = False
-DEBUG_LAYER_LOG = False
-DEBUG_MATRIX_LOG = False
-DEBUG_CHUNK_LOG = False
-DEBUG_PINV_LOG = False
-DEBUG_PARAM_LOG = False
-
-_DEBUG_CONTEXT = dict(step=None, sweep=None, phase=None)
+_LOG_CONTEXT = dict(step=None, sweep=None, phase=None)
 
 
 def set_training_seed():
@@ -62,116 +54,130 @@ def set_training_seed():
         torch.cuda.manual_seed_all(TRAINING_SEED)
 
 
-def _debug_context_text():
-    parts = []
-    for key in ("step", "sweep", "phase"):
-        value = _DEBUG_CONTEXT.get(key)
-        if value is not None:
-            parts.append(f"{key}={value}")
-    return " ".join(parts)
+def _module_log_name(module):
+    return getattr(module, "_log_name", module.__class__.__name__)
 
 
-def _debug_log(message):
-    return
-
-
-def _debug_tensor(name, tensor, include_sample_rms=True):
-    if not DEBUG_TARGET_BACKPROP:
-        return
-    if tensor is None:
-        _debug_log(f"{name}: none")
-        return
-    with torch.no_grad():
-        t = tensor.detach()
-        shape = tuple(t.shape)
-        if t.numel() == 0:
-            _debug_log(f"{name} | shape={shape} | dtype={t.dtype} | device={t.device} | empty")
-            return
-        tf = t.float()
-        finite = torch.isfinite(tf)
-        finite_count = int(finite.sum().item())
-        total = tf.numel()
-        nan_count = int(torch.isnan(tf).sum().item())
-        posinf_count = int(torch.isposinf(tf).sum().item())
-        neginf_count = int(torch.isneginf(tf).sum().item())
-        if finite_count > 0:
-            values = tf[finite]
-            mean = values.mean().item()
-            std = values.std(unbiased=False).item()
-            rms = values.square().mean().sqrt().item()
-            min_value = values.min().item()
-            max_value = values.max().item()
-            absmax = values.abs().max().item()
-        else:
-            mean = std = rms = min_value = max_value = absmax = float("nan")
-        sample_text = ""
-        if include_sample_rms and t.ndim >= 2:
-            sample_values = torch.nan_to_num(tf, nan=0.0, posinf=0.0, neginf=0.0)
-            sample_rms = sample_values.reshape(len(t), -1).square().mean(dim=1).sqrt()
-            sample_text = (
-                " | sample_rms mean=%.6g min=%.6g max=%.6g"
-                % (
-                    sample_rms.mean().item(),
-                    sample_rms.min().item(),
-                    sample_rms.max().item(),
-                )
-            )
-        _debug_log(
-            "%s | shape=%s | dtype=%s | device=%s | finite=%d/%d "
-            "(nan=%d, +inf=%d, -inf=%d) | mean=%.6g std=%.6g rms=%.6g "
-            "min=%.6g max=%.6g absmax=%.6g%s"
-            % (
-                name,
-                shape,
-                t.dtype,
-                t.device,
-                finite_count,
-                total,
-                nan_count,
-                posinf_count,
-                neginf_count,
-                mean,
-                std,
-                rms,
-                min_value,
-                max_value,
-                absmax,
-                sample_text,
-            )
-        )
-
-
-def _debug_scalar(name, value):
-    if not DEBUG_TARGET_BACKPROP:
-        return
-    if torch.is_tensor(value):
-        value = value.detach().float().item()
-    _debug_log(f"{name}=%.9g" % float(value))
-
-
-def _debug_fraction(name, mask):
-    if not DEBUG_TARGET_BACKPROP:
-        return
-    value = mask.float().mean().item() if mask.numel() else float("nan")
-    _debug_log(f"{name}=%.9g" % value)
-
-
-def _debug_module_name(module):
-    return getattr(module, "_debug_name", module.__class__.__name__)
-
-
-def register_debug_names(model):
+def register_operation_names(model):
     for name, module in model.named_modules():
-        module._debug_name = name or "model"
+        module._log_name = name or "model"
 
 
-def _debug_model_parameters(model, label):
-    if not (DEBUG_TARGET_BACKPROP and DEBUG_PARAM_LOG):
-        return
-    _debug_log(f"model_parameters label={label}")
-    for name, param in model.named_parameters():
-        _debug_log(f"param name={name} requires_grad={param.requires_grad}")
-        _debug_tensor(f"{label}.{name}", param.data, include_sample_rms=False)
+def _log_context_fields():
+    fields = []
+    for key in ("step", "sweep", "phase"):
+        value = _LOG_CONTEXT.get(key)
+        if value is not None:
+            fields.append(f"{key}={value}")
+    return fields
+
+
+def _format_log_value(value):
+    if value is None:
+        return "none"
+    value = float(value)
+    if not isfinite(value):
+        return str(value)
+    return "%.6g" % value
+
+
+def _tensor_norm(tensor):
+    if tensor is None:
+        return None
+    with torch.no_grad():
+        value = tensor.detach().float()
+        if value.numel() == 0:
+            return 0.0
+        return value.norm().item()
+
+
+def _print_log_line(tag, fields):
+    print(" ".join([tag] + _log_context_fields() + fields), flush=True)
+
+
+def _log_forward_norm(kind, name, op_index, activation):
+    _print_log_line(
+        "forward_norm",
+        [
+            f"op={op_index}",
+            f"kind={kind}",
+            f"name={name}",
+            f"activation_norm={_format_log_value(_tensor_norm(activation))}",
+        ],
+    )
+
+
+def _log_backward_norm(
+    kind,
+    name,
+    op_index,
+    dy,
+    dx,
+    dw_norm,
+    train_loss_before,
+    train_loss_after,
+):
+    _print_log_line(
+        "backward_norm",
+        [
+            f"op={op_index}",
+            f"kind={kind}",
+            f"name={name}",
+            f"dy_norm={_format_log_value(_tensor_norm(dy))}",
+            f"dw_norm={_format_log_value(dw_norm)}",
+            f"dx_norm={_format_log_value(_tensor_norm(dx))}",
+            f"train_loss_before_dx_dw={_format_log_value(train_loss_before)}",
+            f"train_loss_after_dx_dw={_format_log_value(train_loss_after)}",
+        ],
+    )
+
+
+def _module_param_snapshot(module):
+    if module is None:
+        return {}
+    snapshot = {}
+    for name in ("weight", "bias"):
+        param = getattr(module, name, None)
+        if param is not None:
+            snapshot[name] = param.data.detach().clone()
+    return snapshot
+
+
+def _module_param_delta_norm(module, snapshot):
+    if module is None or not snapshot:
+        return 0.0
+    total = 0.0
+    for name, before in snapshot.items():
+        param = getattr(module, name, None)
+        if param is None:
+            continue
+        delta = param.data.detach().float() - before.float()
+        total += delta.square().sum().item()
+    return total**0.5
+
+
+def _loss_preserving_mode(model, inputs, labels):
+    training_states = [(module, module.training) for module in model.modules()]
+    try:
+        model.eval()
+        with torch.inference_mode():
+            outputs = model(inputs)
+            loss = F.cross_entropy(
+                outputs.float(),
+                labels,
+                label_smoothing=LABEL_SMOOTHING,
+                reduction="mean",
+            )
+        return loss.item()
+    finally:
+        for module, training in training_states:
+            module.train(training)
+
+
+def _operation_train_loss(model, inputs, labels):
+    if model is None or inputs is None or labels is None:
+        return None
+    return _loss_preserving_mode(model, inputs, labels)
 
 
 #############################################
@@ -412,120 +418,57 @@ class CifarNet(nn.Module):
 ############################################
 
 
-def _safe_pinv(x, name="pinv"):
+def _safe_pinv(x):
     x = torch.nan_to_num(x.float())
-    if DEBUG_PINV_LOG:
-        _debug_tensor(f"{name}.pinv_input", x, include_sample_rms=False)
     last_error = None
     for rtol in (PINV_RTOL, 1e-4, 1e-3):
         try:
-            result = torch.linalg.pinv(x, rtol=rtol)
-            if DEBUG_PINV_LOG:
-                _debug_log(f"{name}.pinv_success rtol={rtol:.6g}")
-                _debug_tensor(f"{name}.pinv_output", result, include_sample_rms=False)
-            return result
+            return torch.linalg.pinv(x, rtol=rtol)
         except RuntimeError as err:
             last_error = err
-            if DEBUG_PINV_LOG:
-                _debug_log(f"{name}.pinv_failed rtol={rtol:.6g} error={err}")
     raise last_error
 
 
-def _ridge_delta(xtx, xtdy, lambda_value=0.0, name="weight_solve"):
-    if DEBUG_MATRIX_LOG:
-        _debug_log(f"{name}.ridge_delta lambda={lambda_value:.6g}")
-        _debug_tensor(f"{name}.xtx_before_ridge", xtx, include_sample_rms=False)
-        _debug_tensor(f"{name}.xtdy", xtdy, include_sample_rms=False)
+def _ridge_delta(xtx, xtdy, lambda_value=0.0):
     if lambda_value != 0:
         eye = torch.eye(xtx.size(0), device=xtx.device, dtype=xtx.dtype)
         xtx = xtx + lambda_value * eye
-        if DEBUG_MATRIX_LOG:
-            _debug_tensor(f"{name}.xtx_after_ridge", xtx, include_sample_rms=False)
-    delta = _safe_pinv(xtx, name=f"{name}.xtx") @ xtdy.float()
-    if DEBUG_MATRIX_LOG:
-        _debug_tensor(f"{name}.delta", delta, include_sample_rms=False)
-        residual = xtx @ delta - xtdy.float()
-        _debug_tensor(f"{name}.normal_equation_residual", residual, include_sample_rms=False)
-    return delta
+    return _safe_pinv(xtx) @ xtdy.float()
 
 
-def _ridge_input_delta(dy, weight_eff, name="input_delta"):
+def _ridge_input_delta(dy, weight_eff):
     weight_eff = weight_eff.float()
     dy = dy.float()
-    if DEBUG_MATRIX_LOG:
-        _debug_log(f"{name}.ridge_input_delta lambda_x={TARGET_X_LAMBDA:.6g}")
-        _debug_tensor(f"{name}.dy", dy, include_sample_rms=False)
-        _debug_tensor(f"{name}.weight_eff", weight_eff, include_sample_rms=False)
     if TARGET_X_LAMBDA == 0:
-        dx = dy @ _safe_pinv(weight_eff, name=f"{name}.weight_eff")
-        if DEBUG_MATRIX_LOG:
-            _debug_tensor(f"{name}.dx", dx, include_sample_rms=False)
-        return dx
+        return dy @ _safe_pinv(weight_eff)
     gram = weight_eff.T @ weight_eff
     eye = torch.eye(gram.size(0), device=gram.device, dtype=gram.dtype)
     solve_matrix = gram + TARGET_X_LAMBDA * eye
-    if DEBUG_MATRIX_LOG:
-        _debug_tensor(f"{name}.gram", gram, include_sample_rms=False)
-        _debug_tensor(f"{name}.solve_matrix", solve_matrix, include_sample_rms=False)
-    dx = dy @ _safe_pinv(solve_matrix, name=f"{name}.solve_matrix") @ weight_eff.T
-    if DEBUG_MATRIX_LOG:
-        _debug_tensor(f"{name}.dx", dx, include_sample_rms=False)
-    return dx
+    return dy @ _safe_pinv(solve_matrix) @ weight_eff.T
 
 
-def _project_weight_(p, max_rms=1.0, name="weight"):
+def _project_weight_(p, max_rms=1.0):
     if p is None or not p.requires_grad:
-        if DEBUG_TARGET_BACKPROP and DEBUG_PARAM_LOG:
-            _debug_log(f"{name}.projection skipped=1")
         return
     rms = p.data.float().square().mean().sqrt()
     if torch.isfinite(rms) and rms > 0:
         scale = max_rms / rms
         p.data.mul_(scale.to(dtype=p.data.dtype))
-        if DEBUG_TARGET_BACKPROP and DEBUG_PARAM_LOG:
-            new_rms = p.data.float().square().mean().sqrt()
-            _debug_log(
-                "%s.projection target_rms=%.6g old_rms=%.6g "
-                "scale=%.6g new_rms=%.6g"
-                % (name, max_rms, rms.item(), scale.item(), new_rms.item())
-            )
-            _debug_tensor(f"{name}.after_projection", p.data, include_sample_rms=False)
-    elif DEBUG_TARGET_BACKPROP and DEBUG_PARAM_LOG:
-        _debug_log(f"{name}.projection skipped_nonfinite_or_zero_rms={rms.item():.6g}")
 
 
-def _project_bias_(p, name="bias"):
+def _project_bias_(p):
     if p is not None and p.requires_grad:
-        if DEBUG_TARGET_BACKPROP and DEBUG_PARAM_LOG:
-            old_min = p.data.float().min().item()
-            old_max = p.data.float().max().item()
         p.data.clamp_(-1, 1)
-        if DEBUG_TARGET_BACKPROP and DEBUG_PARAM_LOG:
-            _debug_log(
-                "%s.projection old_min=%.6g old_max=%.6g new_min=%.6g new_max=%.6g"
-                % (
-                    name,
-                    old_min,
-                    old_max,
-                    p.data.float().min().item(),
-                    p.data.float().max().item(),
-                )
-            )
-            _debug_tensor(f"{name}.after_projection", p.data, include_sample_rms=False)
-    elif DEBUG_TARGET_BACKPROP and DEBUG_PARAM_LOG:
-        _debug_log(f"{name}.projection skipped=1")
 
 
 def project_trainable_parameters(model):
-    for name, module in model.named_modules():
+    for module in model.modules():
         if module is getattr(model, "head", None):
-            if DEBUG_TARGET_BACKPROP and DEBUG_PARAM_LOG:
-                _debug_log(f"{name}.head_projection skipped_weight_projection=1")
             continue
         weight = getattr(module, "weight", None)
         bias = getattr(module, "bias", None)
-        _project_weight_(weight, name=f"{name}.weight")
-        _project_bias_(bias, name=f"{name}.bias")
+        _project_weight_(weight)
+        _project_bias_(bias)
 
 
 def _bound_sample_rms(x):
@@ -568,45 +511,28 @@ def cross_entropy_loss_and_delta(logits, labels):
         labels, logits.size(1), LABEL_SMOOTHING, logits_f.dtype
     )
     delta = targets - logits_f
-    if DEBUG_TARGET_BACKPROP:
-        with torch.no_grad():
-            target_loss = F.cross_entropy(
-                targets,
-                labels,
-                label_smoothing=LABEL_SMOOTHING,
-                reduction="mean",
-            )
-            predicted = logits_f.argmax(dim=1)
-            accuracy = (predicted == labels).float().mean()
-            _debug_scalar("cross_entropy.loss", loss)
-            _debug_scalar("cross_entropy.target_logits_loss", target_loss)
-            _debug_scalar("cross_entropy.batch_accuracy", accuracy)
-            _debug_tensor("cross_entropy.logits", logits_f)
-            _debug_tensor("cross_entropy.target_logits", targets)
-            _debug_tensor("cross_entropy.delta", delta)
     return loss, delta.to(dtype=logits.dtype)
 
 
 def _forward_conv(module, x, cache):
     y = module(x)
     if cache is not None:
-        name = _debug_module_name(module)
-        if DEBUG_FORWARD_LOG:
-            _debug_tensor(f"forward.{name}.input", x)
-            _debug_tensor(f"forward.{name}.output", y)
-        cache.append(dict(kind="conv", module=module, name=name, input=x.detach()))
+        name = _module_log_name(module)
+        op_index = len(cache)
+        _log_forward_norm("conv", name, op_index, y)
+        cache.append(
+            dict(kind="conv", module=module, name=name, input=x.detach(), op_index=op_index)
+        )
     return y
 
 
 def _forward_relu(module, x, cache):
     y = module(x)
     if cache is not None:
-        name = _debug_module_name(module)
-        if DEBUG_FORWARD_LOG:
-            _debug_tensor(f"forward.{name}.relu_input", x)
-            _debug_tensor(f"forward.{name}.relu_output", y)
-            _debug_fraction(f"forward.{name}.relu_active_fraction", y > 0)
-        cache.append(dict(kind="relu", name=name, input=x.detach()))
+        name = _module_log_name(module)
+        op_index = len(cache)
+        _log_forward_norm("relu", name, op_index, y)
+        cache.append(dict(kind="relu", name=name, input=x.detach(), op_index=op_index))
     return y
 
 
@@ -622,12 +548,18 @@ def _forward_pool(module, x, cache):
         module.ceil_mode,
         return_indices=True,
     )
-    name = _debug_module_name(module)
-    if DEBUG_FORWARD_LOG:
-        _debug_tensor(f"forward.{name}.pool_input", x)
-        _debug_tensor(f"forward.{name}.pool_output", y)
+    name = _module_log_name(module)
+    op_index = len(cache)
+    _log_forward_norm("pool", name, op_index, y)
     cache.append(
-        dict(kind="pool", module=module, name=name, input=x.detach(), indices=indices)
+        dict(
+            kind="pool",
+            module=module,
+            name=name,
+            input=x.detach(),
+            indices=indices,
+            op_index=op_index,
+        )
     )
     return y
 
@@ -637,11 +569,10 @@ def _forward_batchnorm(module, x, cache):
         return module(x)
     if not module.training:
         y = module(x)
-        name = _debug_module_name(module)
-        if DEBUG_FORWARD_LOG:
-            _debug_tensor(f"forward.{name}.eval_bn_identity_input", x)
-            _debug_tensor(f"forward.{name}.eval_bn_identity_output", y)
-        cache.append(dict(kind="identity", name=name, input=x.detach()))
+        name = _module_log_name(module)
+        op_index = len(cache)
+        _log_forward_norm("identity", name, op_index, y)
+        cache.append(dict(kind="identity", name=name, input=x.detach(), op_index=op_index))
         return y
 
     axes = (0, 2, 3)
@@ -663,33 +594,32 @@ def _forward_batchnorm(module, x, cache):
         dict(
             kind="batchnorm",
             module=module,
-            name=_debug_module_name(module),
+            name=_module_log_name(module),
             input=x.detach(),
             x_hat=x_hat.detach(),
             invstd=invstd.detach(),
+            op_index=len(cache),
         )
     )
-    if DEBUG_FORWARD_LOG:
-        name = _debug_module_name(module)
-        _debug_tensor(f"forward.{name}.bn_input", x)
-        _debug_tensor(f"forward.{name}.bn_mean", mean, include_sample_rms=False)
-        _debug_tensor(f"forward.{name}.bn_var", var, include_sample_rms=False)
-        _debug_tensor(f"forward.{name}.bn_invstd", invstd, include_sample_rms=False)
-        _debug_tensor(f"forward.{name}.bn_x_hat", x_hat)
-        _debug_tensor(f"forward.{name}.bn_output", y)
+    _log_forward_norm("batchnorm", cache[-1]["name"], cache[-1]["op_index"], y)
     return y
 
 
 def _forward_linear(module, x, cache, scale=1):
     y = module(x) / scale
     if cache is not None:
-        name = _debug_module_name(module)
-        if DEBUG_FORWARD_LOG:
-            _debug_log(f"forward.{name}.linear_scale={scale}")
-            _debug_tensor(f"forward.{name}.linear_input", x)
-            _debug_tensor(f"forward.{name}.linear_output", y)
+        name = _module_log_name(module)
+        op_index = len(cache)
+        _log_forward_norm("linear", name, op_index, y)
         cache.append(
-            dict(kind="linear", module=module, name=name, input=x.detach(), scale=scale)
+            dict(
+                kind="linear",
+                module=module,
+                name=name,
+                input=x.detach(),
+                scale=scale,
+                op_index=op_index,
+            )
         )
     return y
 
@@ -728,8 +658,19 @@ def _forward_impl(model, x, cache):
         else:
             raise TypeError(f"Unsupported module in manual forward: {type(module)}")
     if cache is not None:
-        cache.append(dict(kind="flatten", input=x.detach(), shape=x.shape))
+        op_index = len(cache)
+        cache.append(
+            dict(
+                kind="flatten",
+                name="flatten",
+                input=x.detach(),
+                shape=x.shape,
+                op_index=op_index,
+            )
+        )
     x = x.view(len(x), -1)
+    if cache is not None:
+        _log_forward_norm("flatten", "flatten", op_index, x)
     x = _bound_sample_rms(x)
     return _forward_linear(model.head, x, cache, scale=x.size(-1)), cache
 
@@ -743,67 +684,26 @@ def forward_with_cache(model, x):
     return _forward_impl(model, x, [])
 
 
-def _linear_target_backward(module, x, dy, scale, name="linear"):
-    if DEBUG_LAYER_LOG:
-        _debug_log(f"{name}.linear_backward_begin scale={scale}")
-        _debug_tensor(f"{name}.linear.x", x)
-        _debug_tensor(f"{name}.linear.dy_in", dy)
-        _debug_tensor(f"{name}.linear.weight_before", module.weight.data, include_sample_rms=False)
+def _linear_target_backward(module, x, dy, scale):
     x_mat = _bound_sample_rms(x).reshape(-1, x.shape[-1])
     dy_mat = dy.reshape(-1, dy.shape[-1])
-    if DEBUG_LAYER_LOG:
-        _debug_tensor(f"{name}.linear.x_mat", x_mat, include_sample_rms=False)
-        _debug_tensor(f"{name}.linear.dy_mat", dy_mat, include_sample_rms=False)
 
     if module.weight.requires_grad:
-        weight_before = module.weight.data.detach().clone()
         xtx = x_mat.float().T @ x_mat.float()
         xtdy = x_mat.float().T @ dy_mat.float()
-        delta_eff = _ridge_delta(
-            xtx, xtdy, TARGET_HEAD_LAMBDA, name=f"{name}.linear_weight"
-        )
+        delta_eff = _ridge_delta(xtx, xtdy, TARGET_HEAD_LAMBDA)
         weight_update = (delta_eff * scale).T.to(dtype=module.weight.dtype)
-        if DEBUG_LAYER_LOG:
-            local_pred = x_mat.float() @ delta_eff
-            local_residual = dy_mat.float() - local_pred
-            _debug_tensor(f"{name}.linear.delta_eff", delta_eff, include_sample_rms=False)
-            _debug_tensor(f"{name}.linear.local_predicted_dy", local_pred)
-            _debug_tensor(f"{name}.linear.local_residual", local_residual)
-            _debug_tensor(f"{name}.linear.weight_update", weight_update, include_sample_rms=False)
         module.weight.data.add_(weight_update)
-        if DEBUG_LAYER_LOG:
-            _debug_tensor(
-                f"{name}.linear.actual_weight_delta",
-                module.weight.data - weight_before,
-                include_sample_rms=False,
-            )
-            _debug_tensor(f"{name}.linear.weight_after", module.weight.data, include_sample_rms=False)
-    elif DEBUG_LAYER_LOG:
-        _debug_log(f"{name}.linear.weight_update skipped_requires_grad_false=1")
 
     if module.bias is not None and module.bias.requires_grad:
-        bias_before = module.bias.data.detach().clone()
         bias_update = dy_mat.mean(dim=0).mul(scale).to(module.bias.dtype)
         module.bias.data.add_(bias_update)
-        _project_bias_(module.bias, name=f"{name}.bias")
-        if DEBUG_LAYER_LOG:
-            _debug_tensor(f"{name}.linear.bias_update", bias_update, include_sample_rms=False)
-            _debug_tensor(
-                f"{name}.linear.actual_bias_delta",
-                module.bias.data - bias_before,
-                include_sample_rms=False,
-            )
-    elif DEBUG_LAYER_LOG:
-        _debug_log(f"{name}.linear.bias_update skipped=1")
+        _project_bias_(module.bias)
 
     weight_eff = module.weight.data.T.float() / scale
-    dx = _ridge_input_delta(dy_mat, weight_eff, name=f"{name}.linear_input")
+    dx = _ridge_input_delta(dy_mat, weight_eff)
     dx = dx.to(dtype=x.dtype).reshape_as(x)
-    dx = _bound_delta_to_sample_rms(x, dx)
-    if DEBUG_LAYER_LOG:
-        _debug_tensor(f"{name}.linear.weight_eff_after", weight_eff, include_sample_rms=False)
-        _debug_tensor(f"{name}.linear.dx_out", dx)
-    return dx
+    return _bound_delta_to_sample_rms(x, dx)
 
 
 def _conv_weight_eff(module, group, in_per_group, out_per_group):
@@ -813,12 +713,7 @@ def _conv_weight_eff(module, group, in_per_group, out_per_group):
     return module.weight.data[out_slice].reshape(out_per_group, patch_size).T
 
 
-def _conv_target_backward(module, x, dy, name="conv"):
-    if DEBUG_LAYER_LOG:
-        _debug_log(f"{name}.conv_backward_begin")
-        _debug_tensor(f"{name}.conv.x", x)
-        _debug_tensor(f"{name}.conv.dy_in", dy)
-        _debug_tensor(f"{name}.conv.weight_before", module.weight.data, include_sample_rms=False)
+def _conv_target_backward(module, x, dy):
     kernel_size = _pair(module.kernel_size)
     stride = _pair(module.stride)
     padding = _conv_padding_tuple(module.padding, module.kernel_size, module.dilation)
@@ -833,12 +728,10 @@ def _conv_target_backward(module, x, dy, name="conv"):
     patch_size = in_per_group * kh * kw
 
     if module.weight.requires_grad:
-        weight_before = module.weight.data.detach().clone()
         delta_weight = torch.zeros_like(module.weight.data)
         for group in range(groups):
             patch_slice = slice(group * patch_size, (group + 1) * patch_size)
             out_slice = slice(group * out_per_group, (group + 1) * out_per_group)
-            group_name = f"{name}.conv_group{group}"
             xtx = torch.zeros(
                 patch_size, patch_size, device=x.device, dtype=torch.float32
             )
@@ -867,83 +760,24 @@ def _conv_target_backward(module, x, dy, name="conv"):
                     .reshape(-1, out_per_group)
                     .float()
                 )
-                if DEBUG_CHUNK_LOG:
-                    _debug_log(
-                        "%s.chunk start=%d end=%d patch_rows=%d"
-                        % (group_name, start, end, x_group.size(0))
-                    )
-                    _debug_tensor(
-                        f"{group_name}.chunk{start}_{end}.x_group",
-                        x_group,
-                        include_sample_rms=False,
-                    )
-                    _debug_tensor(
-                        f"{group_name}.chunk{start}_{end}.dy_group",
-                        dy_group,
-                        include_sample_rms=False,
-                    )
                 xtx.add_(x_group.T @ x_group)
                 xtdy.add_(x_group.T @ dy_group)
-            delta_eff = _ridge_delta(xtx, xtdy, name=f"{group_name}.weight")
-            if DEBUG_LAYER_LOG:
-                local_pred = x_group @ delta_eff
-                local_residual = dy_group - local_pred
-                _debug_tensor(
-                    f"{group_name}.delta_eff",
-                    delta_eff,
-                    include_sample_rms=False,
-                )
-                _debug_tensor(f"{group_name}.last_chunk_predicted_dy", local_pred)
-                _debug_tensor(f"{group_name}.last_chunk_residual", local_residual)
+            delta_eff = _ridge_delta(xtx, xtdy)
             delta_weight[out_slice] = delta_eff.T.reshape(
                 out_per_group, in_per_group, kh, kw
             ).to(dtype=delta_weight.dtype)
-            if DEBUG_LAYER_LOG:
-                _debug_tensor(
-                    f"{group_name}.delta_weight",
-                    delta_weight[out_slice],
-                    include_sample_rms=False,
-                )
         module.weight.data.add_(delta_weight)
-        if DEBUG_LAYER_LOG:
-            _debug_tensor(f"{name}.conv.weight_update_before_projection", delta_weight, include_sample_rms=False)
-        _project_weight_(module.weight, name=f"{name}.weight")
-        if DEBUG_LAYER_LOG:
-            _debug_tensor(
-                f"{name}.conv.actual_weight_delta_after_projection",
-                module.weight.data - weight_before,
-                include_sample_rms=False,
-            )
-            _debug_tensor(f"{name}.conv.weight_after", module.weight.data, include_sample_rms=False)
-    elif DEBUG_LAYER_LOG:
-        _debug_log(f"{name}.conv.weight_update skipped_requires_grad_false=1")
+        _project_weight_(module.weight)
 
     if module.bias is not None and module.bias.requires_grad:
-        bias_before = module.bias.data.detach().clone()
         bias_update = dy.mean(dim=(0, 2, 3)).to(module.bias.dtype)
         module.bias.data.add_(bias_update)
-        _project_bias_(module.bias, name=f"{name}.bias")
-        if DEBUG_LAYER_LOG:
-            _debug_tensor(f"{name}.conv.bias_update", bias_update, include_sample_rms=False)
-            _debug_tensor(
-                f"{name}.conv.actual_bias_delta",
-                module.bias.data - bias_before,
-                include_sample_rms=False,
-            )
-    elif DEBUG_LAYER_LOG:
-        _debug_log(f"{name}.conv.bias_update skipped=1")
+        _project_bias_(module.bias)
 
     weight_effs = [
         _conv_weight_eff(module, group, in_per_group, out_per_group)
         for group in range(groups)
     ]
-    if DEBUG_LAYER_LOG:
-        for group, weight_eff in enumerate(weight_effs):
-            _debug_tensor(
-                f"{name}.conv_group{group}.weight_eff_after",
-                weight_eff,
-                include_sample_rms=False,
-            )
     dx = torch.zeros_like(x)
     for start in range(0, batch, CONV_BATCH_CHUNK):
         end = min(start + CONV_BATCH_CHUNK, batch)
@@ -961,18 +795,12 @@ def _conv_target_backward(module, x, dy, name="conv"):
             patch_delta = _ridge_input_delta(
                 dy_group,
                 weight_effs[group],
-                name=f"{name}.conv_group{group}.input_chunk{start}_{end}",
             )
             patch_delta = (
                 patch_delta.reshape(end - start, -1, patch_size)
                 .transpose(1, 2)
                 .to(dtype=x.dtype)
             )
-            if DEBUG_CHUNK_LOG:
-                _debug_tensor(
-                    f"{name}.conv_group{group}.patch_delta_chunk{start}_{end}",
-                    patch_delta,
-                )
             folded = F.fold(
                 patch_delta,
                 output_size=x.shape[-2:],
@@ -991,49 +819,25 @@ def _conv_target_backward(module, x, dy, name="conv"):
             ).clamp_min(1)
             dx_chunk[:, in_slice] = folded / overlap
         dx[start:end] = dx_chunk
-        if DEBUG_CHUNK_LOG:
-            _debug_tensor(f"{name}.conv.dx_chunk{start}_{end}", dx_chunk)
-    dx = _bound_delta_to_sample_rms(x, dx)
-    if DEBUG_LAYER_LOG:
-        _debug_tensor(f"{name}.conv.dx_out", dx)
-    return dx
+    return _bound_delta_to_sample_rms(x, dx)
 
 
-def _batchnorm_target_backward(module, x, x_hat, invstd, dy, name="batchnorm"):
-    if DEBUG_LAYER_LOG:
-        _debug_log(f"{name}.batchnorm_backward_begin")
-        _debug_tensor(f"{name}.batchnorm.x", x)
-        _debug_tensor(f"{name}.batchnorm.x_hat", x_hat)
-        _debug_tensor(f"{name}.batchnorm.invstd", invstd, include_sample_rms=False)
-        _debug_tensor(f"{name}.batchnorm.dy_in", dy)
+def _batchnorm_target_backward(module, x, x_hat, invstd, dy):
     axes = (0, 2, 3)
     dtype = dy.dtype
     bias_delta = torch.zeros(1, x.size(1), 1, 1, device=x.device, dtype=dtype)
     if module.bias is not None and module.bias.requires_grad:
         old_bias = module.bias.data.detach().clone()
         module.bias.data.add_(dy.mean(dim=axes).to(module.bias.dtype))
-        _project_bias_(module.bias, name=f"{name}.bias")
+        _project_bias_(module.bias)
         bias_delta = (module.bias.data - old_bias).to(dtype=dtype).view(1, -1, 1, 1)
-        if DEBUG_LAYER_LOG:
-            _debug_tensor(f"{name}.batchnorm.bias_delta", bias_delta, include_sample_rms=False)
-            _debug_tensor(
-                f"{name}.batchnorm.bias_after",
-                module.bias.data,
-                include_sample_rms=False,
-            )
-    elif DEBUG_LAYER_LOG:
-        _debug_log(f"{name}.batchnorm.bias_update skipped=1")
 
     target_hat = x_hat.to(dtype=dtype)
     dy_after_bias = dy - bias_delta
-    if DEBUG_LAYER_LOG:
-        _debug_tensor(f"{name}.batchnorm.dy_after_bias", dy_after_bias)
     if module.weight is None:
         target_hat = target_hat + dy_after_bias
     else:
         gamma = module.weight.data.to(dtype=dtype).view(1, -1, 1, 1)
-        if DEBUG_LAYER_LOG:
-            _debug_tensor(f"{name}.batchnorm.gamma", gamma, include_sample_rms=False)
         safe_gamma = torch.where(
             gamma >= 0,
             gamma.abs().clamp_min(1e-12),
@@ -1045,8 +849,6 @@ def _batchnorm_target_backward(module, x, x_hat, invstd, dy, name="batchnorm"):
             target_hat,
         )
 
-    if DEBUG_LAYER_LOG:
-        _debug_tensor(f"{name}.batchnorm.target_hat_before_projection", target_hat)
     target_hat = target_hat - target_hat.mean(dim=axes, keepdim=True)
     target_rms = target_hat.square().mean(dim=axes, keepdim=True).sqrt()
     target_hat = torch.where(
@@ -1054,50 +856,24 @@ def _batchnorm_target_backward(module, x, x_hat, invstd, dy, name="batchnorm"):
         target_hat / target_rms.clamp_min(1e-12),
         x_hat.to(dtype=dtype),
     )
-    if DEBUG_LAYER_LOG:
-        _debug_tensor(f"{name}.batchnorm.target_hat_rms_before_projection", target_rms, include_sample_rms=False)
-        _debug_tensor(f"{name}.batchnorm.target_hat_after_projection", target_hat)
 
     mean = x.float().mean(dim=axes, keepdim=True).to(dtype=dtype)
     std = invstd.to(dtype=dtype).reciprocal()
     x_target = mean + target_hat * std
     dx = x_target.to(dtype=x.dtype) - x
-    dx = _bound_delta_to_sample_rms(x, dx)
-    if DEBUG_LAYER_LOG:
-        _debug_tensor(f"{name}.batchnorm.mean", mean, include_sample_rms=False)
-        _debug_tensor(f"{name}.batchnorm.std", std, include_sample_rms=False)
-        _debug_tensor(f"{name}.batchnorm.x_target", x_target)
-        _debug_tensor(f"{name}.batchnorm.dx_out", dx)
-    return dx
+    return _bound_delta_to_sample_rms(x, dx)
 
 
-def _relu_target_backward(x, dy, name="relu"):
-    if DEBUG_LAYER_LOG:
-        _debug_log(f"{name}.relu_backward_begin")
-        _debug_tensor(f"{name}.relu.x", x)
-        _debug_tensor(f"{name}.relu.dy_in", dy)
+def _relu_target_backward(x, dy):
     active = x > 0
     inactive_positive_target = (~active) & (dy > 0)
     jump = torch.minimum(torch.ones_like(dy), dy - x)
     dx = torch.where(active, dy, torch.zeros_like(dy))
     dx = torch.where(inactive_positive_target, jump, dx)
-    dx = _bound_delta_to_sample_rms(x, dx)
-    if DEBUG_LAYER_LOG:
-        _debug_fraction(f"{name}.relu.active_fraction", active)
-        _debug_fraction(
-            f"{name}.relu.inactive_positive_target_fraction",
-            inactive_positive_target,
-        )
-        _debug_tensor(f"{name}.relu.jump", jump)
-        _debug_tensor(f"{name}.relu.dx_out", dx)
-    return dx
+    return _bound_delta_to_sample_rms(x, dx)
 
 
-def _pool_target_backward(module, x, indices, dy, name="pool"):
-    if DEBUG_LAYER_LOG:
-        _debug_log(f"{name}.pool_backward_begin")
-        _debug_tensor(f"{name}.pool.x", x)
-        _debug_tensor(f"{name}.pool.dy_in", dy)
+def _pool_target_backward(module, x, indices, dy):
     dx = F.max_unpool2d(
         dy,
         indices,
@@ -1106,43 +882,32 @@ def _pool_target_backward(module, x, indices, dy, name="pool"):
         module.padding,
         output_size=x.shape,
     )
-    dx = _bound_delta_to_sample_rms(x, dx)
-    if DEBUG_LAYER_LOG:
-        _debug_tensor(f"{name}.pool.dx_out", dx)
-    return dx
+    return _bound_delta_to_sample_rms(x, dx)
 
 
-def target_backward(cache, delta):
+def target_backward(cache, delta, model=None, train_inputs=None, train_labels=None):
     dy = delta
-    if DEBUG_TARGET_BACKPROP:
-        kinds = {}
-        for record in cache:
-            kinds[record["kind"]] = kinds.get(record["kind"], 0) + 1
-        _debug_log(f"target_backward_begin cache_len={len(cache)} kinds={kinds}")
-        _debug_tensor("target_backward.initial_delta", dy)
     for reverse_index, record in enumerate(reversed(cache)):
         kind = record["kind"]
         name = record.get("name", kind)
-        if DEBUG_LAYER_LOG:
-            _debug_log(
-                f"target_backward_layer_begin reverse_index={reverse_index} kind={kind} name={name}"
-            )
-            _debug_tensor(f"{name}.{kind}.dy_in_to_layer", dy)
+        op_index = record.get("op_index", len(cache) - reverse_index - 1)
+        dy_in = dy
+        module = record.get("module")
+        param_snapshot = _module_param_snapshot(module)
+        train_loss_before = _operation_train_loss(model, train_inputs, train_labels)
         if kind == "linear":
             dy = _linear_target_backward(
-                record["module"], record["input"], dy, record["scale"], name=name
+                record["module"], record["input"], dy, record["scale"]
             )
         elif kind == "flatten":
             x = record["input"]
             dy = _bound_delta_to_sample_rms(x, dy.reshape(record["shape"]))
-            if DEBUG_LAYER_LOG:
-                _debug_tensor(f"{name}.flatten.dx_out", dy)
         elif kind == "pool":
             dy = _pool_target_backward(
-                record["module"], record["input"], record["indices"], dy, name=name
+                record["module"], record["input"], record["indices"], dy
             )
         elif kind == "relu":
-            dy = _relu_target_backward(record["input"], dy, name=name)
+            dy = _relu_target_backward(record["input"], dy)
         elif kind == "batchnorm":
             dy = _batchnorm_target_backward(
                 record["module"],
@@ -1150,20 +915,25 @@ def target_backward(cache, delta):
                 record["x_hat"],
                 record["invstd"],
                 dy,
-                name=name,
             )
         elif kind == "conv":
-            dy = _conv_target_backward(record["module"], record["input"], dy, name=name)
+            dy = _conv_target_backward(record["module"], record["input"], dy)
         elif kind == "identity":
             dy = _bound_delta_to_sample_rms(record["input"], dy)
-            if DEBUG_LAYER_LOG:
-                _debug_tensor(f"{name}.identity.dx_out", dy)
         else:
             raise TypeError(f"Unsupported cached op: {kind}")
-        if DEBUG_LAYER_LOG:
-            _debug_tensor(f"{name}.{kind}.dy_out_from_layer", dy)
-    if DEBUG_TARGET_BACKPROP:
-        _debug_tensor("target_backward.final_input_delta", dy)
+        dw_norm = _module_param_delta_norm(module, param_snapshot)
+        train_loss_after = _operation_train_loss(model, train_inputs, train_labels)
+        _log_backward_norm(
+            kind,
+            name,
+            op_index,
+            dy_in,
+            dy,
+            dw_norm,
+            train_loss_before,
+            train_loss_after,
+        )
     return dy
 
 
@@ -1171,39 +941,25 @@ def target_train_step(model, inputs, labels, sweeps=1, step=None):
     model.train()
     with torch.no_grad():
         first_loss = None
-        old_context = dict(_DEBUG_CONTEXT)
+        old_context = dict(_LOG_CONTEXT)
         for sweep in range(sweeps):
-            _DEBUG_CONTEXT.update(step=step, sweep=sweep + 1, phase="forward")
-            if DEBUG_TARGET_BACKPROP:
-                _debug_log("target_train_sweep_begin")
-                _debug_tensor("target_train.inputs", inputs)
+            _LOG_CONTEXT.update(step=step, sweep=sweep + 1, phase="forward")
             outputs, cache = forward_with_cache(model, inputs)
             loss, delta = cross_entropy_loss_and_delta(outputs, labels)
             if first_loss is None:
                 first_loss = loss
             if torch.isfinite(loss):
-                _DEBUG_CONTEXT.update(step=step, sweep=sweep + 1, phase="backward")
-                target_backward(cache, delta)
-                if DEBUG_TARGET_BACKPROP:
-                    _debug_log("target_train_sweep_end finite_loss=1")
-            else:
-                _debug_log("target_train_sweep_skip_backward finite_loss=0")
-        _DEBUG_CONTEXT.clear()
-        _DEBUG_CONTEXT.update(old_context)
+                _LOG_CONTEXT.update(step=step, sweep=sweep + 1, phase="backward")
+                target_backward(
+                    cache,
+                    delta,
+                    model=model,
+                    train_inputs=inputs,
+                    train_labels=labels,
+                )
+        _LOG_CONTEXT.clear()
+        _LOG_CONTEXT.update(old_context)
     return first_loss.item()
-
-
-############################################
-#                 Logging                  #
-############################################
-
-
-def log_eval(run, epoch, val_acc, time_seconds):
-    pass
-
-
-def log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds):
-    pass
 
 
 ############################################
@@ -1307,28 +1063,11 @@ def overfit_first_batch(
     train_images,
 ):
     set_training_seed()
-    register_debug_names(model)
-    _DEBUG_CONTEXT.update(step=0, sweep=None, phase="setup")
-    if DEBUG_TARGET_BACKPROP:
-        _debug_log(
-            "config | forward=%d | layer=%d | matrix=%d | chunk=%d | pinv=%d | param=%d"
-            % (
-                DEBUG_FORWARD_LOG,
-                DEBUG_LAYER_LOG,
-                DEBUG_MATRIX_LOG,
-                DEBUG_CHUNK_LOG,
-                DEBUG_PINV_LOG,
-                DEBUG_PARAM_LOG,
-            )
-        )
-        _debug_tensor("setup.inputs", inputs)
-        _debug_tensor("setup.train_images_for_whiten", train_images)
+    register_operation_names(model)
+    _LOG_CONTEXT.update(step=0, sweep=None, phase="setup")
     model.reset()
-    _debug_model_parameters(model, "after_reset_before_whiten")
     model.init_whiten(train_images)
-    _debug_model_parameters(model, "after_whiten_init_before_projection")
     project_trainable_parameters(model)
-    _debug_model_parameters(model, "after_initial_projection")
 
     # For accurately timing GPU code
     starter = torch.cuda.Event(enable_timing=True)
@@ -1344,44 +1083,37 @@ def overfit_first_batch(
         nonlocal time_seconds
         time_seconds += 1e-3 * starter.elapsed_time(ender)
 
-    _DEBUG_CONTEXT.update(step=0, sweep=None, phase="initial_eval")
+    _LOG_CONTEXT.update(step=0, sweep=None, phase="initial_eval")
     initial_loss = first_batch_loss(model, inputs, labels)
-    _debug_scalar("initial_loss", initial_loss)
     final_loss = float("inf")
     last_step_loss = float("inf")
     completed_steps = 0
 
     start_timer()
     for step in range(OVERFIT_STEPS):
-        _DEBUG_CONTEXT.update(step=step + 1, sweep=None, phase="step_start")
-        if DEBUG_TARGET_BACKPROP:
-            _debug_log(f"target_backprop_outer_step_begin step={step + 1}")
-        pre_step_loss = target_train_step(
+        _LOG_CONTEXT.update(step=step + 1, sweep=None, phase="step_start")
+        target_train_step(
             model,
             inputs,
             labels,
             sweeps=INNER_TARGET_SWEEPS,
             step=step + 1,
         )
-        _DEBUG_CONTEXT.update(step=step + 1, sweep=None, phase="post_eval")
+        _LOG_CONTEXT.update(step=step + 1, sweep=None, phase="post_eval")
         last_step_loss = first_batch_loss(model, inputs, labels)
-        _debug_scalar("step_pre_update_loss", pre_step_loss)
-        _debug_scalar("step_post_update_loss", last_step_loss)
         print(
             "loss_step %02d/%d loss=%.6f"
             % (step + 1, OVERFIT_STEPS, last_step_loss),
             flush=True,
         )
-        _debug_model_parameters(model, f"after_step_{step + 1}")
         if not isfinite(last_step_loss):
             break
         completed_steps = step + 1
     stop_timer()
 
     if completed_steps == OVERFIT_STEPS:
-        _DEBUG_CONTEXT.update(step=completed_steps, sweep=None, phase="final_eval")
+        _LOG_CONTEXT.update(step=completed_steps, sweep=None, phase="final_eval")
         final_loss = first_batch_loss(model, inputs, labels)
-        _debug_scalar("final_loss", final_loss)
 
     return dict(
         batch_size=OVERFIT_BATCH_SIZE,
