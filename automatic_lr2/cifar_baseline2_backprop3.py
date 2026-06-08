@@ -65,10 +65,9 @@ def register_operation_names(model):
 
 def _log_context_fields():
     fields = []
-    for key in ("step", "sweep", "phase"):
-        value = _LOG_CONTEXT.get(key)
-        if value is not None:
-            fields.append(f"{key}={value}")
+    value = _LOG_CONTEXT.get("step")
+    if value is not None:
+        fields.append(f"step={value}")
     return fields
 
 
@@ -91,13 +90,12 @@ def _tensor_norm(tensor):
         return value.norm().item()
 
 
-def _print_log_line(tag, fields):
-    print(" ".join([tag] + _log_context_fields() + fields), flush=True)
+def _print_log_line(fields):
+    print(" ".join(_log_context_fields() + fields), flush=True)
 
 
 def _log_forward_norm(kind, name, op_index, activation):
     _print_log_line(
-        "forward_norm",
         [
             f"op={op_index}",
             f"kind={kind}",
@@ -114,11 +112,13 @@ def _log_backward_norm(
     dy,
     dx,
     dw_norm,
+    w_norm,
+    x_norm,
+    y_norm,
     train_loss_before,
     train_loss_after,
 ):
     _print_log_line(
-        "backward_norm",
         [
             f"op={op_index}",
             f"kind={kind}",
@@ -126,6 +126,9 @@ def _log_backward_norm(
             f"dy_norm={_format_log_value(_tensor_norm(dy))}",
             f"dw_norm={_format_log_value(dw_norm)}",
             f"dx_norm={_format_log_value(_tensor_norm(dx))}",
+            f"w_norm={_format_log_value(w_norm)}",
+            f"x_norm={_format_log_value(x_norm)}",
+            f"y_norm={_format_log_value(y_norm)}",
             f"train_loss_before_dx_dw={_format_log_value(train_loss_before)}",
             f"train_loss_after_dx_dw={_format_log_value(train_loss_after)}",
         ],
@@ -156,28 +159,87 @@ def _module_param_delta_norm(module, snapshot):
     return total**0.5
 
 
-def _loss_preserving_mode(model, inputs, labels):
-    training_states = [(module, module.training) for module in model.modules()]
-    try:
-        model.eval()
-        with torch.inference_mode():
-            outputs = model(inputs)
-            loss = F.cross_entropy(
-                outputs.float(),
-                labels,
-                label_smoothing=LABEL_SMOOTHING,
-                reduction="mean",
-            )
-        return loss.item()
-    finally:
-        for module, training in training_states:
-            module.train(training)
-
-
-def _operation_train_loss(model, inputs, labels):
-    if model is None or inputs is None or labels is None:
+def _module_param_norm(module):
+    if module is None:
         return None
-    return _loss_preserving_mode(model, inputs, labels)
+    total = 0.0
+    has_param = False
+    for name in ("weight", "bias"):
+        param = getattr(module, name, None)
+        if param is None:
+            continue
+        has_param = True
+        total += param.data.detach().float().square().sum().item()
+    return total**0.5 if has_param else None
+
+
+def _batchnorm_forward_without_running_update(module, x):
+    if not module.training:
+        return module(x)
+    return F.batch_norm(
+        x,
+        None,
+        None,
+        module.weight,
+        module.bias,
+        True,
+        0.0,
+        module.eps,
+    )
+
+
+def _replay_record_forward_with_current_weights(record, x):
+    kind = record["kind"]
+    if kind == "conv":
+        return record["module"](x)
+    if kind == "relu":
+        return F.relu(x)
+    if kind == "pool":
+        return record["module"](x)
+    if kind == "batchnorm":
+        return _batchnorm_forward_without_running_update(record["module"], x)
+    if kind == "identity":
+        module = record.get("module")
+        return module(x) if module is not None else x
+    if kind == "flatten":
+        return x.view(len(x), -1)
+    if kind == "linear":
+        return record["module"](x) / record["scale"]
+    raise TypeError(f"Unsupported replay op: {kind}")
+
+
+def _local_train_loss_from_output_with_current_suffix(cache, record_index, output):
+    with torch.inference_mode():
+        value = output
+        for next_record in cache[record_index + 1 :]:
+            if next_record["kind"] == "cross_entropy":
+                return _cross_entropy_loss_value(value, next_record["labels"])
+            value = _replay_record_forward_with_current_weights(next_record, value)
+    return None
+
+
+def _local_train_loss_before(cache, record_index):
+    record = cache[record_index]
+    if record["kind"] == "cross_entropy":
+        return _cross_entropy_loss_value(record["input"], record["labels"])
+    return _local_train_loss_from_output_with_current_suffix(
+        cache, record_index, record["output"]
+    )
+
+
+def _local_train_loss_after(cache, record_index, dx):
+    record = cache[record_index]
+    with torch.inference_mode():
+        if record["kind"] == "cross_entropy":
+            logits = record["input"] + dx
+            return _cross_entropy_loss_value(logits, record["labels"])
+        updated_input = record["input"] + dx
+        updated_output = _replay_record_forward_with_current_weights(
+            record, updated_input
+        )
+    return _local_train_loss_from_output_with_current_suffix(
+        cache, record_index, updated_output
+    )
 
 
 #############################################
@@ -303,6 +365,9 @@ class BatchNorm(nn.BatchNorm2d):
         self.weight.requires_grad = False
         # Note that PyTorch already initializes the weights to one and bias to zero
 
+    def train(self, mode=True):
+        return super().train(True)
+
 
 def _pair(value):
     return value if isinstance(value, tuple) else (value, value)
@@ -312,9 +377,7 @@ def _conv_padding_tuple(padding, kernel_size, dilation):
     if padding == "same":
         kernel_size = _pair(kernel_size)
         dilation = _pair(dilation)
-        effective_kernel = tuple(
-            d * (k - 1) + 1 for k, d in zip(kernel_size, dilation)
-        )
+        effective_kernel = tuple(d * (k - 1) + 1 for k, d in zip(kernel_size, dilation))
         if any(k % 2 == 0 for k in effective_kernel):
             raise ValueError(
                 '"same" padding helper only supports odd effective kernels'
@@ -335,6 +398,7 @@ class Conv(nn.Conv2d):
         super().reset_parameters()
         w = self.weight.data
         torch.nn.init.dirac_(w[: w.size(1)])
+
 
 class Linear(nn.Linear):
     pass
@@ -514,6 +578,34 @@ def cross_entropy_loss_and_delta(logits, labels):
     return loss, delta.to(dtype=logits.dtype)
 
 
+def _cross_entropy_loss_value(logits, labels):
+    return F.cross_entropy(
+        logits.float(),
+        labels,
+        label_smoothing=LABEL_SMOOTHING,
+        reduction="mean",
+    ).item()
+
+
+def cache_cross_entropy_op(cache, logits, labels, loss, delta):
+    if cache is None:
+        return
+    op_index = len(cache)
+    _log_forward_norm("cross_entropy", "cross_entropy", op_index, loss)
+    cache.append(
+        dict(
+            kind="cross_entropy",
+            name="cross_entropy",
+            input=logits.detach(),
+            output=loss.detach(),
+            labels=labels.detach(),
+            dy=torch.ones_like(loss).detach(),
+            delta=delta.detach(),
+            op_index=op_index,
+        )
+    )
+
+
 def _forward_conv(module, x, cache):
     y = module(x)
     if cache is not None:
@@ -521,7 +613,14 @@ def _forward_conv(module, x, cache):
         op_index = len(cache)
         _log_forward_norm("conv", name, op_index, y)
         cache.append(
-            dict(kind="conv", module=module, name=name, input=x.detach(), op_index=op_index)
+            dict(
+                kind="conv",
+                module=module,
+                name=name,
+                input=x.detach(),
+                output=y.detach(),
+                op_index=op_index,
+            )
         )
     return y
 
@@ -532,7 +631,15 @@ def _forward_relu(module, x, cache):
         name = _module_log_name(module)
         op_index = len(cache)
         _log_forward_norm("relu", name, op_index, y)
-        cache.append(dict(kind="relu", name=name, input=x.detach(), op_index=op_index))
+        cache.append(
+            dict(
+                kind="relu",
+                name=name,
+                input=x.detach(),
+                output=y.detach(),
+                op_index=op_index,
+            )
+        )
     return y
 
 
@@ -557,6 +664,7 @@ def _forward_pool(module, x, cache):
             module=module,
             name=name,
             input=x.detach(),
+            output=y.detach(),
             indices=indices,
             op_index=op_index,
         )
@@ -572,7 +680,15 @@ def _forward_batchnorm(module, x, cache):
         name = _module_log_name(module)
         op_index = len(cache)
         _log_forward_norm("identity", name, op_index, y)
-        cache.append(dict(kind="identity", name=name, input=x.detach(), op_index=op_index))
+        cache.append(
+            dict(
+                kind="identity",
+                name=name,
+                input=x.detach(),
+                output=y.detach(),
+                op_index=op_index,
+            )
+        )
         return y
 
     axes = (0, 2, 3)
@@ -596,6 +712,7 @@ def _forward_batchnorm(module, x, cache):
             module=module,
             name=_module_log_name(module),
             input=x.detach(),
+            output=y.detach(),
             x_hat=x_hat.detach(),
             invstd=invstd.detach(),
             op_index=len(cache),
@@ -617,6 +734,7 @@ def _forward_linear(module, x, cache, scale=1):
                 module=module,
                 name=name,
                 input=x.detach(),
+                output=y.detach(),
                 scale=scale,
                 op_index=op_index,
             )
@@ -657,20 +775,21 @@ def _forward_impl(model, x, cache):
             x = _bound_sample_rms(x)
         else:
             raise TypeError(f"Unsupported module in manual forward: {type(module)}")
+    flatten_input = x
+    x = x.view(len(x), -1)
     if cache is not None:
         op_index = len(cache)
+        _log_forward_norm("flatten", "flatten", op_index, x)
         cache.append(
             dict(
                 kind="flatten",
                 name="flatten",
-                input=x.detach(),
-                shape=x.shape,
+                input=flatten_input.detach(),
+                output=x.detach(),
+                shape=flatten_input.shape,
                 op_index=op_index,
             )
         )
-    x = x.view(len(x), -1)
-    if cache is not None:
-        _log_forward_norm("flatten", "flatten", op_index, x)
     x = _bound_sample_rms(x)
     return _forward_linear(model.head, x, cache, scale=x.size(-1)), cache
 
@@ -885,17 +1004,20 @@ def _pool_target_backward(module, x, indices, dy):
     return _bound_delta_to_sample_rms(x, dx)
 
 
-def target_backward(cache, delta, model=None, train_inputs=None, train_labels=None):
+def target_backward(cache, delta):
     dy = delta
     for reverse_index, record in enumerate(reversed(cache)):
         kind = record["kind"]
         name = record.get("name", kind)
-        op_index = record.get("op_index", len(cache) - reverse_index - 1)
-        dy_in = dy
+        record_index = len(cache) - reverse_index - 1
+        op_index = record.get("op_index", record_index)
+        dy_in = record.get("dy", dy)
         module = record.get("module")
         param_snapshot = _module_param_snapshot(module)
-        train_loss_before = _operation_train_loss(model, train_inputs, train_labels)
-        if kind == "linear":
+        train_loss_before = _local_train_loss_before(cache, record_index)
+        if kind == "cross_entropy":
+            dy = record["delta"]
+        elif kind == "linear":
             dy = _linear_target_backward(
                 record["module"], record["input"], dy, record["scale"]
             )
@@ -923,7 +1045,7 @@ def target_backward(cache, delta, model=None, train_inputs=None, train_labels=No
         else:
             raise TypeError(f"Unsupported cached op: {kind}")
         dw_norm = _module_param_delta_norm(module, param_snapshot)
-        train_loss_after = _operation_train_loss(model, train_inputs, train_labels)
+        train_loss_after = _local_train_loss_after(cache, record_index, dy)
         _log_backward_norm(
             kind,
             name,
@@ -931,6 +1053,9 @@ def target_backward(cache, delta, model=None, train_inputs=None, train_labels=No
             dy_in,
             dy,
             dw_norm,
+            _module_param_norm(module),
+            _tensor_norm(record.get("input")),
+            _tensor_norm(record.get("output")),
             train_loss_before,
             train_loss_after,
         )
@@ -946,17 +1071,12 @@ def target_train_step(model, inputs, labels, sweeps=1, step=None):
             _LOG_CONTEXT.update(step=step, sweep=sweep + 1, phase="forward")
             outputs, cache = forward_with_cache(model, inputs)
             loss, delta = cross_entropy_loss_and_delta(outputs, labels)
+            cache_cross_entropy_op(cache, outputs, labels, loss, delta)
             if first_loss is None:
                 first_loss = loss
             if torch.isfinite(loss):
                 _LOG_CONTEXT.update(step=step, sweep=sweep + 1, phase="backward")
-                target_backward(
-                    cache,
-                    delta,
-                    model=model,
-                    train_inputs=inputs,
-                    train_labels=labels,
-                )
+                target_backward(cache, delta)
         _LOG_CONTEXT.clear()
         _LOG_CONTEXT.update(old_context)
     return first_loss.item()
@@ -998,7 +1118,7 @@ def infer(model, loader, tta_level=0):
         logits_translate = torch.stack(logits_translate_list).mean(0)
         return 0.5 * logits + 0.5 * logits_translate
 
-    model.eval()
+    model.train()
     test_images = loader.normalized_images()
     infer_fn = [infer_basic, infer_mirror, infer_mirror_translate][tta_level]
     with torch.inference_mode():
@@ -1013,7 +1133,7 @@ def evaluate(model, loader, tta_level=0):
 
 
 def evaluate_train_loss(model, batches):
-    model.eval()
+    model.train()
     total_loss = 0.0
     total_examples = 0
     with torch.inference_mode():
@@ -1044,7 +1164,7 @@ def make_first_train_batch():
 
 
 def first_batch_loss(model, inputs, labels):
-    model.eval()
+    model.train()
     with torch.inference_mode():
         outputs = model(inputs)
         loss = F.cross_entropy(
@@ -1102,8 +1222,7 @@ def overfit_first_batch(
         _LOG_CONTEXT.update(step=step + 1, sweep=None, phase="post_eval")
         last_step_loss = first_batch_loss(model, inputs, labels)
         print(
-            "loss_step %02d/%d loss=%.6f"
-            % (step + 1, OVERFIT_STEPS, last_step_loss),
+            "loss_step %02d/%d loss=%.6f" % (step + 1, OVERFIT_STEPS, last_step_loss),
             flush=True,
         )
         if not isfinite(last_step_loss):
