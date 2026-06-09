@@ -550,46 +550,21 @@ def _ridge_input_delta(dy, weight_eff):
 
 
 def _apply_target_update_(param, update, alpha=1.0):
-    momentum = float(os.environ.get("TARGET_UPDATE_MOMENTUM", "0.7"))
-    alpha *= float(os.environ.get("TARGET_UPDATE_GAIN", "1"))
+    stop_step = int(os.environ.get("TARGET_UPDATE_STOP_STEP", "16"))
+    step = _LOG_CONTEXT.get("step")
+    if step is not None and step > stop_step:
+        return
+    momentum = float(os.environ.get("TARGET_UPDATE_MOMENTUM", "0.52"))
+    alpha *= float(os.environ.get("TARGET_UPDATE_GAIN", "1.57"))
     if momentum > 0:
         state = getattr(param, "_target_update_momentum", None)
         if state is None or state.shape != param.shape or state.device != param.device:
             state = torch.zeros_like(param.data, dtype=torch.float32)
             param._target_update_momentum = state
         state.mul_(momentum).add_(update.float(), alpha=alpha)
-        update_value = _shape_target_update(state)
-        param.data.add_(update_value.to(dtype=param.dtype))
+        param.data.add_(state.to(dtype=param.dtype))
     else:
-        update_value = _shape_target_update(update.float().mul(alpha))
-        param.data.add_(update_value.to(dtype=param.dtype))
-
-
-def _orthogonalize_update(matrix):
-    x = torch.nan_to_num(matrix.float())
-    if x.size(0) > x.size(1):
-        x = x.T
-        transposed = True
-    else:
-        transposed = False
-    x = x / x.norm().clamp_min(1e-12)
-    for _ in range(5):
-        xx_t = x @ x.T
-        x = 3.4445 * x + (-4.7750) * (xx_t @ x) + 2.0315 * (xx_t @ xx_t @ x)
-    if transposed:
-        x = x.T
-    return x
-
-
-def _shape_target_update(update):
-    if os.environ.get("TARGET_UPDATE_MUON", "0") != "1" or update.ndim < 2:
-        return update
-    flat = update.reshape(update.size(0), -1)
-    shaped = _orthogonalize_update(flat)
-    scale = float(os.environ.get("TARGET_MUON_GAIN", "0.03"))
-    if flat.size(0) < flat.size(1):
-        scale *= (flat.size(1) / flat.size(0))**0.5
-    return shaped.reshape_as(update).mul(scale)
+        param.data.add_(update, alpha=alpha)
 
 
 def _project_weight_(p, max_rms=1.0):
@@ -633,7 +608,7 @@ def _low_loss_logit_targets(labels, num_classes, smoothing, dtype):
     probs = _smooth_targets(labels, num_classes, smoothing, torch.float32)
     logits = probs.log()
     logits = logits - logits.mean(dim=1, keepdim=True)
-    target_rms = float(os.environ.get("TARGET_LOGIT_RMS", "0"))
+    target_rms = float(os.environ.get("TARGET_LOGIT_RMS", "1.2"))
     if target_rms > 0:
         rms = logits.square().mean(dim=1, keepdim=True).sqrt()
         logits = logits.mul(target_rms / rms.clamp_min(1e-12))
@@ -652,7 +627,7 @@ def cross_entropy_loss_and_delta(logits, labels):
         labels, logits.size(1), LABEL_SMOOTHING, logits_f.dtype
     )
     delta_scale = float(os.environ.get("TARGET_DELTA_SCALE", "1.25"))
-    final_delta_scale = float(os.environ.get("TARGET_DELTA_SCALE_FINAL", "1.95"))
+    final_delta_scale = float(os.environ.get("TARGET_DELTA_SCALE_FINAL", "2.35"))
     step = _LOG_CONTEXT.get("step")
     if step is not None:
         progress = (float(step) - 1.0) / max(1.0, float(OVERFIT_STEPS - 1))
@@ -1119,17 +1094,6 @@ def _record_target_backward(record, dy, update_scale=1.0):
     raise TypeError(f"Unsupported cached op: {kind}")
 
 
-def _target_update_scale(record):
-    op_index = record.get("op_index")
-    min_op_text = os.environ.get("TARGET_UPDATE_MIN_OP")
-    if min_op_text is not None and op_index is not None and op_index < int(min_op_text):
-        return 0.0
-    max_op_text = os.environ.get("TARGET_UPDATE_MAX_OP")
-    if max_op_text is not None and op_index is not None and op_index > int(max_op_text):
-        return 0.0
-    return 1.0
-
-
 def target_backward(cache, delta):
     dy = delta
     for reverse_index, record in enumerate(reversed(cache)):
@@ -1141,7 +1105,7 @@ def target_backward(cache, delta):
         module = record.get("module")
         param_snapshot = _module_param_snapshot(module)
         train_loss_before = _local_train_loss_before(cache, record_index)
-        dy = _record_target_backward(record, dy, update_scale=_target_update_scale(record))
+        dy = _record_target_backward(record, dy)
         dw_norm = _module_param_delta_norm(module, param_snapshot)
         train_loss_after_dw = _local_train_loss_after_dw(cache, record_index)
         train_loss_after_dx_dw = _local_train_loss_after(cache, record_index, dy)
