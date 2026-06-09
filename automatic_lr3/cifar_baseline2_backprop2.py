@@ -13,7 +13,7 @@ import sys
 with open(sys.argv[0]) as f:
     code = f.read()
 import uuid
-from math import ceil, floor, isfinite, log10
+from math import ceil, isfinite
 
 import torch
 from torch import nn
@@ -38,231 +38,20 @@ torch.backends.cudnn.allow_tf32 = USE_TF32
 torch.backends.cuda.matmul.allow_tf32 = USE_TF32
 
 TRAINING_SEED = 0
+TARGET_LAMBDA = float(os.environ.get("TARGET_LAMBDA", "1"))
 TARGET_HEAD_LAMBDA = float(os.environ.get("TARGET_HEAD_LAMBDA", "22000"))
 TARGET_X_LAMBDA = float(os.environ.get("TARGET_X_LAMBDA", "0.0001"))
 PINV_RTOL = 1e-5
 CONV_BATCH_CHUNK = int(os.environ.get("CONV_BATCH_CHUNK", "128"))
+OUTPUT_TARGET_RMS = float(os.environ.get("OUTPUT_TARGET_RMS", "1.25"))
+OUTPUT_TARGET_RMS_FIRST = float(os.environ.get("OUTPUT_TARGET_RMS_FIRST", "8"))
 INNER_TARGET_SWEEPS = int(os.environ.get("INNER_TARGET_SWEEPS", "1"))
-
-
-_LOG_CONTEXT = dict(step=None, sweep=None, phase=None)
 
 
 def set_training_seed():
     torch.manual_seed(TRAINING_SEED)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(TRAINING_SEED)
-
-
-def _module_log_name(module):
-    return getattr(module, "_log_name", module.__class__.__name__)
-
-
-def register_operation_names(model):
-    for name, module in model.named_modules():
-        module._log_name = name or "model"
-
-
-def _log_context_fields():
-    fields = []
-    value = _LOG_CONTEXT.get("step")
-    if value is not None:
-        fields.append(f"step={value}")
-    return fields
-
-
-def _format_fixed(value, decimals):
-    if value is None:
-        return "none"
-    value = float(value)
-    if not isfinite(value):
-        return str(value)
-    text = f"{value:.{decimals}f}"
-    if "." in text:
-        text = text.rstrip("0").rstrip(".")
-    return text or "0"
-
-
-def _format_sig_figs(value, sig_figs):
-    if value is None:
-        return "none"
-    value = float(value)
-    if not isfinite(value) or value == 0:
-        return _format_fixed(value, 0)
-    decimals = sig_figs - 1 - floor(log10(abs(value)))
-    rounded = round(value, decimals)
-    return _format_fixed(rounded, max(0, decimals))
-
-
-def _format_norm(value):
-    return _format_sig_figs(value, 2)
-
-
-def _format_loss(value):
-    return _format_sig_figs(value, 4)
-
-
-def _format_norm_pair(numerator, denominator):
-    return f"{_format_norm(numerator)}/{_format_norm(denominator)}"
-
-
-def _tensor_norm(tensor):
-    if tensor is None:
-        return None
-    with torch.no_grad():
-        value = tensor.detach().float()
-        if value.numel() == 0:
-            return 0.0
-        return value.norm().item()
-
-
-def _print_log_line(fields):
-    print(" ".join(_log_context_fields() + fields), flush=True)
-
-
-def _log_forward_norm(kind, name, op_index, activation):
-    _print_log_line(
-        [
-            f"op={op_index}",
-            f"kind={kind}",
-            f"name={name}",
-            f"activation_norm={_format_norm(_tensor_norm(activation))}",
-        ],
-    )
-
-
-def _log_backward_norm(
-    kind,
-    name,
-    op_index,
-    dy,
-    dx,
-    dw_norm,
-    w_norm,
-    x_norm,
-    y_norm,
-    train_loss_before,
-    train_loss_after,
-):
-    _print_log_line(
-        [
-            f"op={op_index}",
-            f"kind={kind}",
-            f"name={name}",
-            f"dy_norm/y_norm={_format_norm_pair(_tensor_norm(dy), y_norm)}",
-            f"dx_norm/x_norm={_format_norm_pair(_tensor_norm(dx), x_norm)}",
-            f"dw_norm/w_norm={_format_norm_pair(dw_norm, w_norm)}",
-            f"train_loss_before_dx_dw={_format_loss(train_loss_before)}",
-            f"train_loss_after_dx_dw={_format_loss(train_loss_after)}",
-        ],
-    )
-
-
-def _module_param_snapshot(module):
-    if module is None:
-        return {}
-    snapshot = {}
-    for name in ("weight", "bias"):
-        param = getattr(module, name, None)
-        if param is not None:
-            snapshot[name] = param.data.detach().clone()
-    return snapshot
-
-
-def _module_param_delta_norm(module, snapshot):
-    if module is None or not snapshot:
-        return 0.0
-    total = 0.0
-    for name, before in snapshot.items():
-        param = getattr(module, name, None)
-        if param is None:
-            continue
-        delta = param.data.detach().float() - before.float()
-        total += delta.square().sum().item()
-    return total**0.5
-
-
-def _module_param_norm(module):
-    if module is None:
-        return None
-    total = 0.0
-    has_param = False
-    for name in ("weight", "bias"):
-        param = getattr(module, name, None)
-        if param is None:
-            continue
-        has_param = True
-        total += param.data.detach().float().square().sum().item()
-    return total**0.5 if has_param else None
-
-
-def _batchnorm_forward_without_running_update(module, x):
-    if not module.training:
-        return module(x)
-    return F.batch_norm(
-        x,
-        None,
-        None,
-        module.weight,
-        module.bias,
-        True,
-        0.0,
-        module.eps,
-    )
-
-
-def _replay_record_forward_with_current_weights(record, x):
-    kind = record["kind"]
-    if kind == "conv":
-        return record["module"](x)
-    if kind == "relu":
-        return F.relu(x)
-    if kind == "pool":
-        return record["module"](x)
-    if kind == "batchnorm":
-        return _batchnorm_forward_without_running_update(record["module"], x)
-    if kind == "identity":
-        module = record.get("module")
-        return module(x) if module is not None else x
-    if kind == "flatten":
-        return x.view(len(x), -1)
-    if kind == "linear":
-        return record["module"](x) / record["scale"]
-    raise TypeError(f"Unsupported replay op: {kind}")
-
-
-def _local_train_loss_from_output_with_current_suffix(cache, record_index, output):
-    with torch.inference_mode():
-        value = output
-        for next_record in cache[record_index + 1 :]:
-            if next_record["kind"] == "cross_entropy":
-                return _cross_entropy_loss_value(value, next_record["labels"])
-            value = _replay_record_forward_with_current_weights(next_record, value)
-    return None
-
-
-def _local_train_loss_before(cache, record_index):
-    record = cache[record_index]
-    if record["kind"] == "cross_entropy":
-        return _cross_entropy_loss_value(record["input"], record["labels"])
-    return _local_train_loss_from_output_with_current_suffix(
-        cache, record_index, record["output"]
-    )
-
-
-def _local_train_loss_after(cache, record_index, dx):
-    record = cache[record_index]
-    with torch.inference_mode():
-        if record["kind"] == "cross_entropy":
-            logits = record["input"] + dx
-            return _cross_entropy_loss_value(logits, record["labels"])
-        updated_input = record["input"] + dx
-        updated_output = _replay_record_forward_with_current_weights(
-            record, updated_input
-        )
-    return _local_train_loss_from_output_with_current_suffix(
-        cache, record_index, updated_output
-    )
 
 
 #############################################
@@ -388,9 +177,6 @@ class BatchNorm(nn.BatchNorm2d):
         self.weight.requires_grad = False
         # Note that PyTorch already initializes the weights to one and bias to zero
 
-    def train(self, mode=True):
-        return super().train(True)
-
 
 def _pair(value):
     return value if isinstance(value, tuple) else (value, value)
@@ -400,7 +186,9 @@ def _conv_padding_tuple(padding, kernel_size, dilation):
     if padding == "same":
         kernel_size = _pair(kernel_size)
         dilation = _pair(dilation)
-        effective_kernel = tuple(d * (k - 1) + 1 for k, d in zip(kernel_size, dilation))
+        effective_kernel = tuple(
+            d * (k - 1) + 1 for k, d in zip(kernel_size, dilation)
+        )
         if any(k % 2 == 0 for k in effective_kernel):
             raise ValueError(
                 '"same" padding helper only supports odd effective kernels'
@@ -421,7 +209,6 @@ class Conv(nn.Conv2d):
         super().reset_parameters()
         w = self.weight.data
         torch.nn.init.dirac_(w[: w.size(1)])
-
 
 class Linear(nn.Linear):
     pass
@@ -516,7 +303,9 @@ def _safe_pinv(x):
     raise last_error
 
 
-def _ridge_delta(xtx, xtdy, lambda_value=0.0):
+def _ridge_delta(xtx, xtdy, lambda_value=None):
+    if lambda_value is None:
+        lambda_value = TARGET_LAMBDA
     if lambda_value != 0:
         eye = torch.eye(xtx.size(0), device=xtx.device, dtype=xtx.dtype)
         xtx = xtx + lambda_value * eye
@@ -530,17 +319,15 @@ def _ridge_input_delta(dy, weight_eff):
         return dy @ _safe_pinv(weight_eff)
     gram = weight_eff.T @ weight_eff
     eye = torch.eye(gram.size(0), device=gram.device, dtype=gram.dtype)
-    solve_matrix = gram + TARGET_X_LAMBDA * eye
-    return dy @ _safe_pinv(solve_matrix) @ weight_eff.T
+    return dy @ _safe_pinv(gram + TARGET_X_LAMBDA * eye) @ weight_eff.T
 
 
 def _project_weight_(p, max_rms=1.0):
     if p is None or not p.requires_grad:
         return
     rms = p.data.float().square().mean().sqrt()
-    if torch.isfinite(rms) and rms > 0:
-        scale = max_rms / rms
-        p.data.mul_(scale.to(dtype=p.data.dtype))
+    if torch.isfinite(rms) and rms > max_rms:
+        p.data.mul_((max_rms / rms).to(dtype=p.data.dtype))
 
 
 def _project_bias_(p):
@@ -550,8 +337,6 @@ def _project_bias_(p):
 
 def project_trainable_parameters(model):
     for module in model.modules():
-        if module is getattr(model, "head", None):
-            continue
         weight = getattr(module, "weight", None)
         bias = getattr(module, "bias", None)
         _project_weight_(weight)
@@ -559,11 +344,14 @@ def project_trainable_parameters(model):
 
 
 def _bound_sample_rms(x):
-    return x
+    flat = x.float().reshape(len(x), -1)
+    rms = flat.square().mean(dim=1, keepdim=True).sqrt()
+    scale = torch.minimum(torch.ones_like(rms), rms.clamp_min(1e-12).reciprocal())
+    return x * scale.to(dtype=x.dtype).view(len(x), *([1] * (x.ndim - 1)))
 
 
 def _bound_delta_to_sample_rms(x, dx):
-    return dx
+    return _bound_sample_rms(x + dx) - x
 
 
 def _smooth_targets(labels, num_classes, smoothing, dtype):
@@ -579,14 +367,20 @@ def _smooth_targets(labels, num_classes, smoothing, dtype):
     return targets
 
 
-def _low_loss_logit_targets(labels, num_classes, smoothing, dtype):
+def _low_loss_logit_targets(labels, num_classes, smoothing, dtype, target_rms):
     probs = _smooth_targets(labels, num_classes, smoothing, torch.float32)
     logits = probs.log()
     logits = logits - logits.mean(dim=1, keepdim=True)
-    return logits.to(dtype=dtype)
+    if target_rms <= 0:
+        return logits.to(dtype=dtype)
+    rms = logits.square().mean(dim=1, keepdim=True).sqrt()
+    scale = target_rms / rms.clamp_min(1e-12)
+    return logits.mul(scale).to(dtype=dtype)
 
 
-def cross_entropy_loss_and_delta(logits, labels):
+def cross_entropy_loss_and_delta(logits, labels, output_target_rms=None):
+    if output_target_rms is None:
+        output_target_rms = OUTPUT_TARGET_RMS
     logits_f = logits.float()
     loss = F.cross_entropy(
         logits_f,
@@ -595,74 +389,23 @@ def cross_entropy_loss_and_delta(logits, labels):
         reduction="mean",
     )
     targets = _low_loss_logit_targets(
-        labels, logits.size(1), LABEL_SMOOTHING, logits_f.dtype
+        labels, logits.size(1), LABEL_SMOOTHING, logits_f.dtype, output_target_rms
     )
     delta = targets - logits_f
     return loss, delta.to(dtype=logits.dtype)
 
 
-def _cross_entropy_loss_value(logits, labels):
-    return F.cross_entropy(
-        logits.float(),
-        labels,
-        label_smoothing=LABEL_SMOOTHING,
-        reduction="mean",
-    ).item()
-
-
-def cache_cross_entropy_op(cache, logits, labels, loss, delta):
-    if cache is None:
-        return
-    op_index = len(cache)
-    _log_forward_norm("cross_entropy", "cross_entropy", op_index, loss)
-    cache.append(
-        dict(
-            kind="cross_entropy",
-            name="cross_entropy",
-            input=logits.detach(),
-            output=loss.detach(),
-            labels=labels.detach(),
-            dy=torch.ones_like(loss).detach(),
-            delta=delta.detach(),
-            op_index=op_index,
-        )
-    )
-
-
 def _forward_conv(module, x, cache):
     y = module(x)
     if cache is not None:
-        name = _module_log_name(module)
-        op_index = len(cache)
-        _log_forward_norm("conv", name, op_index, y)
-        cache.append(
-            dict(
-                kind="conv",
-                module=module,
-                name=name,
-                input=x.detach(),
-                output=y.detach(),
-                op_index=op_index,
-            )
-        )
+        cache.append(dict(kind="conv", module=module, input=x.detach()))
     return y
 
 
 def _forward_relu(module, x, cache):
     y = module(x)
     if cache is not None:
-        name = _module_log_name(module)
-        op_index = len(cache)
-        _log_forward_norm("relu", name, op_index, y)
-        cache.append(
-            dict(
-                kind="relu",
-                name=name,
-                input=x.detach(),
-                output=y.detach(),
-                op_index=op_index,
-            )
-        )
+        cache.append(dict(kind="relu", input=x.detach()))
     return y
 
 
@@ -678,20 +421,7 @@ def _forward_pool(module, x, cache):
         module.ceil_mode,
         return_indices=True,
     )
-    name = _module_log_name(module)
-    op_index = len(cache)
-    _log_forward_norm("pool", name, op_index, y)
-    cache.append(
-        dict(
-            kind="pool",
-            module=module,
-            name=name,
-            input=x.detach(),
-            output=y.detach(),
-            indices=indices,
-            op_index=op_index,
-        )
-    )
+    cache.append(dict(kind="pool", module=module, input=x.detach(), indices=indices))
     return y
 
 
@@ -700,18 +430,7 @@ def _forward_batchnorm(module, x, cache):
         return module(x)
     if not module.training:
         y = module(x)
-        name = _module_log_name(module)
-        op_index = len(cache)
-        _log_forward_norm("identity", name, op_index, y)
-        cache.append(
-            dict(
-                kind="identity",
-                name=name,
-                input=x.detach(),
-                output=y.detach(),
-                op_index=op_index,
-            )
-        )
+        cache.append(dict(kind="identity", input=x.detach()))
         return y
 
     axes = (0, 2, 3)
@@ -733,34 +452,19 @@ def _forward_batchnorm(module, x, cache):
         dict(
             kind="batchnorm",
             module=module,
-            name=_module_log_name(module),
             input=x.detach(),
-            output=y.detach(),
             x_hat=x_hat.detach(),
             invstd=invstd.detach(),
-            op_index=len(cache),
         )
     )
-    _log_forward_norm("batchnorm", cache[-1]["name"], cache[-1]["op_index"], y)
     return y
 
 
 def _forward_linear(module, x, cache, scale=1):
     y = module(x) / scale
     if cache is not None:
-        name = _module_log_name(module)
-        op_index = len(cache)
-        _log_forward_norm("linear", name, op_index, y)
         cache.append(
-            dict(
-                kind="linear",
-                module=module,
-                name=name,
-                input=x.detach(),
-                output=y.detach(),
-                scale=scale,
-                op_index=op_index,
-            )
+            dict(kind="linear", module=module, input=x.detach(), scale=scale)
         )
     return y
 
@@ -798,21 +502,9 @@ def _forward_impl(model, x, cache):
             x = _bound_sample_rms(x)
         else:
             raise TypeError(f"Unsupported module in manual forward: {type(module)}")
-    flatten_input = x
-    x = x.view(len(x), -1)
     if cache is not None:
-        op_index = len(cache)
-        _log_forward_norm("flatten", "flatten", op_index, x)
-        cache.append(
-            dict(
-                kind="flatten",
-                name="flatten",
-                input=flatten_input.detach(),
-                output=x.detach(),
-                shape=flatten_input.shape,
-                op_index=op_index,
-            )
-        )
+        cache.append(dict(kind="flatten", input=x.detach(), shape=x.shape))
+    x = x.view(len(x), -1)
     x = _bound_sample_rms(x)
     return _forward_linear(model.head, x, cache, scale=x.size(-1)), cache
 
@@ -834,12 +526,11 @@ def _linear_target_backward(module, x, dy, scale):
         xtx = x_mat.float().T @ x_mat.float()
         xtdy = x_mat.float().T @ dy_mat.float()
         delta_eff = _ridge_delta(xtx, xtdy, TARGET_HEAD_LAMBDA)
-        weight_update = (delta_eff * scale).T.to(dtype=module.weight.dtype)
-        module.weight.data.add_(weight_update)
+        module.weight.data.add_((delta_eff * scale).T.to(dtype=module.weight.dtype))
+        _project_weight_(module.weight, max_rms=scale)
 
     if module.bias is not None and module.bias.requires_grad:
-        bias_update = dy_mat.mean(dim=0).mul(scale).to(module.bias.dtype)
-        module.bias.data.add_(bias_update)
+        module.bias.data.add_(dy_mat.mean(dim=0).mul(scale).to(module.bias.dtype))
         _project_bias_(module.bias)
 
     weight_eff = module.weight.data.T.float() / scale
@@ -912,8 +603,7 @@ def _conv_target_backward(module, x, dy):
         _project_weight_(module.weight)
 
     if module.bias is not None and module.bias.requires_grad:
-        bias_update = dy.mean(dim=(0, 2, 3)).to(module.bias.dtype)
-        module.bias.data.add_(bias_update)
+        module.bias.data.add_(dy.mean(dim=(0, 2, 3)).to(module.bias.dtype))
         _project_bias_(module.bias)
 
     weight_effs = [
@@ -934,10 +624,7 @@ def _conv_target_backward(module, x, dy):
                 .reshape(-1, out_per_group)
                 .float()
             )
-            patch_delta = _ridge_input_delta(
-                dy_group,
-                weight_effs[group],
-            )
+            patch_delta = _ridge_input_delta(dy_group, weight_effs[group])
             patch_delta = (
                 patch_delta.reshape(end - start, -1, patch_size)
                 .transpose(1, 2)
@@ -966,43 +653,30 @@ def _conv_target_backward(module, x, dy):
 
 def _batchnorm_target_backward(module, x, x_hat, invstd, dy):
     axes = (0, 2, 3)
-    dtype = dy.dtype
-    bias_delta = torch.zeros(1, x.size(1), 1, 1, device=x.device, dtype=dtype)
+    count = x.numel() // x.size(1)
+
     if module.bias is not None and module.bias.requires_grad:
-        old_bias = module.bias.data.detach().clone()
         module.bias.data.add_(dy.mean(dim=axes).to(module.bias.dtype))
         _project_bias_(module.bias)
-        bias_delta = (module.bias.data - old_bias).to(dtype=dtype).view(1, -1, 1, 1)
 
-    target_hat = x_hat.to(dtype=dtype)
-    dy_after_bias = dy - bias_delta
-    if module.weight is None:
-        target_hat = target_hat + dy_after_bias
-    else:
-        gamma = module.weight.data.to(dtype=dtype).view(1, -1, 1, 1)
-        safe_gamma = torch.where(
-            gamma >= 0,
-            gamma.abs().clamp_min(1e-12),
-            -gamma.abs().clamp_min(1e-12),
-        )
-        target_hat = torch.where(
-            gamma.abs() > 1e-12,
-            target_hat + dy_after_bias / safe_gamma,
-            target_hat,
-        )
+    gamma = 1.0
+    if module.weight is not None:
+        if module.weight.requires_grad:
+            numerator = (x_hat * dy).sum(dim=axes)
+            denominator = x_hat.square().sum(dim=axes)
+            delta_gamma = torch.where(
+                denominator > 0,
+                numerator / denominator.clamp_min(1e-12),
+                torch.zeros_like(numerator),
+            )
+            module.weight.data.add_(delta_gamma.to(module.weight.dtype))
+            _project_weight_(module.weight)
+        gamma = module.weight.data.view(1, -1, 1, 1)
 
-    target_hat = target_hat - target_hat.mean(dim=axes, keepdim=True)
-    target_rms = target_hat.square().mean(dim=axes, keepdim=True).sqrt()
-    target_hat = torch.where(
-        target_rms > 1e-12,
-        target_hat / target_rms.clamp_min(1e-12),
-        x_hat.to(dtype=dtype),
-    )
-
-    mean = x.float().mean(dim=axes, keepdim=True).to(dtype=dtype)
-    std = invstd.to(dtype=dtype).reciprocal()
-    x_target = mean + target_hat * std
-    dx = x_target.to(dtype=x.dtype) - x
+    dy_norm = dy * gamma
+    sum_dy = dy_norm.sum(dim=axes, keepdim=True)
+    sum_dy_xhat = (dy_norm * x_hat).sum(dim=axes, keepdim=True)
+    dx = (dy_norm * count - sum_dy - x_hat * sum_dy_xhat) * (invstd / count)
     return _bound_delta_to_sample_rms(x, dx)
 
 
@@ -1029,18 +703,9 @@ def _pool_target_backward(module, x, indices, dy):
 
 def target_backward(cache, delta):
     dy = delta
-    for reverse_index, record in enumerate(reversed(cache)):
+    for record in reversed(cache):
         kind = record["kind"]
-        name = record.get("name", kind)
-        record_index = len(cache) - reverse_index - 1
-        op_index = record.get("op_index", record_index)
-        dy_in = record.get("dy", dy)
-        module = record.get("module")
-        param_snapshot = _module_param_snapshot(module)
-        train_loss_before = _local_train_loss_before(cache, record_index)
-        if kind == "cross_entropy":
-            dy = record["delta"]
-        elif kind == "linear":
+        if kind == "linear":
             dy = _linear_target_backward(
                 record["module"], record["input"], dy, record["scale"]
             )
@@ -1067,42 +732,46 @@ def target_backward(cache, delta):
             dy = _bound_delta_to_sample_rms(record["input"], dy)
         else:
             raise TypeError(f"Unsupported cached op: {kind}")
-        dw_norm = _module_param_delta_norm(module, param_snapshot)
-        train_loss_after = _local_train_loss_after(cache, record_index, dy)
-        _log_backward_norm(
-            kind,
-            name,
-            op_index,
-            dy_in,
-            dy,
-            dw_norm,
-            _module_param_norm(module),
-            _tensor_norm(record.get("input")),
-            _tensor_norm(record.get("output")),
-            train_loss_before,
-            train_loss_after,
-        )
     return dy
 
 
-def target_train_step(model, inputs, labels, sweeps=1, step=None):
+def target_train_step(model, inputs, labels, sweeps=1, output_target_rms=None):
     model.train()
     with torch.no_grad():
         first_loss = None
-        old_context = dict(_LOG_CONTEXT)
-        for sweep in range(sweeps):
-            _LOG_CONTEXT.update(step=step, sweep=sweep + 1, phase="forward")
+        for _ in range(sweeps):
             outputs, cache = forward_with_cache(model, inputs)
-            loss, delta = cross_entropy_loss_and_delta(outputs, labels)
-            cache_cross_entropy_op(cache, outputs, labels, loss, delta)
+            loss, delta = cross_entropy_loss_and_delta(
+                outputs, labels, output_target_rms
+            )
             if first_loss is None:
                 first_loss = loss
             if torch.isfinite(loss):
-                _LOG_CONTEXT.update(step=step, sweep=sweep + 1, phase="backward")
                 target_backward(cache, delta)
-        _LOG_CONTEXT.clear()
-        _LOG_CONTEXT.update(old_context)
     return first_loss.item()
+
+
+############################################
+#                 Logging                  #
+############################################
+
+
+def log_eval(run, epoch, val_acc, time_seconds):
+    run_info = f" run={run}" if run is not None else ""
+    print(
+        f"eval{run_info} epoch={epoch} val_acc={val_acc:.4f} "
+        f"time_seconds={time_seconds:.4f}",
+        flush=True,
+    )
+
+
+def log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds):
+    print(
+        f"eval epoch=final 25batch_train_loss={train25_loss:.4f} "
+        f"val_acc={val_acc:.4f} tta_val_acc={tta_val_acc:.4f} "
+        f"time_seconds={time_seconds:.4f}",
+        flush=True,
+    )
 
 
 ############################################
@@ -1141,7 +810,7 @@ def infer(model, loader, tta_level=0):
         logits_translate = torch.stack(logits_translate_list).mean(0)
         return 0.5 * logits + 0.5 * logits_translate
 
-    model.train()
+    model.eval()
     test_images = loader.normalized_images()
     infer_fn = [infer_basic, infer_mirror, infer_mirror_translate][tta_level]
     with torch.inference_mode():
@@ -1156,7 +825,7 @@ def evaluate(model, loader, tta_level=0):
 
 
 def evaluate_train_loss(model, batches):
-    model.train()
+    model.eval()
     total_loss = 0.0
     total_examples = 0
     with torch.inference_mode():
@@ -1174,7 +843,7 @@ def evaluate_train_loss(model, batches):
 ############################################
 
 OVERFIT_BATCH_SIZE = 2000
-OVERFIT_STEPS = 1
+OVERFIT_STEPS = 20
 LABEL_SMOOTHING = 0.2
 
 
@@ -1187,7 +856,7 @@ def make_first_train_batch():
 
 
 def first_batch_loss(model, inputs, labels):
-    model.train()
+    model.eval()
     with torch.inference_mode():
         outputs = model(inputs)
         loss = F.cross_entropy(
@@ -1206,8 +875,6 @@ def overfit_first_batch(
     train_images,
 ):
     set_training_seed()
-    register_operation_names(model)
-    _LOG_CONTEXT.update(step=0, sweep=None, phase="setup")
     model.reset()
     model.init_whiten(train_images)
     project_trainable_parameters(model)
@@ -1226,7 +893,6 @@ def overfit_first_batch(
         nonlocal time_seconds
         time_seconds += 1e-3 * starter.elapsed_time(ender)
 
-    _LOG_CONTEXT.update(step=0, sweep=None, phase="initial_eval")
     initial_loss = first_batch_loss(model, inputs, labels)
     final_loss = float("inf")
     last_step_loss = float("inf")
@@ -1234,18 +900,18 @@ def overfit_first_batch(
 
     start_timer()
     for step in range(OVERFIT_STEPS):
-        _LOG_CONTEXT.update(step=step + 1, sweep=None, phase="step_start")
+        output_target_rms = OUTPUT_TARGET_RMS_FIRST if step == 0 else OUTPUT_TARGET_RMS
         target_train_step(
             model,
             inputs,
             labels,
             sweeps=INNER_TARGET_SWEEPS,
-            step=step + 1,
+            output_target_rms=output_target_rms,
         )
-        _LOG_CONTEXT.update(step=step + 1, sweep=None, phase="post_eval")
         last_step_loss = first_batch_loss(model, inputs, labels)
         print(
-            "loss_step %02d/%d loss=%.6f" % (step + 1, OVERFIT_STEPS, last_step_loss),
+            "target_backprop_step step=%d/%d loss=%.6f"
+            % (step + 1, OVERFIT_STEPS, last_step_loss),
             flush=True,
         )
         if not isfinite(last_step_loss):
@@ -1254,8 +920,34 @@ def overfit_first_batch(
     stop_timer()
 
     if completed_steps == OVERFIT_STEPS:
-        _LOG_CONTEXT.update(step=completed_steps, sweep=None, phase="final_eval")
         final_loss = first_batch_loss(model, inputs, labels)
+
+    print(
+        "target_backprop_eval batch_size=%d steps=%d/%d "
+        "lambda=%.6g head_lambda=%.6g lambda_x=%.6g "
+        "output_target_rms=%.6g first_output_target_rms=%.6g "
+        "inner_sweeps=%d pinv_rtol=%.6g conv_batch_chunk=%d "
+        "initial_train_loss=%.6f last_step_loss=%.6f final_train_loss=%.6f "
+        "time_seconds=%.4f"
+        % (
+            OVERFIT_BATCH_SIZE,
+            completed_steps,
+            OVERFIT_STEPS,
+            TARGET_LAMBDA,
+            TARGET_HEAD_LAMBDA,
+            TARGET_X_LAMBDA,
+            OUTPUT_TARGET_RMS,
+            OUTPUT_TARGET_RMS_FIRST,
+            INNER_TARGET_SWEEPS,
+            PINV_RTOL,
+            CONV_BATCH_CHUNK,
+            initial_loss,
+            last_step_loss,
+            final_loss,
+            time_seconds,
+        ),
+        flush=True,
+    )
 
     return dict(
         batch_size=OVERFIT_BATCH_SIZE,
@@ -1264,8 +956,11 @@ def overfit_first_batch(
         initial_train_loss=initial_loss,
         last_step_loss=last_step_loss,
         final_train_loss=final_loss,
+        target_lambda=TARGET_LAMBDA,
         target_head_lambda=TARGET_HEAD_LAMBDA,
         target_x_lambda=TARGET_X_LAMBDA,
+        output_target_rms=OUTPUT_TARGET_RMS,
+        output_target_rms_first=OUTPUT_TARGET_RMS_FIRST,
         inner_target_sweeps=INNER_TARGET_SWEEPS,
         pinv_rtol=PINV_RTOL,
         conv_batch_chunk=CONV_BATCH_CHUNK,
@@ -1279,17 +974,50 @@ def main():
     # model.compile(mode="max-autotune")
     inputs, labels, train_images = make_first_train_batch()
 
+    print(
+        "target_backprop_start batch_size=%d steps=%d "
+        "lambda=%.6g head_lambda=%.6g lambda_x=%.6g "
+        "output_target_rms=%.6g first_output_target_rms=%.6g "
+        "inner_sweeps=%d pinv_rtol=%.6g conv_batch_chunk=%d"
+        % (
+            OVERFIT_BATCH_SIZE,
+            OVERFIT_STEPS,
+            TARGET_LAMBDA,
+            TARGET_HEAD_LAMBDA,
+            TARGET_X_LAMBDA,
+            OUTPUT_TARGET_RMS,
+            OUTPUT_TARGET_RMS_FIRST,
+            INNER_TARGET_SWEEPS,
+            PINV_RTOL,
+            CONV_BATCH_CHUNK,
+        ),
+        flush=True,
+    )
+
     result = overfit_first_batch(
         model=model,
         inputs=inputs,
         labels=labels,
         train_images=train_images,
     )
+    print(
+        "target_backprop_final batch_size=%d steps=%d final_train_loss=%.6f "
+        "last_step_loss=%.6f initial_train_loss=%.6f"
+        % (
+            result["batch_size"],
+            result["steps"],
+            result["final_train_loss"],
+            result["last_step_loss"],
+            result["initial_train_loss"],
+        ),
+        flush=True,
+    )
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "log.pt")
     torch.save(dict(code=code, result=result), log_path)
+    print(os.path.abspath(log_path))
 
 
 if __name__ == "__main__":

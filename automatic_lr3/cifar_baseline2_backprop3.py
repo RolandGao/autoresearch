@@ -45,7 +45,7 @@ CONV_BATCH_CHUNK = int(os.environ.get("CONV_BATCH_CHUNK", "128"))
 INNER_TARGET_SWEEPS = int(os.environ.get("INNER_TARGET_SWEEPS", "1"))
 
 
-_LOG_CONTEXT = dict(step=None, sweep=None, phase=None)
+_LOG_CONTEXT = dict(step=None)
 
 
 def set_training_seed():
@@ -227,7 +227,7 @@ def _replay_record_forward_with_current_weights(record, x):
     if kind == "flatten":
         return x.view(len(x), -1)
     if kind == "linear":
-        return record["module"](x) / record["scale"]
+        return record["module"](x)
     raise TypeError(f"Unsupported replay op: {kind}")
 
 
@@ -558,14 +558,6 @@ def project_trainable_parameters(model):
         _project_bias_(bias)
 
 
-def _bound_sample_rms(x):
-    return x
-
-
-def _bound_delta_to_sample_rms(x, dx):
-    return dx
-
-
 def _smooth_targets(labels, num_classes, smoothing, dtype):
     off_value = smoothing / num_classes
     on_value = 1.0 - smoothing + off_value
@@ -745,8 +737,8 @@ def _forward_batchnorm(module, x, cache):
     return y
 
 
-def _forward_linear(module, x, cache, scale=1):
-    y = module(x) / scale
+def _forward_linear(module, x, cache):
+    y = module(x)
     if cache is not None:
         name = _module_log_name(module)
         op_index = len(cache)
@@ -758,7 +750,6 @@ def _forward_linear(module, x, cache, scale=1):
                 name=name,
                 input=x.detach(),
                 output=y.detach(),
-                scale=scale,
                 op_index=op_index,
             )
         )
@@ -767,35 +758,24 @@ def _forward_linear(module, x, cache, scale=1):
 
 def _forward_conv_group(group, x, cache):
     x = _forward_conv(group.conv1, x, cache)
-    x = _bound_sample_rms(x)
     x = _forward_pool(group.pool, x, cache)
-    x = _bound_sample_rms(x)
     x = _forward_batchnorm(group.norm1, x, cache)
-    x = _bound_sample_rms(x)
     x = _forward_relu(group.activ, x, cache)
-    x = _bound_sample_rms(x)
     x = _forward_conv(group.conv2, x, cache)
-    x = _bound_sample_rms(x)
     x = _forward_batchnorm(group.norm2, x, cache)
-    x = _bound_sample_rms(x)
     x = _forward_relu(group.activ, x, cache)
-    x = _bound_sample_rms(x)
     return x
 
 
 def _forward_impl(model, x, cache):
-    x = _bound_sample_rms(x)
     x = _forward_conv(model.whiten, x, cache)
-    x = _bound_sample_rms(x)
     for module in model.layers:
         if isinstance(module, ConvGroup):
             x = _forward_conv_group(module, x, cache)
         elif isinstance(module, nn.ReLU):
             x = _forward_relu(module, x, cache)
-            x = _bound_sample_rms(x)
         elif isinstance(module, nn.MaxPool2d):
             x = _forward_pool(module, x, cache)
-            x = _bound_sample_rms(x)
         else:
             raise TypeError(f"Unsupported module in manual forward: {type(module)}")
     flatten_input = x
@@ -813,8 +793,7 @@ def _forward_impl(model, x, cache):
                 op_index=op_index,
             )
         )
-    x = _bound_sample_rms(x)
-    return _forward_linear(model.head, x, cache, scale=x.size(-1)), cache
+    return _forward_linear(model.head, x, cache), cache
 
 
 def forward_no_cache(model, x):
@@ -826,26 +805,26 @@ def forward_with_cache(model, x):
     return _forward_impl(model, x, [])
 
 
-def _linear_target_backward(module, x, dy, scale):
-    x_mat = _bound_sample_rms(x).reshape(-1, x.shape[-1])
+def _linear_target_backward(module, x, dy):
+    x_mat = x.reshape(-1, x.shape[-1])
     dy_mat = dy.reshape(-1, dy.shape[-1])
 
     if module.weight.requires_grad:
         xtx = x_mat.float().T @ x_mat.float()
         xtdy = x_mat.float().T @ dy_mat.float()
         delta_eff = _ridge_delta(xtx, xtdy, TARGET_HEAD_LAMBDA)
-        weight_update = (delta_eff * scale).T.to(dtype=module.weight.dtype)
+        weight_update = delta_eff.T.to(dtype=module.weight.dtype)
         module.weight.data.add_(weight_update)
 
     if module.bias is not None and module.bias.requires_grad:
-        bias_update = dy_mat.mean(dim=0).mul(scale).to(module.bias.dtype)
+        bias_update = dy_mat.mean(dim=0).to(module.bias.dtype)
         module.bias.data.add_(bias_update)
         _project_bias_(module.bias)
 
-    weight_eff = module.weight.data.T.float() / scale
+    weight_eff = module.weight.data.T.float()
     dx = _ridge_input_delta(dy_mat, weight_eff)
     dx = dx.to(dtype=x.dtype).reshape_as(x)
-    return _bound_delta_to_sample_rms(x, dx)
+    return dx
 
 
 def _conv_weight_eff(module, group, in_per_group, out_per_group):
@@ -883,7 +862,7 @@ def _conv_target_backward(module, x, dy):
             for start in range(0, batch, CONV_BATCH_CHUNK):
                 end = min(start + CONV_BATCH_CHUNK, batch)
                 patches = F.unfold(
-                    _bound_sample_rms(x[start:end]),
+                    x[start:end],
                     kernel_size,
                     dilation=dilation,
                     padding=padding,
@@ -961,7 +940,7 @@ def _conv_target_backward(module, x, dy):
             ).clamp_min(1)
             dx_chunk[:, in_slice] = folded / overlap
         dx[start:end] = dx_chunk
-    return _bound_delta_to_sample_rms(x, dx)
+    return dx
 
 
 def _batchnorm_target_backward(module, x, x_hat, invstd, dy):
@@ -1003,7 +982,7 @@ def _batchnorm_target_backward(module, x, x_hat, invstd, dy):
     std = invstd.to(dtype=dtype).reciprocal()
     x_target = mean + target_hat * std
     dx = x_target.to(dtype=x.dtype) - x
-    return _bound_delta_to_sample_rms(x, dx)
+    return dx
 
 
 def _relu_target_backward(x, dy):
@@ -1012,7 +991,7 @@ def _relu_target_backward(x, dy):
     jump = torch.minimum(torch.ones_like(dy), dy - x)
     dx = torch.where(active, dy, torch.zeros_like(dy))
     dx = torch.where(inactive_positive_target, jump, dx)
-    return _bound_delta_to_sample_rms(x, dx)
+    return dx
 
 
 def _pool_target_backward(module, x, indices, dy):
@@ -1024,7 +1003,7 @@ def _pool_target_backward(module, x, indices, dy):
         module.padding,
         output_size=x.shape,
     )
-    return _bound_delta_to_sample_rms(x, dx)
+    return dx
 
 
 def target_backward(cache, delta):
@@ -1042,11 +1021,10 @@ def target_backward(cache, delta):
             dy = record["delta"]
         elif kind == "linear":
             dy = _linear_target_backward(
-                record["module"], record["input"], dy, record["scale"]
+                record["module"], record["input"], dy
             )
         elif kind == "flatten":
-            x = record["input"]
-            dy = _bound_delta_to_sample_rms(x, dy.reshape(record["shape"]))
+            dy = dy.reshape(record["shape"])
         elif kind == "pool":
             dy = _pool_target_backward(
                 record["module"], record["input"], record["indices"], dy
@@ -1064,7 +1042,7 @@ def target_backward(cache, delta):
         elif kind == "conv":
             dy = _conv_target_backward(record["module"], record["input"], dy)
         elif kind == "identity":
-            dy = _bound_delta_to_sample_rms(record["input"], dy)
+            pass
         else:
             raise TypeError(f"Unsupported cached op: {kind}")
         dw_norm = _module_param_delta_norm(module, param_snapshot)
@@ -1090,83 +1068,18 @@ def target_train_step(model, inputs, labels, sweeps=1, step=None):
     with torch.no_grad():
         first_loss = None
         old_context = dict(_LOG_CONTEXT)
-        for sweep in range(sweeps):
-            _LOG_CONTEXT.update(step=step, sweep=sweep + 1, phase="forward")
+        for _ in range(sweeps):
+            _LOG_CONTEXT.update(step=step)
             outputs, cache = forward_with_cache(model, inputs)
             loss, delta = cross_entropy_loss_and_delta(outputs, labels)
             cache_cross_entropy_op(cache, outputs, labels, loss, delta)
             if first_loss is None:
                 first_loss = loss
             if torch.isfinite(loss):
-                _LOG_CONTEXT.update(step=step, sweep=sweep + 1, phase="backward")
                 target_backward(cache, delta)
         _LOG_CONTEXT.clear()
         _LOG_CONTEXT.update(old_context)
     return first_loss.item()
-
-
-############################################
-#               Evaluation                 #
-############################################
-
-
-def infer(model, loader, tta_level=0):
-
-    # Test-time augmentation strategy (for tta_level=2):
-    # 1. Flip/mirror the image left-to-right (50% of the time).
-    # 2. Translate the image by one pixel either up-and-left or down-and-right (50% of the time,
-    #    i.e. both happen 25% of the time).
-    #
-    # This creates 6 views per image (left/right times the two translations and no-translation),
-    # which we evaluate and then weight according to the given probabilities.
-
-    def infer_basic(inputs, net):
-        return net(inputs).clone()
-
-    def infer_mirror(inputs, net):
-        return 0.5 * net(inputs) + 0.5 * net(inputs.flip(-1))
-
-    def infer_mirror_translate(inputs, net):
-        logits = infer_mirror(inputs, net)
-        pad = 1
-        padded_inputs = F.pad(inputs, (pad,) * 4, "reflect")
-        inputs_translate_list = [
-            padded_inputs[:, :, 0:32, 0:32],
-            padded_inputs[:, :, 2:34, 2:34],
-        ]
-        logits_translate_list = [
-            infer_mirror(inputs_translate, net)
-            for inputs_translate in inputs_translate_list
-        ]
-        logits_translate = torch.stack(logits_translate_list).mean(0)
-        return 0.5 * logits + 0.5 * logits_translate
-
-    model.train()
-    test_images = loader.normalized_images()
-    infer_fn = [infer_basic, infer_mirror, infer_mirror_translate][tta_level]
-    with torch.inference_mode():
-        return torch.cat(
-            [infer_fn(inputs, model) for inputs in test_images.split(2000)]
-        )
-
-
-def evaluate(model, loader, tta_level=0):
-    logits = infer(model, loader, tta_level)
-    return (logits.argmax(1) == loader.labels).float().mean().item()
-
-
-def evaluate_train_loss(model, batches):
-    model.train()
-    total_loss = 0.0
-    total_examples = 0
-    with torch.inference_mode():
-        for inputs, labels in batches:
-            outputs = model(inputs)
-            total_loss += F.cross_entropy(
-                outputs.float(), labels, label_smoothing=0.2, reduction="sum"
-            ).item()
-            total_examples += len(labels)
-    return total_loss / total_examples
 
 
 ############################################
@@ -1207,7 +1120,6 @@ def overfit_first_batch(
 ):
     set_training_seed()
     register_operation_names(model)
-    _LOG_CONTEXT.update(step=0, sweep=None, phase="setup")
     model.reset()
     model.init_whiten(train_images)
     project_trainable_parameters(model)
@@ -1226,7 +1138,6 @@ def overfit_first_batch(
         nonlocal time_seconds
         time_seconds += 1e-3 * starter.elapsed_time(ender)
 
-    _LOG_CONTEXT.update(step=0, sweep=None, phase="initial_eval")
     initial_loss = first_batch_loss(model, inputs, labels)
     final_loss = float("inf")
     last_step_loss = float("inf")
@@ -1234,7 +1145,6 @@ def overfit_first_batch(
 
     start_timer()
     for step in range(OVERFIT_STEPS):
-        _LOG_CONTEXT.update(step=step + 1, sweep=None, phase="step_start")
         target_train_step(
             model,
             inputs,
@@ -1242,7 +1152,6 @@ def overfit_first_batch(
             sweeps=INNER_TARGET_SWEEPS,
             step=step + 1,
         )
-        _LOG_CONTEXT.update(step=step + 1, sweep=None, phase="post_eval")
         last_step_loss = first_batch_loss(model, inputs, labels)
         print(
             "loss_step %02d/%d loss=%.6f" % (step + 1, OVERFIT_STEPS, last_step_loss),
@@ -1254,7 +1163,6 @@ def overfit_first_batch(
     stop_timer()
 
     if completed_steps == OVERFIT_STEPS:
-        _LOG_CONTEXT.update(step=completed_steps, sweep=None, phase="final_eval")
         final_loss = first_batch_loss(model, inputs, labels)
 
     return dict(
