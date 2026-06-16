@@ -9,13 +9,14 @@ Descends from https://github.com/tysam-code/hlb-CIFAR10/blob/main/main.py
 #                  Setup                    #
 #############################################
 
+import copy
 import os
 import sys
 
 with open(sys.argv[0]) as f:
     code = f.read()
 import uuid
-from math import ceil
+from math import ceil, floor, log, log10
 
 import torch
 from torch import nn
@@ -241,6 +242,9 @@ class BatchNorm(nn.BatchNorm2d):
         self.weight.requires_grad = False
         # Note that PyTorch already initializes the weights to one and bias to zero
 
+    def train(self, mode=True):
+        return super().train(True)
+
 
 class Conv(nn.Conv2d):
     def __init__(self, in_channels, out_channels):
@@ -335,128 +339,116 @@ class CifarNet(nn.Module):
 ############################################
 
 
-def log_step(epoch, step, total_steps, loss, head_lr, muon_lr):
+def log_train_loss(run, step, total_steps, loss, head_lr, muon_lr):
     print(
-        f"step={step}/{total_steps} epoch={epoch} "
+        f"train_loss run={run} step={step}/{total_steps} "
         f"loss={loss:.4f} head_lr={head_lr:.6g} muon_lr={muon_lr:.6g}",
         flush=True,
     )
 
 
-def log_eval(run, epoch, val_acc, time_seconds):
-    run_info = f" run={run}" if run is not None else ""
-    print(
-        f"eval{run_info} epoch={epoch} val_acc={val_acc:.4f} "
-        f"time_seconds={time_seconds:.4f}",
-        flush=True,
-    )
-
-
-def log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds):
-    print(
-        f"eval epoch=final 25batch_train_loss={train25_loss:.4f} "
-        f"val_acc={val_acc:.4f} tta_val_acc={tta_val_acc:.4f} "
-        f"time_seconds={time_seconds:.4f}",
-        flush=True,
-    )
-
-
-############################################
-#               Evaluation                 #
-############################################
-
-
-def infer(model, loader, tta_level=0):
-
-    # Test-time augmentation strategy (for tta_level=2):
-    # 1. Flip/mirror the image left-to-right (50% of the time).
-    # 2. Translate the image by one pixel either up-and-left or down-and-right (50% of the time,
-    #    i.e. both happen 25% of the time).
-    #
-    # This creates 6 views per image (left/right times the two translations and no-translation),
-    # which we evaluate and then weight according to the given probabilities.
-
-    def infer_basic(inputs, net):
-        return net(inputs).clone()
-
-    def infer_mirror(inputs, net):
-        return 0.5 * net(inputs) + 0.5 * net(inputs.flip(-1))
-
-    def infer_mirror_translate(inputs, net):
-        logits = infer_mirror(inputs, net)
-        pad = 1
-        padded_inputs = F.pad(inputs, (pad,) * 4, "reflect")
-        inputs_translate_list = [
-            padded_inputs[:, :, 0:32, 0:32],
-            padded_inputs[:, :, 2:34, 2:34],
-        ]
-        logits_translate_list = [
-            infer_mirror(inputs_translate, net)
-            for inputs_translate in inputs_translate_list
-        ]
-        logits_translate = torch.stack(logits_translate_list).mean(0)
-        return 0.5 * logits + 0.5 * logits_translate
-
-    model.eval()
-    test_images = loader.normalized_images()
-    infer_fn = [infer_basic, infer_mirror, infer_mirror_translate][tta_level]
-    with torch.inference_mode():
-        return torch.cat(
-            [infer_fn(inputs, model) for inputs in test_images.split(2000)]
+def log_lr_landscape(search_name, interval_steps, results_by_k):
+    for k in sorted(results_by_k):
+        result = results_by_k[k]
+        losses = result["losses"]
+        print(
+            "muon_lr_loss_landscape search=%s interval_steps=%d k=%d muon_lr=%.6g "
+            "loss_after_interval=%.6f final_loss=%.6f"
+            % (
+                search_name,
+                interval_steps,
+                k,
+                result["muon_lr"],
+                losses[interval_steps],
+                losses[-1],
+            ),
+            flush=True,
         )
 
 
-def evaluate(model, loader, tta_level=0):
-    logits = infer(model, loader, tta_level)
-    return (logits.argmax(1) == loader.labels).float().mean().item()
+def log_lr_search_eval(search_name, k, lr):
+    print(
+        "muon_lr_search_eval search=%s k=%d rounded_muon_lr=%.6g"
+        % (search_name, k, lr),
+        flush=True,
+    )
 
 
-def evaluate_train_loss(model, batches):
-    model.eval()
-    total_loss = 0.0
-    total_examples = 0
-    with torch.inference_mode():
-        for inputs, labels in batches:
-            outputs = model(inputs)
-            total_loss += F.cross_entropy(
-                outputs.float(), labels, label_smoothing=0.2, reduction="sum"
-            ).item()
-            total_examples += len(labels)
-    return total_loss / total_examples
+def log_lr_search_cache_hit(search_name, k, lr):
+    print(
+        "muon_lr_search_cache_hit search=%s k=%d rounded_muon_lr=%.6g"
+        % (search_name, k, lr),
+        flush=True,
+    )
 
 
 ############################################
 #                Training                  #
 ############################################
 
-TRAIN_EVAL_BATCHES = 25
+OVERFIT_BATCH_SIZES = [500, 2000, 10000]
+N_SEARCH_STEPS = [1, 2, 5, 10]
+OVERFIT_TRAIN_STEPS = 50
+LR_SEARCH_BASE = 0.2
+LR_SEARCH_FACTOR = 0.6
+LR_SEARCH_SIG_FIGS = 2
+LR_SEARCH_MAX_MOVES = 60
+LABEL_SMOOTHING = 0.2
+SGD_LR_MULTS = {
+    500: 1.0,
+    2000: 0.8,
+    10000: 0.8,
+}
 RUN_CONFIGS = [
-    dict(batch_size=125, muon_lr=0.04),
-    dict(batch_size=500, muon_lr=0.079),
-    dict(batch_size=2000, muon_lr=0.19),
+    dict(
+        batch_size=batch_size,
+        initial_lr=LR_SEARCH_BASE,
+        sgd_lr_mult=SGD_LR_MULTS[batch_size],
+    )
+    for batch_size in OVERFIT_BATCH_SIZES
 ]
 
 
-def main(run, model, batch_size, muon_lr):
-    set_training_seed()
+def rounded_lr(value):
+    if value == 0:
+        return 0.0
+    return round(value, LR_SEARCH_SIG_FIGS - 1 - floor(log10(abs(value))))
 
-    SGD_LR_MULT = batch_size / 2000
-    bias_lr = 104 * SGD_LR_MULT
-    head_lr = 1340 * SGD_LR_MULT
 
-    test_loader = CifarLoader("cifar10", train=False, batch_size=2000)
-    train_loader = CifarLoader(
-        "cifar10", train=True, batch_size=batch_size, aug=dict(flip=True, translate=2)
-    )
-    if run == "warmup":
-        # The only purpose of the first run is to warmup the compiled model, so we can use dummy data
-        train_loader.labels = torch.randint(
-            0, 10, size=(len(train_loader.labels),), device=train_loader.labels.device
+def lr_from_k(k):
+    return rounded_lr(LR_SEARCH_BASE * LR_SEARCH_FACTOR**k)
+
+
+def nearest_lr_k(lr):
+    if lr <= 0:
+        raise ValueError(f"LR must be positive, got {lr}")
+    return int(round(log(lr / LR_SEARCH_BASE) / log(LR_SEARCH_FACTOR)))
+
+
+def make_first_train_batch(batch_size):
+    train_loader = CifarLoader("cifar10", train=True, batch_size=batch_size)
+    train_loader.shuffle = False
+    inputs, labels = next(iter(train_loader))
+    train_images = train_loader.normalized_images()[:5000]
+    return inputs.detach(), labels.detach(), train_images
+
+
+def first_batch_loss(model, inputs, labels):
+    model.train()
+    with torch.inference_mode():
+        outputs = model(inputs)
+        loss = F.cross_entropy(
+            outputs.float(),
+            labels,
+            label_smoothing=LABEL_SMOOTHING,
+            reduction="mean",
         )
-    total_train_steps = ceil(8 * len(train_loader))
-    whiten_bias_train_steps = ceil(3 * len(train_loader))
+    return loss.item()
 
-    # Create optimizers and learning rate schedulers
+
+def make_optimizers(model, batch_size, muon_lr, sgd_lr_mult):
+    bias_lr = 104 * sgd_lr_mult
+    head_lr = 1340 * sgd_lr_mult
     filter_params = [
         p for p in model.parameters() if len(p.shape) == 4 and p.requires_grad
     ]
@@ -472,124 +464,343 @@ def main(run, model, batch_size, muon_lr):
         param_configs, momentum=0.85, nesterov=True, fused=True
     )
     optimizer2 = Muon(filter_params, lr=muon_lr, momentum=0.6, nesterov=True)
-    optimizers = [optimizer1, optimizer2]
-    for opt in optimizers:
-        for group in opt.param_groups:
-            group["initial_lr"] = group["lr"]
+    return optimizer1, optimizer2
 
-    # For accurately timing GPU code
-    starter = torch.cuda.Event(enable_timing=True)
-    ender = torch.cuda.Event(enable_timing=True)
-    time_seconds = 0.0
 
-    def start_timer():
-        starter.record()
+def set_muon_lr(muon_optimizer, muon_lr):
+    muon_lr = rounded_lr(muon_lr)
+    for group in muon_optimizer.param_groups:
+        group["lr"] = muon_lr
+    return muon_lr
 
-    def stop_timer():
-        ender.record()
-        torch.cuda.synchronize()
-        nonlocal time_seconds
-        time_seconds += 1e-3 * starter.elapsed_time(ender)
 
-    model.reset()
-    step = 0
-    train_eval_batches = []
-
-    # Initialize the whitening layer using training images
-    start_timer()
-    train_images = train_loader.normalized_images()[:5000]
-    model.init_whiten(train_images)
-    stop_timer()
-
-    for epoch in range(ceil(total_train_steps / len(train_loader))):
-        ####################
-        #     Training     #
-        ####################
-
-        start_timer()
-        model.train()
-        for inputs, labels in train_loader:
-            train_eval_batches.append((inputs.detach(), labels.detach()))
-            train_eval_batches = train_eval_batches[-TRAIN_EVAL_BATCHES:]
-            outputs = model(inputs, whiten_bias_grad=(step < whiten_bias_train_steps))
-            loss = F.cross_entropy(
-                outputs, labels, label_smoothing=0.2, reduction="mean"
-            )
-            loss.backward()
-            for group in optimizer1.param_groups[:1]:
-                group["lr"] = group["initial_lr"] * (1 - step / whiten_bias_train_steps)
-            for group in optimizer1.param_groups[1:] + optimizer2.param_groups:
-                group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
-            for opt in optimizers:
-                opt.step()
-            model.zero_grad(set_to_none=True)
-            step += 1
-            log_step(
-                epoch=epoch,
-                step=step,
-                total_steps=total_train_steps,
-                loss=loss.item(),
-                head_lr=optimizer1.param_groups[2]["lr"],
-                muon_lr=optimizer2.param_groups[0]["lr"],
-            )
-            if step >= total_train_steps:
-                break
-        stop_timer()
-
-        ####################
-        #    Evaluation    #
-        ####################
-
-        val_acc = evaluate(model, test_loader, tta_level=0)
-        log_eval(run, epoch, val_acc, time_seconds)
-        run = None  # Only print the run number once
-
-    ####################
-    #  TTA Evaluation  #
-    ####################
-
-    start_timer()
-    train25_loss = evaluate_train_loss(model, train_eval_batches)
-    tta_val_acc = evaluate(model, test_loader, tta_level=2)
-    stop_timer()
-    log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds)
-
+def snapshot_training_state(model, optimizers):
     return dict(
-        train25_loss=train25_loss,
-        **{"25batch_train_loss": train25_loss},
-        val_acc=val_acc,
-        tta_val_acc=tta_val_acc,
-        batch_size=batch_size,
-        muon_lr=muon_lr,
-        sgd_lr_mult=SGD_LR_MULT,
+        model={
+            name: value.detach().clone()
+            for name, value in model.state_dict().items()
+        },
+        optimizers=[copy.deepcopy(optimizer.state_dict()) for optimizer in optimizers],
     )
 
 
-if __name__ == "__main__":
-    # We re-use the compiled model between runs to save the non-data-dependent compilation time
+def load_training_state(model, optimizers, state):
+    model.load_state_dict(state["model"])
+    for optimizer, optimizer_state in zip(optimizers, state["optimizers"]):
+        optimizer.load_state_dict(optimizer_state)
+    model.zero_grad(set_to_none=True)
+
+
+def train_one_step(model, optimizers, muon_optimizer, inputs, labels, muon_lr):
+    set_muon_lr(muon_optimizer, muon_lr)
+    model.train()
+    model.zero_grad(set_to_none=True)
+    outputs = model(inputs, whiten_bias_grad=True)
+    loss = F.cross_entropy(
+        outputs,
+        labels,
+        label_smoothing=LABEL_SMOOTHING,
+        reduction="mean",
+    )
+    loss.backward()
+    for optimizer in optimizers:
+        optimizer.step()
+    model.zero_grad(set_to_none=True)
+
+
+def train_interval(
+    model,
+    optimizers,
+    muon_optimizer,
+    inputs,
+    labels,
+    muon_lr,
+    interval_steps,
+):
+    muon_lr = rounded_lr(muon_lr)
+    losses = [first_batch_loss(model, inputs, labels)]
+    completed_steps = 0
+    for _ in range(interval_steps):
+        train_one_step(model, optimizers, muon_optimizer, inputs, labels, muon_lr)
+        step_loss = first_batch_loss(model, inputs, labels)
+        losses.append(step_loss)
+        completed_steps += 1
+        if not torch.isfinite(torch.tensor(step_loss)):
+            break
+    while len(losses) <= interval_steps:
+        losses.append(float("inf"))
+    return dict(
+        muon_lr=muon_lr,
+        losses=losses,
+        completed_steps=completed_steps,
+        final_loss=losses[interval_steps],
+        end_state=snapshot_training_state(model, optimizers),
+    )
+
+
+def better_k(k, incumbent_k, results_by_k):
+    if incumbent_k is None:
+        return True
+    loss = results_by_k[k]["final_loss"]
+    incumbent_loss = results_by_k[incumbent_k]["final_loss"]
+    return (loss, abs(k), k) < (incumbent_loss, abs(incumbent_k), incumbent_k)
+
+
+def best_neighbor_k(middle_k, results_by_k):
+    best_k = middle_k
+    for k in (middle_k - 1, middle_k + 1):
+        if better_k(k, best_k, results_by_k):
+            best_k = k
+    return best_k
+
+
+def search_interval_lr(
+    run,
+    model,
+    optimizers,
+    muon_optimizer,
+    inputs,
+    labels,
+    initial_lr_k,
+    interval_steps,
+    interval_index,
+    interval_start_step,
+    batch_size,
+    n_steps,
+):
+    search_name = "run%d_bs%d_N%d_interval%d_step%d" % (
+        run,
+        batch_size,
+        n_steps,
+        interval_index,
+        interval_start_step,
+    )
+    start_state = snapshot_training_state(model, optimizers)
+    results_by_k = {}
+    initial_lr = lr_from_k(initial_lr_k)
+
+    def evaluate(k):
+        if k not in results_by_k:
+            lr = lr_from_k(k)
+            log_lr_search_eval(search_name, k, lr)
+            load_training_state(model, optimizers, start_state)
+            result = train_interval(
+                model=model,
+                optimizers=optimizers,
+                muon_optimizer=muon_optimizer,
+                inputs=inputs,
+                labels=labels,
+                muon_lr=lr,
+                interval_steps=interval_steps,
+            )
+            result["k"] = k
+            result["initial_lr_k"] = initial_lr_k
+            result["initial_lr"] = initial_lr
+            results_by_k[k] = result
+        else:
+            log_lr_search_cache_hit(search_name, k, results_by_k[k]["muon_lr"])
+        return results_by_k[k]
+
+    initial_candidate_ks = (initial_lr_k - 1, initial_lr_k, initial_lr_k + 1)
+    for k in initial_candidate_ks:
+        evaluate(k)
+
+    middle_k = None
+    for k in initial_candidate_ks:
+        if better_k(k, middle_k, results_by_k):
+            middle_k = k
+
+    for _ in range(LR_SEARCH_MAX_MOVES):
+        evaluate(middle_k - 1)
+        evaluate(middle_k + 1)
+        next_k = best_neighbor_k(middle_k, results_by_k)
+        if next_k == middle_k:
+            best_result = results_by_k[middle_k]
+            load_training_state(model, optimizers, best_result["end_state"])
+            log_lr_landscape(search_name, interval_steps, results_by_k)
+            print(
+                "muon_lr_search_complete search=%s initial_muon_lr=%.6g best_k=%d "
+                "best_muon_lr=%.6g interval_steps=%d interval_loss=%.6f "
+                "evaluated_lrs=%d"
+                % (
+                    search_name,
+                    initial_lr,
+                    middle_k,
+                    best_result["muon_lr"],
+                    interval_steps,
+                    best_result["final_loss"],
+                    len(results_by_k),
+                ),
+                flush=True,
+            )
+            return dict(
+                search_name=search_name,
+                interval_index=interval_index,
+                interval_start_step=interval_start_step,
+                interval_steps=interval_steps,
+                best_k=middle_k,
+                muon_lr=best_result["muon_lr"],
+                initial_lr_k=initial_lr_k,
+                initial_lr=initial_lr,
+                initial_train_loss=best_result["losses"][0],
+                final_train_loss=best_result["final_loss"],
+                completed_steps=best_result["completed_steps"],
+                losses=list(best_result["losses"]),
+                search_evaluations=[
+                    dict(
+                        k=k,
+                        muon_lr=result["muon_lr"],
+                        initial_lr_k=result["initial_lr_k"],
+                        initial_lr=result["initial_lr"],
+                        losses=list(result["losses"]),
+                        final_loss=result["final_loss"],
+                        completed_steps=result["completed_steps"],
+                    )
+                    for k, result in sorted(results_by_k.items())
+                ],
+            )
+        middle_k = next_k
+
+    raise RuntimeError(
+        "LR search did not converge within %d moves for %s"
+        % (LR_SEARCH_MAX_MOVES, search_name)
+    )
+
+
+def run_overfit_n_search(run, model, batch_size, n_steps, initial_lr, sgd_lr_mult):
+    set_training_seed()
+    initial_lr_k = nearest_lr_k(initial_lr)
+    initial_lr = lr_from_k(initial_lr_k)
+    inputs, labels, train_images = make_first_train_batch(batch_size)
+    model.reset()
+    model.init_whiten(train_images)
+    optimizer1, optimizer2 = make_optimizers(
+        model,
+        batch_size=batch_size,
+        muon_lr=rounded_lr(initial_lr),
+        sgd_lr_mult=sgd_lr_mult,
+    )
+    optimizers = [optimizer1, optimizer2]
+
+    losses = [first_batch_loss(model, inputs, labels)]
+    log_train_loss(
+        run=run,
+        step=0,
+        total_steps=OVERFIT_TRAIN_STEPS,
+        loss=losses[-1],
+        head_lr=optimizer1.param_groups[2]["lr"],
+        muon_lr=optimizer2.param_groups[0]["lr"],
+    )
+
+    interval_results = []
+    interval_initial_lr_k = initial_lr_k
+    completed_steps = 0
+    interval_index = 0
+    while completed_steps < OVERFIT_TRAIN_STEPS:
+        interval_steps = min(n_steps, OVERFIT_TRAIN_STEPS - completed_steps)
+        interval_result = search_interval_lr(
+            run=run,
+            model=model,
+            optimizers=optimizers,
+            muon_optimizer=optimizer2,
+            inputs=inputs,
+            labels=labels,
+            initial_lr_k=interval_initial_lr_k,
+            interval_steps=interval_steps,
+            interval_index=interval_index,
+            interval_start_step=completed_steps,
+            batch_size=batch_size,
+            n_steps=n_steps,
+        )
+        interval_results.append(interval_result)
+        interval_initial_lr_k = interval_result["best_k"]
+        actual_losses = interval_result["losses"][
+            1 : 1 + interval_result["completed_steps"]
+        ]
+        for local_offset, loss in enumerate(actual_losses, start=1):
+            global_step = completed_steps + local_offset
+            losses.append(loss)
+            log_train_loss(
+                run=run,
+                step=global_step,
+                total_steps=OVERFIT_TRAIN_STEPS,
+                loss=loss,
+                head_lr=optimizer1.param_groups[2]["lr"],
+                muon_lr=interval_result["muon_lr"],
+            )
+        completed_steps += interval_result["completed_steps"]
+        interval_index += 1
+        if not torch.isfinite(torch.tensor(losses[-1])):
+            break
+
+    while len(losses) <= OVERFIT_TRAIN_STEPS:
+        losses.append(float("inf"))
+
+    return dict(
+        run=run,
+        batch_size=batch_size,
+        n_steps=n_steps,
+        initial_lr_k=initial_lr_k,
+        initial_lr=initial_lr,
+        final_muon_lr=interval_results[-1]["muon_lr"] if interval_results else None,
+        final_muon_lr_k=interval_results[-1]["best_k"] if interval_results else None,
+        sgd_lr_mult=sgd_lr_mult,
+        losses=losses,
+        initial_train_loss=losses[0],
+        final_train_loss=losses[OVERFIT_TRAIN_STEPS],
+        steps=completed_steps,
+        target_steps=OVERFIT_TRAIN_STEPS,
+        interval_results=interval_results,
+    )
+
+
+def main():
+    # We re-use the model object between runs to save non-data-dependent setup time.
     set_training_seed()
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
     # model.compile(mode="max-autotune")
 
-    # main("warmup", model, RUN_CONFIGS[0]["batch_size"], RUN_CONFIGS[0]["muon_lr"])
     results = []
-    for run, config in enumerate(RUN_CONFIGS):
-        print(
-            "cifar_baseline2 run=%d batch_size=%d muon_lr=%.6g"
-            % (run, config["batch_size"], config["muon_lr"]),
-            flush=True,
-        )
-        result = main(run, model, config["batch_size"], config["muon_lr"])
-        results.append(result)
-        print("Batch size:         %d" % result["batch_size"])
-        print("Muon lr:            %.6g" % result["muon_lr"])
-        print("SGD lr mult:        %.6g" % result["sgd_lr_mult"])
-        print("25batch train loss: %.4f" % result["train25_loss"])
-        print("Val acc:            %.4f" % result["val_acc"])
-        print("TTA val:            %.4f" % result["tta_val_acc"])
+    for config in RUN_CONFIGS:
+        for n_steps in N_SEARCH_STEPS:
+            run = len(results)
+            print(
+                "cifar_baseline2_overfit_n_search run=%d batch_size=%d N=%d "
+                "initial_muon_lr=%.6g initial_muon_lr_k=%d"
+                % (
+                    run,
+                    config["batch_size"],
+                    n_steps,
+                    config["initial_lr"],
+                    nearest_lr_k(config["initial_lr"]),
+                ),
+                flush=True,
+            )
+            result = run_overfit_n_search(
+                run=run,
+                model=model,
+                batch_size=config["batch_size"],
+                n_steps=n_steps,
+                initial_lr=config["initial_lr"],
+                sgd_lr_mult=config["sgd_lr_mult"],
+            )
+            results.append(result)
+            print("Batch size:          %d" % result["batch_size"])
+            print("N steps:             %d" % result["n_steps"])
+            print("Initial Muon lr:     %.6g" % result["initial_lr"])
+            print("Initial Muon lr k:   %d" % result["initial_lr_k"])
+            print("Final Muon lr:       %.6g" % result["final_muon_lr"])
+            print("Final Muon lr k:     %d" % result["final_muon_lr_k"])
+            print("SGD lr mult:         %.6g" % result["sgd_lr_mult"])
+            print("Initial train loss:  %.6f" % result["initial_train_loss"])
+            print("Final train loss:    %.6f" % result["final_train_loss"])
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "log.pt")
     torch.save(dict(code=code, results=results), log_path)
-    print(os.path.abspath(log_path))
+    print(os.path.abspath(log_path), flush=True)
+
+
+if __name__ == "__main__":
+    main()
