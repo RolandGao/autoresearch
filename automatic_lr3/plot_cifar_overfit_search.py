@@ -28,6 +28,7 @@ RUN_RE = re.compile(
     rf"M=(?P<M>\d+) "
     rf"final_k_granularity=(?P<final_k_granularity>{FLOAT_RE}) "
     rf"cooldown_final_k_granularity=(?P<cooldown_final_k_granularity>{FLOAT_RE}) "
+    rf"(?:muon_orthogonalize=(?P<muon_orthogonalize>\S+) )?"
     rf"initial_muon_lr=(?P<initial_muon_lr>{FLOAT_RE}) "
     rf"initial_muon_lr_k=(?P<initial_muon_lr_k>{FLOAT_RE})"
 )
@@ -91,6 +92,7 @@ class Run:
     M: int
     final_k_granularity: float
     cooldown_final_k_granularity: float
+    muon_orthogonalize: str | None
     initial_muon_lr: float
     initial_muon_lr_k: float
     train: list[TrainPoint] = field(default_factory=list)
@@ -103,6 +105,7 @@ class Run:
             f"run={self.run} N={self.N} M={self.M} "
             f"G={format_number(self.final_k_granularity)} "
             f"CG={format_number(self.cooldown_final_k_granularity)}"
+            f"{self.orthogonalize_label}"
         )
 
     @property
@@ -111,6 +114,12 @@ class Run:
             f"G={format_number(self.final_k_granularity)}, "
             f"CG={format_number(self.cooldown_final_k_granularity)}"
         )
+
+    @property
+    def orthogonalize_label(self) -> str:
+        if self.muon_orthogonalize is None:
+            return ""
+        return f" orth={self.muon_orthogonalize}"
 
     @property
     def initial_loss(self) -> float | None:
@@ -247,6 +256,7 @@ def parse_log(path: Path) -> list[Run]:
                     cooldown_final_k_granularity=float(
                         match.group("cooldown_final_k_granularity")
                     ),
+                    muon_orthogonalize=match.group("muon_orthogonalize"),
                     initial_muon_lr=float(match.group("initial_muon_lr")),
                     initial_muon_lr_k=float(match.group("initial_muon_lr_k")),
                 )
@@ -305,6 +315,7 @@ def write_csvs(runs: list[Run], output_dir: Path) -> None:
                 "M",
                 "final_k_granularity",
                 "cooldown_final_k_granularity",
+                "muon_orthogonalize",
                 "initial_muon_lr",
                 "initial_muon_lr_k",
                 "initial_loss",
@@ -332,6 +343,7 @@ def write_csvs(runs: list[Run], output_dir: Path) -> None:
                     "M": run.M,
                     "final_k_granularity": run.final_k_granularity,
                     "cooldown_final_k_granularity": run.cooldown_final_k_granularity,
+                    "muon_orthogonalize": run.muon_orthogonalize,
                     "initial_muon_lr": run.initial_muon_lr,
                     "initial_muon_lr_k": run.initial_muon_lr_k,
                     "initial_loss": initial_loss,
@@ -688,49 +700,143 @@ def plot_final_loss_by_config(runs: list[Run], output_dir: Path) -> None:
     ranked = sorted_complete_runs(runs)
     groups = group_by_granularity(ranked)
 
-    fig, axes = plt.subplots(1, len(groups), figsize=(5 * len(groups), 4), squeeze=False)
-    for ax, (granularity, group) in zip(axes[0], groups.items()):
-        for M in sorted({run.M for run in group}):
-            subset = sorted([run for run in group if run.M == M], key=lambda run: run.N)
-            ax.plot(
-                [run.N for run in subset],
-                [run.final_loss for run in subset],
-                marker="o",
-                linewidth=1.5,
-                label=f"M={M}",
-            )
-        ax.set_title(f"G={format_number(granularity[0])}, CG={format_number(granularity[1])}")
-        ax.set_xlabel("N steps")
-        ax.set_ylabel("final train loss")
-        style_axes(ax)
-        ax.legend(fontsize=8)
+    if not ranked:
+        return
 
-    fig.tight_layout()
+    metrics = [
+        ("Loss after 50 steps", "train loss", lambda run: run.loss_at_step(50)),
+        ("Loss after 10 steps", "train loss", lambda run: run.loss_at_step(10)),
+        ("Loss after 20 steps", "train loss", lambda run: run.loss_at_step(20)),
+        (
+            "First step below 0.9",
+            "step",
+            lambda run: (
+                point.step if (point := run.first_step_below(0.9)) is not None else math.nan
+            ),
+        ),
+        (
+            "First step below 0.88",
+            "step",
+            lambda run: (
+                point.step if (point := run.first_step_below(0.88)) is not None else math.nan
+            ),
+        ),
+        (
+            "First step below 0.87",
+            "step",
+            lambda run: (
+                point.step if (point := run.first_step_below(0.87)) is not None else math.nan
+            ),
+        ),
+    ]
+
+    ncols = 3
+    nrows = math.ceil(len(metrics) / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(16, 8.5), squeeze=False)
+    flat_axes = axes.ravel()
+    multiple_granularities = len(groups) > 1
+
+    for ax, (title, ylabel, metric_fn) in zip(flat_axes, metrics):
+        for granularity, group in groups.items():
+            for M in sorted({run.M for run in group}):
+                subset = sorted([run for run in group if run.M == M], key=lambda run: run.N)
+                values = [metric_fn(run) for run in subset]
+                if all(value is None or math.isnan(value) for value in values):
+                    continue
+                label = f"M={M}"
+                if multiple_granularities:
+                    label = (
+                        f"G={format_number(granularity[0])} "
+                        f"CG={format_number(granularity[1])} {label}"
+                    )
+                ax.plot(
+                    [run.N for run in subset],
+                    values,
+                    marker="o",
+                    linewidth=1.3,
+                    label=label,
+                )
+                for run, value in zip(subset, values):
+                    if value is None or math.isnan(value):
+                        continue
+                    ax.annotate(
+                        str(run.run),
+                        (run.N, value),
+                        textcoords="offset points",
+                        xytext=(0, 4),
+                        ha="center",
+                        fontsize=6,
+                        alpha=0.7,
+                    )
+
+        ax.set_title(title)
+        ax.set_xlabel("N steps")
+        ax.set_ylabel(ylabel)
+        ax.set_xticks(sorted({run.N for run in ranked}))
+        style_axes(ax)
+
+    for ax in flat_axes[len(metrics) :]:
+        ax.set_visible(False)
+
+    handles, labels = flat_axes[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(
+            handles,
+            labels,
+            loc="lower center",
+            ncol=min(6, len(labels)),
+            fontsize=8,
+        )
+    fig.suptitle("Search metrics by N and M config; lower is better", y=0.98)
+    fig.tight_layout(rect=(0, 0.06, 1, 0.95))
     fig.savefig(output_dir / "final_loss_by_config.png", dpi=180)
     plt.close(fig)
 
 
+def remove_stale_plots(output_dir: Path) -> None:
+    for filename in ("final_loss_heatmaps.png", "final_loss_ranked.png"):
+        (output_dir / filename).unlink(missing_ok=True)
+
+
 def plot_muon_lr_curves(runs: list[Run], output_dir: Path) -> None:
-    ranked = sorted_complete_runs(runs)
-    top_runs = ranked[:8]
+    complete_runs = sorted_complete_runs(runs)
+    Ns = sorted({run.N for run in complete_runs})
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    for run in top_runs:
-        points = sorted(run.train, key=lambda point: point.step)
-        ax.plot(
-            [point.step for point in points],
-            [point.muon_lr for point in points],
-            marker=".",
-            linewidth=1.2,
-            label=run.label,
-        )
+    if not Ns:
+        return
 
-    ax.set_title("Applied Muon LR for top runs")
-    ax.set_xlabel("step")
-    ax.set_ylabel("Muon LR")
-    ax.set_yscale("log")
-    style_axes(ax)
-    ax.legend(fontsize=7)
+    ncols = min(3, len(Ns))
+    nrows = math.ceil(len(Ns) / ncols)
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(5.5 * ncols, 3.8 * nrows),
+        squeeze=False,
+        sharex=True,
+        sharey=True,
+    )
+    flat_axes = axes.ravel()
+
+    for ax, N in zip(flat_axes, Ns):
+        for run in sorted([run for run in complete_runs if run.N == N], key=lambda run: run.M):
+            points = sorted(run.train, key=lambda point: point.step)
+            ax.plot(
+                [point.step for point in points],
+                [point.muon_lr for point in points],
+                marker=".",
+                linewidth=1.2,
+                label=f"M={run.M} run={run.run}",
+            )
+        ax.set_title(f"N={N}")
+        ax.set_xlabel("step")
+        ax.set_ylabel("Muon LR")
+        style_axes(ax)
+        ax.legend(fontsize=7)
+
+    for ax in flat_axes[len(Ns) :]:
+        ax.set_visible(False)
+
+    fig.suptitle("Applied Muon LR by N; all M curves", y=0.98)
     fig.tight_layout()
     fig.savefig(output_dir / "top_muon_lr_curves.png", dpi=180)
     plt.close(fig)
@@ -758,9 +864,8 @@ def plot_search_evaluation_counts(runs: list[Run], output_dir: Path) -> None:
 
 
 def plot_all(runs: list[Run], output_dir: Path) -> None:
+    remove_stale_plots(output_dir)
     plot_loss_curves(runs, output_dir)
-    plot_final_loss_bars(runs, output_dir)
-    plot_heatmaps(runs, output_dir)
     plot_final_loss_by_config(runs, output_dir)
     plot_muon_lr_curves(runs, output_dir)
     plot_search_evaluation_counts(runs, output_dir)

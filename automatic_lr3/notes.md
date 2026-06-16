@@ -22,3 +22,11 @@ currently, the lr search is parameterized by lr = 0.2*0.6^k, rounded to 2 sig fi
 currently, we have a hparam N, that divides the train steps into intervals of N steps such that the N steps are searched together with a constant lr. now we introduce a new hparam called M. M can be either 1 or 2. after the N steps in the interval, we attach a cooldown of M steps with an independently searched constant lr. the best lr for the N steps interval is not based on the train loss after N steps but instead based on the train loss after the cooldown of M steps. after finding the best lr for the N steps by using the train loss after the M steps cooldown, we discard the cooldown steps and use the checkpoint after the N steps to keep going. for the last N steps interval where having M more steps would go over the total train steps, we won't have the cooldown.
 
 for each fo the N steps interval and the M steps cooldown, we can choose "coarse" or "precise" for the search. instead of having just coarse or precise, use an hparam called final_k_granularity. if this hparam is 1, it's "coarse", and currently precise means this hparam is 0.25. do not use words coarse and precise but instead use final_k_granularity. 
+
+i will introduce a few more hparams. normal_equation_dw. if normal_equation_dw is False, the current behaviour holds. if normal_equation_dw is true, set dw to minimize dy=dw*x, where dy is the output gradient and x is the input and dw is the weight and they do matrix multiplication. use the normal equation with lambda = 0 to solve for dw. this applies to only muon conv weights. 
+
+pseudo_inverse_dx. if pseudo_inverse_dx is False, current behaviour holds. if pseudo_inverse_dx is True, set dx to minimize dy=w*dx. x is solved using pseudo inverse. applies to only muon conv weights. 
+
+norm_inverse. if norm_inverse is False, current behaviour holds. if norm_inverse is True, the BN backwards is modified. originally, forward is (x-mean(x))/(std(x)), and backwards is kind of like (tangent(dy))/std(x). we modify the backwards to (tangent(dy))*std(x) instead. our BN norm group is per-output-channel, so we still do that. 
+
+remove_norm. if remove_norm is False, current behaviour holds. if remove_norm is True, remove BN layers from the model. if remove_norm is True, norm_inverse does not matter.

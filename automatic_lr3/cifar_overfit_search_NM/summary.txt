@@ -1,0 +1,243 @@
+CIFAR overfit LR search summary
+Input log: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_NM.log
+Output directory: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_NM
+Runs parsed: 30
+
+Best run
+  run=11 N=2 M=5 G=1 CG=1 orth=True: final_loss=0.866933 initial_loss=2.31348 final_muon_lr=0.00026 final_muon_lr_k=13
+
+Final-loss distribution
+  min=0.866933
+  median=0.867163
+  max=0.880209
+  spread=0.013276
+  worst=run=1 N=1 M=1 G=1 CG=1 orth=True: final_loss=0.880209
+
+Ranking: loss after 50 steps
+   1. run=11 N=2 M=5 G=1 CG=1 orth=True: step=50 loss=0.866933 final_loss=0.866933 final_muon_lr=0.00026
+   2. run=9 N=2 M=3 G=1 CG=1 orth=True: step=50 loss=0.866944 final_loss=0.866944 final_muon_lr=0.00026
+   3. run=16 N=3 M=4 G=1 CG=1 orth=True: step=50 loss=0.866961 final_loss=0.866961 final_muon_lr=0.00044
+   4. run=28 N=5 M=4 G=1 CG=1 orth=True: step=50 loss=0.866966 final_loss=0.866966 final_muon_lr=0.00073
+   5. run=29 N=5 M=5 G=1 CG=1 orth=True: step=50 loss=0.866967 final_loss=0.866967 final_muon_lr=0.00073
+   6. run=10 N=2 M=4 G=1 CG=1 orth=True: step=50 loss=0.866989 final_loss=0.866989 final_muon_lr=0.00044
+   7. run=22 N=4 M=4 G=1 CG=1 orth=True: step=50 loss=0.866999 final_loss=0.866999 final_muon_lr=0.00044
+   8. run=17 N=3 M=5 G=1 CG=1 orth=True: step=50 loss=0.867 final_loss=0.867 final_muon_lr=0.0034
+   9. run=23 N=4 M=5 G=1 CG=1 orth=True: step=50 loss=0.867006 final_loss=0.867006 final_muon_lr=0.00044
+  10. run=13 N=3 M=1 G=1 CG=1 orth=True: step=50 loss=0.86701 final_loss=0.86701 final_muon_lr=0.002
+  11. run=25 N=5 M=1 G=1 CG=1 orth=True: step=50 loss=0.867015 final_loss=0.867015 final_muon_lr=0.00073
+  12. run=21 N=4 M=3 G=1 CG=1 orth=True: step=50 loss=0.867078 final_loss=0.867078 final_muon_lr=0.00073
+  13. run=15 N=3 M=3 G=1 CG=1 orth=True: step=50 loss=0.867079 final_loss=0.867079 final_muon_lr=0.00044
+  14. run=19 N=4 M=1 G=1 CG=1 orth=True: step=50 loss=0.867098 final_loss=0.867098 final_muon_lr=0.00073
+  15. run=27 N=5 M=3 G=1 CG=1 orth=True: step=50 loss=0.867103 final_loss=0.867103 final_muon_lr=0.00073
+  16. run=8 N=2 M=2 G=1 CG=1 orth=True: step=50 loss=0.867222 final_loss=0.867222 final_muon_lr=0.00073
+  17. run=5 N=1 M=5 G=1 CG=1 orth=True: step=50 loss=0.86724 final_loss=0.86724 final_muon_lr=0.00044
+  18. run=26 N=5 M=2 G=1 CG=1 orth=True: step=50 loss=0.867266 final_loss=0.867266 final_muon_lr=0.00073
+  19. run=7 N=2 M=1 G=1 CG=1 orth=True: step=50 loss=0.86743 final_loss=0.86743 final_muon_lr=0.00073
+  20. run=14 N=3 M=2 G=1 CG=1 orth=True: step=50 loss=0.867498 final_loss=0.867498 final_muon_lr=0.00073
+  21. run=20 N=4 M=2 G=1 CG=1 orth=True: step=50 loss=0.867545 final_loss=0.867545 final_muon_lr=0.00073
+  22. run=4 N=1 M=4 G=1 CG=1 orth=True: step=50 loss=0.867599 final_loss=0.867599 final_muon_lr=0.00044
+  23. run=3 N=1 M=3 G=1 CG=1 orth=True: step=50 loss=0.867881 final_loss=0.867881 final_muon_lr=0.00016
+  24. run=6 N=2 M=0 G=1 CG=1 orth=True: step=50 loss=0.867993 final_loss=0.867993 final_muon_lr=0.00073
+  25. run=18 N=4 M=0 G=1 CG=1 orth=True: step=50 loss=0.868042 final_loss=0.868042 final_muon_lr=0.00073
+  26. run=12 N=3 M=0 G=1 CG=1 orth=True: step=50 loss=0.868215 final_loss=0.868215 final_muon_lr=0.00044
+  27. run=2 N=1 M=2 G=1 CG=1 orth=True: step=50 loss=0.868587 final_loss=0.868587 final_muon_lr=5.6e-05
+  28. run=24 N=5 M=0 G=1 CG=1 orth=True: step=50 loss=0.868668 final_loss=0.868668 final_muon_lr=0.00073
+  29. run=0 N=1 M=0 G=1 CG=1 orth=True: step=50 loss=0.868739 final_loss=0.868739 final_muon_lr=0.00073
+  30. run=1 N=1 M=1 G=1 CG=1 orth=True: step=50 loss=0.880209 final_loss=0.880209 final_muon_lr=0.00073
+
+Ranking: loss after 10 steps
+   1. run=11 N=2 M=5 G=1 CG=1 orth=True: step=10 loss=0.9097 final_loss=0.866933 final_muon_lr=0.00026
+   2. run=8 N=2 M=2 G=1 CG=1 orth=True: step=10 loss=0.9158 final_loss=0.867222 final_muon_lr=0.00073
+   3. run=9 N=2 M=3 G=1 CG=1 orth=True: step=10 loss=0.9232 final_loss=0.866944 final_muon_lr=0.00026
+   4. run=15 N=3 M=3 G=1 CG=1 orth=True: step=10 loss=0.927 final_loss=0.867079 final_muon_lr=0.00044
+   5. run=6 N=2 M=0 G=1 CG=1 orth=True: step=10 loss=0.9289 final_loss=0.867993 final_muon_lr=0.00073
+   6. run=7 N=2 M=1 G=1 CG=1 orth=True: step=10 loss=0.9306 final_loss=0.86743 final_muon_lr=0.00073
+   7. run=14 N=3 M=2 G=1 CG=1 orth=True: step=10 loss=0.9323 final_loss=0.867498 final_muon_lr=0.00073
+   8. run=16 N=3 M=4 G=1 CG=1 orth=True: step=10 loss=0.9334 final_loss=0.866961 final_muon_lr=0.00044
+   9. run=19 N=4 M=1 G=1 CG=1 orth=True: step=10 loss=0.9363 final_loss=0.867098 final_muon_lr=0.00073
+  10. run=21 N=4 M=3 G=1 CG=1 orth=True: step=10 loss=0.9389 final_loss=0.867078 final_muon_lr=0.00073
+  11. run=17 N=3 M=5 G=1 CG=1 orth=True: step=10 loss=0.9408 final_loss=0.867 final_muon_lr=0.0034
+  12. run=18 N=4 M=0 G=1 CG=1 orth=True: step=10 loss=0.948 final_loss=0.868042 final_muon_lr=0.00073
+  13. run=20 N=4 M=2 G=1 CG=1 orth=True: step=10 loss=0.9499 final_loss=0.867545 final_muon_lr=0.00073
+  14. run=12 N=3 M=0 G=1 CG=1 orth=True: step=10 loss=0.9511 final_loss=0.868215 final_muon_lr=0.00044
+  15. run=27 N=5 M=3 G=1 CG=1 orth=True: step=10 loss=0.9544 final_loss=0.867103 final_muon_lr=0.00073
+  16. run=23 N=4 M=5 G=1 CG=1 orth=True: step=10 loss=0.9546 final_loss=0.867006 final_muon_lr=0.00044
+  17. run=22 N=4 M=4 G=1 CG=1 orth=True: step=10 loss=0.9547 final_loss=0.866999 final_muon_lr=0.00044
+  18. run=26 N=5 M=2 G=1 CG=1 orth=True: step=10 loss=0.9573 final_loss=0.867266 final_muon_lr=0.00073
+  19. run=3 N=1 M=3 G=1 CG=1 orth=True: step=10 loss=0.9692 final_loss=0.867881 final_muon_lr=0.00016
+  20. run=10 N=2 M=4 G=1 CG=1 orth=True: step=10 loss=0.9696 final_loss=0.866989 final_muon_lr=0.00044
+  21. run=13 N=3 M=1 G=1 CG=1 orth=True: step=10 loss=0.979 final_loss=0.86701 final_muon_lr=0.002
+  22. run=4 N=1 M=4 G=1 CG=1 orth=True: step=10 loss=0.9979 final_loss=0.867599 final_muon_lr=0.00044
+  23. run=24 N=5 M=0 G=1 CG=1 orth=True: step=10 loss=1.0002 final_loss=0.868668 final_muon_lr=0.00073
+  24. run=28 N=5 M=4 G=1 CG=1 orth=True: step=10 loss=1.0055 final_loss=0.866966 final_muon_lr=0.00073
+  25. run=5 N=1 M=5 G=1 CG=1 orth=True: step=10 loss=1.0098 final_loss=0.86724 final_muon_lr=0.00044
+  26. run=0 N=1 M=0 G=1 CG=1 orth=True: step=10 loss=1.0102 final_loss=0.868739 final_muon_lr=0.00073
+  27. run=25 N=5 M=1 G=1 CG=1 orth=True: step=10 loss=1.0603 final_loss=0.867015 final_muon_lr=0.00073
+  28. run=29 N=5 M=5 G=1 CG=1 orth=True: step=10 loss=1.0631 final_loss=0.866967 final_muon_lr=0.00073
+  29. run=2 N=1 M=2 G=1 CG=1 orth=True: step=10 loss=1.0851 final_loss=0.868587 final_muon_lr=5.6e-05
+  30. run=1 N=1 M=1 G=1 CG=1 orth=True: step=10 loss=1.3622 final_loss=0.880209 final_muon_lr=0.00073
+
+Ranking: loss after 20 steps
+   1. run=10 N=2 M=4 G=1 CG=1 orth=True: step=20 loss=0.8699 final_loss=0.866989 final_muon_lr=0.00044
+   2. run=11 N=2 M=5 G=1 CG=1 orth=True: step=20 loss=0.8707 final_loss=0.866933 final_muon_lr=0.00026
+   3. run=13 N=3 M=1 G=1 CG=1 orth=True: step=20 loss=0.8715 final_loss=0.86701 final_muon_lr=0.002
+   4. run=16 N=3 M=4 G=1 CG=1 orth=True: step=20 loss=0.8721 final_loss=0.866961 final_muon_lr=0.00044
+   5. run=5 N=1 M=5 G=1 CG=1 orth=True: step=20 loss=0.8722 final_loss=0.86724 final_muon_lr=0.00044
+   6. run=8 N=2 M=2 G=1 CG=1 orth=True: step=20 loss=0.8724 final_loss=0.867222 final_muon_lr=0.00073
+   7. run=25 N=5 M=1 G=1 CG=1 orth=True: step=20 loss=0.8726 final_loss=0.867015 final_muon_lr=0.00073
+   8. run=19 N=4 M=1 G=1 CG=1 orth=True: step=20 loss=0.8731 final_loss=0.867098 final_muon_lr=0.00073
+   9. run=7 N=2 M=1 G=1 CG=1 orth=True: step=20 loss=0.8732 final_loss=0.86743 final_muon_lr=0.00073
+  10. run=9 N=2 M=3 G=1 CG=1 orth=True: step=20 loss=0.8741 final_loss=0.866944 final_muon_lr=0.00026
+  11. run=14 N=3 M=2 G=1 CG=1 orth=True: step=20 loss=0.8741 final_loss=0.867498 final_muon_lr=0.00073
+  12. run=15 N=3 M=3 G=1 CG=1 orth=True: step=20 loss=0.8741 final_loss=0.867079 final_muon_lr=0.00044
+  13. run=17 N=3 M=5 G=1 CG=1 orth=True: step=20 loss=0.8741 final_loss=0.867 final_muon_lr=0.0034
+  14. run=4 N=1 M=4 G=1 CG=1 orth=True: step=20 loss=0.8745 final_loss=0.867599 final_muon_lr=0.00044
+  15. run=22 N=4 M=4 G=1 CG=1 orth=True: step=20 loss=0.8748 final_loss=0.866999 final_muon_lr=0.00044
+  16. run=23 N=4 M=5 G=1 CG=1 orth=True: step=20 loss=0.875 final_loss=0.867006 final_muon_lr=0.00044
+  17. run=6 N=2 M=0 G=1 CG=1 orth=True: step=20 loss=0.8751 final_loss=0.867993 final_muon_lr=0.00073
+  18. run=20 N=4 M=2 G=1 CG=1 orth=True: step=20 loss=0.8752 final_loss=0.867545 final_muon_lr=0.00073
+  19. run=26 N=5 M=2 G=1 CG=1 orth=True: step=20 loss=0.8754 final_loss=0.867266 final_muon_lr=0.00073
+  20. run=12 N=3 M=0 G=1 CG=1 orth=True: step=20 loss=0.8758 final_loss=0.868215 final_muon_lr=0.00044
+  21. run=18 N=4 M=0 G=1 CG=1 orth=True: step=20 loss=0.8765 final_loss=0.868042 final_muon_lr=0.00073
+  22. run=21 N=4 M=3 G=1 CG=1 orth=True: step=20 loss=0.877 final_loss=0.867078 final_muon_lr=0.00073
+  23. run=24 N=5 M=0 G=1 CG=1 orth=True: step=20 loss=0.8783 final_loss=0.868668 final_muon_lr=0.00073
+  24. run=29 N=5 M=5 G=1 CG=1 orth=True: step=20 loss=0.8783 final_loss=0.866967 final_muon_lr=0.00073
+  25. run=27 N=5 M=3 G=1 CG=1 orth=True: step=20 loss=0.8785 final_loss=0.867103 final_muon_lr=0.00073
+  26. run=28 N=5 M=4 G=1 CG=1 orth=True: step=20 loss=0.8799 final_loss=0.866966 final_muon_lr=0.00073
+  27. run=0 N=1 M=0 G=1 CG=1 orth=True: step=20 loss=0.8809 final_loss=0.868739 final_muon_lr=0.00073
+  28. run=3 N=1 M=3 G=1 CG=1 orth=True: step=20 loss=0.8809 final_loss=0.867881 final_muon_lr=0.00016
+  29. run=2 N=1 M=2 G=1 CG=1 orth=True: step=20 loss=0.8836 final_loss=0.868587 final_muon_lr=5.6e-05
+  30. run=1 N=1 M=1 G=1 CG=1 orth=True: step=20 loss=0.9718 final_loss=0.880209 final_muon_lr=0.00073
+
+Ranking: first step below 0.9
+   1. run=11 N=2 M=5 G=1 CG=1 orth=True: first_step=11 loss=0.8895 final_loss=0.866933
+   2. run=8 N=2 M=2 G=1 CG=1 orth=True: first_step=12 loss=0.8917 final_loss=0.867222
+   3. run=6 N=2 M=0 G=1 CG=1 orth=True: first_step=12 loss=0.898 final_loss=0.867993
+   4. run=5 N=1 M=5 G=1 CG=1 orth=True: first_step=12 loss=0.8987 final_loss=0.86724
+   5. run=12 N=3 M=0 G=1 CG=1 orth=True: first_step=12 loss=0.8993 final_loss=0.868215
+   6. run=15 N=3 M=3 G=1 CG=1 orth=True: first_step=13 loss=0.8883 final_loss=0.867079
+   7. run=17 N=3 M=5 G=1 CG=1 orth=True: first_step=13 loss=0.8891 final_loss=0.867
+   8. run=7 N=2 M=1 G=1 CG=1 orth=True: first_step=13 loss=0.8912 final_loss=0.86743
+   9. run=4 N=1 M=4 G=1 CG=1 orth=True: first_step=13 loss=0.8916 final_loss=0.867599
+  10. run=10 N=2 M=4 G=1 CG=1 orth=True: first_step=13 loss=0.8916 final_loss=0.866989
+  11. run=26 N=5 M=2 G=1 CG=1 orth=True: first_step=13 loss=0.8916 final_loss=0.867266
+  12. run=21 N=4 M=3 G=1 CG=1 orth=True: first_step=13 loss=0.8922 final_loss=0.867078
+  13. run=22 N=4 M=4 G=1 CG=1 orth=True: first_step=13 loss=0.8926 final_loss=0.866999
+  14. run=19 N=4 M=1 G=1 CG=1 orth=True: first_step=13 loss=0.8929 final_loss=0.867098
+  15. run=14 N=3 M=2 G=1 CG=1 orth=True: first_step=13 loss=0.8932 final_loss=0.867498
+  16. run=23 N=4 M=5 G=1 CG=1 orth=True: first_step=13 loss=0.8942 final_loss=0.867006
+  17. run=18 N=4 M=0 G=1 CG=1 orth=True: first_step=13 loss=0.8951 final_loss=0.868042
+  18. run=20 N=4 M=2 G=1 CG=1 orth=True: first_step=13 loss=0.896 final_loss=0.867545
+  19. run=13 N=3 M=1 G=1 CG=1 orth=True: first_step=13 loss=0.8979 final_loss=0.86701
+  20. run=16 N=3 M=4 G=1 CG=1 orth=True: first_step=13 loss=0.8979 final_loss=0.866961
+  21. run=9 N=2 M=3 G=1 CG=1 orth=True: first_step=14 loss=0.8902 final_loss=0.866944
+  22. run=3 N=1 M=3 G=1 CG=1 orth=True: first_step=14 loss=0.8914 final_loss=0.867881
+  23. run=27 N=5 M=3 G=1 CG=1 orth=True: first_step=14 loss=0.8948 final_loss=0.867103
+  24. run=24 N=5 M=0 G=1 CG=1 orth=True: first_step=14 loss=0.8991 final_loss=0.868668
+  25. run=25 N=5 M=1 G=1 CG=1 orth=True: first_step=14 loss=0.8996 final_loss=0.867015
+  26. run=29 N=5 M=5 G=1 CG=1 orth=True: first_step=15 loss=0.8969 final_loss=0.866967
+  27. run=28 N=5 M=4 G=1 CG=1 orth=True: first_step=16 loss=0.8823 final_loss=0.866966
+  28. run=0 N=1 M=0 G=1 CG=1 orth=True: first_step=16 loss=0.8944 final_loss=0.868739
+  29. run=2 N=1 M=2 G=1 CG=1 orth=True: first_step=16 loss=0.8998 final_loss=0.868587
+  30. run=1 N=1 M=1 G=1 CG=1 orth=True: first_step=31 loss=0.8999 final_loss=0.880209
+
+Ranking: first step below 0.88
+   1. run=10 N=2 M=4 G=1 CG=1 orth=True: first_step=15 loss=0.8777 final_loss=0.866989
+   2. run=8 N=2 M=2 G=1 CG=1 orth=True: first_step=15 loss=0.8782 final_loss=0.867222
+   3. run=5 N=1 M=5 G=1 CG=1 orth=True: first_step=15 loss=0.8784 final_loss=0.86724
+   4. run=13 N=3 M=1 G=1 CG=1 orth=True: first_step=16 loss=0.8765 final_loss=0.86701
+   5. run=4 N=1 M=4 G=1 CG=1 orth=True: first_step=16 loss=0.8785 final_loss=0.867599
+   6. run=16 N=3 M=4 G=1 CG=1 orth=True: first_step=16 loss=0.8785 final_loss=0.866961
+   7. run=7 N=2 M=1 G=1 CG=1 orth=True: first_step=16 loss=0.8788 final_loss=0.86743
+   8. run=29 N=5 M=5 G=1 CG=1 orth=True: first_step=16 loss=0.8795 final_loss=0.866967
+   9. run=25 N=5 M=1 G=1 CG=1 orth=True: first_step=16 loss=0.8797 final_loss=0.867015
+  10. run=26 N=5 M=2 G=1 CG=1 orth=True: first_step=16 loss=0.8798 final_loss=0.867266
+  11. run=11 N=2 M=5 G=1 CG=1 orth=True: first_step=17 loss=0.8721 final_loss=0.866933
+  12. run=9 N=2 M=3 G=1 CG=1 orth=True: first_step=17 loss=0.8738 final_loss=0.866944
+  13. run=19 N=4 M=1 G=1 CG=1 orth=True: first_step=17 loss=0.8757 final_loss=0.867098
+  14. run=22 N=4 M=4 G=1 CG=1 orth=True: first_step=17 loss=0.8757 final_loss=0.866999
+  15. run=23 N=4 M=5 G=1 CG=1 orth=True: first_step=17 loss=0.8758 final_loss=0.867006
+  16. run=14 N=3 M=2 G=1 CG=1 orth=True: first_step=17 loss=0.8771 final_loss=0.867498
+  17. run=6 N=2 M=0 G=1 CG=1 orth=True: first_step=17 loss=0.8782 final_loss=0.867993
+  18. run=12 N=3 M=0 G=1 CG=1 orth=True: first_step=17 loss=0.8791 final_loss=0.868215
+  19. run=20 N=4 M=2 G=1 CG=1 orth=True: first_step=17 loss=0.8791 final_loss=0.867545
+  20. run=15 N=3 M=3 G=1 CG=1 orth=True: first_step=17 loss=0.8799 final_loss=0.867079
+  21. run=21 N=4 M=3 G=1 CG=1 orth=True: first_step=18 loss=0.877 final_loss=0.867078
+  22. run=18 N=4 M=0 G=1 CG=1 orth=True: first_step=18 loss=0.8788 final_loss=0.868042
+  23. run=27 N=5 M=3 G=1 CG=1 orth=True: first_step=18 loss=0.8795 final_loss=0.867103
+  24. run=17 N=3 M=5 G=1 CG=1 orth=True: first_step=19 loss=0.8738 final_loss=0.867
+  25. run=24 N=5 M=0 G=1 CG=1 orth=True: first_step=19 loss=0.8798 final_loss=0.868668
+  26. run=28 N=5 M=4 G=1 CG=1 orth=True: first_step=20 loss=0.8799 final_loss=0.866966
+  27. run=0 N=1 M=0 G=1 CG=1 orth=True: first_step=21 loss=0.8779 final_loss=0.868739
+  28. run=3 N=1 M=3 G=1 CG=1 orth=True: first_step=22 loss=0.8742 final_loss=0.867881
+  29. run=2 N=1 M=2 G=1 CG=1 orth=True: first_step=23 loss=0.8795 final_loss=0.868587
+  1 runs never went below 0.88.
+
+Ranking: first step below 0.87
+   1. run=11 N=2 M=5 G=1 CG=1 orth=True: first_step=19 loss=0.8695 final_loss=0.866933
+   2. run=10 N=2 M=4 G=1 CG=1 orth=True: first_step=20 loss=0.8699 final_loss=0.866989
+   3. run=16 N=3 M=4 G=1 CG=1 orth=True: first_step=22 loss=0.8695 final_loss=0.866961
+   4. run=9 N=2 M=3 G=1 CG=1 orth=True: first_step=23 loss=0.869 final_loss=0.866944
+   5. run=8 N=2 M=2 G=1 CG=1 orth=True: first_step=23 loss=0.8698 final_loss=0.867222
+   6. run=13 N=3 M=1 G=1 CG=1 orth=True: first_step=23 loss=0.8698 final_loss=0.86701
+   7. run=17 N=3 M=5 G=1 CG=1 orth=True: first_step=24 loss=0.8698 final_loss=0.867
+   8. run=23 N=4 M=5 G=1 CG=1 orth=True: first_step=25 loss=0.8684 final_loss=0.867006
+   9. run=22 N=4 M=4 G=1 CG=1 orth=True: first_step=25 loss=0.8686 final_loss=0.866999
+  10. run=21 N=4 M=3 G=1 CG=1 orth=True: first_step=25 loss=0.8692 final_loss=0.867078
+  11. run=5 N=1 M=5 G=1 CG=1 orth=True: first_step=25 loss=0.8693 final_loss=0.86724
+  12. run=15 N=3 M=3 G=1 CG=1 orth=True: first_step=25 loss=0.8697 final_loss=0.867079
+  13. run=29 N=5 M=5 G=1 CG=1 orth=True: first_step=26 loss=0.8686 final_loss=0.866967
+  14. run=28 N=5 M=4 G=1 CG=1 orth=True: first_step=26 loss=0.8687 final_loss=0.866966
+  15. run=25 N=5 M=1 G=1 CG=1 orth=True: first_step=26 loss=0.869 final_loss=0.867015
+  16. run=27 N=5 M=3 G=1 CG=1 orth=True: first_step=26 loss=0.8691 final_loss=0.867103
+  17. run=26 N=5 M=2 G=1 CG=1 orth=True: first_step=26 loss=0.8696 final_loss=0.867266
+  18. run=19 N=4 M=1 G=1 CG=1 orth=True: first_step=26 loss=0.8698 final_loss=0.867098
+  19. run=7 N=2 M=1 G=1 CG=1 orth=True: first_step=27 loss=0.8696 final_loss=0.86743
+  20. run=14 N=3 M=2 G=1 CG=1 orth=True: first_step=29 loss=0.8696 final_loss=0.867498
+  21. run=20 N=4 M=2 G=1 CG=1 orth=True: first_step=31 loss=0.8698 final_loss=0.867545
+  22. run=4 N=1 M=4 G=1 CG=1 orth=True: first_step=32 loss=0.8694 final_loss=0.867599
+  23. run=3 N=1 M=3 G=1 CG=1 orth=True: first_step=32 loss=0.8698 final_loss=0.867881
+  24. run=6 N=2 M=0 G=1 CG=1 orth=True: first_step=32 loss=0.8698 final_loss=0.867993
+  25. run=18 N=4 M=0 G=1 CG=1 orth=True: first_step=33 loss=0.8698 final_loss=0.868042
+  26. run=12 N=3 M=0 G=1 CG=1 orth=True: first_step=35 loss=0.8697 final_loss=0.868215
+  27. run=0 N=1 M=0 G=1 CG=1 orth=True: first_step=39 loss=0.8699 final_loss=0.868739
+  28. run=24 N=5 M=0 G=1 CG=1 orth=True: first_step=39 loss=0.8699 final_loss=0.868668
+  29. run=2 N=1 M=2 G=1 CG=1 orth=True: first_step=40 loss=0.8699 final_loss=0.868587
+  1 runs never went below 0.87.
+
+Best run by N,M
+  N  M  run  G  CG  final_loss  final_muon_lr
+  1  0  0    1    1    0.868739   0.00073
+  1  1  1    1    1    0.880209   0.00073
+  1  2  2    1    1    0.868587   5.6e-05
+  1  3  3    1    1    0.867881   0.00016
+  1  4  4    1    1    0.867599   0.00044
+  1  5  5    1    1    0.86724    0.00044
+  2  0  6    1    1    0.867993   0.00073
+  2  1  7    1    1    0.86743    0.00073
+  2  2  8    1    1    0.867222   0.00073
+  2  3  9    1    1    0.866944   0.00026
+  2  4  10   1    1    0.866989   0.00044
+  2  5  11   1    1    0.866933   0.00026
+  3  0  12   1    1    0.868215   0.00044
+  3  1  13   1    1    0.86701    0.002
+  3  2  14   1    1    0.867498   0.00073
+  3  3  15   1    1    0.867079   0.00044
+  3  4  16   1    1    0.866961   0.00044
+  3  5  17   1    1    0.867      0.0034
+  4  0  18   1    1    0.868042   0.00073
+  4  1  19   1    1    0.867098   0.00073
+  4  2  20   1    1    0.867545   0.00073
+  4  3  21   1    1    0.867078   0.00073
+  4  4  22   1    1    0.866999   0.00044
+  4  5  23   1    1    0.867006   0.00044
+  5  0  24   1    1    0.868668   0.00073
+  5  1  25   1    1    0.867015   0.00073
+  5  2  26   1    1    0.867266   0.00073
+  5  3  27   1    1    0.867103   0.00073
+  5  4  28   1    1    0.866966   0.00073
+  5  5  29   1    1    0.866967   0.00073
+
+Best run by granularity pair
+  G  CG  run  N  M  final_loss
+  1    1    11  2  5  0.866933

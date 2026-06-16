@@ -400,9 +400,9 @@ def log_lr_search_cache_hit(search_name, k, lr):
 ############################################
 
 OVERFIT_BATCH_SIZES = [2000]
-N_SEARCH_STEPS = [1, 2, 3, 4, 5]
-M_COOLDOWN_STEPS = [0, 1, 2, 3, 4, 5]
-MUON_ORTHOGONALIZE = [True]
+N_SEARCH_STEPS = [2]
+M_COOLDOWN_STEPS = [2]
+MUON_ORTHOGONALIZE = [True, False]
 K_GRANULARITY_CONFIGS = [
     dict(final_k_granularity=1, cooldown_final_k_granularity=1),
 ]
