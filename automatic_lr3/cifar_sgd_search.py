@@ -43,6 +43,7 @@ torch.backends.cuda.matmul.allow_tf32 = USE_TF32
 USE_COMPILED_MUON = False
 MUON_DTYPE = torch.bfloat16
 TRAINING_SEED = 0
+NORMAL_EQUATION_PINV_RTOL = 1e-5
 
 
 def set_training_seed():
@@ -58,7 +59,9 @@ def set_training_seed():
 
 def normalize_rows(G):
     assert len(G.shape) == 2
-    row_normalized = G / G.norm(dim=1, keepdim=True)
+    eps = torch.finfo(G.dtype).eps
+    row_normalized = G / G.norm(dim=1, keepdim=True).clamp_min(eps)
+    row_normalized = torch.nan_to_num(row_normalized)
     return row_normalized * (min(G.shape) / G.size(0)) ** 0.5
 
 
@@ -91,7 +94,10 @@ def zeropower_via_newtonschulz5(G, steps=3, eps=0):
     assert len(G.shape) == 2
     a, b, c = (3.4445, -4.7750, 2.0315)
     X = G.to(MUON_DTYPE)
-    X /= X.norm() + eps  # ensure top singular value <= 1
+    X_norm = X.norm()
+    if not torch.isfinite(X_norm) or X_norm == 0:
+        return torch.zeros_like(G)
+    X /= X_norm + eps  # ensure top singular value <= 1
     if G.size(0) > G.size(1):
         X = X.T
     for _ in range(steps):
@@ -348,7 +354,11 @@ def normal_equation_conv2d_weight_grad(
     solve_dtype = torch.float32 if x_matrix.dtype != torch.float64 else torch.float64
     x_solve = x_matrix.to(solve_dtype)
     y_solve = y_matrix.to(solve_dtype)
-    solution = torch.linalg.solve(x_solve.T @ x_solve, x_solve.T @ y_solve)
+    xtx = x_solve.T @ x_solve
+    xty = x_solve.T @ y_solve
+    solution, info = torch.linalg.solve_ex(xtx, xty)
+    if torch.any(info != 0):
+        solution = torch.linalg.pinv(xtx, rtol=NORMAL_EQUATION_PINV_RTOL) @ xty
     return solution.T.reshape(weight_shape).to(grad_output.dtype)
 
 
@@ -357,7 +367,21 @@ def pseudo_inverse_conv2d_input_grad(
 ):
     weight_matrix = weight.reshape(weight.size(0), -1)
     solve_dtype = torch.float32 if weight_matrix.dtype != torch.float64 else torch.float64
-    weight_pinv = torch.linalg.pinv(weight_matrix.to(solve_dtype)).to(grad_output.dtype)
+    weight_solve = weight_matrix.to(solve_dtype)
+    try:
+        svd_kwargs = dict(full_matrices=False)
+        if weight_solve.is_cuda:
+            svd_kwargs["driver"] = "gesvd"
+        U, S, Vh = torch.linalg.svd(weight_solve, **svd_kwargs)
+    except RuntimeError:
+        U, S, Vh = torch.linalg.svd(weight_solve.cpu(), full_matrices=False)
+        U = U.to(weight_solve.device)
+        S = S.to(weight_solve.device)
+        Vh = Vh.to(weight_solve.device)
+
+    cutoff = max(weight_solve.shape) * torch.finfo(S.dtype).eps * S.max()
+    S_inv = torch.where(S > cutoff, S.reciprocal(), torch.zeros_like(S))
+    weight_pinv = ((Vh.mH * S_inv.unsqueeze(0)) @ U.mH).to(grad_output.dtype)
     grad_output_cols = grad_output.flatten(2)
     grad_input_cols = torch.einsum("ko,nol->nkl", weight_pinv, grad_output_cols)
     return F.fold(
@@ -969,6 +993,8 @@ def main(
     model.reset()
     step = 0
     train_eval_batches = []
+    failed = False
+    val_acc = 0.0
 
     # Initialize the whitening layer using training images
     start_timer()
@@ -990,6 +1016,14 @@ def main(
             loss = F.cross_entropy(
                 outputs, labels, label_smoothing=0.2, reduction="mean"
             )
+            if not torch.isfinite(loss):
+                print(
+                    "nonfinite_loss run=%s epoch=%d step=%d loss=%s"
+                    % (run, epoch, step + 1, loss.item()),
+                    flush=True,
+                )
+                failed = True
+                break
             loss.backward()
             for group in optimizer1.param_groups[:1]:
                 group["lr"] = group["initial_lr"] * (1 - step / whiten_bias_train_steps)
@@ -1011,6 +1045,9 @@ def main(
                 break
         stop_timer()
 
+        if failed:
+            break
+
         ####################
         #    Evaluation    #
         ####################
@@ -1023,11 +1060,16 @@ def main(
     #  TTA Evaluation  #
     ####################
 
-    start_timer()
-    train25_loss = evaluate_train_loss(model, train_eval_batches)
-    tta_val_acc = evaluate(model, test_loader, tta_level=2)
-    stop_timer()
-    log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds)
+    if failed:
+        train25_loss = float("inf")
+        tta_val_acc = 0.0
+        log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds)
+    else:
+        start_timer()
+        train25_loss = evaluate_train_loss(model, train_eval_batches)
+        tta_val_acc = evaluate(model, test_loader, tta_level=2)
+        stop_timer()
+        log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds)
 
     return dict(
         train25_loss=train25_loss,
