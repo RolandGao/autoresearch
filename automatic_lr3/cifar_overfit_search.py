@@ -16,7 +16,7 @@ import sys
 with open(sys.argv[0]) as f:
     code = f.read()
 import uuid
-from math import ceil, floor, log, log10
+from math import ceil, floor, isclose, log, log10
 
 import torch
 from torch import nn
@@ -86,14 +86,21 @@ if USE_COMPILED_MUON:
 
 
 class Muon(torch.optim.Optimizer):
-    def __init__(self, params, lr=1e-3, momentum=0, nesterov=False):
+    def __init__(
+        self, params, lr=1e-3, momentum=0, nesterov=False, orthogonalize=True
+    ):
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
         if momentum < 0.0:
             raise ValueError(f"Invalid momentum value: {momentum}")
         if nesterov and momentum <= 0:
             raise ValueError("Nesterov momentum requires a momentum")
-        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov)
+        defaults = dict(
+            lr=lr,
+            momentum=momentum,
+            nesterov=nesterov,
+            orthogonalize=orthogonalize,
+        )
         super().__init__(params, defaults)
 
     def step(self):
@@ -113,9 +120,11 @@ class Muon(torch.optim.Optimizer):
                 g = g.add(buf, alpha=momentum) if group["nesterov"] else buf
 
                 p.data.mul_(len(p.data) ** 0.5 / p.data.norm())  # normalize the weight
-                update = zeropower_via_newtonschulz5(g.reshape(len(g), -1)).view(
-                    g.shape
-                )  # whiten the update
+                update = g
+                if group["orthogonalize"]:
+                    update = zeropower_via_newtonschulz5(g.reshape(len(g), -1)).view(
+                        g.shape
+                    )  # whiten the update
                 p.data.add_(update, alpha=-lr)  # take a step
 
 
@@ -347,20 +356,24 @@ def log_train_loss(run, step, total_steps, loss, head_lr, muon_lr):
     )
 
 
+def format_k(k):
+    return "%g" % k
+
+
 def log_lr_landscape(search_name, interval_steps, results_by_k):
     for k in sorted(results_by_k):
         result = results_by_k[k]
         losses = result["losses"]
         print(
-            "muon_lr_loss_landscape search=%s interval_steps=%d k=%d muon_lr=%.6g "
+            "muon_lr_loss_landscape search=%s interval_steps=%d k=%s muon_lr=%.6g "
             "loss_after_interval=%.6f final_loss=%.6f"
             % (
                 search_name,
                 interval_steps,
-                k,
+                format_k(k),
                 result["muon_lr"],
                 losses[interval_steps],
-                losses[-1],
+                result["final_loss"],
             ),
             flush=True,
         )
@@ -368,16 +381,16 @@ def log_lr_landscape(search_name, interval_steps, results_by_k):
 
 def log_lr_search_eval(search_name, k, lr):
     print(
-        "muon_lr_search_eval search=%s k=%d rounded_muon_lr=%.6g"
-        % (search_name, k, lr),
+        "muon_lr_search_eval search=%s k=%s rounded_muon_lr=%.6g"
+        % (search_name, format_k(k), lr),
         flush=True,
     )
 
 
 def log_lr_search_cache_hit(search_name, k, lr):
     print(
-        "muon_lr_search_cache_hit search=%s k=%d rounded_muon_lr=%.6g"
-        % (search_name, k, lr),
+        "muon_lr_search_cache_hit search=%s k=%s rounded_muon_lr=%.6g"
+        % (search_name, format_k(k), lr),
         flush=True,
     )
 
@@ -386,8 +399,15 @@ def log_lr_search_cache_hit(search_name, k, lr):
 #                Training                  #
 ############################################
 
-OVERFIT_BATCH_SIZES = [500, 2000, 10000]
-N_SEARCH_STEPS = [1, 2, 5, 10]
+OVERFIT_BATCH_SIZES = [2000]
+N_SEARCH_STEPS = [1, 2, 3, 4, 5]
+M_COOLDOWN_STEPS = [0, 1, 2]
+MUON_ORTHOGONALIZE = [True, False]
+K_GRANULARITY_CONFIGS = [
+    dict(final_k_granularity=1, cooldown_final_k_granularity=1),
+    dict(final_k_granularity=1, cooldown_final_k_granularity=0.25),
+    dict(final_k_granularity=0.25, cooldown_final_k_granularity=0.25),
+]
 OVERFIT_TRAIN_STEPS = 50
 LR_SEARCH_BASE = 0.2
 LR_SEARCH_FACTOR = 0.6
@@ -446,7 +466,7 @@ def first_batch_loss(model, inputs, labels):
     return loss.item()
 
 
-def make_optimizers(model, batch_size, muon_lr, sgd_lr_mult):
+def make_optimizers(model, batch_size, muon_lr, sgd_lr_mult, muon_orthogonalize):
     bias_lr = 104 * sgd_lr_mult
     head_lr = 1340 * sgd_lr_mult
     filter_params = [
@@ -463,7 +483,13 @@ def make_optimizers(model, batch_size, muon_lr, sgd_lr_mult):
     optimizer1 = torch.optim.SGD(
         param_configs, momentum=0.85, nesterov=True, fused=True
     )
-    optimizer2 = Muon(filter_params, lr=muon_lr, momentum=0.6, nesterov=True)
+    optimizer2 = Muon(
+        filter_params,
+        lr=muon_lr,
+        momentum=0.6,
+        nesterov=True,
+        orthogonalize=muon_orthogonalize,
+    )
     return optimizer1, optimizer2
 
 
@@ -546,36 +572,85 @@ def better_k(k, incumbent_k, results_by_k):
     return (loss, abs(k), k) < (incumbent_loss, abs(incumbent_k), incumbent_k)
 
 
-def best_neighbor_k(middle_k, results_by_k):
+def best_neighbor_k(middle_k, results_by_k, step):
     best_k = middle_k
-    for k in (middle_k - 1, middle_k + 1):
+    for k in (middle_k - step, middle_k + step):
         if better_k(k, best_k, results_by_k):
             best_k = k
     return best_k
 
 
-def search_interval_lr(
-    run,
+def validate_final_k_granularity(final_k_granularity):
+    if final_k_granularity <= 0 or final_k_granularity > 1:
+        raise ValueError(
+            "final_k_granularity must be in (0, 1], got %s"
+            % final_k_granularity
+        )
+    step = 1
+    while step > final_k_granularity:
+        step /= 2
+    if not isclose(step, final_k_granularity):
+        raise ValueError(
+            "final_k_granularity must be reachable by halving 1, got %s"
+            % final_k_granularity
+        )
+
+
+def refinement_steps(final_k_granularity):
+    validate_final_k_granularity(final_k_granularity)
+    step = 0.5
+    while step >= final_k_granularity:
+        yield step
+        step /= 2
+
+
+def find_best_lr_k(initial_lr_k, final_k_granularity, evaluate, results_by_k):
+    initial_candidate_ks = (initial_lr_k - 1, initial_lr_k, initial_lr_k + 1)
+    for k in initial_candidate_ks:
+        evaluate(k)
+
+    middle_k = None
+    for k in initial_candidate_ks:
+        if better_k(k, middle_k, results_by_k):
+            middle_k = k
+
+    for _ in range(LR_SEARCH_MAX_MOVES):
+        evaluate(middle_k - 1)
+        evaluate(middle_k + 1)
+        next_k = best_neighbor_k(middle_k, results_by_k, 1)
+        if next_k == middle_k:
+            break
+        middle_k = next_k
+    else:
+        raise RuntimeError(
+            "LR search did not converge within %d moves"
+            % LR_SEARCH_MAX_MOVES
+        )
+
+    for step in refinement_steps(final_k_granularity):
+        evaluate(middle_k - step)
+        evaluate(middle_k + step)
+        middle_k = best_neighbor_k(middle_k, results_by_k, step)
+
+    return middle_k
+
+
+def granularity_slug(final_k_granularity):
+    return format_k(final_k_granularity).replace(".", "p")
+
+
+def search_cooldown_lr(
+    search_name,
     model,
     optimizers,
     muon_optimizer,
     inputs,
     labels,
     initial_lr_k,
-    interval_steps,
-    interval_index,
-    interval_start_step,
-    batch_size,
-    n_steps,
+    cooldown_steps,
+    final_k_granularity,
+    start_state,
 ):
-    search_name = "run%d_bs%d_N%d_interval%d_step%d" % (
-        run,
-        batch_size,
-        n_steps,
-        interval_index,
-        interval_start_step,
-    )
-    start_state = snapshot_training_state(model, optimizers)
     results_by_k = {}
     initial_lr = lr_from_k(initial_lr_k)
 
@@ -591,7 +666,7 @@ def search_interval_lr(
                 inputs=inputs,
                 labels=labels,
                 muon_lr=lr,
-                interval_steps=interval_steps,
+                interval_steps=cooldown_steps,
             )
             result["k"] = k
             result["initial_lr_k"] = initial_lr_k
@@ -601,73 +676,226 @@ def search_interval_lr(
             log_lr_search_cache_hit(search_name, k, results_by_k[k]["muon_lr"])
         return results_by_k[k]
 
-    initial_candidate_ks = (initial_lr_k - 1, initial_lr_k, initial_lr_k + 1)
-    for k in initial_candidate_ks:
-        evaluate(k)
-
-    middle_k = None
-    for k in initial_candidate_ks:
-        if better_k(k, middle_k, results_by_k):
-            middle_k = k
-
-    for _ in range(LR_SEARCH_MAX_MOVES):
-        evaluate(middle_k - 1)
-        evaluate(middle_k + 1)
-        next_k = best_neighbor_k(middle_k, results_by_k)
-        if next_k == middle_k:
-            best_result = results_by_k[middle_k]
-            load_training_state(model, optimizers, best_result["end_state"])
-            log_lr_landscape(search_name, interval_steps, results_by_k)
-            print(
-                "muon_lr_search_complete search=%s initial_muon_lr=%.6g best_k=%d "
-                "best_muon_lr=%.6g interval_steps=%d interval_loss=%.6f "
-                "evaluated_lrs=%d"
-                % (
-                    search_name,
-                    initial_lr,
-                    middle_k,
-                    best_result["muon_lr"],
-                    interval_steps,
-                    best_result["final_loss"],
-                    len(results_by_k),
-                ),
-                flush=True,
+    best_k = find_best_lr_k(
+        initial_lr_k=initial_lr_k,
+        final_k_granularity=final_k_granularity,
+        evaluate=evaluate,
+        results_by_k=results_by_k,
+    )
+    best_result = results_by_k[best_k]
+    log_lr_landscape(search_name, cooldown_steps, results_by_k)
+    print(
+        "muon_lr_search_complete search=%s initial_muon_lr=%.6g best_k=%s "
+        "best_muon_lr=%.6g interval_steps=%d final_k_granularity=%.6g "
+        "interval_loss=%.6f evaluated_lrs=%d"
+        % (
+            search_name,
+            initial_lr,
+            format_k(best_k),
+            best_result["muon_lr"],
+            cooldown_steps,
+            final_k_granularity,
+            best_result["final_loss"],
+            len(results_by_k),
+        ),
+        flush=True,
+    )
+    load_training_state(model, optimizers, start_state)
+    return dict(
+        search_name=search_name,
+        cooldown_steps=cooldown_steps,
+        final_k_granularity=final_k_granularity,
+        best_k=best_k,
+        muon_lr=best_result["muon_lr"],
+        initial_lr_k=initial_lr_k,
+        initial_lr=initial_lr,
+        initial_train_loss=best_result["losses"][0],
+        final_train_loss=best_result["final_loss"],
+        completed_steps=best_result["completed_steps"],
+        losses=list(best_result["losses"]),
+        search_evaluations=[
+            dict(
+                k=k,
+                muon_lr=result["muon_lr"],
+                initial_lr_k=result["initial_lr_k"],
+                initial_lr=result["initial_lr"],
+                losses=list(result["losses"]),
+                final_loss=result["final_loss"],
+                completed_steps=result["completed_steps"],
             )
-            return dict(
-                search_name=search_name,
-                interval_index=interval_index,
-                interval_start_step=interval_start_step,
-                interval_steps=interval_steps,
-                best_k=middle_k,
-                muon_lr=best_result["muon_lr"],
-                initial_lr_k=initial_lr_k,
-                initial_lr=initial_lr,
-                initial_train_loss=best_result["losses"][0],
-                final_train_loss=best_result["final_loss"],
-                completed_steps=best_result["completed_steps"],
-                losses=list(best_result["losses"]),
-                search_evaluations=[
-                    dict(
-                        k=k,
-                        muon_lr=result["muon_lr"],
-                        initial_lr_k=result["initial_lr_k"],
-                        initial_lr=result["initial_lr"],
-                        losses=list(result["losses"]),
-                        final_loss=result["final_loss"],
-                        completed_steps=result["completed_steps"],
-                    )
-                    for k, result in sorted(results_by_k.items())
-                ],
-            )
-        middle_k = next_k
-
-    raise RuntimeError(
-        "LR search did not converge within %d moves for %s"
-        % (LR_SEARCH_MAX_MOVES, search_name)
+            for k, result in sorted(results_by_k.items())
+        ],
     )
 
 
-def run_overfit_n_search(run, model, batch_size, n_steps, initial_lr, sgd_lr_mult):
+def search_interval_lr(
+    run,
+    model,
+    optimizers,
+    muon_optimizer,
+    inputs,
+    labels,
+    initial_lr_k,
+    cooldown_initial_lr_k,
+    interval_steps,
+    cooldown_steps,
+    total_steps,
+    final_k_granularity,
+    cooldown_final_k_granularity,
+    interval_index,
+    interval_start_step,
+    batch_size,
+    n_steps,
+):
+    search_name = "run%d_bs%d_N%d_M%d_G%s_CG%s_interval%d_step%d" % (
+        run,
+        batch_size,
+        n_steps,
+        cooldown_steps,
+        granularity_slug(final_k_granularity),
+        granularity_slug(cooldown_final_k_granularity),
+        interval_index,
+        interval_start_step,
+    )
+    start_state = snapshot_training_state(model, optimizers)
+    results_by_k = {}
+    initial_lr = lr_from_k(initial_lr_k)
+    use_cooldown = interval_start_step + interval_steps + cooldown_steps <= total_steps
+    use_cooldown = use_cooldown and cooldown_steps > 0
+
+    def evaluate(k):
+        if k not in results_by_k:
+            lr = lr_from_k(k)
+            log_lr_search_eval(search_name, k, lr)
+            load_training_state(model, optimizers, start_state)
+            result = train_interval(
+                model=model,
+                optimizers=optimizers,
+                muon_optimizer=muon_optimizer,
+                inputs=inputs,
+                labels=labels,
+                muon_lr=lr,
+                interval_steps=interval_steps,
+            )
+            interval_end_state = result["end_state"]
+            result["interval_final_loss"] = result["final_loss"]
+            result["cooldown_result"] = None
+            if (
+                use_cooldown
+                and result["completed_steps"] == interval_steps
+                and torch.isfinite(torch.tensor(result["final_loss"]))
+            ):
+                cooldown_search_name = "%s_cooldown_for_k%s" % (
+                    search_name,
+                    format_k(k),
+                )
+                cooldown_result = search_cooldown_lr(
+                    search_name=cooldown_search_name,
+                    model=model,
+                    optimizers=optimizers,
+                    muon_optimizer=muon_optimizer,
+                    inputs=inputs,
+                    labels=labels,
+                    initial_lr_k=cooldown_initial_lr_k,
+                    cooldown_steps=cooldown_steps,
+                    final_k_granularity=cooldown_final_k_granularity,
+                    start_state=interval_end_state,
+                )
+                result["cooldown_result"] = cooldown_result
+                result["final_loss"] = cooldown_result["final_train_loss"]
+            result["k"] = k
+            result["initial_lr_k"] = initial_lr_k
+            result["initial_lr"] = initial_lr
+            results_by_k[k] = result
+        else:
+            log_lr_search_cache_hit(search_name, k, results_by_k[k]["muon_lr"])
+        return results_by_k[k]
+
+    best_k = find_best_lr_k(
+        initial_lr_k=initial_lr_k,
+        final_k_granularity=final_k_granularity,
+        evaluate=evaluate,
+        results_by_k=results_by_k,
+    )
+    best_result = results_by_k[best_k]
+    load_training_state(model, optimizers, best_result["end_state"])
+    log_lr_landscape(search_name, interval_steps, results_by_k)
+    print(
+        "muon_lr_search_complete search=%s initial_muon_lr=%.6g best_k=%s "
+        "best_muon_lr=%.6g interval_steps=%d cooldown_steps=%d "
+        "final_k_granularity=%.6g cooldown_final_k_granularity=%.6g "
+        "interval_loss=%.6f final_loss=%.6f evaluated_lrs=%d"
+        % (
+            search_name,
+            initial_lr,
+            format_k(best_k),
+            best_result["muon_lr"],
+            interval_steps,
+            cooldown_steps if use_cooldown else 0,
+            final_k_granularity,
+            cooldown_final_k_granularity,
+            best_result["interval_final_loss"],
+            best_result["final_loss"],
+            len(results_by_k),
+        ),
+        flush=True,
+    )
+    best_cooldown_result = best_result["cooldown_result"]
+    return dict(
+        search_name=search_name,
+        interval_index=interval_index,
+        interval_start_step=interval_start_step,
+        interval_steps=interval_steps,
+        cooldown_steps=cooldown_steps if use_cooldown else 0,
+        final_k_granularity=final_k_granularity,
+        cooldown_final_k_granularity=cooldown_final_k_granularity,
+        best_k=best_k,
+        muon_lr=best_result["muon_lr"],
+        cooldown_best_k=(
+            best_cooldown_result["best_k"] if best_cooldown_result else None
+        ),
+        cooldown_muon_lr=(
+            best_cooldown_result["muon_lr"] if best_cooldown_result else None
+        ),
+        initial_lr_k=initial_lr_k,
+        initial_lr=initial_lr,
+        cooldown_initial_lr_k=cooldown_initial_lr_k,
+        cooldown_initial_lr=lr_from_k(cooldown_initial_lr_k),
+        initial_train_loss=best_result["losses"][0],
+        interval_final_train_loss=best_result["interval_final_loss"],
+        final_train_loss=best_result["final_loss"],
+        completed_steps=best_result["completed_steps"],
+        losses=list(best_result["losses"]),
+        cooldown_result=best_cooldown_result,
+        search_evaluations=[
+            dict(
+                k=k,
+                muon_lr=result["muon_lr"],
+                initial_lr_k=result["initial_lr_k"],
+                initial_lr=result["initial_lr"],
+                interval_final_loss=result["interval_final_loss"],
+                losses=list(result["losses"]),
+                final_loss=result["final_loss"],
+                completed_steps=result["completed_steps"],
+                cooldown_result=result["cooldown_result"],
+            )
+            for k, result in sorted(results_by_k.items())
+        ],
+    )
+
+
+def run_overfit_n_search(
+    run,
+    model,
+    batch_size,
+    n_steps,
+    m_steps,
+    final_k_granularity,
+    cooldown_final_k_granularity,
+    muon_orthogonalize,
+    initial_lr,
+    sgd_lr_mult,
+):
     set_training_seed()
     initial_lr_k = nearest_lr_k(initial_lr)
     initial_lr = lr_from_k(initial_lr_k)
@@ -679,6 +907,7 @@ def run_overfit_n_search(run, model, batch_size, n_steps, initial_lr, sgd_lr_mul
         batch_size=batch_size,
         muon_lr=rounded_lr(initial_lr),
         sgd_lr_mult=sgd_lr_mult,
+        muon_orthogonalize=muon_orthogonalize,
     )
     optimizers = [optimizer1, optimizer2]
 
@@ -694,6 +923,7 @@ def run_overfit_n_search(run, model, batch_size, n_steps, initial_lr, sgd_lr_mul
 
     interval_results = []
     interval_initial_lr_k = initial_lr_k
+    cooldown_initial_lr_k = initial_lr_k
     completed_steps = 0
     interval_index = 0
     while completed_steps < OVERFIT_TRAIN_STEPS:
@@ -706,7 +936,12 @@ def run_overfit_n_search(run, model, batch_size, n_steps, initial_lr, sgd_lr_mul
             inputs=inputs,
             labels=labels,
             initial_lr_k=interval_initial_lr_k,
+            cooldown_initial_lr_k=cooldown_initial_lr_k,
             interval_steps=interval_steps,
+            cooldown_steps=m_steps,
+            total_steps=OVERFIT_TRAIN_STEPS,
+            final_k_granularity=final_k_granularity,
+            cooldown_final_k_granularity=cooldown_final_k_granularity,
             interval_index=interval_index,
             interval_start_step=completed_steps,
             batch_size=batch_size,
@@ -714,6 +949,8 @@ def run_overfit_n_search(run, model, batch_size, n_steps, initial_lr, sgd_lr_mul
         )
         interval_results.append(interval_result)
         interval_initial_lr_k = interval_result["best_k"]
+        if interval_result["cooldown_best_k"] is not None:
+            cooldown_initial_lr_k = interval_result["cooldown_best_k"]
         actual_losses = interval_result["losses"][
             1 : 1 + interval_result["completed_steps"]
         ]
@@ -736,14 +973,35 @@ def run_overfit_n_search(run, model, batch_size, n_steps, initial_lr, sgd_lr_mul
     while len(losses) <= OVERFIT_TRAIN_STEPS:
         losses.append(float("inf"))
 
+    last_cooldown_result = next(
+        (
+            interval_result
+            for interval_result in reversed(interval_results)
+            if interval_result["cooldown_best_k"] is not None
+        ),
+        None,
+    )
+
     return dict(
         run=run,
         batch_size=batch_size,
         n_steps=n_steps,
+        m_steps=m_steps,
+        final_k_granularity=final_k_granularity,
+        cooldown_final_k_granularity=cooldown_final_k_granularity,
+        muon_orthogonalize=muon_orthogonalize,
         initial_lr_k=initial_lr_k,
         initial_lr=initial_lr,
         final_muon_lr=interval_results[-1]["muon_lr"] if interval_results else None,
         final_muon_lr_k=interval_results[-1]["best_k"] if interval_results else None,
+        final_cooldown_muon_lr=(
+            last_cooldown_result["cooldown_muon_lr"]
+            if last_cooldown_result
+            else None
+        ),
+        final_cooldown_muon_lr_k=(
+            last_cooldown_result["cooldown_best_k"] if last_cooldown_result else None
+        ),
         sgd_lr_mult=sgd_lr_mult,
         losses=losses,
         initial_train_loss=losses[0],
@@ -763,37 +1021,79 @@ def main():
     results = []
     for config in RUN_CONFIGS:
         for n_steps in N_SEARCH_STEPS:
-            run = len(results)
-            print(
-                "cifar_baseline2_overfit_n_search run=%d batch_size=%d N=%d "
-                "initial_muon_lr=%.6g initial_muon_lr_k=%d"
-                % (
-                    run,
-                    config["batch_size"],
-                    n_steps,
-                    config["initial_lr"],
-                    nearest_lr_k(config["initial_lr"]),
-                ),
-                flush=True,
-            )
-            result = run_overfit_n_search(
-                run=run,
-                model=model,
-                batch_size=config["batch_size"],
-                n_steps=n_steps,
-                initial_lr=config["initial_lr"],
-                sgd_lr_mult=config["sgd_lr_mult"],
-            )
-            results.append(result)
-            print("Batch size:          %d" % result["batch_size"])
-            print("N steps:             %d" % result["n_steps"])
-            print("Initial Muon lr:     %.6g" % result["initial_lr"])
-            print("Initial Muon lr k:   %d" % result["initial_lr_k"])
-            print("Final Muon lr:       %.6g" % result["final_muon_lr"])
-            print("Final Muon lr k:     %d" % result["final_muon_lr_k"])
-            print("SGD lr mult:         %.6g" % result["sgd_lr_mult"])
-            print("Initial train loss:  %.6f" % result["initial_train_loss"])
-            print("Final train loss:    %.6f" % result["final_train_loss"])
+            for m_steps in M_COOLDOWN_STEPS:
+                for muon_orthogonalize in MUON_ORTHOGONALIZE:
+                    for granularity_config in K_GRANULARITY_CONFIGS:
+                        final_k_granularity = granularity_config["final_k_granularity"]
+                        cooldown_final_k_granularity = granularity_config[
+                            "cooldown_final_k_granularity"
+                        ]
+                        run = len(results)
+                        print(
+                            "cifar_baseline2_overfit_n_search run=%d batch_size=%d "
+                            "N=%d M=%d final_k_granularity=%.6g "
+                            "cooldown_final_k_granularity=%.6g "
+                            "muon_orthogonalize=%s "
+                            "initial_muon_lr=%.6g initial_muon_lr_k=%d"
+                            % (
+                                run,
+                                config["batch_size"],
+                                n_steps,
+                                m_steps,
+                                final_k_granularity,
+                                cooldown_final_k_granularity,
+                                muon_orthogonalize,
+                                config["initial_lr"],
+                                nearest_lr_k(config["initial_lr"]),
+                            ),
+                            flush=True,
+                        )
+                        result = run_overfit_n_search(
+                            run=run,
+                            model=model,
+                            batch_size=config["batch_size"],
+                            n_steps=n_steps,
+                            m_steps=m_steps,
+                            final_k_granularity=final_k_granularity,
+                            cooldown_final_k_granularity=cooldown_final_k_granularity,
+                            muon_orthogonalize=muon_orthogonalize,
+                            initial_lr=config["initial_lr"],
+                            sgd_lr_mult=config["sgd_lr_mult"],
+                        )
+                        results.append(result)
+                        print("Batch size:          %d" % result["batch_size"])
+                        print("N steps:             %d" % result["n_steps"])
+                        print("M cooldown steps:    %d" % result["m_steps"])
+                        print(
+                            "Final k granularity: %.6g"
+                            % result["final_k_granularity"]
+                        )
+                        print(
+                            "Cooldown k granular: %.6g"
+                            % result["cooldown_final_k_granularity"]
+                        )
+                        print("Muon orthogonalize:  %s" % result["muon_orthogonalize"])
+                        print("Initial Muon lr:     %.6g" % result["initial_lr"])
+                        print("Initial Muon lr k:   %d" % result["initial_lr_k"])
+                        print("Final Muon lr:       %.6g" % result["final_muon_lr"])
+                        print(
+                            "Final Muon lr k:     %s"
+                            % format_k(result["final_muon_lr_k"])
+                        )
+                        if result["final_cooldown_muon_lr"] is not None:
+                            print(
+                                "Final cooldown lr:   %.6g"
+                                % result["final_cooldown_muon_lr"]
+                            )
+                            print(
+                                "Final cooldown lr k: %s"
+                                % format_k(result["final_cooldown_muon_lr_k"])
+                            )
+                        print("SGD lr mult:         %.6g" % result["sgd_lr_mult"])
+                        print(
+                            "Initial train loss:  %.6f" % result["initial_train_loss"]
+                        )
+                        print("Final train loss:    %.6f" % result["final_train_loss"])
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)

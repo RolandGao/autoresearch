@@ -13,3 +13,12 @@ no, the hparam N means that we break the 50 step training into intervals of N st
 lr is always parameterized by initial_lr * 0.8^k rounded to 2 sig figs. so initial_lr and k determine the lr. 
 
 different Ns are different runs with no dependence between them.
+
+
+modify autoresearch/automatic_lr3/cifar_overfit_n_search_cooldown.py
+
+currently, the lr search is parameterized by lr = 0.2*0.6^k, rounded to 2 sig figs, with some integer k. now we introduce two modes of the search. the "coarse" search is the currently implemented search, the "precise" search is as follows: after finding the best integer k, where k+1 and k-1 both achieve worse loss, we try k+0.5 and k-0.5 to find the best k under this finer grid, after finding the best k in this finder grid, we try k+0.25 and k-0.25 to find the best k under this even finer grid. we stop at 0.25 granularity. 
+
+currently, we have a hparam N, that divides the train steps into intervals of N steps such that the N steps are searched together with a constant lr. now we introduce a new hparam called M. M can be either 1 or 2. after the N steps in the interval, we attach a cooldown of M steps with an independently searched constant lr. the best lr for the N steps interval is not based on the train loss after N steps but instead based on the train loss after the cooldown of M steps. after finding the best lr for the N steps by using the train loss after the M steps cooldown, we discard the cooldown steps and use the checkpoint after the N steps to keep going. for the last N steps interval where having M more steps would go over the total train steps, we won't have the cooldown.
+
+for each fo the N steps interval and the M steps cooldown, we can choose "coarse" or "precise" for the search. instead of having just coarse or precise, use an hparam called final_k_granularity. if this hparam is 1, it's "coarse", and currently precise means this hparam is 0.25. do not use words coarse and precise but instead use final_k_granularity. 
