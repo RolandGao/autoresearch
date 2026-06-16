@@ -401,12 +401,10 @@ def log_lr_search_cache_hit(search_name, k, lr):
 
 OVERFIT_BATCH_SIZES = [2000]
 N_SEARCH_STEPS = [1, 2, 3, 4, 5]
-M_COOLDOWN_STEPS = [0, 1, 2]
-MUON_ORTHOGONALIZE = [True, False]
+M_COOLDOWN_STEPS = [0, 1, 2, 3, 4, 5]
+MUON_ORTHOGONALIZE = [True]
 K_GRANULARITY_CONFIGS = [
     dict(final_k_granularity=1, cooldown_final_k_granularity=1),
-    dict(final_k_granularity=1, cooldown_final_k_granularity=0.25),
-    dict(final_k_granularity=0.25, cooldown_final_k_granularity=0.25),
 ]
 OVERFIT_TRAIN_STEPS = 50
 LR_SEARCH_BASE = 0.2
