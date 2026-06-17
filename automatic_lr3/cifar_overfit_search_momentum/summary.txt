@@ -1,0 +1,13 @@
+CIFAR overfit LR/momentum search summary
+Input log: autoresearch/automatic_lr3/cifar_overfit_search_momentum.log
+Output directory: autoresearch/automatic_lr3/cifar_overfit_search_momentum
+Runs parsed: 1
+
+Run 0
+  train points: 51
+  interval searches: 25
+  interval configs evaluated: 218
+  final loss: 0.86701
+  final muon lr: 0.00073
+  final muon momentum: 0.5
+  final cooldown lr: 0.00044

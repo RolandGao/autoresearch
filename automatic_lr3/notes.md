@@ -48,3 +48,22 @@ you can try anything within the above constraints, but i think the relu backward
 
 do not stop until you achieve your goal.
 one step means one forward and one backward pass. no secret extra passes. 
+
+
+modify autoresearch/automatic_lr3/cifar_overfit_search.py
+
+keep orthogonalize = True.
+
+now we do a 2D search over muon lr and muon momentum. remove nesterov. 
+
+m1 = g1
+m2 = m*m1 + (1-m)*g2
+
+m_t = m*m_{t-1}+(1-m)*g_t
+
+m is the momentum hparam. g is the raw gradient, m_t is the momentum buffer. 
+m goes from 0 to 0.9 with 0.1 granularity, inclusive of 0 and 0.9. 
+
+for (lr,m), the neighbours are the four points, where m is fixed and lr shifts, or lr is fixed and m shifts to m+0.1 and m-0.1. remember that m has boundaries while lr does not. 
+
+we do this 2D search for the main interval, and only search the lr for the cooldown, the cooldown inherits the momentum of the main interval.
