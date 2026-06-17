@@ -67,3 +67,11 @@ m goes from 0 to 0.9 with 0.1 granularity, inclusive of 0 and 0.9.
 for (lr,m), the neighbours are the four points, where m is fixed and lr shifts, or lr is fixed and m shifts to m+0.1 and m-0.1. remember that m has boundaries while lr does not. 
 
 we do this 2D search for the main interval, and only search the lr for the cooldown, the cooldown inherits the momentum of the main interval.
+
+modify autoresearch/automatic_lr3/cifar_overfit_search.py
+
+train for 30 steps instead of 50.
+
+have 3 runs, one is the current nesterov_search = True one, where it does a full search for the interval for both nesterov = True and False. have two more runs, where nesterov is fixed to False always in one run, and always True in the other run.
+
+for the momentum hparam space, it goes from 0 to 0.9 in granularity of 0.1, including 0 and 0.9. but we now want to extend it to include 0.95 and 0.99. one step above 0.9 is 0.95, and one step above that is 0.99. the boundary of this space is 0 and 0.99.
