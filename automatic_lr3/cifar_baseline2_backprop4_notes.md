@@ -116,3 +116,98 @@ This improved step 8, but did not reach the target.
 
 - Existing historical logs reached below `0.88`, but only around step 14-16.
   - The current work compressed the step-8 loss substantially but did not compress the full crossing point to 8 steps.
+
+## Follow-up Pass: Best Verified `0.884737`
+
+Best clean no-env result after the later backward-pass tuning:
+
+```text
+loss_step 01/20 loss=1.768774
+loss_step 02/20 loss=1.444249
+loss_step 03/20 loss=1.298850
+loss_step 04/20 loss=1.094660
+loss_step 05/20 loss=0.971039
+loss_step 06/20 loss=0.920249
+loss_step 07/20 loss=0.898178
+loss_step 08/20 loss=0.884737
+```
+
+This was a large improvement over `0.921626`, but still did not reach the `<0.88` target.
+
+### Things That Worked
+
+- Moving `LATE_UPDATE_FREEZE_STEP` from `5` to `4`.
+  - This was the first reproducible improvement in the new pass.
+  - Alone it reached about `0.917820`.
+
+- Splitting the head weight update target from the representation target.
+  - `TARGET_HEAD_DW_DELTA_SCALE=1.0` kept the head update closer to the CE/logit target while allowing the stronger representation target to continue propagating.
+  - This was important for stabilizing stronger late-block gains.
+
+- Enabling backward updates for the frozen whitening convolution.
+  - This did not help in the older baseline, but it helped after the freeze/head/late-gain changes.
+  - In the stronger late-gain branch it improved step 8 to about `0.893811`.
+  - A separate frozen-conv scale was tested; the default `1.0` was best among the tried values.
+
+- Targeted late-block gain.
+  - Applying late gain to op `16+` from step 6 helped once the head update was stabilized.
+  - Uniform gain had a knee: too much improved steps 5-6 but caused step-8 overshoot.
+  - A tuned global late gain around `1.6`-`1.65` worked best after op-specific gains were added.
+
+- Op-specific late gains in the final block.
+  - Dampening op 16 (`layers.3.conv1`) helped; `TARGET_OP16_GAIN=0.2` was best among tried values.
+  - Boosting op 18 (`layers.3.norm1`) helped a lot; `TARGET_OP18_GAIN=3.0` was best among tried values.
+  - Mildly boosting op 20 (`layers.3.conv2`) helped; `TARGET_OP20_GAIN=1.3` was best among tried values.
+  - Dampening op 21 (`layers.3.norm2`) helped when op 18 was boosted; values around `0.5`-`0.65` were best.
+
+- Slightly stronger final CE target scale in the tuned branch.
+  - After late-block tuning, `TARGET_DELTA_SCALE_FINAL=3.6` beat the earlier `3.1`.
+  - Larger values started to hurt step 8 again.
+
+- A tiny head weight scale above 1.
+  - `TARGET_HEAD_WEIGHT_SCALE=1.05` gave a small improvement in the tuned branch.
+  - Larger head scaling became worse.
+
+### Things That Did Not Work
+
+- Standard CE optimizer-style updates.
+  - Pure SGD/Adam/Muon-style CE backward updates were nowhere close in 8 steps.
+  - Adding a CE-gradient correction hook into the target-backward pass destabilized training, even with very small learning rates.
+
+- Lowering the final CE scale globally.
+  - Analytically, the step-8 logits preferred a lower logit-delta scale locally, but lowering the schedule hurt the realized forward loss.
+  - The stronger target was still useful as a representation driver.
+
+- Step-8-only CE scale drops.
+  - Softer step-8 logit targets improved the local logit CE target but worsened the realized model loss.
+
+- More literal ReLU ignore behavior.
+  - Reducing `RELU_REVIVE_CAP`, setting it to zero, or ignoring zero-dy rows in conv solves all worsened step 8.
+  - The bounded negative inactive ReLU target remained better.
+
+- Broadly unfreezing earlier late updates.
+  - Letting ops before 16 update after the freeze generally worsened step 8.
+  - The old freeze boundary was too late, but the op boundary around 16 remained important.
+
+- Larger uniform late gain.
+  - Stronger late gain often reduced step 5-6 losses but overshot by step 8.
+  - Op-specific gains were much better than one large scalar.
+
+- Head retargeting to predicted `x + dx` features.
+  - Gating it to step 8 and trying small or large gains still worsened the final loss.
+
+- Prototype feature targets.
+  - Still much worse in the tuned branch, landing around `1.2+` at step 8.
+
+- Conv weight ridge damping.
+  - `TARGET_CONV_W_LAMBDA` remained neutral at tiny values and worse when large enough to matter.
+
+- Tuning `TARGET_X_LAMBDA`.
+  - Changing the input-target ridge moved only the fourth decimal in the best branch.
+
+- BatchNorm tangent backward mode and BN gamma max changes.
+  - Tangent mode was effectively a wash or slightly worse.
+  - Changing `TARGET_BN_WEIGHT_MAX` had no effect in the tuned branch, suggesting the max clamp was not active.
+
+- Head op gain changes.
+  - Damping or boosting op 25 was worse; the default op 25 scaling was best.

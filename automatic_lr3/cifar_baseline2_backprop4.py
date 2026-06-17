@@ -43,7 +43,7 @@ TARGET_X_LAMBDA = float(os.environ.get("TARGET_X_LAMBDA", "0.0001"))
 PINV_RTOL = 1e-5
 CONV_BATCH_CHUNK = int(os.environ.get("CONV_BATCH_CHUNK", "128"))
 RELU_REVIVE_CAP = float(os.environ.get("RELU_REVIVE_CAP", "0.65"))
-LATE_UPDATE_FREEZE_STEP = int(os.environ.get("LATE_UPDATE_FREEZE_STEP", "5"))
+LATE_UPDATE_FREEZE_STEP = int(os.environ.get("LATE_UPDATE_FREEZE_STEP", "4"))
 LATE_UPDATE_MIN_OP = int(os.environ.get("LATE_UPDATE_MIN_OP", "16"))
 
 
@@ -648,7 +648,7 @@ def cross_entropy_loss_and_delta(logits, labels):
         labels, logits.size(1), LABEL_SMOOTHING, logits_f.dtype
     )
     delta_scale = float(os.environ.get("TARGET_DELTA_SCALE", "1.25"))
-    final_delta_scale = float(os.environ.get("TARGET_DELTA_SCALE_FINAL", "3.1"))
+    final_delta_scale = float(os.environ.get("TARGET_DELTA_SCALE_FINAL", "3.6"))
     step = _LOG_CONTEXT.get("step")
     warmup_steps = int(os.environ.get("TARGET_UPDATE_WARMUP_STEPS", "1"))
     if step is not None and step <= warmup_steps:
@@ -656,6 +656,9 @@ def cross_entropy_loss_and_delta(logits, labels):
     elif step is not None:
         progress = (float(step) - 1.0) / max(1.0, float(OVERFIT_STEPS - 1))
         delta_scale = delta_scale + (final_delta_scale - delta_scale) * progress
+    late_drop_step = int(os.environ.get("TARGET_DELTA_SCALE_LATE_DROP_STEP", "0"))
+    if step is not None and late_drop_step > 0 and step >= late_drop_step:
+        delta_scale = float(os.environ.get("TARGET_DELTA_SCALE_LATE", "1.0"))
     delta_mode = os.environ.get("TARGET_CE_DELTA_MODE", "logit")
     if delta_mode == "logit_then_newton" and step == 1:
         delta_mode = "logit"
@@ -901,6 +904,7 @@ def _linear_target_backward(module, x, y, dy, update_scale=1.0, labels=None):
     x_mat = x.reshape(-1, x.shape[-1])
     dy_mat = dy.reshape(-1, dy.shape[-1])
     target_y = y.reshape_as(dy).float() + dy.float()
+    weight_dy_mat = dy_mat
 
     if (
         labels is not None
@@ -923,19 +927,31 @@ def _linear_target_backward(module, x, y, dy, update_scale=1.0, labels=None):
 
     update_frozen_conv = os.environ.get("TARGET_UPDATE_FROZEN_CONV", "0") != "0"
     can_update_weight = module.weight.requires_grad or update_frozen_conv
+    head_dw_scale = os.environ.get("TARGET_HEAD_DW_DELTA_SCALE", "1.0")
+    if labels is not None and head_dw_scale is not None:
+        targets = _low_loss_logit_targets(
+            labels, y.size(-1), LABEL_SMOOTHING, torch.float32
+        )
+        weight_dy = (targets - y.reshape_as(dy).float()).mul(float(head_dw_scale))
+        weight_dy_mat = weight_dy.reshape_as(dy_mat)
     if can_update_weight and update_scale != 0:
         xtx = x_mat.float().T @ x_mat.float()
-        xtdy = x_mat.float().T @ dy_mat.float()
+        xtdy = x_mat.float().T @ weight_dy_mat.float()
         delta_eff = _ridge_delta(xtx, xtdy, TARGET_HEAD_LAMBDA)
         weight_update = delta_eff.T.to(dtype=module.weight.dtype)
         _apply_target_update_(module.weight, weight_update, alpha=update_scale)
+        head_weight_scale = float(os.environ.get("TARGET_HEAD_WEIGHT_SCALE", "1.05"))
+        if labels is not None and head_weight_scale != 1.0:
+            module.weight.data.mul_(head_weight_scale)
 
     can_update_bias = (
         module.bias is not None
         and (module.bias.requires_grad or update_frozen_conv)
     )
     if can_update_bias and update_scale != 0:
-        bias_update = dy_mat.mean(dim=0).mul(update_scale).to(module.bias.dtype)
+        bias_update = (
+            weight_dy_mat.mean(dim=0).mul(update_scale).to(module.bias.dtype)
+        )
         _apply_target_update_(module.bias, bias_update)
         _project_bias_(module.bias)
 
@@ -948,6 +964,10 @@ def _linear_target_backward(module, x, y, dy, update_scale=1.0, labels=None):
     dx = dx.to(dtype=x.dtype).reshape_as(x)
 
     retarget_gain = float(os.environ.get("TARGET_HEAD_RETARGET_GAIN", "0"))
+    retarget_start_step = int(os.environ.get("TARGET_HEAD_RETARGET_START_STEP", "0"))
+    step = _LOG_CONTEXT.get("step")
+    if step is not None and retarget_start_step > 0 and step < retarget_start_step:
+        retarget_gain = 0.0
     if module.weight.requires_grad and update_scale != 0 and retarget_gain != 0:
         x_target = (x + dx).reshape_as(x_mat).float()
         with torch.inference_mode():
@@ -989,7 +1009,7 @@ def _conv_target_backward(module, x, y, dy, update_scale=1.0):
     kh, kw = kernel_size
     patch_size = in_per_group * kh * kw
 
-    update_frozen_conv = os.environ.get("TARGET_UPDATE_FROZEN_CONV", "0") != "0"
+    update_frozen_conv = os.environ.get("TARGET_UPDATE_FROZEN_CONV", "1") != "0"
     can_update_weight = module.weight.requires_grad or update_frozen_conv
     if can_update_weight and update_scale != 0:
         delta_weight = torch.zeros_like(module.weight.data)
@@ -1024,6 +1044,12 @@ def _conv_target_backward(module, x, y, dy, update_scale=1.0):
                     .reshape(-1, out_per_group)
                     .float()
                 )
+                if os.environ.get("TARGET_CONV_IGNORE_ZERO_DY", "0") != "0":
+                    row_mask = dy_group.abs().amax(dim=1) > 1e-12
+                    x_group = x_group[row_mask]
+                    dy_group = dy_group[row_mask]
+                    if x_group.numel() == 0:
+                        continue
                 xtx.add_(x_group.T @ x_group)
                 xtdy.add_(x_group.T @ dy_group)
             delta_eff = _ridge_delta(
@@ -1034,7 +1060,12 @@ def _conv_target_backward(module, x, y, dy, update_scale=1.0):
             delta_weight[out_slice] = delta_eff.T.reshape(
                 out_per_group, in_per_group, kh, kw
             ).to(dtype=delta_weight.dtype)
-        _apply_target_update_(module.weight, delta_weight, alpha=update_scale)
+        conv_update_scale = update_scale
+        if update_frozen_conv and not module.weight.requires_grad:
+            conv_update_scale *= float(
+                os.environ.get("TARGET_FROZEN_CONV_UPDATE_SCALE", "1.0")
+            )
+        _apply_target_update_(module.weight, delta_weight, alpha=conv_update_scale)
         _project_weight_(module.weight, force=can_update_weight)
 
     can_update_bias = (
@@ -1042,7 +1073,14 @@ def _conv_target_backward(module, x, y, dy, update_scale=1.0):
         and (module.bias.requires_grad or update_frozen_conv)
     )
     if can_update_bias and update_scale != 0:
-        bias_update = dy.mean(dim=(0, 2, 3)).mul(update_scale).to(module.bias.dtype)
+        bias_update_scale = update_scale
+        if update_frozen_conv and not module.bias.requires_grad:
+            bias_update_scale *= float(
+                os.environ.get("TARGET_FROZEN_CONV_UPDATE_SCALE", "1.0")
+            )
+        bias_update = (
+            dy.mean(dim=(0, 2, 3)).mul(bias_update_scale).to(module.bias.dtype)
+        )
         _apply_target_update_(module.bias, bias_update)
         _project_bias_(module.bias)
 
@@ -1264,13 +1302,23 @@ def _late_update_scale(record, record_index):
     ):
         return 0.0
     scale = 1.0
-    gain_start_step = int(os.environ.get("LATE_UPDATE_GAIN_START_STEP", "2"))
+    gain_start_step = int(os.environ.get("LATE_UPDATE_GAIN_START_STEP", "6"))
     if (
         step is not None
         and step >= gain_start_step
-        and op_index >= int(os.environ.get("LATE_UPDATE_GAIN_MIN_OP", "20"))
+        and op_index >= int(os.environ.get("LATE_UPDATE_GAIN_MIN_OP", "16"))
     ):
-        scale *= float(os.environ.get("LATE_UPDATE_GAIN", "1.0"))
+        scale *= float(os.environ.get("LATE_UPDATE_GAIN", "1.65"))
+    if op_index == 16:
+        scale *= float(os.environ.get("TARGET_OP16_GAIN", "0.2"))
+    if op_index == 18:
+        scale *= float(os.environ.get("TARGET_OP18_GAIN", "3.0"))
+    if op_index == 20:
+        scale *= float(os.environ.get("TARGET_OP20_GAIN", "1.3"))
+    if op_index == 21:
+        scale *= float(os.environ.get("TARGET_OP21_GAIN", "0.65"))
+    if op_index == 25:
+        scale *= float(os.environ.get("TARGET_OP25_GAIN", "1.0"))
     return scale
 
 
