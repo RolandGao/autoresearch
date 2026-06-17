@@ -45,8 +45,6 @@ CONV_BATCH_CHUNK = int(os.environ.get("CONV_BATCH_CHUNK", "128"))
 RELU_REVIVE_CAP = float(os.environ.get("RELU_REVIVE_CAP", "0.65"))
 LATE_UPDATE_FREEZE_STEP = int(os.environ.get("LATE_UPDATE_FREEZE_STEP", "5"))
 LATE_UPDATE_MIN_OP = int(os.environ.get("LATE_UPDATE_MIN_OP", "16"))
-SUFFIX_REFINE_START_OP = int(os.environ.get("SUFFIX_REFINE_START_OP", "16"))
-SUFFIX_REFINE_SCALE = float(os.environ.get("SUFFIX_REFINE_SCALE", "0.5"))
 
 
 _LOG_CONTEXT = dict(step=None)
@@ -1110,150 +1108,6 @@ def _late_update_scale(record, record_index):
     return 1.0
 
 
-def _rebuild_cache_with_current_weights(cache, labels):
-    fresh = []
-    value = cache[0]["input"]
-    for record in cache:
-        kind = record["kind"]
-        if kind == "cross_entropy":
-            break
-        op_index = record.get("op_index", len(fresh))
-        name = record.get("name", kind)
-        if kind == "conv":
-            output = record["module"](value)
-            fresh.append(
-                dict(
-                    kind="conv",
-                    module=record["module"],
-                    name=name,
-                    input=value.detach(),
-                    output=output.detach(),
-                    op_index=op_index,
-                )
-            )
-        elif kind == "relu":
-            output = F.relu(value)
-            fresh.append(
-                dict(
-                    kind="relu",
-                    name=name,
-                    input=value.detach(),
-                    output=output.detach(),
-                    op_index=op_index,
-                )
-            )
-        elif kind == "pool":
-            module = record["module"]
-            output, indices = F.max_pool2d(
-                value,
-                module.kernel_size,
-                module.stride,
-                module.padding,
-                module.dilation,
-                module.ceil_mode,
-                return_indices=True,
-            )
-            fresh.append(
-                dict(
-                    kind="pool",
-                    module=module,
-                    name=name,
-                    input=value.detach(),
-                    output=output.detach(),
-                    indices=indices,
-                    op_index=op_index,
-                )
-            )
-        elif kind == "batchnorm":
-            module = record["module"]
-            axes = (0, 2, 3)
-            mean = value.mean(dim=axes, keepdim=True)
-            var = value.var(dim=axes, unbiased=False, keepdim=True)
-            invstd = torch.rsqrt(var + module.eps)
-            x_hat = (value - mean) * invstd
-            output = _batchnorm_forward_without_running_update(module, value)
-            fresh.append(
-                dict(
-                    kind="batchnorm",
-                    module=module,
-                    name=name,
-                    input=value.detach(),
-                    output=output.detach(),
-                    x_hat=x_hat.detach(),
-                    invstd=invstd.detach(),
-                    op_index=op_index,
-                )
-            )
-        elif kind == "flatten":
-            flatten_input = value
-            output = value.view(len(value), -1)
-            fresh.append(
-                dict(
-                    kind="flatten",
-                    name=name,
-                    input=flatten_input.detach(),
-                    output=output.detach(),
-                    shape=flatten_input.shape,
-                    op_index=op_index,
-                )
-            )
-        elif kind == "linear":
-            output = record["module"](value)
-            fresh.append(
-                dict(
-                    kind="linear",
-                    module=record["module"],
-                    name=name,
-                    input=value.detach(),
-                    output=output.detach(),
-                    op_index=op_index,
-                )
-            )
-        elif kind == "identity":
-            output = value
-            fresh.append(
-                dict(
-                    kind="identity",
-                    name=name,
-                    input=value.detach(),
-                    output=output.detach(),
-                    op_index=op_index,
-                )
-            )
-        else:
-            raise TypeError(f"Unsupported cached op for suffix replay: {kind}")
-        value = output
-
-    loss, delta = cross_entropy_loss_and_delta(value, labels)
-    fresh.append(
-        dict(
-            kind="cross_entropy",
-            name="cross_entropy",
-            input=value.detach(),
-            output=loss.detach(),
-            labels=labels.detach(),
-            dy=torch.ones_like(loss).detach(),
-            delta=delta.detach(),
-            op_index=len(fresh),
-        )
-    )
-    return fresh, delta
-
-
-def _suffix_refinement_backward(cache):
-    if SUFFIX_REFINE_SCALE == 0:
-        return
-    step = _LOG_CONTEXT.get("step")
-    if step is not None and step < LATE_UPDATE_FREEZE_STEP:
-        return
-    labels = next(
-        record["labels"] for record in cache if record["kind"] == "cross_entropy"
-    )
-    fresh_cache, dy = _rebuild_cache_with_current_weights(cache, labels)
-    for record in reversed(fresh_cache[SUFFIX_REFINE_START_OP:]):
-        dy = _record_target_backward(record, dy, SUFFIX_REFINE_SCALE)
-
-
 def target_backward(cache, delta):
     dy = delta
     for reverse_index, record in enumerate(reversed(cache)):
@@ -1284,7 +1138,6 @@ def target_backward(cache, delta):
             train_loss_after_dw,
             train_loss_after_dx_dw,
         )
-    _suffix_refinement_backward(cache)
     return dy
 
 

@@ -30,3 +30,21 @@ pseudo_inverse_dx. if pseudo_inverse_dx is False, current behaviour holds. if ps
 norm_inverse. if norm_inverse is False, current behaviour holds. if norm_inverse is True, the BN backwards is modified. originally, forward is (x-mean(x))/(std(x)), and backwards is kind of like (tangent(dy))/std(x). we modify the backwards to (tangent(dy))*std(x) instead. our BN norm group is per-output-channel, so we still do that. 
 
 remove_norm. if remove_norm is False, current behaviour holds. if remove_norm is True, remove BN layers from the model. if remove_norm is True, norm_inverse does not matter.
+
+one step means one forward pass and one backward pass. you can't do this. 
+
+we know we can get to 1.83 in one step, so we can probably save a few steps in the beginning if we are careful. for ReLU backwards, the dx that are zero because x < 0 and dy < 0 should not be treated as true zero target. they should be "ignored" in the backward pass when going through the earlier layers. 
+
+
+
+
+modify only autoresearch/automatic_lr3/cifar_baseline2_backprop4.py
+
+your goal is to achieve a train loss of less than 0.88 in at most 8 steps. 
+
+you can not change the architecture, or the forward pass. you can only change the backward pass. you cannot cheat.
+
+you can try anything within the above constraints, but i think the relu backwards might need to be revised: the x < 0 and dy < 0 elements should be ignored instead of forced to zero for the few prior layers targeting this layer. And the last layer's calculations need to be revised. I was converting the CE loss into an MSE loss but the MSE loss optimal point is different from the CE loss optimal point. and the optimal point is not achievable given our model, so we need a new way to calculate dx,dw,dy of the last layer. also, i noticed that the loss first goes up for a few steps and then goes down to 2.0. we know we can get to 1.83 in one step, so we can probably save a few steps in the beginning if we are careful. 
+
+do not stop until you achieve your goal.
+one step means one forward and one backward pass. no secret extra passes. 
