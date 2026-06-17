@@ -1,0 +1,126 @@
+Combined CIFAR overfit LR/momentum search summary
+Input logs:
+  /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_momentum2.log
+  /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_momentum.log
+Output directory: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_momentum_combined
+Runs parsed: 4
+
+Final-loss ranking
+   1. final_loss=0.866915 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True
+   2. final_loss=0.866916 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False
+   3. final_loss=0.86697 momentum: run 1 - search_momentum, nesterov=False
+   4. final_loss=0.867103 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True
+
+Step-loss rankings
+  Loss at step 5
+     1. step5=1.1668 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     2. step5=1.1864 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+     3. step5=1.2196 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+     4. step5=1.414 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+
+  Loss at step 10
+     1. step10=0.8833 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+     2. step10=0.8848 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     3. step10=0.8959 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+     4. step10=0.9128 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+
+  Loss at step 15
+     1. step15=0.8689 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+     2. step15=0.8693 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     3. step15=0.8742 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+     4. step15=0.8768 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+
+  Loss at step 20
+     1. step20=0.8676 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     2. step20=0.8676 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+     3. step20=0.8691 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+     4. step20=0.8717 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+
+  Loss at step 30
+     1. step30=0.867 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     2. step30=0.8677 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+     3. step30=0.8677 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+     4. step30=0.8684 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+
+  Loss at step 40
+     1. step40=0.8669 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     2. step40=0.8669 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+     3. step40=0.8671 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+     4. step40=0.8674 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+
+  Loss at step 50
+     1. step50=0.8669 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     2. step50=0.8669 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+     3. step50=0.867 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+     4. step50=0.8671 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+
+Aggregate rankings
+  Loss AUC, lower is better
+     1. auc=48.9905 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     2. auc=49.0579 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+     3. auc=49.1168 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+     4. auc=50.3884 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+
+  Mean loss, lower is better
+     1. mean_loss=0.991778 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     2. mean_loss=0.9931 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+     3. mean_loss=0.994257 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+     4. mean_loss=1.01919 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+
+  Best observed train loss
+     1. min_loss=0.8669 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     2. min_loss=0.8669 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+     3. min_loss=0.867 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+     4. min_loss=0.8671 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+
+  Loss improvement, higher is better
+     1. improvement=1.44657 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+     2. improvement=1.44657 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     3. improvement=1.44651 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+     4. improvement=1.44638 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+
+Search-cost rankings
+  Evaluated final configs, lower is cheaper
+     1. evaluated_configs=450 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+     2. evaluated_configs=831 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     3. evaluated_configs=844 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+     4. evaluated_configs=1540 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+
+  Evaluated interval configs, lower is cheaper
+     1. evaluated_interval_configs=105 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True final_loss=0.867103
+     2. evaluated_interval_configs=191 momentum: run 1 - search_momentum, nesterov=False final_loss=0.86697
+     3. evaluated_interval_configs=198 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False final_loss=0.866916
+     4. evaluated_interval_configs=199 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True final_loss=0.866915
+
+Threshold steps
+  First step below 1
+    step= 7 loss=0.9565 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True
+    step= 7 loss=0.957 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False
+    step= 8 loss=0.9549 momentum: run 1 - search_momentum, nesterov=False
+    step= 9 loss=0.9439 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True
+  First step below 0.95
+    step= 8 loss=0.9116 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True
+    step= 8 loss=0.9175 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False
+    step= 9 loss=0.9159 momentum: run 1 - search_momentum, nesterov=False
+    step= 9 loss=0.9439 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True
+  First step below 0.9
+    step= 9 loss=0.8891 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False
+    step= 9 loss=0.892 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True
+    step=10 loss=0.8959 momentum: run 1 - search_momentum, nesterov=False
+    step=11 loss=0.8955 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True
+  First step below 0.88
+    step=11 loss=0.8766 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False
+    step=11 loss=0.8769 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True
+    step=13 loss=0.8778 momentum: run 1 - search_momentum, nesterov=False
+    step=14 loss=0.8796 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True
+  First step below 0.87
+    step=15 loss=0.8689 momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True
+    step=15 loss=0.8693 momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False
+    step=19 loss=0.8696 momentum: run 1 - search_momentum, nesterov=False
+    step=24 loss=0.8698 momentum: run 0 - fixed_m0p6_nesterov, nesterov=True
+
+Final hyperparameters
+  momentum2: run 1 - search_momentum_search_nesterov, search_nesterov=True: final_loss=0.866915 min_loss=0.8669@step39 final_lr=0.00026 final_momentum=0.9 final_nesterov=True cooldown_lr=0.00026 cooldown_momentum=0.9 evaluated_configs=844
+  momentum2: run 0 - search_momentum_nesterov_false, search_nesterov=False: final_loss=0.866916 min_loss=0.8669@step37 final_lr=0.00044 final_momentum=0.8 final_nesterov=False cooldown_lr=0.00016 cooldown_momentum=0.8 evaluated_configs=831
+  momentum: run 1 - search_momentum, nesterov=False: final_loss=0.86697 min_loss=0.867@step43 final_lr=0.00026 final_momentum=0.8 final_nesterov=False cooldown_lr=0.00026 cooldown_momentum=0.8 evaluated_configs=1540
+  momentum: run 0 - fixed_m0p6_nesterov, nesterov=True: final_loss=0.867103 min_loss=0.8671@step47 final_lr=0.00044 final_momentum=0.6 final_nesterov=True cooldown_lr=0.00044 cooldown_momentum=0.6 evaluated_configs=450

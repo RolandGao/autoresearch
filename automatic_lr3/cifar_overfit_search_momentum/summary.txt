@@ -1,13 +1,63 @@
 CIFAR overfit LR/momentum search summary
 Input log: autoresearch/automatic_lr3/cifar_overfit_search_momentum.log
 Output directory: autoresearch/automatic_lr3/cifar_overfit_search_momentum
-Runs parsed: 1
+Runs parsed: 2
 
-Run 0
+Best run
+  run 1: search_momentum: final_loss=0.86697 initial_loss=2.31348 final_muon_lr=0.00026 final_muon_momentum=0.8
+
+Final-loss distribution
+  min=0.86697
+  median=0.867036
+  max=0.867103
+  spread=0.000133
+  worst=run 0: fixed_m0p6_nesterov: final_loss=0.867103
+
+Ranking: loss after 50 steps
+   1. run 1: search_momentum: step=50 loss=0.867 final_loss=0.86697 final_muon_lr=0.00026 final_muon_momentum=0.8
+   2. run 0: fixed_m0p6_nesterov: step=50 loss=0.8671 final_loss=0.867103 final_muon_lr=0.00044 final_muon_momentum=0.6
+
+Ranking: loss after 10 steps
+   1. run 1: search_momentum: step=10 loss=0.8959 final_loss=0.86697 final_muon_lr=0.00026 final_muon_momentum=0.8
+   2. run 0: fixed_m0p6_nesterov: step=10 loss=0.9128 final_loss=0.867103 final_muon_lr=0.00044 final_muon_momentum=0.6
+
+Ranking: loss after 20 steps
+   1. run 1: search_momentum: step=20 loss=0.8691 final_loss=0.86697 final_muon_lr=0.00026 final_muon_momentum=0.8
+   2. run 0: fixed_m0p6_nesterov: step=20 loss=0.8717 final_loss=0.867103 final_muon_lr=0.00044 final_muon_momentum=0.6
+
+Ranking: first step below 0.9
+   1. run 1: search_momentum: first_step=10 loss=0.8959 final_loss=0.86697
+   2. run 0: fixed_m0p6_nesterov: first_step=11 loss=0.8955 final_loss=0.867103
+
+Ranking: first step below 0.88
+   1. run 1: search_momentum: first_step=13 loss=0.8778 final_loss=0.86697
+   2. run 0: fixed_m0p6_nesterov: first_step=14 loss=0.8796 final_loss=0.867103
+
+Ranking: first step below 0.87
+   1. run 1: search_momentum: first_step=19 loss=0.8696 final_loss=0.86697
+   2. run 0: fixed_m0p6_nesterov: first_step=24 loss=0.8698 final_loss=0.867103
+
+Run 0: fixed_m0p6_nesterov
+  search momentum: False
+  muon nesterov: True
   train points: 51
   interval searches: 25
-  interval configs evaluated: 218
-  final loss: 0.86701
-  final muon lr: 0.00073
-  final muon momentum: 0.5
+  interval configs evaluated: 105
+  final loss: 0.867103
+  final muon lr: 0.00044
+  final muon momentum: 0.6
   final cooldown lr: 0.00044
+  final cooldown momentum: 0.6
+
+Run 1: search_momentum
+  search momentum: True
+  muon nesterov: False
+  train points: 51
+  interval searches: 25
+  interval configs evaluated: 191
+  final loss: 0.86697
+  final muon lr: 0.00026
+  final muon momentum: 0.8
+  final cooldown lr: 0.00026
+  final cooldown momentum: 0.8
+

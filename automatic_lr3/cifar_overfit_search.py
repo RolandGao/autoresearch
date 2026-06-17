@@ -86,7 +86,9 @@ if USE_COMPILED_MUON:
 
 
 class Muon(torch.optim.Optimizer):
-    def __init__(self, params, lr=1e-3, momentum=0, orthogonalize=True):
+    def __init__(
+        self, params, lr=1e-3, momentum=0, nesterov=False, orthogonalize=True
+    ):
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
         if momentum < 0.0:
@@ -94,6 +96,7 @@ class Muon(torch.optim.Optimizer):
         defaults = dict(
             lr=lr,
             momentum=momentum,
+            nesterov=nesterov,
             orthogonalize=orthogonalize,
         )
         super().__init__(params, defaults)
@@ -109,10 +112,10 @@ class Muon(torch.optim.Optimizer):
                 state = self.state[p]
 
                 if "momentum_buffer" not in state.keys():
-                    state["momentum_buffer"] = g.detach().clone()
-                else:
-                    state["momentum_buffer"].mul_(momentum).add_(g, alpha=1 - momentum)
-                g = state["momentum_buffer"]
+                    state["momentum_buffer"] = torch.zeros_like(g)
+                buf = state["momentum_buffer"]
+                buf.mul_(momentum).add_(g)
+                g = g.add(buf, alpha=momentum) if group["nesterov"] else buf
 
                 p.data.mul_(len(p.data) ** 0.5 / p.data.norm())  # normalize the weight
                 update = g
@@ -343,11 +346,14 @@ class CifarNet(nn.Module):
 ############################################
 
 
-def log_train_loss(run, step, total_steps, loss, head_lr, muon_lr, muon_momentum):
+def log_train_loss(
+    run, step, total_steps, loss, head_lr, muon_lr, muon_momentum, muon_nesterov
+):
     print(
         f"train_loss run={run} step={step}/{total_steps} "
         f"loss={loss:.4f} head_lr={head_lr:.6g} "
-        f"muon_lr={muon_lr:.6g} muon_momentum={muon_momentum:.1f}",
+        f"muon_lr={muon_lr:.6g} muon_momentum={muon_momentum:.1f} "
+        f"muon_nesterov={muon_nesterov}",
         flush=True,
     )
 
@@ -373,10 +379,12 @@ def log_interval_lr_landscape(results_by_point):
         interval_result = results_by_point[interval_point]
         cooldown_result = interval_result["cooldown_result"]
         print(
-            "interval_muon_lr=%.6g interval_muon_momentum=%.1f interval_loss=%.6f"
+            "interval_muon_lr=%.6g interval_muon_momentum=%.1f "
+            "interval_muon_nesterov=%s interval_loss=%.6f"
             % (
                 interval_result["muon_lr"],
                 interval_result["muon_momentum"],
+                interval_result["muon_nesterov"],
                 interval_result["interval_final_loss"],
             ),
             flush=True,
@@ -393,10 +401,11 @@ def log_interval_lr_landscape(results_by_point):
 
         for cooldown_eval in cooldown_result["search_evaluations"]:
             print(
-                "%.6g %.1f -> %.6f"
+                "%.6g %.1f %s -> %.6f"
                 % (
                     cooldown_eval["muon_lr"],
                     cooldown_eval["muon_momentum"],
+                    cooldown_eval["muon_nesterov"],
                     cooldown_eval["final_loss"],
                 ),
                 flush=True,
@@ -428,18 +437,27 @@ def log_interval_lr_search_complete(
         if best_cooldown_result is not None
         else None
     )
+    cooldown_muon_nesterov = (
+        best_cooldown_result["muon_nesterov"]
+        if best_cooldown_result is not None
+        else None
+    )
     print(
         "best_interval_muon_lr=%.6g "
         "best_interval_muon_momentum=%.1f "
+        "best_interval_muon_nesterov=%s "
         "best_cooldown_muon_lr=%s "
         "best_cooldown_muon_momentum=%s "
+        "best_cooldown_muon_nesterov=%s "
         "interval_loss=%.6f final_loss=%.6f evaluated_interval_configs=%d "
         "evaluated_configs=%d"
         % (
             best_result["muon_lr"],
             best_result["muon_momentum"],
+            best_result["muon_nesterov"],
             format_optional_lr(cooldown_muon_lr),
             format_optional_momentum(cooldown_muon_momentum),
+            cooldown_muon_nesterov,
             best_result["interval_final_loss"],
             best_result["final_loss"],
             len(results_by_k),
@@ -467,6 +485,15 @@ LR_SEARCH_SIG_FIGS = 2
 LR_SEARCH_MAX_MOVES = 60
 MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)]
 INITIAL_MUON_MOMENTUM = 0.6
+MUON_MOMENTUM_CONFIGS = [
+    dict(
+        momentum_config_name="search_momentum_search_nesterov",
+        initial_momentum=0.6,
+        search_momentum=True,
+        muon_nesterov=False,
+        search_nesterov=True,
+    ),
+]
 LABEL_SMOOTHING = 0.2
 SGD_LR_MULTS = {
     500: 1.0,
@@ -534,7 +561,13 @@ def first_batch_loss(model, inputs, labels):
 
 
 def make_optimizers(
-    model, batch_size, muon_lr, muon_momentum, sgd_lr_mult, muon_orthogonalize
+    model,
+    batch_size,
+    muon_lr,
+    muon_momentum,
+    muon_nesterov,
+    sgd_lr_mult,
+    muon_orthogonalize,
 ):
     bias_lr = 104 * sgd_lr_mult
     head_lr = 1340 * sgd_lr_mult
@@ -549,21 +582,25 @@ def make_optimizers(
         dict(params=norm_biases, lr=bias_lr, weight_decay=0),
         dict(params=[model.head.weight], lr=head_lr, weight_decay=0),
     ]
-    optimizer1 = torch.optim.SGD(param_configs, momentum=0.85, fused=True)
+    optimizer1 = torch.optim.SGD(
+        param_configs, momentum=0.85, nesterov=True, fused=True
+    )
     optimizer2 = Muon(
         filter_params,
         lr=muon_lr,
         momentum=muon_momentum,
+        nesterov=muon_nesterov,
         orthogonalize=muon_orthogonalize,
     )
     return optimizer1, optimizer2
 
 
-def set_muon_hparams(muon_optimizer, muon_lr, muon_momentum):
+def set_muon_hparams(muon_optimizer, muon_lr, muon_momentum, muon_nesterov):
     muon_lr = rounded_lr(muon_lr)
     for group in muon_optimizer.param_groups:
         group["lr"] = muon_lr
         group["momentum"] = muon_momentum
+        group["nesterov"] = muon_nesterov
     return muon_lr
 
 
@@ -585,9 +622,16 @@ def load_training_state(model, optimizers, state):
 
 
 def train_one_step(
-    model, optimizers, muon_optimizer, inputs, labels, muon_lr, muon_momentum
+    model,
+    optimizers,
+    muon_optimizer,
+    inputs,
+    labels,
+    muon_lr,
+    muon_momentum,
+    muon_nesterov,
 ):
-    set_muon_hparams(muon_optimizer, muon_lr, muon_momentum)
+    set_muon_hparams(muon_optimizer, muon_lr, muon_momentum, muon_nesterov)
     model.train()
     model.zero_grad(set_to_none=True)
     outputs = model(inputs, whiten_bias_grad=True)
@@ -611,6 +655,7 @@ def train_interval(
     labels,
     muon_lr,
     muon_momentum,
+    muon_nesterov,
     interval_steps,
 ):
     muon_lr = rounded_lr(muon_lr)
@@ -618,7 +663,14 @@ def train_interval(
     completed_steps = 0
     for _ in range(interval_steps):
         train_one_step(
-            model, optimizers, muon_optimizer, inputs, labels, muon_lr, muon_momentum
+            model,
+            optimizers,
+            muon_optimizer,
+            inputs,
+            labels,
+            muon_lr,
+            muon_momentum,
+            muon_nesterov,
         )
         step_loss = first_batch_loss(model, inputs, labels)
         losses.append(step_loss)
@@ -630,6 +682,7 @@ def train_interval(
     return dict(
         muon_lr=muon_lr,
         muon_momentum=muon_momentum,
+        muon_nesterov=muon_nesterov,
         losses=losses,
         completed_steps=completed_steps,
         final_loss=losses[interval_steps],
@@ -654,8 +707,8 @@ def best_neighbor_k(middle_k, results_by_k, step):
 
 
 def point_sort_key(point):
-    k, momentum_index = point
-    return (abs(k), k, momentum_index)
+    k, momentum_index, nesterov = point
+    return (abs(k), k, momentum_index, nesterov)
 
 
 def better_point(point, incumbent_point, results_by_point):
@@ -669,19 +722,32 @@ def better_point(point, incumbent_point, results_by_point):
     )
 
 
-def neighbor_points(point, lr_step):
-    k, momentum_index = point
-    yield (k - lr_step, momentum_index)
-    yield (k + lr_step, momentum_index)
-    if momentum_index > 0:
-        yield (k, momentum_index - 1)
-    if momentum_index + 1 < len(MOMENTUM_SEARCH_VALUES):
-        yield (k, momentum_index + 1)
+def neighbor_points(point, lr_step, search_momentum, search_nesterov):
+    k, momentum_index, nesterov = point
+    points = [
+        (k - lr_step, momentum_index, nesterov),
+        (k + lr_step, momentum_index, nesterov),
+    ]
+    if search_momentum:
+        if momentum_index > 0:
+            points.append((k, momentum_index - 1, nesterov))
+        if momentum_index + 1 < len(MOMENTUM_SEARCH_VALUES):
+            points.append((k, momentum_index + 1, nesterov))
+
+    for neighbor_point in points:
+        yield neighbor_point
+        if search_nesterov:
+            neighbor_k, neighbor_momentum_index, neighbor_nesterov = neighbor_point
+            yield (neighbor_k, neighbor_momentum_index, not neighbor_nesterov)
 
 
-def best_neighbor_point(middle_point, results_by_point, lr_step):
+def best_neighbor_point(
+    middle_point, results_by_point, lr_step, search_momentum, search_nesterov
+):
     best_point = middle_point
-    for point in neighbor_points(middle_point, lr_step):
+    for point in neighbor_points(
+        middle_point, lr_step, search_momentum, search_nesterov
+    ):
         if better_point(point, best_point, results_by_point):
             best_point = point
     return best_point
@@ -745,13 +811,18 @@ def find_best_lr_k(initial_lr_k, final_k_granularity, evaluate, results_by_k):
 def find_best_lr_momentum_point(
     initial_lr_k,
     initial_momentum_index,
+    initial_nesterov,
     final_k_granularity,
     evaluate,
     results_by_point,
+    search_momentum,
+    search_nesterov,
 ):
-    middle_point = (initial_lr_k, initial_momentum_index)
+    middle_point = (initial_lr_k, initial_momentum_index, initial_nesterov)
     evaluate(middle_point)
-    for point in neighbor_points(middle_point, 1):
+    for point in neighbor_points(
+        middle_point, 1, search_momentum, search_nesterov
+    ):
         evaluate(point)
 
     for point in list(results_by_point):
@@ -759,9 +830,13 @@ def find_best_lr_momentum_point(
             middle_point = point
 
     for _ in range(LR_SEARCH_MAX_MOVES):
-        for point in neighbor_points(middle_point, 1):
+        for point in neighbor_points(
+            middle_point, 1, search_momentum, search_nesterov
+        ):
             evaluate(point)
-        next_point = best_neighbor_point(middle_point, results_by_point, 1)
+        next_point = best_neighbor_point(
+            middle_point, results_by_point, 1, search_momentum, search_nesterov
+        )
         if next_point == middle_point:
             break
         middle_point = next_point
@@ -772,9 +847,17 @@ def find_best_lr_momentum_point(
         )
 
     for step in refinement_steps(final_k_granularity):
-        for point in neighbor_points(middle_point, step):
+        for point in neighbor_points(
+            middle_point, step, search_momentum, search_nesterov
+        ):
             evaluate(point)
-        middle_point = best_neighbor_point(middle_point, results_by_point, step)
+        middle_point = best_neighbor_point(
+            middle_point,
+            results_by_point,
+            step,
+            search_momentum,
+            search_nesterov,
+        )
 
     return middle_point
 
@@ -792,16 +875,19 @@ def search_cooldown_lr(
     labels,
     initial_lr_k,
     initial_momentum_index,
+    initial_nesterov,
     cooldown_steps,
     final_k_granularity,
     start_state,
+    search_momentum,
+    search_nesterov,
 ):
     results_by_point = {}
     initial_lr = lr_from_k(initial_lr_k)
     initial_momentum = momentum_from_index(initial_momentum_index)
 
     def evaluate(point):
-        k, momentum_index = point
+        k, momentum_index, nesterov = point
         if point not in results_by_point:
             lr = lr_from_k(k)
             momentum = momentum_from_index(momentum_index)
@@ -814,39 +900,50 @@ def search_cooldown_lr(
                 labels=labels,
                 muon_lr=lr,
                 muon_momentum=momentum,
+                muon_nesterov=nesterov,
                 interval_steps=cooldown_steps,
             )
             result["k"] = k
             result["momentum_index"] = momentum_index
+            result["nesterov"] = nesterov
             result["initial_lr_k"] = initial_lr_k
             result["initial_lr"] = initial_lr
             result["initial_momentum_index"] = initial_momentum_index
             result["initial_momentum"] = initial_momentum
+            result["initial_nesterov"] = initial_nesterov
             results_by_point[point] = result
         return results_by_point[point]
 
     best_point = find_best_lr_momentum_point(
         initial_lr_k=initial_lr_k,
         initial_momentum_index=initial_momentum_index,
+        initial_nesterov=initial_nesterov,
         final_k_granularity=final_k_granularity,
         evaluate=evaluate,
         results_by_point=results_by_point,
+        search_momentum=search_momentum,
+        search_nesterov=search_nesterov,
     )
-    best_k, best_momentum_index = best_point
+    best_k, best_momentum_index, best_nesterov = best_point
     best_result = results_by_point[best_point]
     load_training_state(model, optimizers, start_state)
     return dict(
         search_name=search_name,
         cooldown_steps=cooldown_steps,
         final_k_granularity=final_k_granularity,
+        search_momentum=search_momentum,
+        search_nesterov=search_nesterov,
         best_k=best_k,
         best_momentum_index=best_momentum_index,
+        best_nesterov=best_nesterov,
         muon_lr=best_result["muon_lr"],
         muon_momentum=best_result["muon_momentum"],
+        muon_nesterov=best_result["muon_nesterov"],
         initial_lr_k=initial_lr_k,
         initial_lr=initial_lr,
         initial_momentum_index=initial_momentum_index,
         initial_momentum=initial_momentum,
+        initial_nesterov=initial_nesterov,
         initial_train_loss=best_result["losses"][0],
         final_train_loss=best_result["final_loss"],
         completed_steps=best_result["completed_steps"],
@@ -855,17 +952,22 @@ def search_cooldown_lr(
             dict(
                 k=k,
                 momentum_index=momentum_index,
+                nesterov=nesterov,
                 muon_lr=result["muon_lr"],
                 muon_momentum=result["muon_momentum"],
+                muon_nesterov=result["muon_nesterov"],
                 initial_lr_k=result["initial_lr_k"],
                 initial_lr=result["initial_lr"],
                 initial_momentum_index=result["initial_momentum_index"],
                 initial_momentum=result["initial_momentum"],
+                initial_nesterov=result["initial_nesterov"],
                 losses=list(result["losses"]),
                 final_loss=result["final_loss"],
                 completed_steps=result["completed_steps"],
             )
-            for (k, momentum_index), result in sorted(results_by_point.items())
+            for (k, momentum_index, nesterov), result in sorted(
+                results_by_point.items()
+            )
         ],
     )
 
@@ -888,6 +990,9 @@ def search_interval_lr(
     interval_start_step,
     batch_size,
     n_steps,
+    search_momentum,
+    search_nesterov,
+    initial_nesterov,
 ):
     search_name = "run%d_bs%d_N%d_M%d_G%s_CG%s_interval%d_step%d" % (
         run,
@@ -907,7 +1012,7 @@ def search_interval_lr(
     use_cooldown = use_cooldown and cooldown_steps > 0
 
     def evaluate(point):
-        k, momentum_index = point
+        k, momentum_index, nesterov = point
         if point not in results_by_point:
             lr = lr_from_k(k)
             momentum = momentum_from_index(momentum_index)
@@ -920,6 +1025,7 @@ def search_interval_lr(
                 labels=labels,
                 muon_lr=lr,
                 muon_momentum=momentum,
+                muon_nesterov=nesterov,
                 interval_steps=interval_steps,
             )
             interval_end_state = result["end_state"]
@@ -930,10 +1036,11 @@ def search_interval_lr(
                 and result["completed_steps"] == interval_steps
                 and torch.isfinite(torch.tensor(result["final_loss"]))
             ):
-                cooldown_search_name = "%s_cooldown_for_k%s_m%.1f" % (
+                cooldown_search_name = "%s_cooldown_for_k%s_m%.1f_n%s" % (
                     search_name,
                     format_k(k),
                     momentum,
+                    nesterov,
                 )
                 cooldown_result = search_cooldown_lr(
                     search_name=cooldown_search_name,
@@ -944,29 +1051,37 @@ def search_interval_lr(
                     labels=labels,
                     initial_lr_k=k,
                     initial_momentum_index=momentum_index,
+                    initial_nesterov=nesterov,
                     cooldown_steps=cooldown_steps,
                     final_k_granularity=cooldown_final_k_granularity,
                     start_state=interval_end_state,
+                    search_momentum=False,
+                    search_nesterov=False,
                 )
                 result["cooldown_result"] = cooldown_result
                 result["final_loss"] = cooldown_result["final_train_loss"]
             result["k"] = k
             result["momentum_index"] = momentum_index
+            result["nesterov"] = nesterov
             result["initial_lr_k"] = initial_lr_k
             result["initial_lr"] = initial_lr
             result["initial_momentum_index"] = initial_momentum_index
             result["initial_momentum"] = initial_momentum
+            result["initial_nesterov"] = initial_nesterov
             results_by_point[point] = result
         return results_by_point[point]
 
     best_point = find_best_lr_momentum_point(
         initial_lr_k=initial_lr_k,
         initial_momentum_index=initial_momentum_index,
+        initial_nesterov=initial_nesterov,
         final_k_granularity=final_k_granularity,
         evaluate=evaluate,
         results_by_point=results_by_point,
+        search_momentum=search_momentum,
+        search_nesterov=search_nesterov,
     )
-    best_k, best_momentum_index = best_point
+    best_k, best_momentum_index, best_nesterov = best_point
     best_result = results_by_point[best_point]
     load_training_state(model, optimizers, best_result["end_state"])
     best_cooldown_result = best_result["cooldown_result"]
@@ -984,10 +1099,14 @@ def search_interval_lr(
         cooldown_steps=cooldown_steps if use_cooldown else 0,
         final_k_granularity=final_k_granularity,
         cooldown_final_k_granularity=cooldown_final_k_granularity,
+        search_momentum=search_momentum,
+        search_nesterov=search_nesterov,
         best_k=best_k,
         best_momentum_index=best_momentum_index,
+        best_nesterov=best_nesterov,
         muon_lr=best_result["muon_lr"],
         muon_momentum=best_result["muon_momentum"],
+        muon_nesterov=best_result["muon_nesterov"],
         cooldown_best_k=(
             best_cooldown_result["best_k"] if best_cooldown_result else None
         ),
@@ -996,20 +1115,28 @@ def search_interval_lr(
             if best_cooldown_result
             else None
         ),
+        cooldown_best_nesterov=(
+            best_cooldown_result["best_nesterov"] if best_cooldown_result else None
+        ),
         cooldown_muon_lr=(
             best_cooldown_result["muon_lr"] if best_cooldown_result else None
         ),
         cooldown_muon_momentum=(
             best_cooldown_result["muon_momentum"] if best_cooldown_result else None
         ),
+        cooldown_muon_nesterov=(
+            best_cooldown_result["muon_nesterov"] if best_cooldown_result else None
+        ),
         initial_lr_k=initial_lr_k,
         initial_lr=initial_lr,
         initial_momentum_index=initial_momentum_index,
         initial_momentum=initial_momentum,
+        initial_nesterov=initial_nesterov,
         cooldown_initial_lr_k=best_k,
         cooldown_initial_lr=lr_from_k(best_k),
         cooldown_initial_momentum_index=best_momentum_index,
         cooldown_initial_momentum=momentum_from_index(best_momentum_index),
+        cooldown_initial_nesterov=best_nesterov,
         initial_train_loss=best_result["losses"][0],
         interval_final_train_loss=best_result["interval_final_loss"],
         final_train_loss=best_result["final_loss"],
@@ -1020,19 +1147,24 @@ def search_interval_lr(
             dict(
                 k=k,
                 momentum_index=momentum_index,
+                nesterov=nesterov,
                 muon_lr=result["muon_lr"],
                 muon_momentum=result["muon_momentum"],
+                muon_nesterov=result["muon_nesterov"],
                 initial_lr_k=result["initial_lr_k"],
                 initial_lr=result["initial_lr"],
                 initial_momentum_index=result["initial_momentum_index"],
                 initial_momentum=result["initial_momentum"],
+                initial_nesterov=result["initial_nesterov"],
                 interval_final_loss=result["interval_final_loss"],
                 losses=list(result["losses"]),
                 final_loss=result["final_loss"],
                 completed_steps=result["completed_steps"],
                 cooldown_result=result["cooldown_result"],
             )
-            for (k, momentum_index), result in sorted(results_by_point.items())
+            for (k, momentum_index, nesterov), result in sorted(
+                results_by_point.items()
+            )
         ],
     )
 
@@ -1047,12 +1179,17 @@ def run_overfit_n_search(
     cooldown_final_k_granularity,
     muon_orthogonalize,
     initial_lr,
+    initial_momentum,
+    search_momentum,
+    muon_nesterov,
+    search_nesterov,
+    momentum_config_name,
     sgd_lr_mult,
 ):
     set_training_seed()
     initial_lr_k = nearest_lr_k(initial_lr)
     initial_lr = lr_from_k(initial_lr_k)
-    initial_momentum_index = nearest_momentum_index(INITIAL_MUON_MOMENTUM)
+    initial_momentum_index = nearest_momentum_index(initial_momentum)
     initial_momentum = momentum_from_index(initial_momentum_index)
     inputs, labels, train_images = make_first_train_batch(batch_size)
     model.reset()
@@ -1062,6 +1199,7 @@ def run_overfit_n_search(
         batch_size=batch_size,
         muon_lr=rounded_lr(initial_lr),
         muon_momentum=initial_momentum,
+        muon_nesterov=muon_nesterov,
         sgd_lr_mult=sgd_lr_mult,
         muon_orthogonalize=muon_orthogonalize,
     )
@@ -1076,11 +1214,13 @@ def run_overfit_n_search(
         head_lr=optimizer1.param_groups[2]["lr"],
         muon_lr=optimizer2.param_groups[0]["lr"],
         muon_momentum=optimizer2.param_groups[0]["momentum"],
+        muon_nesterov=optimizer2.param_groups[0]["nesterov"],
     )
 
     interval_results = []
     interval_initial_lr_k = initial_lr_k
     interval_initial_momentum_index = initial_momentum_index
+    interval_initial_nesterov = muon_nesterov
     completed_steps = 0
     interval_index = 0
     while completed_steps < OVERFIT_TRAIN_STEPS:
@@ -1103,10 +1243,14 @@ def run_overfit_n_search(
             interval_start_step=completed_steps,
             batch_size=batch_size,
             n_steps=n_steps,
+            search_momentum=search_momentum,
+            search_nesterov=search_nesterov,
+            initial_nesterov=interval_initial_nesterov,
         )
         interval_results.append(interval_result)
         interval_initial_lr_k = interval_result["best_k"]
         interval_initial_momentum_index = interval_result["best_momentum_index"]
+        interval_initial_nesterov = interval_result["best_nesterov"]
         actual_losses = interval_result["losses"][
             1 : 1 + interval_result["completed_steps"]
         ]
@@ -1121,6 +1265,7 @@ def run_overfit_n_search(
                 head_lr=optimizer1.param_groups[2]["lr"],
                 muon_lr=interval_result["muon_lr"],
                 muon_momentum=interval_result["muon_momentum"],
+                muon_nesterov=interval_result["muon_nesterov"],
             )
         completed_steps += interval_result["completed_steps"]
         interval_index += 1
@@ -1147,14 +1292,22 @@ def run_overfit_n_search(
         final_k_granularity=final_k_granularity,
         cooldown_final_k_granularity=cooldown_final_k_granularity,
         muon_orthogonalize=muon_orthogonalize,
+        momentum_config_name=momentum_config_name,
+        search_momentum=search_momentum,
+        muon_nesterov=muon_nesterov,
+        search_nesterov=search_nesterov,
         initial_lr_k=initial_lr_k,
         initial_lr=initial_lr,
         initial_momentum_index=initial_momentum_index,
         initial_momentum=initial_momentum,
+        initial_nesterov=muon_nesterov,
         final_muon_lr=interval_results[-1]["muon_lr"] if interval_results else None,
         final_muon_lr_k=interval_results[-1]["best_k"] if interval_results else None,
         final_muon_momentum=(
             interval_results[-1]["muon_momentum"] if interval_results else None
+        ),
+        final_muon_nesterov=(
+            interval_results[-1]["muon_nesterov"] if interval_results else None
         ),
         final_muon_momentum_index=(
             interval_results[-1]["best_momentum_index"] if interval_results else None
@@ -1166,6 +1319,11 @@ def run_overfit_n_search(
         ),
         final_cooldown_muon_momentum=(
             last_cooldown_result["cooldown_muon_momentum"]
+            if last_cooldown_result
+            else None
+        ),
+        final_cooldown_muon_nesterov=(
+            last_cooldown_result["cooldown_muon_nesterov"]
             if last_cooldown_result
             else None
         ),
@@ -1198,103 +1356,142 @@ def main():
         for n_steps in N_SEARCH_STEPS:
             for m_steps in M_COOLDOWN_STEPS:
                 for muon_orthogonalize in MUON_ORTHOGONALIZE:
-                    for granularity_config in K_GRANULARITY_CONFIGS:
-                        final_k_granularity = granularity_config["final_k_granularity"]
-                        cooldown_final_k_granularity = granularity_config[
-                            "cooldown_final_k_granularity"
-                        ]
-                        run = len(results)
-                        print(
-                            "cifar_baseline2_overfit_n_search run=%d batch_size=%d "
-                            "N=%d M=%d final_k_granularity=%.6g "
-                            "cooldown_final_k_granularity=%.6g "
-                            "muon_orthogonalize=%s "
-                            "initial_muon_lr=%.6g initial_muon_lr_k=%d "
-                            "initial_muon_momentum=%.1f initial_muon_momentum_index=%d"
-                            % (
-                                run,
-                                config["batch_size"],
-                                n_steps,
-                                m_steps,
-                                final_k_granularity,
-                                cooldown_final_k_granularity,
-                                muon_orthogonalize,
-                                config["initial_lr"],
-                                nearest_lr_k(config["initial_lr"]),
-                                INITIAL_MUON_MOMENTUM,
-                                nearest_momentum_index(INITIAL_MUON_MOMENTUM),
-                            ),
-                            flush=True,
-                        )
-                        result = run_overfit_n_search(
-                            run=run,
-                            model=model,
-                            batch_size=config["batch_size"],
-                            n_steps=n_steps,
-                            m_steps=m_steps,
-                            final_k_granularity=final_k_granularity,
-                            cooldown_final_k_granularity=cooldown_final_k_granularity,
-                            muon_orthogonalize=muon_orthogonalize,
-                            initial_lr=config["initial_lr"],
-                            sgd_lr_mult=config["sgd_lr_mult"],
-                        )
-                        results.append(result)
-                        print("Batch size:          %d" % result["batch_size"])
-                        print("N steps:             %d" % result["n_steps"])
-                        print("M cooldown steps:    %d" % result["m_steps"])
-                        print(
-                            "Final k granularity: %.6g"
-                            % result["final_k_granularity"]
-                        )
-                        print(
-                            "Cooldown k granular: %.6g"
-                            % result["cooldown_final_k_granularity"]
-                        )
-                        print("Muon orthogonalize:  %s" % result["muon_orthogonalize"])
-                        print("Initial Muon lr:     %.6g" % result["initial_lr"])
-                        print("Initial Muon lr k:   %d" % result["initial_lr_k"])
-                        print(
-                            "Initial Muon mom:    %.1f" % result["initial_momentum"]
-                        )
-                        print(
-                            "Initial Muon mom i:  %d"
-                            % result["initial_momentum_index"]
-                        )
-                        print("Final Muon lr:       %.6g" % result["final_muon_lr"])
-                        print(
-                            "Final Muon lr k:     %s"
-                            % format_k(result["final_muon_lr_k"])
-                        )
-                        print(
-                            "Final Muon momentum: %.1f"
-                            % result["final_muon_momentum"]
-                        )
-                        print(
-                            "Final Muon mom i:    %s"
-                            % format_k(result["final_muon_momentum_index"])
-                        )
-                        if result["final_cooldown_muon_lr"] is not None:
+                    for momentum_config in MUON_MOMENTUM_CONFIGS:
+                        for granularity_config in K_GRANULARITY_CONFIGS:
+                            final_k_granularity = granularity_config[
+                                "final_k_granularity"
+                            ]
+                            cooldown_final_k_granularity = granularity_config[
+                                "cooldown_final_k_granularity"
+                            ]
+                            initial_momentum = momentum_config["initial_momentum"]
+                            run = len(results)
                             print(
-                                "Final cooldown lr:   %.6g"
-                                % result["final_cooldown_muon_lr"]
+                                "cifar_baseline2_overfit_n_search run=%d batch_size=%d "
+                                "N=%d M=%d final_k_granularity=%.6g "
+                                "cooldown_final_k_granularity=%.6g "
+                                "muon_orthogonalize=%s "
+                                "momentum_config=%s search_momentum=%s "
+                                "muon_nesterov=%s search_nesterov=%s "
+                                "initial_muon_lr=%.6g initial_muon_lr_k=%d "
+                                "initial_muon_momentum=%.1f "
+                                "initial_muon_momentum_index=%d"
+                                % (
+                                    run,
+                                    config["batch_size"],
+                                    n_steps,
+                                    m_steps,
+                                    final_k_granularity,
+                                    cooldown_final_k_granularity,
+                                    muon_orthogonalize,
+                                    momentum_config["momentum_config_name"],
+                                    momentum_config["search_momentum"],
+                                    momentum_config["muon_nesterov"],
+                                    momentum_config["search_nesterov"],
+                                    config["initial_lr"],
+                                    nearest_lr_k(config["initial_lr"]),
+                                    initial_momentum,
+                                    nearest_momentum_index(initial_momentum),
+                                ),
+                                flush=True,
+                            )
+                            result = run_overfit_n_search(
+                                run=run,
+                                model=model,
+                                batch_size=config["batch_size"],
+                                n_steps=n_steps,
+                                m_steps=m_steps,
+                                final_k_granularity=final_k_granularity,
+                                cooldown_final_k_granularity=cooldown_final_k_granularity,
+                                muon_orthogonalize=muon_orthogonalize,
+                                initial_lr=config["initial_lr"],
+                                initial_momentum=initial_momentum,
+                                search_momentum=momentum_config["search_momentum"],
+                                muon_nesterov=momentum_config["muon_nesterov"],
+                                search_nesterov=momentum_config["search_nesterov"],
+                                momentum_config_name=momentum_config[
+                                    "momentum_config_name"
+                                ],
+                                sgd_lr_mult=config["sgd_lr_mult"],
+                            )
+                            results.append(result)
+                            print("Batch size:          %d" % result["batch_size"])
+                            print("N steps:             %d" % result["n_steps"])
+                            print("M cooldown steps:    %d" % result["m_steps"])
+                            print(
+                                "Final k granularity: %.6g"
+                                % result["final_k_granularity"]
                             )
                             print(
-                                "Final cooldown lr k: %s"
-                                % format_k(result["final_cooldown_muon_lr_k"])
+                                "Cooldown k granular: %.6g"
+                                % result["cooldown_final_k_granularity"]
                             )
                             print(
-                                "Final cooldown mom:  %.1f"
-                                % result["final_cooldown_muon_momentum"]
+                                "Muon orthogonalize:  %s"
+                                % result["muon_orthogonalize"]
+                            )
+                            print("Momentum config:     %s" % result["momentum_config_name"])
+                            print("Search momentum:     %s" % result["search_momentum"])
+                            print("Initial nesterov:    %s" % result["initial_nesterov"])
+                            print("Search nesterov:     %s" % result["search_nesterov"])
+                            print("Initial Muon lr:     %.6g" % result["initial_lr"])
+                            print("Initial Muon lr k:   %d" % result["initial_lr_k"])
+                            print(
+                                "Initial Muon mom:    %.1f"
+                                % result["initial_momentum"]
                             )
                             print(
-                                "Final cooldown mom i: %s"
-                                % format_k(result["final_cooldown_muon_momentum_index"])
+                                "Initial Muon mom i:  %d"
+                                % result["initial_momentum_index"]
                             )
-                        print("SGD lr mult:         %.6g" % result["sgd_lr_mult"])
-                        print(
-                            "Initial train loss:  %.6f" % result["initial_train_loss"]
-                        )
-                        print("Final train loss:    %.6f" % result["final_train_loss"])
+                            print("Final Muon lr:       %.6g" % result["final_muon_lr"])
+                            print(
+                                "Final Muon lr k:     %s"
+                                % format_k(result["final_muon_lr_k"])
+                            )
+                            print(
+                                "Final Muon momentum: %.1f"
+                                % result["final_muon_momentum"]
+                            )
+                            print(
+                                "Final Muon nesterov: %s"
+                                % result["final_muon_nesterov"]
+                            )
+                            print(
+                                "Final Muon mom i:    %s"
+                                % format_k(result["final_muon_momentum_index"])
+                            )
+                            if result["final_cooldown_muon_lr"] is not None:
+                                print(
+                                    "Final cooldown lr:   %.6g"
+                                    % result["final_cooldown_muon_lr"]
+                                )
+                                print(
+                                    "Final cooldown lr k: %s"
+                                    % format_k(result["final_cooldown_muon_lr_k"])
+                                )
+                                print(
+                                    "Final cooldown mom:  %.1f"
+                                    % result["final_cooldown_muon_momentum"]
+                                )
+                                print(
+                                    "Final cooldown nest: %s"
+                                    % result["final_cooldown_muon_nesterov"]
+                                )
+                                print(
+                                    "Final cooldown mom i: %s"
+                                    % format_k(
+                                        result["final_cooldown_muon_momentum_index"]
+                                    )
+                                )
+                            print("SGD lr mult:         %.6g" % result["sgd_lr_mult"])
+                            print(
+                                "Initial train loss:  %.6f"
+                                % result["initial_train_loss"]
+                            )
+                            print(
+                                "Final train loss:    %.6f" % result["final_train_loss"]
+                            )
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
