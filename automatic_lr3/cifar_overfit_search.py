@@ -722,32 +722,22 @@ def better_point(point, incumbent_point, results_by_point):
     )
 
 
-def neighbor_points(point, lr_step, search_momentum, search_nesterov):
+def neighbor_points(point, lr_step, search_momentum):
     k, momentum_index, nesterov = point
-    points = [
-        (k - lr_step, momentum_index, nesterov),
-        (k + lr_step, momentum_index, nesterov),
-    ]
+    yield (k - lr_step, momentum_index, nesterov)
+    yield (k + lr_step, momentum_index, nesterov)
     if search_momentum:
         if momentum_index > 0:
-            points.append((k, momentum_index - 1, nesterov))
+            yield (k, momentum_index - 1, nesterov)
         if momentum_index + 1 < len(MOMENTUM_SEARCH_VALUES):
-            points.append((k, momentum_index + 1, nesterov))
-
-    for neighbor_point in points:
-        yield neighbor_point
-        if search_nesterov:
-            neighbor_k, neighbor_momentum_index, neighbor_nesterov = neighbor_point
-            yield (neighbor_k, neighbor_momentum_index, not neighbor_nesterov)
+            yield (k, momentum_index + 1, nesterov)
 
 
 def best_neighbor_point(
-    middle_point, results_by_point, lr_step, search_momentum, search_nesterov
+    middle_point, results_by_point, lr_step, search_momentum
 ):
     best_point = middle_point
-    for point in neighbor_points(
-        middle_point, lr_step, search_momentum, search_nesterov
-    ):
+    for point in neighbor_points(middle_point, lr_step, search_momentum):
         if better_point(point, best_point, results_by_point):
             best_point = point
     return best_point
@@ -808,7 +798,7 @@ def find_best_lr_k(initial_lr_k, final_k_granularity, evaluate, results_by_k):
     return middle_k
 
 
-def find_best_lr_momentum_point(
+def find_best_lr_momentum_point_for_nesterov(
     initial_lr_k,
     initial_momentum_index,
     initial_nesterov,
@@ -816,26 +806,23 @@ def find_best_lr_momentum_point(
     evaluate,
     results_by_point,
     search_momentum,
-    search_nesterov,
 ):
     middle_point = (initial_lr_k, initial_momentum_index, initial_nesterov)
+    initial_points = [middle_point]
     evaluate(middle_point)
-    for point in neighbor_points(
-        middle_point, 1, search_momentum, search_nesterov
-    ):
+    for point in neighbor_points(middle_point, 1, search_momentum):
         evaluate(point)
+        initial_points.append(point)
 
-    for point in list(results_by_point):
+    for point in initial_points:
         if better_point(point, middle_point, results_by_point):
             middle_point = point
 
     for _ in range(LR_SEARCH_MAX_MOVES):
-        for point in neighbor_points(
-            middle_point, 1, search_momentum, search_nesterov
-        ):
+        for point in neighbor_points(middle_point, 1, search_momentum):
             evaluate(point)
         next_point = best_neighbor_point(
-            middle_point, results_by_point, 1, search_momentum, search_nesterov
+            middle_point, results_by_point, 1, search_momentum
         )
         if next_point == middle_point:
             break
@@ -847,19 +834,53 @@ def find_best_lr_momentum_point(
         )
 
     for step in refinement_steps(final_k_granularity):
-        for point in neighbor_points(
-            middle_point, step, search_momentum, search_nesterov
-        ):
+        for point in neighbor_points(middle_point, step, search_momentum):
             evaluate(point)
         middle_point = best_neighbor_point(
             middle_point,
             results_by_point,
             step,
             search_momentum,
-            search_nesterov,
         )
 
     return middle_point
+
+
+def find_best_lr_momentum_point(
+    initial_lr_k,
+    initial_momentum_index,
+    initial_nesterov,
+    final_k_granularity,
+    evaluate,
+    results_by_point,
+    search_momentum,
+    search_nesterov,
+):
+    if not search_nesterov:
+        return find_best_lr_momentum_point_for_nesterov(
+            initial_lr_k=initial_lr_k,
+            initial_momentum_index=initial_momentum_index,
+            initial_nesterov=initial_nesterov,
+            final_k_granularity=final_k_granularity,
+            evaluate=evaluate,
+            results_by_point=results_by_point,
+            search_momentum=search_momentum,
+        )
+
+    best_point = None
+    for nesterov in (True, False):
+        point = find_best_lr_momentum_point_for_nesterov(
+            initial_lr_k=initial_lr_k,
+            initial_momentum_index=initial_momentum_index,
+            initial_nesterov=nesterov,
+            final_k_granularity=final_k_granularity,
+            evaluate=evaluate,
+            results_by_point=results_by_point,
+            search_momentum=search_momentum,
+        )
+        if better_point(point, best_point, results_by_point):
+            best_point = point
+    return best_point
 
 
 def granularity_slug(final_k_granularity):

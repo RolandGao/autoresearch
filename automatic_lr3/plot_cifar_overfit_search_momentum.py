@@ -686,6 +686,14 @@ def style_axes(ax) -> None:
     ax.spines["right"].set_visible(False)
 
 
+def nesterov_value(value: str | None) -> float | None:
+    if value == "True":
+        return 1.0
+    if value == "False":
+        return 0.0
+    return None
+
+
 def plot_train_loss(run: Run, output_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(10, 5.5))
     ax.plot(
@@ -709,9 +717,14 @@ def plot_choices(run: Run, output_dir: Path) -> None:
     choices = run.interval_choices
     if not choices:
         return
-    fig, (ax_lr, ax_momentum, ax_loss) = plt.subplots(
-        3, 1, figsize=(10, 8), sharex=True
+    has_nesterov = any(
+        nesterov_value(choice.muon_nesterov) is not None
+        or nesterov_value(choice.cooldown_muon_nesterov) is not None
+        for choice in choices
     )
+    row_count = 4 if has_nesterov else 3
+    fig, axes = plt.subplots(row_count, 1, figsize=(10, 2.7 * row_count), sharex=True)
+    ax_lr, ax_momentum, ax_loss = axes[:3]
     steps = [choice.start_step for choice in choices]
 
     ax_lr.plot(
@@ -782,10 +795,58 @@ def plot_choices(run: Run, output_dir: Path) -> None:
         label="after cooldown",
         color="#d62728",
     )
-    ax_loss.set_xlabel("Interval start step")
     ax_loss.set_ylabel("Loss")
     ax_loss.legend()
     style_axes(ax_loss)
+
+    if has_nesterov:
+        ax_nesterov = axes[3]
+        interval_nesterov_steps = [
+            choice.start_step
+            for choice in choices
+            if nesterov_value(choice.muon_nesterov) is not None
+        ]
+        interval_nesterov_values = [
+            nesterov_value(choice.muon_nesterov)
+            for choice in choices
+            if nesterov_value(choice.muon_nesterov) is not None
+        ]
+        if interval_nesterov_steps:
+            ax_nesterov.plot(
+                interval_nesterov_steps,
+                interval_nesterov_values,
+                marker="o",
+                label="interval nesterov",
+                color="#17becf",
+            )
+
+        cooldown_nesterov_steps = [
+            choice.start_step
+            for choice in choices
+            if nesterov_value(choice.cooldown_muon_nesterov) is not None
+        ]
+        cooldown_nesterov_values = [
+            nesterov_value(choice.cooldown_muon_nesterov)
+            for choice in choices
+            if nesterov_value(choice.cooldown_muon_nesterov) is not None
+        ]
+        if cooldown_nesterov_steps:
+            ax_nesterov.plot(
+                cooldown_nesterov_steps,
+                cooldown_nesterov_values,
+                marker="s",
+                label="cooldown nesterov",
+                color="#bcbd22",
+            )
+
+        ax_nesterov.set_xlabel("Interval start step")
+        ax_nesterov.set_ylabel("Nesterov")
+        ax_nesterov.set_yticks([0, 1], labels=["False", "True"])
+        ax_nesterov.set_ylim(-0.12, 1.12)
+        ax_nesterov.legend()
+        style_axes(ax_nesterov)
+    else:
+        ax_loss.set_xlabel("Interval start step")
 
     fig.suptitle(f"{run.label}: selected hyperparameters")
     fig.tight_layout()

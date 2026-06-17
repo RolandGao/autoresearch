@@ -1,0 +1,45 @@
+CIFAR overfit LR/momentum search summary
+Input log: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_momentum4.log
+Output directory: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_momentum4
+Runs parsed: 1
+
+Best run
+  run 0: search_momentum_search_nesterov: final_loss=0.866909 initial_loss=2.31348 final_muon_lr=0.00016 final_muon_momentum=0.9
+
+Final-loss distribution
+  min=0.866909
+  median=0.866909
+  max=0.866909
+  spread=0
+  worst=run 0: search_momentum_search_nesterov: final_loss=0.866909
+
+Ranking: loss after 50 steps
+   1. run 0: search_momentum_search_nesterov: step=50 loss=0.8669 final_loss=0.866909 final_muon_lr=0.00016 final_muon_momentum=0.9
+
+Ranking: loss after 10 steps
+   1. run 0: search_momentum_search_nesterov: step=10 loss=0.8819 final_loss=0.866909 final_muon_lr=0.00016 final_muon_momentum=0.9
+
+Ranking: loss after 20 steps
+   1. run 0: search_momentum_search_nesterov: step=20 loss=0.8675 final_loss=0.866909 final_muon_lr=0.00016 final_muon_momentum=0.9
+
+Ranking: first step below 0.9
+   1. run 0: search_momentum_search_nesterov: first_step=9 loss=0.8918 final_loss=0.866909
+
+Ranking: first step below 0.88
+   1. run 0: search_momentum_search_nesterov: first_step=11 loss=0.875 final_loss=0.866909
+
+Ranking: first step below 0.87
+   1. run 0: search_momentum_search_nesterov: first_step=14 loss=0.8698 final_loss=0.866909
+
+Run 0: search_momentum_search_nesterov
+  search momentum: True
+  muon nesterov: False
+  train points: 51
+  interval searches: 25
+  interval configs evaluated: 289
+  final loss: 0.866909
+  final muon lr: 0.00016
+  final muon momentum: 0.9
+  final cooldown lr: 0.00026
+  final cooldown momentum: 0.9
+
