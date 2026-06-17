@@ -12,7 +12,6 @@ Descends from https://github.com/tysam-code/hlb-CIFAR10/blob/main/main.py
 import copy
 import os
 import sys
-import time
 
 with open(sys.argv[0]) as f:
     code = f.read()
@@ -363,6 +362,10 @@ def format_k(k):
     return "%g" % k
 
 
+def format_optional_k(k):
+    return "none" if k is None else format_k(k)
+
+
 def format_optional_lr(lr):
     return "none" if lr is None else "%.6g" % lr
 
@@ -472,9 +475,9 @@ def log_interval_lr_search_complete(
 #                Training                  #
 ############################################
 
-OVERFIT_BATCH_SIZES = [500, 2000, 10000]
-N_SEARCH_STEPS = [1, 2, 3, 4]
-M_COOLDOWN_STEPS = [0, 1, 2, 3, 4]
+OVERFIT_BATCH_SIZES = [2000]
+N_SEARCH_STEPS = [2]
+M_COOLDOWN_STEPS = [2]
 MUON_ORTHOGONALIZE = [True]
 K_GRANULARITY_CONFIGS = [
     dict(final_k_granularity=1, cooldown_final_k_granularity=1),
@@ -485,12 +488,27 @@ LR_SEARCH_FACTOR = 0.6
 LR_SEARCH_SIG_FIGS = 2
 LR_SEARCH_MAX_MOVES = 60
 MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
+INITIAL_MUON_MOMENTUM = 0.6
 MUON_MOMENTUM_CONFIGS = [
+    dict(
+        momentum_config_name="search_momentum_search_nesterov",
+        initial_momentum=0.6,
+        search_momentum=True,
+        muon_nesterov=False,
+        search_nesterov=True,
+    ),
     dict(
         momentum_config_name="search_momentum_fixed_nesterov_false",
         initial_momentum=0.6,
         search_momentum=True,
         muon_nesterov=False,
+        search_nesterov=False,
+    ),
+    dict(
+        momentum_config_name="search_momentum_fixed_nesterov_true",
+        initial_momentum=0.6,
+        search_momentum=True,
+        muon_nesterov=True,
         search_nesterov=False,
     ),
 ]
@@ -690,6 +708,22 @@ def train_interval(
     )
 
 
+def better_k(k, incumbent_k, results_by_k):
+    if incumbent_k is None:
+        return True
+    loss = results_by_k[k]["final_loss"]
+    incumbent_loss = results_by_k[incumbent_k]["final_loss"]
+    return (loss, abs(k), k) < (incumbent_loss, abs(incumbent_k), incumbent_k)
+
+
+def best_neighbor_k(middle_k, results_by_k, step):
+    best_k = middle_k
+    for k in (middle_k - step, middle_k + step):
+        if better_k(k, best_k, results_by_k):
+            best_k = k
+    return best_k
+
+
 def point_sort_key(point):
     k, momentum_index, nesterov = point
     return (abs(k), k, momentum_index, nesterov)
@@ -751,6 +785,37 @@ def refinement_steps(final_k_granularity):
         step /= 2
 
 
+def find_best_lr_k(initial_lr_k, final_k_granularity, evaluate, results_by_k):
+    initial_candidate_ks = (initial_lr_k - 1, initial_lr_k, initial_lr_k + 1)
+    for k in initial_candidate_ks:
+        evaluate(k)
+
+    middle_k = None
+    for k in initial_candidate_ks:
+        if better_k(k, middle_k, results_by_k):
+            middle_k = k
+
+    for _ in range(LR_SEARCH_MAX_MOVES):
+        evaluate(middle_k - 1)
+        evaluate(middle_k + 1)
+        next_k = best_neighbor_k(middle_k, results_by_k, 1)
+        if next_k == middle_k:
+            break
+        middle_k = next_k
+    else:
+        raise RuntimeError(
+            "LR search did not converge within %d moves"
+            % LR_SEARCH_MAX_MOVES
+        )
+
+    for step in refinement_steps(final_k_granularity):
+        evaluate(middle_k - step)
+        evaluate(middle_k + step)
+        middle_k = best_neighbor_k(middle_k, results_by_k, step)
+
+    return middle_k
+
+
 def find_best_lr_momentum_point_for_nesterov(
     initial_lr_k,
     initial_momentum_index,
@@ -807,16 +872,33 @@ def find_best_lr_momentum_point(
     evaluate,
     results_by_point,
     search_momentum,
+    search_nesterov,
 ):
-    return find_best_lr_momentum_point_for_nesterov(
-        initial_lr_k=initial_lr_k,
-        initial_momentum_index=initial_momentum_index,
-        initial_nesterov=initial_nesterov,
-        final_k_granularity=final_k_granularity,
-        evaluate=evaluate,
-        results_by_point=results_by_point,
-        search_momentum=search_momentum,
-    )
+    if not search_nesterov:
+        return find_best_lr_momentum_point_for_nesterov(
+            initial_lr_k=initial_lr_k,
+            initial_momentum_index=initial_momentum_index,
+            initial_nesterov=initial_nesterov,
+            final_k_granularity=final_k_granularity,
+            evaluate=evaluate,
+            results_by_point=results_by_point,
+            search_momentum=search_momentum,
+        )
+
+    best_point = None
+    for nesterov in (True, False):
+        point = find_best_lr_momentum_point_for_nesterov(
+            initial_lr_k=initial_lr_k,
+            initial_momentum_index=initial_momentum_index,
+            initial_nesterov=nesterov,
+            final_k_granularity=final_k_granularity,
+            evaluate=evaluate,
+            results_by_point=results_by_point,
+            search_momentum=search_momentum,
+        )
+        if better_point(point, best_point, results_by_point):
+            best_point = point
+    return best_point
 
 
 def granularity_slug(final_k_granularity):
@@ -879,6 +961,7 @@ def search_cooldown_lr(
         evaluate=evaluate,
         results_by_point=results_by_point,
         search_momentum=search_momentum,
+        search_nesterov=search_nesterov,
     )
     best_k, best_momentum_index, best_nesterov = best_point
     best_result = results_by_point[best_point]
@@ -1035,6 +1118,7 @@ def search_interval_lr(
         evaluate=evaluate,
         results_by_point=results_by_point,
         search_momentum=search_momentum,
+        search_nesterov=search_nesterov,
     )
     best_k, best_momentum_index, best_nesterov = best_point
     best_result = results_by_point[best_point]
@@ -1350,7 +1434,6 @@ def main():
                                 ),
                                 flush=True,
                             )
-                            run_start_time = time.perf_counter()
                             result = run_overfit_n_search(
                                 run=run,
                                 model=model,
@@ -1370,7 +1453,6 @@ def main():
                                 ],
                                 sgd_lr_mult=config["sgd_lr_mult"],
                             )
-                            result["run_seconds"] = time.perf_counter() - run_start_time
                             results.append(result)
                             print("Batch size:          %d" % result["batch_size"])
                             print("N steps:             %d" % result["n_steps"])
@@ -1451,7 +1533,6 @@ def main():
                             print(
                                 "Final train loss:    %.6f" % result["final_train_loss"]
                             )
-                            print("Run seconds:         %.3f" % result["run_seconds"])
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)

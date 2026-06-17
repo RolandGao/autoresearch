@@ -1,0 +1,85 @@
+CIFAR overfit Nesterov-search summary
+Input log: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_nesterov.log
+Output directory: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_nesterov_plots
+Runs parsed: 3
+
+Best run
+  run 0: search: final_loss=0.866934 initial_loss=2.31348 final_muon_lr=0.0012 final_muon_momentum=0.95 final_nesterov=True
+
+Final-loss distribution
+  min=0.866934
+  median=0.866962
+  max=0.867017
+  spread=8.3e-05
+  worst=run 2: fixed True: final_loss=0.867017
+
+Final-loss ranking
+   1. run 0: search final_loss=0.866934 initial_loss=2.31348 final_lr=0.0012 final_momentum=0.95 final_nesterov=True
+   2. run 1: fixed False final_loss=0.866962 initial_loss=2.31348 final_lr=0.00073 final_momentum=0.9 final_nesterov=False
+   3. run 2: fixed True final_loss=0.867017 initial_loss=2.31348 final_lr=0.002 final_momentum=0.99 final_nesterov=True
+
+Ranking: loss after 30 steps
+   1. run 0: search: step=30 loss=0.8669 final_loss=0.866934 final_muon_lr=0.0012 final_muon_momentum=0.95 final_nesterov=True
+   2. run 1: fixed False: step=30 loss=0.867 final_loss=0.866962 final_muon_lr=0.00073 final_muon_momentum=0.9 final_nesterov=False
+   3. run 2: fixed True: step=30 loss=0.867 final_loss=0.867017 final_muon_lr=0.002 final_muon_momentum=0.99 final_nesterov=True
+
+Ranking: loss after 10 steps
+   1. run 0: search: step=10 loss=0.88 final_loss=0.866934 final_muon_lr=0.0012 final_muon_momentum=0.95 final_nesterov=True
+   2. run 1: fixed False: step=10 loss=0.8848 final_loss=0.866962 final_muon_lr=0.00073 final_muon_momentum=0.9 final_nesterov=False
+   3. run 2: fixed True: step=10 loss=0.8849 final_loss=0.867017 final_muon_lr=0.002 final_muon_momentum=0.99 final_nesterov=True
+
+Ranking: loss after 20 steps
+   1. run 0: search: step=20 loss=0.8673 final_loss=0.866934 final_muon_lr=0.0012 final_muon_momentum=0.95 final_nesterov=True
+   2. run 1: fixed False: step=20 loss=0.8674 final_loss=0.866962 final_muon_lr=0.00073 final_muon_momentum=0.9 final_nesterov=False
+   3. run 2: fixed True: step=20 loss=0.8676 final_loss=0.867017 final_muon_lr=0.002 final_muon_momentum=0.99 final_nesterov=True
+
+Ranking: first step below 0.9
+   1. run 2: fixed True: first_step=9 loss=0.8864 final_loss=0.867017 final_nesterov=True
+   2. run 1: fixed False: first_step=9 loss=0.8891 final_loss=0.866962 final_nesterov=False
+   3. run 0: search: first_step=9 loss=0.8896 final_loss=0.866934 final_nesterov=True
+
+Ranking: first step below 0.88
+   1. run 1: fixed False: first_step=11 loss=0.8766 final_loss=0.866962 final_nesterov=False
+   2. run 2: fixed True: first_step=11 loss=0.877 final_loss=0.867017 final_nesterov=True
+   3. run 0: search: first_step=11 loss=0.8786 final_loss=0.866934 final_nesterov=True
+
+Ranking: first step below 0.87
+   1. run 1: fixed False: first_step=15 loss=0.8688 final_loss=0.866962 final_nesterov=False
+   2. run 0: search: first_step=15 loss=0.8689 final_loss=0.866934 final_nesterov=True
+   3. run 2: fixed True: first_step=15 loss=0.8699 final_loss=0.867017 final_nesterov=True
+
+run 0: search
+  momentum config: search_momentum_search_nesterov
+  search nesterov: True
+  initial nesterov: False
+  final nesterov: True
+  train points: 31
+  interval choices: 15
+  interval evals: 262
+  final loss: 0.866934
+  final muon lr: 0.0012
+  final muon momentum: 0.95
+
+run 1: fixed False
+  momentum config: search_momentum_fixed_nesterov_false
+  search nesterov: False
+  initial nesterov: False
+  final nesterov: False
+  train points: 31
+  interval choices: 15
+  interval evals: 134
+  final loss: 0.866962
+  final muon lr: 0.00073
+  final muon momentum: 0.9
+
+run 2: fixed True
+  momentum config: search_momentum_fixed_nesterov_true
+  search nesterov: False
+  initial nesterov: True
+  final nesterov: True
+  train points: 31
+  interval choices: 15
+  interval evals: 155
+  final loss: 0.867017
+  final muon lr: 0.002
+  final muon momentum: 0.99

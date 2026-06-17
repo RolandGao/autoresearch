@@ -1,0 +1,46 @@
+run,label,momentum_config,search_nesterov,initial_nesterov,interval_index,start_step,muon_lr,muon_momentum,muon_nesterov,cooldown_muon_lr,cooldown_muon_momentum,cooldown_muon_nesterov,interval_loss,final_loss,evaluated_interval_configs,evaluated_configs
+0,run 0: search,search_momentum_search_nesterov,True,False,0,0,0.12,0.95,True,0.072,0.95,True,2.205266,1.616074,26,118
+0,run 0: search,search_momentum_search_nesterov,True,False,1,2,0.12,0.8,False,0.043,0.8,False,1.376086,1.033556,22,103
+0,run 0: search,search_momentum_search_nesterov,True,False,2,4,0.072,0.9,True,0.043,0.9,True,0.990357,0.908184,18,86
+0,run 0: search,search_momentum_search_nesterov,True,False,3,6,0.043,0.9,True,0.016,0.9,True,0.905436,0.882799,16,76
+0,run 0: search,search_momentum_search_nesterov,True,False,4,8,0.026,0.9,False,0.016,0.9,False,0.880024,0.873067,16,80
+0,run 0: search,search_momentum_search_nesterov,True,False,5,10,0.016,0.9,False,0.0093,0.9,False,0.872233,0.869381,16,77
+0,run 0: search,search_momentum_search_nesterov,True,False,6,12,0.0093,0.9,True,0.0056,0.9,True,0.870047,0.868019,16,79
+0,run 0: search,search_momentum_search_nesterov,True,False,7,14,0.0056,0.9,True,0.0034,0.9,True,0.868042,0.867544,16,70
+0,run 0: search,search_momentum_search_nesterov,True,False,8,16,0.0056,0.9,False,0.0034,0.9,False,0.867591,0.867197,15,62
+0,run 0: search,search_momentum_search_nesterov,True,False,9,18,0.0034,0.9,True,0.002,0.9,True,0.867296,0.867083,18,81
+0,run 0: search,search_momentum_search_nesterov,True,False,10,20,0.002,0.9,True,0.0012,0.9,True,0.867102,0.867029,16,72
+0,run 0: search,search_momentum_search_nesterov,True,False,11,22,0.002,0.99,True,0.0012,0.99,True,0.867114,0.866976,15,64
+0,run 0: search,search_momentum_search_nesterov,True,False,12,24,0.0034,0.95,True,0.002,0.95,True,0.867329,0.866944,14,66
+0,run 0: search,search_momentum_search_nesterov,True,False,13,26,0.0034,0.95,True,0.002,0.95,True,0.867233,0.866933,16,81
+0,run 0: search,search_momentum_search_nesterov,True,False,14,28,0.0012,0.95,True,,,None,0.866934,0.866934,22,22
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,0,0,0.12,0.6,False,0.072,0.6,False,2.206,1.646008,8,37
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,1,2,0.12,0.8,False,0.043,0.8,False,1.514076,1.106091,11,51
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,2,4,0.072,0.9,False,0.043,0.9,False,1.040451,0.921376,10,46
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,3,6,0.043,0.9,False,0.026,0.9,False,0.917466,0.885994,8,44
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,4,8,0.026,0.9,False,0.016,0.9,False,0.884794,0.87596,8,45
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,5,10,0.016,0.9,False,0.0093,0.9,False,0.875846,0.870584,8,37
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,6,12,0.0093,0.9,False,0.0056,0.9,False,0.870139,0.868656,8,38
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,7,14,0.0093,0.95,False,0.0056,0.95,False,0.869098,0.867619,8,37
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,8,16,0.0056,0.95,False,0.0034,0.95,False,0.867942,0.867352,8,34
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,9,18,0.0034,0.9,False,0.002,0.9,False,0.867433,0.867168,10,40
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,10,20,0.0034,0.99,False,0.002,0.99,False,0.867608,0.867071,10,40
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,11,22,0.002,0.99,False,0.00016,0.99,False,0.867114,0.867083,6,35
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,12,24,0.0034,0.9,False,0.0012,0.9,False,0.867437,0.866985,12,51
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,13,26,0.002,0.9,False,0.00073,0.9,False,0.867092,0.866963,8,37
+1,run 1: fixed False,search_momentum_fixed_nesterov_false,False,False,14,28,0.00073,0.9,False,,,None,0.866962,0.866962,11,11
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,0,0,0.12,0.95,True,0.072,0.95,True,2.205266,1.616074,18,81
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,1,2,0.12,0.8,True,0.043,0.8,True,1.450681,1.070969,11,51
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,2,4,0.072,0.95,True,0.043,0.95,True,1.047283,0.920548,13,57
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,3,6,0.043,0.95,True,0.026,0.95,True,0.909774,0.886027,8,32
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,4,8,0.026,0.9,True,0.016,0.9,True,0.884926,0.875005,10,43
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,5,10,0.016,0.9,True,0.0093,0.9,True,0.876312,0.87075,8,34
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,6,12,0.0093,0.9,True,0.0056,0.9,True,0.870695,0.8688,8,35
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,7,14,0.0093,0.99,True,0.0056,0.99,True,0.870615,0.867794,10,43
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,8,16,0.0093,0.99,True,0.0056,0.99,True,0.870413,0.867592,4,17
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,9,18,0.0034,0.99,True,0.00073,0.99,True,0.867595,0.867426,8,41
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,10,20,0.002,0.7,True,0.0012,0.7,True,0.867356,0.867212,20,94
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,11,22,0.0012,0.7,True,0.00073,0.7,True,0.867209,0.867157,8,37
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,12,24,0.002,0.95,True,0.0012,0.95,True,0.867175,0.86704,15,59
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,13,26,0.0034,0.99,True,0.002,0.99,True,0.867349,0.866982,8,31
+2,run 2: fixed True,search_momentum_fixed_nesterov_true,False,True,14,28,0.002,0.99,True,,,None,0.867017,0.867017,6,6
