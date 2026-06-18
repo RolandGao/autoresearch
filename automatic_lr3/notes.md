@@ -81,3 +81,8 @@ for the momentum hparam space, it goes from 0 to 0.9 in granularity of 0.1, incl
 
 for each interval, we currently search for a constant lr. now we change it so that we search for a start_lr and an end_lr for that interval and the lr during the interval is a linear decay from start_lr to end_lr inclusive. if N = 1, only search for start_lr. for (start_lr,end_lr), its neighbours are its eight points where start_lr and or end_lr could be *0.6 or /0.6.
 for the first interval, start_lr and end_lr are initialized to 0.2. for later intervals, they are initialized to the end_lr of the previous interval. 
+we have an hparam called interval_scheduler. if interval_scheduler = linear, the above algorithm is used. if interval_scheduler = constant, the original algorithm is used. 
+
+during the neighbourhood search, if the (start_lr, end_lr) point has been run before, cache it so as to not duplicate efforts. 
+
+If M > 0, M's start_lr and end_lr are initialized to the main interval's end_lr. If M = 1, only start_lr is used.
