@@ -75,3 +75,9 @@ train for 30 steps instead of 50.
 have 3 runs, one is the current nesterov_search = True one, where it does a full search for the interval for both nesterov = True and False. have two more runs, where nesterov is fixed to False always in one run, and always True in the other run.
 
 for the momentum hparam space, it goes from 0 to 0.9 in granularity of 0.1, including 0 and 0.9. but we now want to extend it to include 0.95 and 0.99. one step above 0.9 is 0.95, and one step above that is 0.99. the boundary of this space is 0 and 0.99.
+
+
+
+
+for each interval, we currently search for a constant lr. now we change it so that we search for a start_lr and an end_lr for that interval and the lr during the interval is a linear decay from start_lr to end_lr inclusive. if N = 1, only search for start_lr. for (start_lr,end_lr), its neighbours are its eight points where start_lr and or end_lr could be *0.6 or /0.6.
+for the first interval, start_lr and end_lr are initialized to 0.2. for later intervals, they are initialized to the end_lr of the previous interval. 
