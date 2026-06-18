@@ -87,9 +87,7 @@ if USE_COMPILED_MUON:
 
 
 class Muon(torch.optim.Optimizer):
-    def __init__(
-        self, params, lr=1e-3, momentum=0, nesterov=False, orthogonalize=True
-    ):
+    def __init__(self, params, lr=1e-3, momentum=0, nesterov=False, orthogonalize=True):
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
         if momentum < 0.0:
@@ -393,9 +391,7 @@ def log_interval_lr_landscape(results_by_point):
         if cooldown_result is None:
             print(
                 "cooldown_muon_lr=none final_loss=%.6f"
-                % (
-                    interval_result["final_loss"],
-                ),
+                % (interval_result["final_loss"],),
                 flush=True,
             )
             continue
@@ -496,8 +492,10 @@ MUON_MOMENTUM_CONFIGS = [
 ]
 LABEL_SMOOTHING = 0.2
 SGD_LR_MULTS = {
+    125: 1.0,
     500: 1.0,
     2000: 0.8,
+    5000: 0.8,
     10000: 0.8,
 }
 RUN_CONFIGS = [
@@ -607,8 +605,7 @@ def set_muon_hparams(muon_optimizer, muon_lr, muon_momentum, muon_nesterov):
 def snapshot_training_state(model, optimizers):
     return dict(
         model={
-            name: value.detach().clone()
-            for name, value in model.state_dict().items()
+            name: value.detach().clone() for name, value in model.state_dict().items()
         },
         optimizers=[copy.deepcopy(optimizer.state_dict()) for optimizer in optimizers],
     )
@@ -717,9 +714,7 @@ def neighbor_points(point, lr_step, search_momentum):
             yield (k, momentum_index + 1, nesterov)
 
 
-def best_neighbor_point(
-    middle_point, results_by_point, lr_step, search_momentum
-):
+def best_neighbor_point(middle_point, results_by_point, lr_step, search_momentum):
     best_point = middle_point
     for point in neighbor_points(middle_point, lr_step, search_momentum):
         if better_point(point, best_point, results_by_point):
@@ -730,8 +725,7 @@ def best_neighbor_point(
 def validate_final_k_granularity(final_k_granularity):
     if final_k_granularity <= 0 or final_k_granularity > 1:
         raise ValueError(
-            "final_k_granularity must be in (0, 1], got %s"
-            % final_k_granularity
+            "final_k_granularity must be in (0, 1], got %s" % final_k_granularity
         )
     step = 1
     while step > final_k_granularity:
@@ -782,8 +776,7 @@ def find_best_lr_momentum_point_for_nesterov(
         middle_point = next_point
     else:
         raise RuntimeError(
-            "LR/momentum search did not converge within %d moves"
-            % LR_SEARCH_MAX_MOVES
+            "LR/momentum search did not converge within %d moves" % LR_SEARCH_MAX_MOVES
         )
 
     for step in refinement_steps(final_k_granularity):
@@ -1268,9 +1261,7 @@ def run_overfit_n_search(
             interval_results[-1]["best_momentum_index"] if interval_results else None
         ),
         final_cooldown_muon_lr=(
-            last_cooldown_result["cooldown_muon_lr"]
-            if last_cooldown_result
-            else None
+            last_cooldown_result["cooldown_muon_lr"] if last_cooldown_result else None
         ),
         final_cooldown_muon_momentum=(
             last_cooldown_result["cooldown_muon_momentum"]
@@ -1384,12 +1375,16 @@ def main():
                                 % result["cooldown_final_k_granularity"]
                             )
                             print(
-                                "Muon orthogonalize:  %s"
-                                % result["muon_orthogonalize"]
+                                "Muon orthogonalize:  %s" % result["muon_orthogonalize"]
                             )
-                            print("Momentum config:     %s" % result["momentum_config_name"])
+                            print(
+                                "Momentum config:     %s"
+                                % result["momentum_config_name"]
+                            )
                             print("Search momentum:     %s" % result["search_momentum"])
-                            print("Initial nesterov:    %s" % result["initial_nesterov"])
+                            print(
+                                "Initial nesterov:    %s" % result["initial_nesterov"]
+                            )
                             print("Search nesterov:     %s" % result["search_nesterov"])
                             print("Initial Muon lr:     %.6g" % result["initial_lr"])
                             print("Initial Muon lr k:   %d" % result["initial_lr_k"])
