@@ -416,39 +416,27 @@ def format_optional_momentum(momentum):
 
 
 def log_interval_lr_landscape(results_by_point):
-    for interval_point in sorted(results_by_point):
-        interval_result = results_by_point[interval_point]
+    for interval_result in results_by_point.values():
         cooldown_result = interval_result["cooldown_result"]
         print(
-            "interval_start_muon_lr=%.6g interval_end_muon_lr=%.6g "
-            "interval_muon_lr=%.6g interval_muon_momentum=%s "
-            "interval_muon_nesterov=%s interval_loss=%.6f"
+            "main interval: %.6g %.6g %s loss=%.6f"
             % (
                 interval_result["start_muon_lr"],
                 interval_result["end_muon_lr"],
-                interval_result["muon_lr"],
                 format_momentum(interval_result["muon_momentum"]),
-                interval_result["muon_nesterov"],
                 interval_result["interval_final_loss"],
             ),
             flush=True,
         )
         if cooldown_result is None:
-            print(
-                "cooldown_muon_lr=none final_loss=%.6f"
-                % (interval_result["final_loss"],),
-                flush=True,
-            )
             continue
 
         for cooldown_eval in cooldown_result["search_evaluations"]:
             print(
-                "%.6g %.6g %s %s -> %.6f"
+                "%.6g %.6g -> %.6f"
                 % (
                     cooldown_eval["start_muon_lr"],
                     cooldown_eval["end_muon_lr"],
-                    format_momentum(cooldown_eval["muon_momentum"]),
-                    cooldown_eval["muon_nesterov"],
                     cooldown_eval["final_loss"],
                 ),
                 flush=True,
@@ -472,53 +460,23 @@ def log_interval_lr_search_complete(
     best_cooldown_result,
     results_by_k,
 ):
-    cooldown_muon_lr = (
-        best_cooldown_result["muon_lr"] if best_cooldown_result is not None else None
-    )
-    cooldown_start_muon_lr = (
-        best_cooldown_result["start_muon_lr"]
-        if best_cooldown_result is not None
-        else None
-    )
-    cooldown_end_muon_lr = (
-        best_cooldown_result["end_muon_lr"]
-        if best_cooldown_result is not None
-        else None
-    )
-    cooldown_muon_momentum = (
-        best_cooldown_result["muon_momentum"]
-        if best_cooldown_result is not None
-        else None
-    )
-    cooldown_muon_nesterov = (
-        best_cooldown_result["muon_nesterov"]
-        if best_cooldown_result is not None
-        else None
-    )
+    best_muon_lrs = [best_result["start_muon_lr"], best_result["end_muon_lr"]]
+    if best_cooldown_result is not None:
+        best_muon_lrs.extend(
+            [
+                best_cooldown_result["start_muon_lr"],
+                best_cooldown_result["end_muon_lr"],
+            ]
+        )
+    best_muon_lr = "[%s]" % ",".join("%.6g" % lr for lr in best_muon_lrs)
     print(
-        "best_interval_start_muon_lr=%.6g "
-        "best_interval_end_muon_lr=%.6g "
-        "best_interval_muon_lr=%.6g "
-        "best_interval_muon_momentum=%s "
-        "best_interval_muon_nesterov=%s "
-        "best_cooldown_start_muon_lr=%s "
-        "best_cooldown_end_muon_lr=%s "
-        "best_cooldown_muon_lr=%s "
-        "best_cooldown_muon_momentum=%s "
-        "best_cooldown_muon_nesterov=%s "
+        "best_muon_lr=%s "
+        "best_muon_momentum=%s "
         "interval_loss=%.6f final_loss=%.6f evaluated_interval_configs=%d "
         "evaluated_configs=%d"
         % (
-            best_result["start_muon_lr"],
-            best_result["end_muon_lr"],
-            best_result["muon_lr"],
+            best_muon_lr,
             format_momentum(best_result["muon_momentum"]),
-            best_result["muon_nesterov"],
-            format_optional_lr(cooldown_start_muon_lr),
-            format_optional_lr(cooldown_end_muon_lr),
-            format_optional_lr(cooldown_muon_lr),
-            format_optional_momentum(cooldown_muon_momentum),
-            cooldown_muon_nesterov,
             best_result["interval_final_loss"],
             best_result["final_loss"],
             len(results_by_k),
@@ -533,12 +491,13 @@ def log_interval_lr_search_complete(
 ############################################
 
 OVERFIT_BATCH_SIZES = [2000]
-SEARCH_STEP_CONFIGS = [(3, 0), (3, 3), (5, 0), (5, 5)]
+SEARCH_STEP_CONFIGS = [(10, 0)]
 MUON_ORTHOGONALIZE = [True]
-INTERVAL_SCHEDULERS = ["linear"]
-LR_CONNECTEDNESSES = ["continuous_double", "continuous_single"]
+INTERVAL_SCHEDULERS = ["linear", "exp_linear", "constant"]
+ENDPOINT_INTERVAL_SCHEDULERS = {"linear", "exp_linear"}
+LR_CONNECTEDNESSES = ["continuous_double"]
 VALID_LR_CONNECTEDNESSES = ["jump_allowed", "continuous_double", "continuous_single"]
-OVERFIT_TRAIN_STEPS = 30
+OVERFIT_TRAIN_STEPS = 10
 LR_SEARCH_BASE = 0.2
 LR_SEARCH_FACTOR = 0.6
 LR_SEARCH_SIG_FIGS = 2
@@ -768,24 +727,36 @@ def lr_schedule_from_endpoints(
 ):
     if interval_scheduler == "constant" or interval_steps == 1:
         if (
-            interval_scheduler == "linear"
+            interval_scheduler in ENDPOINT_INTERVAL_SCHEDULERS
             and interval_steps == 1
             and fixed_start
             and lr_connectedness == "continuous_single"
         ):
             return [rounded_lr(end_lr)]
         return [rounded_lr(start_lr)] * interval_steps
-    if interval_scheduler != "linear":
-        raise ValueError(f"Unknown interval scheduler: {interval_scheduler}")
-    if fixed_start and lr_connectedness == "continuous_single":
+    if interval_scheduler == "linear":
+        if fixed_start and lr_connectedness == "continuous_single":
+            return [
+                rounded_lr(start_lr + (end_lr - start_lr) * i / interval_steps)
+                for i in range(1, interval_steps + 1)
+            ]
         return [
-            rounded_lr(start_lr + (end_lr - start_lr) * i / interval_steps)
-            for i in range(1, interval_steps + 1)
+            rounded_lr(start_lr + (end_lr - start_lr) * i / (interval_steps - 1))
+            for i in range(interval_steps)
         ]
-    return [
-        rounded_lr(start_lr + (end_lr - start_lr) * i / (interval_steps - 1))
-        for i in range(interval_steps)
-    ]
+    if interval_scheduler == "exp_linear":
+        start_lr_k = nearest_lr_k(start_lr)
+        end_lr_k = nearest_lr_k(end_lr)
+        if fixed_start and lr_connectedness == "continuous_single":
+            return [
+                lr_from_k(start_lr_k + (end_lr_k - start_lr_k) * i / interval_steps)
+                for i in range(1, interval_steps + 1)
+            ]
+        return [
+            lr_from_k(start_lr_k + (end_lr_k - start_lr_k) * i / (interval_steps - 1))
+            for i in range(interval_steps)
+        ]
+    raise ValueError(f"Unknown interval scheduler: {interval_scheduler}")
 
 
 def lr_connectedness_uses_fixed_start(lr_connectedness, fixed_start_lr_k):
@@ -804,7 +775,7 @@ def make_initial_search_point(
 ):
     if lr_connectedness_uses_fixed_start(lr_connectedness, fixed_start_lr_k):
         return (initial_lr_k, initial_momentum_index)
-    if interval_scheduler == "linear" and interval_steps > 1:
+    if interval_scheduler in ENDPOINT_INTERVAL_SCHEDULERS and interval_steps > 1:
         return (initial_lr_k, initial_lr_k, initial_momentum_index)
     return (initial_lr_k, initial_momentum_index)
 
@@ -819,7 +790,7 @@ def unpack_search_point(
     if lr_connectedness_uses_fixed_start(lr_connectedness, fixed_start_lr_k):
         end_k, momentum_index = point
         return fixed_start_lr_k, end_k, momentum_index
-    if interval_scheduler == "linear" and interval_steps > 1:
+    if interval_scheduler in ENDPOINT_INTERVAL_SCHEDULERS and interval_steps > 1:
         start_k, end_k, momentum_index = point
     else:
         start_k, momentum_index = point
@@ -906,8 +877,15 @@ def find_best_lr_momentum_point(
             break
         middle_point = next_point
     else:
-        raise RuntimeError(
-            "LR/momentum search did not converge within %d moves" % LR_SEARCH_MAX_MOVES
+        print(
+            "lr_momentum_search_warning did_not_converge_within=%d "
+            "using_point=%s final_loss=%.6f"
+            % (
+                LR_SEARCH_MAX_MOVES,
+                middle_point,
+                results_by_point[middle_point]["final_loss"],
+            ),
+            flush=True,
         )
 
     return middle_point
@@ -1056,7 +1034,7 @@ def search_cooldown_lr(
                 final_loss=result["final_loss"],
                 completed_steps=result["completed_steps"],
             )
-            for point, result in sorted(results_by_point.items())
+            for result in results_by_point.values()
         ],
     )
 
@@ -1295,7 +1273,7 @@ def search_interval_lr(
                 completed_steps=result["completed_steps"],
                 cooldown_result=result["cooldown_result"],
             )
-            for point, result in sorted(results_by_point.items())
+            for result in results_by_point.values()
         ],
     )
 
@@ -1355,11 +1333,9 @@ def run_overfit_n_search(
     interval_index = 0
     while completed_steps < OVERFIT_TRAIN_STEPS:
         interval_steps = min(n_steps, OVERFIT_TRAIN_STEPS - completed_steps)
-        previous_interval_end_lr_k = (
-            interval_initial_lr_k
-            if lr_connectedness.startswith("continuous_") and interval_index > 0
-            else None
-        )
+        previous_interval_end_lr_k = None
+        if interval_index > 0 and lr_connectedness.startswith("continuous_"):
+            previous_interval_end_lr_k = interval_initial_lr_k
         interval_result = search_interval_lr(
             run=run,
             model=model,

@@ -1,0 +1,44 @@
+CIFAR overfit continuous-LR scheduler search summary
+Input log: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_continuous_lr2.log
+Output directory: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_continuous_lr2_plots
+Plot file: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_continuous_lr2_plots/curves.png
+Runs parsed: 2
+Completed runs: 2
+Metrics are ranked lower-is-better.
+
+Best completed run by final loss:
+  run=0 batch_size=2000 N=3 M=3 lr_connectedness=continuous_double final_loss=0.866932 run_seconds=398.029
+
+Batch size: 2000
+
+Final loss
+  run=0 N=3 M=3 lr_connectedness=continuous_double final_loss=0.866932 first_below_0p87=10 evaluated_configs=1794
+  run=1 N=3 M=3 lr_connectedness=continuous_single final_loss=0.866933 first_below_0p87=11 evaluated_configs=2191
+
+Pareto frontier: first step below 0.87 vs run seconds
+  run=0 N=3 M=3 lr_connectedness=continuous_double first_step_below_0p87=10 run_seconds=398.029 final_lr=3.4e-05 final_momentum=0.95
+
+Loss after 30 steps
+   1. run=0 N=3 M=3 lr_connectedness=continuous_double loss_after_30_steps=0.8669 run_seconds=398.029 final_lr=3.4e-05 final_momentum=0.95
+   2. run=1 N=3 M=3 lr_connectedness=continuous_single loss_after_30_steps=0.8669 run_seconds=476.972 final_lr=0.00073 final_momentum=0.95
+
+Loss after 10 steps
+   1. run=0 N=3 M=3 lr_connectedness=continuous_double loss_after_10_steps=0.8684 run_seconds=398.029 final_lr=3.4e-05 final_momentum=0.95
+   2. run=1 N=3 M=3 lr_connectedness=continuous_single loss_after_10_steps=0.8700 run_seconds=476.972 final_lr=0.00073 final_momentum=0.95
+
+Loss after 20 steps
+   1. run=0 N=3 M=3 lr_connectedness=continuous_double loss_after_20_steps=0.8670 run_seconds=398.029 final_lr=3.4e-05 final_momentum=0.95
+   2. run=1 N=3 M=3 lr_connectedness=continuous_single loss_after_20_steps=0.8671 run_seconds=476.972 final_lr=0.00073 final_momentum=0.95
+
+First step below 0.9
+   1. run=0 N=3 M=3 lr_connectedness=continuous_double first_step_below_0p9=7 run_seconds=398.029 final_lr=3.4e-05 final_momentum=0.95
+   2. run=1 N=3 M=3 lr_connectedness=continuous_single first_step_below_0p9=7 run_seconds=476.972 final_lr=0.00073 final_momentum=0.95
+
+First step below 0.88
+   1. run=0 N=3 M=3 lr_connectedness=continuous_double first_step_below_0p88=8 run_seconds=398.029 final_lr=3.4e-05 final_momentum=0.95
+   2. run=1 N=3 M=3 lr_connectedness=continuous_single first_step_below_0p88=9 run_seconds=476.972 final_lr=0.00073 final_momentum=0.95
+
+First step below 0.87
+   1. run=0 N=3 M=3 lr_connectedness=continuous_double first_step_below_0p87=10 run_seconds=398.029 final_lr=3.4e-05 final_momentum=0.95
+   2. run=1 N=3 M=3 lr_connectedness=continuous_single first_step_below_0p87=11 run_seconds=476.972 final_lr=0.00073 final_momentum=0.95
+

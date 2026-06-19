@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the CIFAR overfit momentum-ratio search log."""
+"""Plot the CIFAR overfit continuous-LR search log."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ import matplotlib.pyplot as plt
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_LOG = HERE / "cifar_overfit_search_momentum_ratio.log"
-DEFAULT_OUTPUT_DIR = HERE / "cifar_overfit_search_momentum_ratio_plots"
+DEFAULT_LOG = HERE / "cifar_overfit_search_continuous_lr2.log"
+DEFAULT_OUTPUT_DIR = HERE / "cifar_overfit_search_continuous_lr2_plots"
 OUTPUT_SUMMARY = "summary.txt"
 OUTPUT_PLOT = "curves.png"
 
@@ -107,6 +107,7 @@ class Run:
     n_steps: int | None = None
     m_steps: int | None = None
     interval_scheduler: str | None = None
+    lr_connectedness: str | None = None
     initial_muon_lr: float | None = None
     initial_muon_momentum: float | None = None
     train: list[TrainPoint] = field(default_factory=list)
@@ -158,6 +159,19 @@ def parse_kv_line(line: str) -> dict[str, str]:
     return {match["key"]: match["value"] for match in KV_RE.finditer(line)}
 
 
+def parse_float_list(value: str | None) -> list[float]:
+    if value is None:
+        return []
+    value = value.strip()
+    if not (value.startswith("[") and value.endswith("]")):
+        return []
+    return [
+        parsed
+        for item in value[1:-1].split(",")
+        if (parsed := parse_optional_float(item.strip())) is not None
+    ]
+
+
 def style_axes(ax) -> None:
     ax.grid(True, color="#dddddd", linewidth=0.7, alpha=0.75)
     ax.spines["top"].set_visible(False)
@@ -191,6 +205,7 @@ def parse_log(log_path: Path) -> list[Run]:
                     n_steps=parse_optional_int(fields.get("N")),
                     m_steps=parse_optional_int(fields.get("M")),
                     interval_scheduler=fields.get("interval_scheduler"),
+                    lr_connectedness=fields.get("lr_connectedness"),
                     initial_muon_lr=parse_optional_float(fields.get("initial_muon_lr")),
                     initial_muon_momentum=parse_optional_float(
                         fields.get("initial_muon_momentum")
@@ -223,29 +238,26 @@ def parse_log(log_path: Path) -> list[Run]:
                 )
                 continue
 
-            if line.startswith("best_interval_") and current is not None:
+            if line.startswith("best_muon_lr=") and current is not None:
                 fields = parse_kv_line(line)
+                best_muon_lrs = parse_float_list(fields.get("best_muon_lr"))
                 last_step = current.train[-1].step if current.train else -1
                 current.choices.append(
                     SearchChoice(
                         start_step=last_step + 1,
-                        start_muon_lr=parse_optional_float(
-                            fields.get("best_interval_start_muon_lr")
-                        ),
-                        end_muon_lr=parse_optional_float(
-                            fields.get("best_interval_end_muon_lr")
-                        ),
-                        muon_lr=parse_optional_float(
-                            fields.get("best_interval_muon_lr")
-                        ),
+                        start_muon_lr=best_muon_lrs[0] if best_muon_lrs else None,
+                        end_muon_lr=best_muon_lrs[1]
+                        if len(best_muon_lrs) > 1
+                        else None,
+                        muon_lr=best_muon_lrs[1] if len(best_muon_lrs) > 1 else None,
                         muon_momentum=parse_optional_float(
-                            fields.get("best_interval_muon_momentum")
+                            fields.get("best_muon_momentum")
                         ),
-                        cooldown_muon_lr=parse_optional_float(
-                            fields.get("best_cooldown_muon_lr")
-                        ),
+                        cooldown_muon_lr=best_muon_lrs[-1]
+                        if len(best_muon_lrs) > 2
+                        else None,
                         cooldown_muon_momentum=parse_optional_float(
-                            fields.get("best_cooldown_muon_momentum")
+                            fields.get("best_muon_momentum")
                         ),
                         interval_loss=parse_optional_float(fields.get("interval_loss")),
                         final_loss=parse_optional_float(fields.get("final_loss")),
@@ -273,6 +285,7 @@ def sorted_runs(runs: list[Run]) -> list[Run]:
             run.batch_size if run.batch_size is not None else -1,
             run.n_steps if run.n_steps is not None else -1,
             run.m_steps if run.m_steps is not None else -1,
+            run.lr_connectedness or "",
             run.run,
         ),
     )
@@ -386,7 +399,7 @@ def final_muon_momentum(run: Run) -> float | None:
 def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
     best = best_completed_run(runs)
     lines = [
-        "CIFAR overfit momentum-ratio scheduler search summary",
+        "CIFAR overfit continuous-LR scheduler search summary",
         f"Input log: {log_path}",
         f"Output directory: {output_dir}",
         f"Plot file: {output_dir / OUTPUT_PLOT}",
@@ -402,6 +415,7 @@ def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
                 (
                     f"  run={best.run} batch_size={best.batch_size} "
                     f"N={best.n_steps} M={best.m_steps} "
+                    f"lr_connectedness={best.lr_connectedness or 'NA'} "
                     f"final_loss={best.final_loss:.6f} "
                     f"run_seconds={format_number(best.run_seconds)}"
                 ),
@@ -424,9 +438,10 @@ def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
         for run in ranked:
             suffix = "" if run.completed else " partial"
             lines.append(
-                f"  run={run.run} N={run.n_steps} M={run.m_steps} final_loss="
-                f"{format_number(run.final_loss)} first_below_0p87="
-                f"{format_number(first_step_below(run, 0.87))} "
+                f"  run={run.run} N={run.n_steps} M={run.m_steps} "
+                f"lr_connectedness={run.lr_connectedness or 'NA'} "
+                f"final_loss={format_number(run.final_loss)} "
+                f"first_below_0p87={format_number(first_step_below(run, 0.87))} "
                 f"evaluated_configs={total_evaluated_configs(run)}"
                 f"{suffix}"
             )
@@ -437,6 +452,7 @@ def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
         for run in frontier:
             lines.append(
                 f"  run={run.run} N={run.n_steps} M={run.m_steps} "
+                f"lr_connectedness={run.lr_connectedness or 'NA'} "
                 f"first_step_below_0p87={first_step_below(run, 0.87)} "
                 f"run_seconds={format_number(run.run_seconds)} "
                 f"final_lr={format_number(final_muon_lr(run))} "
@@ -457,6 +473,7 @@ def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
                 value = metric.value(run)
                 lines.append(
                     f"  {rank:2d}. run={run.run} N={run.n_steps} M={run.m_steps} "
+                    f"lr_connectedness={run.lr_connectedness or 'NA'} "
                     f"{metric.csv_name}={metric.format_value(value)} "
                     f"run_seconds={format_number(run.run_seconds)} "
                     f"final_lr={format_number(final_muon_lr(run))} "
@@ -496,6 +513,7 @@ def plot_curves(runs: list[Run], output_dir: Path) -> None:
         steps = [point.step for point in points]
         label = (
             f"run={run.run} bs={run.batch_size} N={run.n_steps} M={run.m_steps} "
+            f"lr_connectedness={run.lr_connectedness or 'NA'} "
             f"loss={format_number(run.final_loss)}"
         )
 
@@ -534,7 +552,7 @@ def plot_curves(runs: list[Run], output_dir: Path) -> None:
     for ax in axes[-1, :]:
         ax.set_xlabel("Step")
 
-    fig.suptitle("CIFAR momentum-ratio search curves", y=0.998)
+    fig.suptitle("CIFAR continuous-LR search curves", y=0.998)
     fig.tight_layout()
     fig.savefig(output_dir / OUTPUT_PLOT, dpi=180)
     plt.close(fig)
@@ -548,7 +566,7 @@ def plot_all(runs: list[Run], log_path: Path, output_dir: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Parse and plot cifar_overfit_search_momentum_ratio.log."
+        description="Parse and plot cifar_overfit_search_continuous_lr2.log."
     )
     parser.add_argument(
         "log",
@@ -582,7 +600,9 @@ def main() -> None:
     if best is not None:
         print(
             f"Best completed run: run={best.run} batch_size={best.batch_size} "
-            f"N={best.n_steps} M={best.m_steps} final_loss={best.final_loss:.6f}"
+            f"N={best.n_steps} M={best.m_steps} "
+            f"lr_connectedness={best.lr_connectedness or 'NA'} "
+            f"final_loss={best.final_loss:.6f}"
         )
 
 
