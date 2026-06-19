@@ -28,5 +28,6 @@ sgd_ablation/
 softmax_hparam_plots/
 sgdh_ablation2_variant_plots/
 cifar10/
+automatic_lr*/cifar10
 logs/
 cifar96/cifar10
