@@ -86,3 +86,12 @@ we have an hparam called interval_scheduler. if interval_scheduler = linear, the
 during the neighbourhood search, if the (start_lr, end_lr) point has been run before, cache it so as to not duplicate efforts. 
 
 If M > 0, M's start_lr and end_lr are initialized to the main interval's end_lr. If M = 1, only start_lr is used.
+
+
+write code that plots autoresearch/automatic_lr3/cifar_overfit_search_momentum_ratio.log
+
+the output summary.txt should contain all the ranking metrics in autoresearch/automatic_lr3/cifar_overfit_search_linear_plots/summary.txt
+
+besides that, plot the lr curves, one per subplot. the momentum curves, the loss curves. use linear y scale for lr curves. 
+
+so only a .txt and a .png file
