@@ -536,6 +536,8 @@ OVERFIT_BATCH_SIZES = [2000]
 SEARCH_STEP_CONFIGS = [(3, 0), (3, 3), (5, 0), (5, 5)]
 MUON_ORTHOGONALIZE = [True]
 INTERVAL_SCHEDULERS = ["linear"]
+LR_CONNECTEDNESSES = ["continuous_double", "continuous_single"]
+VALID_LR_CONNECTEDNESSES = ["jump_allowed", "continuous_double", "continuous_single"]
 OVERFIT_TRAIN_STEPS = 30
 LR_SEARCH_BASE = 0.2
 LR_SEARCH_FACTOR = 0.6
@@ -756,26 +758,67 @@ def train_interval(
     )
 
 
-def lr_schedule_from_endpoints(interval_scheduler, start_lr, end_lr, interval_steps):
+def lr_schedule_from_endpoints(
+    interval_scheduler,
+    start_lr,
+    end_lr,
+    interval_steps,
+    lr_connectedness="jump_allowed",
+    fixed_start=False,
+):
     if interval_scheduler == "constant" or interval_steps == 1:
+        if (
+            interval_scheduler == "linear"
+            and interval_steps == 1
+            and fixed_start
+            and lr_connectedness == "continuous_single"
+        ):
+            return [rounded_lr(end_lr)]
         return [rounded_lr(start_lr)] * interval_steps
     if interval_scheduler != "linear":
         raise ValueError(f"Unknown interval scheduler: {interval_scheduler}")
+    if fixed_start and lr_connectedness == "continuous_single":
+        return [
+            rounded_lr(start_lr + (end_lr - start_lr) * i / interval_steps)
+            for i in range(1, interval_steps + 1)
+        ]
     return [
         rounded_lr(start_lr + (end_lr - start_lr) * i / (interval_steps - 1))
         for i in range(interval_steps)
     ]
 
 
+def lr_connectedness_uses_fixed_start(lr_connectedness, fixed_start_lr_k):
+    if lr_connectedness not in VALID_LR_CONNECTEDNESSES:
+        raise ValueError(f"Unknown LR connectedness: {lr_connectedness}")
+    return lr_connectedness.startswith("continuous_") and fixed_start_lr_k is not None
+
+
 def make_initial_search_point(
-    interval_scheduler, interval_steps, initial_lr_k, initial_momentum_index
+    interval_scheduler,
+    interval_steps,
+    initial_lr_k,
+    initial_momentum_index,
+    lr_connectedness="jump_allowed",
+    fixed_start_lr_k=None,
 ):
+    if lr_connectedness_uses_fixed_start(lr_connectedness, fixed_start_lr_k):
+        return (initial_lr_k, initial_momentum_index)
     if interval_scheduler == "linear" and interval_steps > 1:
         return (initial_lr_k, initial_lr_k, initial_momentum_index)
     return (initial_lr_k, initial_momentum_index)
 
 
-def unpack_search_point(interval_scheduler, interval_steps, point):
+def unpack_search_point(
+    interval_scheduler,
+    interval_steps,
+    point,
+    lr_connectedness="jump_allowed",
+    fixed_start_lr_k=None,
+):
+    if lr_connectedness_uses_fixed_start(lr_connectedness, fixed_start_lr_k):
+        end_k, momentum_index = point
+        return fixed_start_lr_k, end_k, momentum_index
     if interval_scheduler == "linear" and interval_steps > 1:
         start_k, end_k, momentum_index = point
     else:
@@ -884,17 +927,31 @@ def search_cooldown_lr(
     start_state,
     search_momentum,
     interval_scheduler,
+    lr_connectedness,
+    fixed_start_lr_k=None,
 ):
     results_by_point = {}
     initial_lr = lr_from_k(initial_lr_k)
     initial_momentum = momentum_from_index(initial_momentum_index)
+    fixed_start = lr_connectedness_uses_fixed_start(
+        lr_connectedness, fixed_start_lr_k
+    )
     initial_point = make_initial_search_point(
-        interval_scheduler, cooldown_steps, initial_lr_k, initial_momentum_index
+        interval_scheduler,
+        cooldown_steps,
+        initial_lr_k,
+        initial_momentum_index,
+        lr_connectedness=lr_connectedness,
+        fixed_start_lr_k=fixed_start_lr_k,
     )
 
     def evaluate(point):
         start_k, end_k, momentum_index = unpack_search_point(
-            interval_scheduler, cooldown_steps, point
+            interval_scheduler,
+            cooldown_steps,
+            point,
+            lr_connectedness=lr_connectedness,
+            fixed_start_lr_k=fixed_start_lr_k,
         )
         if point not in results_by_point:
             start_lr = lr_from_k(start_k)
@@ -908,12 +965,19 @@ def search_cooldown_lr(
                 inputs=inputs,
                 labels=labels,
                 muon_lrs=lr_schedule_from_endpoints(
-                    interval_scheduler, start_lr, end_lr, cooldown_steps
+                    interval_scheduler,
+                    start_lr,
+                    end_lr,
+                    cooldown_steps,
+                    lr_connectedness=lr_connectedness,
+                    fixed_start=fixed_start,
                 ),
                 muon_momentum=momentum,
                 muon_nesterov=muon_nesterov,
                 interval_steps=cooldown_steps,
             )
+            result["start_muon_lr"] = start_lr
+            result["end_muon_lr"] = end_lr
             result["k"] = end_k
             result["start_lr_k"] = start_k
             result["end_lr_k"] = end_k
@@ -934,7 +998,11 @@ def search_cooldown_lr(
         search_momentum=search_momentum,
     )
     best_start_k, best_end_k, best_momentum_index = unpack_search_point(
-        interval_scheduler, cooldown_steps, best_point
+        interval_scheduler,
+        cooldown_steps,
+        best_point,
+        lr_connectedness=lr_connectedness,
+        fixed_start_lr_k=fixed_start_lr_k,
     )
     best_result = results_by_point[best_point]
     load_training_state(model, optimizers, start_state)
@@ -943,6 +1011,7 @@ def search_cooldown_lr(
         cooldown_steps=cooldown_steps,
         search_momentum=search_momentum,
         interval_scheduler=interval_scheduler,
+        lr_connectedness=lr_connectedness,
         best_k=best_end_k,
         best_start_lr_k=best_start_k,
         best_end_lr_k=best_end_k,
@@ -1011,13 +1080,16 @@ def search_interval_lr(
     search_momentum,
     muon_nesterov,
     interval_scheduler,
+    lr_connectedness,
+    fixed_start_lr_k=None,
 ):
-    search_name = "run%d_bs%d_N%d_M%d_%s_interval%d_step%d" % (
+    search_name = "run%d_bs%d_N%d_M%d_%s_%s_interval%d_step%d" % (
         run,
         batch_size,
         n_steps,
         cooldown_steps,
         interval_scheduler,
+        lr_connectedness,
         interval_index,
         interval_start_step,
     )
@@ -1025,15 +1097,27 @@ def search_interval_lr(
     results_by_point = {}
     initial_lr = lr_from_k(initial_lr_k)
     initial_momentum = momentum_from_index(initial_momentum_index)
+    fixed_start = lr_connectedness_uses_fixed_start(
+        lr_connectedness, fixed_start_lr_k
+    )
     initial_point = make_initial_search_point(
-        interval_scheduler, interval_steps, initial_lr_k, initial_momentum_index
+        interval_scheduler,
+        interval_steps,
+        initial_lr_k,
+        initial_momentum_index,
+        lr_connectedness=lr_connectedness,
+        fixed_start_lr_k=fixed_start_lr_k,
     )
     use_cooldown = interval_start_step + interval_steps + cooldown_steps <= total_steps
     use_cooldown = use_cooldown and cooldown_steps > 0
 
     def evaluate(point):
         start_k, end_k, momentum_index = unpack_search_point(
-            interval_scheduler, interval_steps, point
+            interval_scheduler,
+            interval_steps,
+            point,
+            lr_connectedness=lr_connectedness,
+            fixed_start_lr_k=fixed_start_lr_k,
         )
         if point not in results_by_point:
             start_lr = lr_from_k(start_k)
@@ -1047,13 +1131,20 @@ def search_interval_lr(
                 inputs=inputs,
                 labels=labels,
                 muon_lrs=lr_schedule_from_endpoints(
-                    interval_scheduler, start_lr, end_lr, interval_steps
+                    interval_scheduler,
+                    start_lr,
+                    end_lr,
+                    interval_steps,
+                    lr_connectedness=lr_connectedness,
+                    fixed_start=fixed_start,
                 ),
                 muon_momentum=momentum,
                 muon_nesterov=muon_nesterov,
                 interval_steps=interval_steps,
             )
             interval_end_state = result["end_state"]
+            result["start_muon_lr"] = start_lr
+            result["end_muon_lr"] = end_lr
             result["interval_final_loss"] = result["final_loss"]
             result["cooldown_result"] = None
             if (
@@ -1082,6 +1173,12 @@ def search_interval_lr(
                     start_state=interval_end_state,
                     search_momentum=False,
                     interval_scheduler=interval_scheduler,
+                    lr_connectedness=lr_connectedness,
+                    fixed_start_lr_k=(
+                        end_k
+                        if lr_connectedness.startswith("continuous_")
+                        else None
+                    ),
                 )
                 result["cooldown_result"] = cooldown_result
                 result["final_loss"] = cooldown_result["final_train_loss"]
@@ -1105,7 +1202,11 @@ def search_interval_lr(
         search_momentum=search_momentum,
     )
     best_start_k, best_end_k, best_momentum_index = unpack_search_point(
-        interval_scheduler, interval_steps, best_point
+        interval_scheduler,
+        interval_steps,
+        best_point,
+        lr_connectedness=lr_connectedness,
+        fixed_start_lr_k=fixed_start_lr_k,
     )
     best_result = results_by_point[best_point]
     load_training_state(model, optimizers, best_result["end_state"])
@@ -1124,6 +1225,7 @@ def search_interval_lr(
         cooldown_steps=cooldown_steps if use_cooldown else 0,
         search_momentum=search_momentum,
         interval_scheduler=interval_scheduler,
+        lr_connectedness=lr_connectedness,
         best_k=best_end_k,
         best_start_lr_k=best_start_k,
         best_end_lr_k=best_end_k,
@@ -1211,6 +1313,7 @@ def run_overfit_n_search(
     muon_nesterov,
     momentum_config_name,
     interval_scheduler,
+    lr_connectedness,
     sgd_lr_mult,
 ):
     set_training_seed()
@@ -1252,6 +1355,11 @@ def run_overfit_n_search(
     interval_index = 0
     while completed_steps < OVERFIT_TRAIN_STEPS:
         interval_steps = min(n_steps, OVERFIT_TRAIN_STEPS - completed_steps)
+        previous_interval_end_lr_k = (
+            interval_initial_lr_k
+            if lr_connectedness.startswith("continuous_") and interval_index > 0
+            else None
+        )
         interval_result = search_interval_lr(
             run=run,
             model=model,
@@ -1271,6 +1379,8 @@ def run_overfit_n_search(
             search_momentum=search_momentum,
             muon_nesterov=muon_nesterov,
             interval_scheduler=interval_scheduler,
+            lr_connectedness=lr_connectedness,
+            fixed_start_lr_k=previous_interval_end_lr_k,
         )
         interval_results.append(interval_result)
         interval_initial_lr_k = interval_result["best_k"]
@@ -1332,6 +1442,7 @@ def run_overfit_n_search(
         search_momentum=search_momentum,
         muon_nesterov=muon_nesterov,
         interval_scheduler=interval_scheduler,
+        lr_connectedness=lr_connectedness,
         initial_lr_k=initial_lr_k,
         initial_lr=initial_lr,
         initial_momentum_index=initial_momentum_index,
@@ -1407,128 +1518,153 @@ def main():
     for config in RUN_CONFIGS:
         for n_steps, m_steps in SEARCH_STEP_CONFIGS:
             for interval_scheduler in INTERVAL_SCHEDULERS:
-                for muon_orthogonalize in MUON_ORTHOGONALIZE:
-                    for momentum_config in MUON_MOMENTUM_CONFIGS:
-                        initial_momentum = momentum_config["initial_momentum"]
-                        run = len(results)
-                        print(
-                            "cifar_baseline2_overfit_n_search run=%d "
-                            "batch_size=%d N=%d M=%d interval_scheduler=%s "
-                            "muon_orthogonalize=%s momentum_config=%s "
-                            "search_momentum=%s muon_nesterov=%s "
-                            "initial_muon_lr=%.6g initial_muon_lr_k=%d "
-                            "initial_muon_momentum=%s "
-                            "initial_muon_momentum_index=%d"
-                            % (
-                                run,
-                                config["batch_size"],
-                                n_steps,
-                                m_steps,
-                                interval_scheduler,
-                                muon_orthogonalize,
-                                momentum_config["momentum_config_name"],
-                                momentum_config["search_momentum"],
-                                momentum_config["muon_nesterov"],
-                                config["initial_lr"],
-                                nearest_lr_k(config["initial_lr"]),
-                                format_momentum(initial_momentum),
-                                nearest_momentum_index(initial_momentum),
-                            ),
-                            flush=True,
-                        )
-                        run_start_time = time.perf_counter()
-                        result = run_overfit_n_search(
-                            run=run,
-                            model=model,
-                            batch_size=config["batch_size"],
-                            n_steps=n_steps,
-                            m_steps=m_steps,
-                            muon_orthogonalize=muon_orthogonalize,
-                            initial_lr=config["initial_lr"],
-                            initial_momentum=initial_momentum,
-                            search_momentum=momentum_config["search_momentum"],
-                            muon_nesterov=momentum_config["muon_nesterov"],
-                            momentum_config_name=momentum_config[
-                                "momentum_config_name"
-                            ],
-                            interval_scheduler=interval_scheduler,
-                            sgd_lr_mult=config["sgd_lr_mult"],
-                        )
-                        result["run_seconds"] = time.perf_counter() - run_start_time
-                        results.append(result)
-                        print("Batch size:          %d" % result["batch_size"])
-                        print("N steps:             %d" % result["n_steps"])
-                        print("M cooldown steps:    %d" % result["m_steps"])
-                        print(
-                            "Interval scheduler:  %s" % result["interval_scheduler"]
-                        )
-                        print("Muon orthogonalize:  %s" % result["muon_orthogonalize"])
-                        print("Momentum config:     %s" % result["momentum_config_name"])
-                        print("Search momentum:     %s" % result["search_momentum"])
-                        print("Muon nesterov:       %s" % result["muon_nesterov"])
-                        print("Initial Muon lr:     %.6g" % result["initial_lr"])
-                        print("Initial Muon lr k:   %d" % result["initial_lr_k"])
-                        print(
-                            "Initial Muon mom:    %s"
-                            % format_momentum(result["initial_momentum"])
-                        )
-                        print(
-                            "Initial Muon mom i:  %d"
-                            % result["initial_momentum_index"]
-                        )
-                        print("Final start lr:      %.6g" % result["final_start_muon_lr"])
-                        print(
-                            "Final start lr k:    %s"
-                            % format_k(result["final_start_muon_lr_k"])
-                        )
-                        print("Final Muon lr:       %.6g" % result["final_muon_lr"])
-                        print(
-                            "Final Muon lr k:     %s"
-                            % format_k(result["final_muon_lr_k"])
-                        )
-                        print("Final end lr:        %.6g" % result["final_end_muon_lr"])
-                        print(
-                            "Final end lr k:      %s"
-                            % format_k(result["final_end_muon_lr_k"])
-                        )
-                        print(
-                            "Final Muon momentum: %s"
-                            % format_momentum(result["final_muon_momentum"])
-                        )
-                        print(
-                            "Final Muon nesterov: %s" % result["final_muon_nesterov"]
-                        )
-                        print(
-                            "Final Muon mom i:    %s"
-                            % format_k(result["final_muon_momentum_index"])
-                        )
-                        if result["final_cooldown_muon_lr"] is not None:
+                for lr_connectedness in LR_CONNECTEDNESSES:
+                    for muon_orthogonalize in MUON_ORTHOGONALIZE:
+                        for momentum_config in MUON_MOMENTUM_CONFIGS:
+                            initial_momentum = momentum_config["initial_momentum"]
+                            run = len(results)
                             print(
-                                "Final cooldown lr:   %.6g"
-                                % result["final_cooldown_muon_lr"]
+                                "cifar_baseline2_overfit_n_search run=%d "
+                                "batch_size=%d N=%d M=%d interval_scheduler=%s "
+                                "lr_connectedness=%s "
+                                "muon_orthogonalize=%s momentum_config=%s "
+                                "search_momentum=%s muon_nesterov=%s "
+                                "initial_muon_lr=%.6g initial_muon_lr_k=%d "
+                                "initial_muon_momentum=%s "
+                                "initial_muon_momentum_index=%d"
+                                % (
+                                    run,
+                                    config["batch_size"],
+                                    n_steps,
+                                    m_steps,
+                                    interval_scheduler,
+                                    lr_connectedness,
+                                    muon_orthogonalize,
+                                    momentum_config["momentum_config_name"],
+                                    momentum_config["search_momentum"],
+                                    momentum_config["muon_nesterov"],
+                                    config["initial_lr"],
+                                    nearest_lr_k(config["initial_lr"]),
+                                    format_momentum(initial_momentum),
+                                    nearest_momentum_index(initial_momentum),
+                                ),
+                                flush=True,
+                            )
+                            run_start_time = time.perf_counter()
+                            result = run_overfit_n_search(
+                                run=run,
+                                model=model,
+                                batch_size=config["batch_size"],
+                                n_steps=n_steps,
+                                m_steps=m_steps,
+                                muon_orthogonalize=muon_orthogonalize,
+                                initial_lr=config["initial_lr"],
+                                initial_momentum=initial_momentum,
+                                search_momentum=momentum_config["search_momentum"],
+                                muon_nesterov=momentum_config["muon_nesterov"],
+                                momentum_config_name=momentum_config[
+                                    "momentum_config_name"
+                                ],
+                                interval_scheduler=interval_scheduler,
+                                lr_connectedness=lr_connectedness,
+                                sgd_lr_mult=config["sgd_lr_mult"],
+                            )
+                            result["run_seconds"] = time.perf_counter() - run_start_time
+                            results.append(result)
+                            print("Batch size:          %d" % result["batch_size"])
+                            print("N steps:             %d" % result["n_steps"])
+                            print("M cooldown steps:    %d" % result["m_steps"])
+                            print(
+                                "Interval scheduler:  %s"
+                                % result["interval_scheduler"]
+                            )
+                            print("LR connectedness:    %s" % result["lr_connectedness"])
+                            print(
+                                "Muon orthogonalize:  %s" % result["muon_orthogonalize"]
                             )
                             print(
-                                "Final cooldown lr k: %s"
-                                % format_k(result["final_cooldown_muon_lr_k"])
+                                "Momentum config:     %s"
+                                % result["momentum_config_name"]
+                            )
+                            print("Search momentum:     %s" % result["search_momentum"])
+                            print("Muon nesterov:       %s" % result["muon_nesterov"])
+                            print("Initial Muon lr:     %.6g" % result["initial_lr"])
+                            print("Initial Muon lr k:   %d" % result["initial_lr_k"])
+                            print(
+                                "Initial Muon mom:    %s"
+                                % format_momentum(result["initial_momentum"])
                             )
                             print(
-                                "Final cooldown mom:  %s"
-                                % format_momentum(result["final_cooldown_muon_momentum"])
+                                "Initial Muon mom i:  %d"
+                                % result["initial_momentum_index"]
                             )
                             print(
-                                "Final cooldown nest: %s"
-                                % result["final_cooldown_muon_nesterov"]
+                                "Final start lr:      %.6g"
+                                % result["final_start_muon_lr"]
                             )
                             print(
-                                "Final cooldown mom i: %s"
-                                % format_k(result["final_cooldown_muon_momentum_index"])
+                                "Final start lr k:    %s"
+                                % format_k(result["final_start_muon_lr_k"])
                             )
-                        print("SGD lr mult:         %.6g" % result["sgd_lr_mult"])
-                        print(
-                            "Initial train loss:  %.6f" % result["initial_train_loss"]
-                        )
-                        print("Final train loss:    %.6f" % result["final_train_loss"])
-                        print("Run seconds:         %.3f" % result["run_seconds"])
+                            print("Final Muon lr:       %.6g" % result["final_muon_lr"])
+                            print(
+                                "Final Muon lr k:     %s"
+                                % format_k(result["final_muon_lr_k"])
+                            )
+                            print(
+                                "Final end lr:        %.6g"
+                                % result["final_end_muon_lr"]
+                            )
+                            print(
+                                "Final end lr k:      %s"
+                                % format_k(result["final_end_muon_lr_k"])
+                            )
+                            print(
+                                "Final Muon momentum: %s"
+                                % format_momentum(result["final_muon_momentum"])
+                            )
+                            print(
+                                "Final Muon nesterov: %s" % result["final_muon_nesterov"]
+                            )
+                            print(
+                                "Final Muon mom i:    %s"
+                                % format_k(result["final_muon_momentum_index"])
+                            )
+                            if result["final_cooldown_muon_lr"] is not None:
+                                print(
+                                    "Final cooldown lr:   %.6g"
+                                    % result["final_cooldown_muon_lr"]
+                                )
+                                print(
+                                    "Final cooldown lr k: %s"
+                                    % format_k(result["final_cooldown_muon_lr_k"])
+                                )
+                                print(
+                                    "Final cooldown mom:  %s"
+                                    % format_momentum(
+                                        result["final_cooldown_muon_momentum"]
+                                    )
+                                )
+                                print(
+                                    "Final cooldown nest: %s"
+                                    % result["final_cooldown_muon_nesterov"]
+                                )
+                                print(
+                                    "Final cooldown mom i: %s"
+                                    % format_k(
+                                        result["final_cooldown_muon_momentum_index"]
+                                    )
+                                )
+                            print("SGD lr mult:         %.6g" % result["sgd_lr_mult"])
+                            print(
+                                "Initial train loss:  %.6f"
+                                % result["initial_train_loss"]
+                            )
+                            print(
+                                "Final train loss:    %.6f"
+                                % result["final_train_loss"]
+                            )
+                            print("Run seconds:         %.3f" % result["run_seconds"])
 
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)

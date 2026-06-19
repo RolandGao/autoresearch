@@ -95,3 +95,13 @@ the output summary.txt should contain all the ranking metrics in autoresearch/au
 besides that, plot the lr curves, one per subplot. the momentum curves, the loss curves. use linear y scale for lr curves. 
 
 so only a .txt and a .png file
+
+modify autoresearch/automatic_lr3/cifar_overfit_search.py
+
+introduce a new hparam called lr_connectedness. If lr_connectedness is "jump_allowed", then it's the current behaviour. If it's "continuous_double", then the start_lr of the next interval has to be equal to the end_lr of the previous interval. If it's "continuous_single", then the start_lr of the next interval also has to be equal to the end_lr of the previous interval. 
+
+suppose N = 3. 
+
+step 1 to step 3 is a linear curve. if it's jump_allowed, both start_lr and end_lr are searched and step 4 to step 6 use the searched start_lr and end_lr. if it's continuous_double, we search for only end_lr and step 4's lr = step 3's lr and it linear curve down to step 6 end_lr. but if it's continuous_single, we search for only end_lr and step 4 lr != step 3's lr and the curve linear goes down from step 3 to step 6. 
+
+if M > 0 and and it's continuous_*, then it also only searches for end_lr
