@@ -1,0 +1,18 @@
+CIFAR overfit global search summary
+Input log: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_global_search.log
+Output directory: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_global_search_plots
+Runs parsed: 9
+Completed runs: 9
+
+Best run by final loss:
+  run=1 batch_size=500 scheduler=linear final_loss=0.867141 run_seconds=88.052
+
+run= 0 bs=500   scheduler=exp_linear final_loss=0.867375 first_below_0p87=24 seconds=81.398 final_lr=0.0056 mom=0.7
+run= 1 bs=500   scheduler=linear     final_loss=0.867141 first_below_0p87=27 seconds=88.052 final_lr=0.002 mom=0.6
+run= 2 bs=500   scheduler=constant   final_loss=0.868958 first_below_0p87=29 seconds=33.484 final_lr=0.2 mom=0.99
+run= 3 bs=2000  scheduler=exp_linear final_loss=0.867586 first_below_0p87=23 seconds=314.859 final_lr=0.002 mom=0.7
+run= 4 bs=2000  scheduler=linear     final_loss=0.867365 first_below_0p87=28 seconds=266.728 final_lr=0.002 mom=0.6
+run= 5 bs=2000  scheduler=constant   final_loss=0.909257 first_below_0p87=NA seconds=46.495 final_lr=0.12 mom=0.7
+run= 6 bs=10000 scheduler=exp_linear final_loss=0.87704 first_below_0p87=NA seconds=880.454 final_lr=0.016 mom=0.7
+run= 7 bs=10000 scheduler=linear     final_loss=0.87253 first_below_0p87=NA seconds=970.895 final_lr=0.016 mom=0.7
+run= 8 bs=10000 scheduler=constant   final_loss=0.888883 first_below_0p87=NA seconds=216.632 final_lr=0.072 mom=0.9

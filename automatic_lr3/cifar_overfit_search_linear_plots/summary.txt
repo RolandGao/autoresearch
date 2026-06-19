@@ -1,0 +1,180 @@
+CIFAR overfit linear scheduler search summary
+Input log: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_linear.log
+Output directory: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_linear_plots
+Runs parsed: 16
+Completed runs: 15
+Metrics are ranked lower-is-better.
+
+Best completed run by final loss:
+  run=8 batch_size=2000 N=3 final_loss=0.866930 run_seconds=182.001
+
+Batch size: 500
+
+Final loss
+  run=2 N=3 final_loss=0.866942 first_below_0p87=13 evaluated_configs=358
+  run=3 N=5 final_loss=0.866945 first_below_0p87=16 evaluated_configs=272
+  run=4 N=7 final_loss=0.867007 first_below_0p87=17 evaluated_configs=152
+  run=5 N=9 final_loss=0.867011 first_below_0p87=17 evaluated_configs=153
+  run=1 N=2 final_loss=0.867152 first_below_0p87=18 evaluated_configs=454
+  run=0 N=1 final_loss=0.869588 first_below_0p87=29 evaluated_configs=204
+
+Pareto frontier: first step below 0.87 vs run seconds
+  run=0 N=1 M=0 first_step_below_0p87=29 run_seconds=12.203 final_lr=0.00073 final_momentum=0.1
+  run=1 N=2 M=0 first_step_below_0p87=18 run_seconds=42.156 final_lr=0.00044 final_momentum=0.7
+  run=4 N=7 M=0 first_step_below_0p87=17 run_seconds=43.963 final_lr=0.0012 final_momentum=0.5
+  run=2 N=3 M=0 first_step_below_0p87=13 run_seconds=50.155 final_lr=0.00073 final_momentum=0.8
+
+Loss after 30 steps
+   1. run=2 N=3 M=0 loss_after_30_steps=0.8669 run_seconds=50.155 final_lr=0.00073 final_momentum=0.8
+   2. run=3 N=5 M=0 loss_after_30_steps=0.8669 run_seconds=60.957 final_lr=0.00044 final_momentum=0.8
+   3. run=4 N=7 M=0 loss_after_30_steps=0.8670 run_seconds=43.963 final_lr=0.0012 final_momentum=0.5
+   4. run=5 N=9 M=0 loss_after_30_steps=0.8670 run_seconds=54.637 final_lr=0.00044 final_momentum=0.8
+   5. run=1 N=2 M=0 loss_after_30_steps=0.8672 run_seconds=42.156 final_lr=0.00044 final_momentum=0.7
+   6. run=0 N=1 M=0 loss_after_30_steps=0.8696 run_seconds=12.203 final_lr=0.00073 final_momentum=0.1
+
+Loss after 10 steps
+   1. run=2 N=3 M=0 loss_after_10_steps=0.8746 run_seconds=50.155 final_lr=0.00073 final_momentum=0.8
+   2. run=3 N=5 M=0 loss_after_10_steps=0.8902 run_seconds=60.957 final_lr=0.00044 final_momentum=0.8
+   3. run=1 N=2 M=0 loss_after_10_steps=0.8937 run_seconds=42.156 final_lr=0.00044 final_momentum=0.7
+   4. run=4 N=7 M=0 loss_after_10_steps=0.8962 run_seconds=43.963 final_lr=0.0012 final_momentum=0.5
+   5. run=5 N=9 M=0 loss_after_10_steps=0.9068 run_seconds=54.637 final_lr=0.00044 final_momentum=0.8
+   6. run=0 N=1 M=0 loss_after_10_steps=0.9087 run_seconds=12.203 final_lr=0.00073 final_momentum=0.1
+
+Loss after 20 steps
+   1. run=2 N=3 M=0 loss_after_20_steps=0.8671 run_seconds=50.155 final_lr=0.00073 final_momentum=0.8
+   2. run=3 N=5 M=0 loss_after_20_steps=0.8675 run_seconds=60.957 final_lr=0.00044 final_momentum=0.8
+   3. run=4 N=7 M=0 loss_after_20_steps=0.8677 run_seconds=43.963 final_lr=0.0012 final_momentum=0.5
+   4. run=5 N=9 M=0 loss_after_20_steps=0.8682 run_seconds=54.637 final_lr=0.00044 final_momentum=0.8
+   5. run=1 N=2 M=0 loss_after_20_steps=0.8684 run_seconds=42.156 final_lr=0.00044 final_momentum=0.7
+   6. run=0 N=1 M=0 loss_after_20_steps=0.8740 run_seconds=12.203 final_lr=0.00073 final_momentum=0.1
+
+First step below 0.9
+   1. run=2 N=3 M=0 first_step_below_0p9=9 run_seconds=50.155 final_lr=0.00073 final_momentum=0.8
+   2. run=1 N=2 M=0 first_step_below_0p9=10 run_seconds=42.156 final_lr=0.00044 final_momentum=0.7
+   3. run=3 N=5 M=0 first_step_below_0p9=10 run_seconds=60.957 final_lr=0.00044 final_momentum=0.8
+   4. run=4 N=7 M=0 first_step_below_0p9=10 run_seconds=43.963 final_lr=0.0012 final_momentum=0.5
+   5. run=0 N=1 M=0 first_step_below_0p9=11 run_seconds=12.203 final_lr=0.00073 final_momentum=0.1
+   6. run=5 N=9 M=0 first_step_below_0p9=11 run_seconds=54.637 final_lr=0.00044 final_momentum=0.8
+
+First step below 0.88
+   1. run=2 N=3 M=0 first_step_below_0p88=10 run_seconds=50.155 final_lr=0.00073 final_momentum=0.8
+   2. run=1 N=2 M=0 first_step_below_0p88=12 run_seconds=42.156 final_lr=0.00044 final_momentum=0.7
+   3. run=3 N=5 M=0 first_step_below_0p88=12 run_seconds=60.957 final_lr=0.00044 final_momentum=0.8
+   4. run=4 N=7 M=0 first_step_below_0p88=12 run_seconds=43.963 final_lr=0.0012 final_momentum=0.5
+   5. run=5 N=9 M=0 first_step_below_0p88=13 run_seconds=54.637 final_lr=0.00044 final_momentum=0.8
+   6. run=0 N=1 M=0 first_step_below_0p88=15 run_seconds=12.203 final_lr=0.00073 final_momentum=0.1
+
+First step below 0.87
+   1. run=2 N=3 M=0 first_step_below_0p87=13 run_seconds=50.155 final_lr=0.00073 final_momentum=0.8
+   2. run=3 N=5 M=0 first_step_below_0p87=16 run_seconds=60.957 final_lr=0.00044 final_momentum=0.8
+   3. run=4 N=7 M=0 first_step_below_0p87=17 run_seconds=43.963 final_lr=0.0012 final_momentum=0.5
+   4. run=5 N=9 M=0 first_step_below_0p87=17 run_seconds=54.637 final_lr=0.00044 final_momentum=0.8
+   5. run=1 N=2 M=0 first_step_below_0p87=18 run_seconds=42.156 final_lr=0.00044 final_momentum=0.7
+   6. run=0 N=1 M=0 first_step_below_0p87=29 run_seconds=12.203 final_lr=0.00073 final_momentum=0.1
+
+Batch size: 2000
+
+Final loss
+  run=8 N=3 final_loss=0.86693 first_below_0p87=13 evaluated_configs=359
+  run=11 N=9 final_loss=0.867124 first_below_0p87=21 evaluated_configs=121
+  run=9 N=5 final_loss=0.867299 first_below_0p87=20 evaluated_configs=153
+  run=7 N=2 final_loss=0.86731 first_below_0p87=20 evaluated_configs=345
+  run=10 N=7 final_loss=0.867852 first_below_0p87=24 evaluated_configs=122
+  run=6 N=1 final_loss=0.877061 first_below_0p87=NA evaluated_configs=152
+
+Pareto frontier: first step below 0.87 vs run seconds
+  run=7 N=2 M=0 first_step_below_0p87=20 run_seconds=119.91 final_lr=0.002 final_momentum=0.8
+  run=8 N=3 M=0 first_step_below_0p87=13 run_seconds=182.001 final_lr=0.00073 final_momentum=0.9
+
+Loss after 30 steps
+   1. run=8 N=3 M=0 loss_after_30_steps=0.8669 run_seconds=182.001 final_lr=0.00073 final_momentum=0.9
+   2. run=11 N=9 M=0 loss_after_30_steps=0.8671 run_seconds=158.321 final_lr=0.002 final_momentum=0.7
+   3. run=7 N=2 M=0 loss_after_30_steps=0.8673 run_seconds=119.91 final_lr=0.002 final_momentum=0.8
+   4. run=9 N=5 M=0 loss_after_30_steps=0.8673 run_seconds=125.826 final_lr=0.002 final_momentum=0.8
+   5. run=10 N=7 M=0 loss_after_30_steps=0.8679 run_seconds=126.708 final_lr=0.002 final_momentum=0.5
+   6. run=6 N=1 M=0 loss_after_30_steps=0.8771 run_seconds=30.985 final_lr=0.0056 final_momentum=0
+
+Loss after 10 steps
+   1. run=8 N=3 M=0 loss_after_10_steps=0.8711 run_seconds=182.001 final_lr=0.00073 final_momentum=0.9
+   2. run=7 N=2 M=0 loss_after_10_steps=0.8994 run_seconds=119.91 final_lr=0.002 final_momentum=0.8
+   3. run=9 N=5 M=0 loss_after_10_steps=0.9093 run_seconds=125.826 final_lr=0.002 final_momentum=0.8
+   4. run=10 N=7 M=0 loss_after_10_steps=0.9698 run_seconds=126.708 final_lr=0.002 final_momentum=0.5
+   5. run=11 N=9 M=0 loss_after_10_steps=0.9977 run_seconds=158.321 final_lr=0.002 final_momentum=0.7
+   6. run=6 N=1 M=0 loss_after_10_steps=1.0836 run_seconds=30.985 final_lr=0.0056 final_momentum=0
+
+Loss after 20 steps
+   1. run=8 N=3 M=0 loss_after_20_steps=0.8671 run_seconds=182.001 final_lr=0.00073 final_momentum=0.9
+   2. run=7 N=2 M=0 loss_after_20_steps=0.8691 run_seconds=119.91 final_lr=0.002 final_momentum=0.8
+   3. run=9 N=5 M=0 loss_after_20_steps=0.8694 run_seconds=125.826 final_lr=0.002 final_momentum=0.8
+   4. run=11 N=9 M=0 loss_after_20_steps=0.8704 run_seconds=158.321 final_lr=0.002 final_momentum=0.7
+   5. run=10 N=7 M=0 loss_after_20_steps=0.8716 run_seconds=126.708 final_lr=0.002 final_momentum=0.5
+   6. run=6 N=1 M=0 loss_after_20_steps=0.8895 run_seconds=30.985 final_lr=0.0056 final_momentum=0
+
+First step below 0.9
+   1. run=8 N=3 M=0 first_step_below_0p9=7 run_seconds=182.001 final_lr=0.00073 final_momentum=0.9
+   2. run=7 N=2 M=0 first_step_below_0p9=10 run_seconds=119.91 final_lr=0.002 final_momentum=0.8
+   3. run=9 N=5 M=0 first_step_below_0p9=12 run_seconds=125.826 final_lr=0.002 final_momentum=0.8
+   4. run=10 N=7 M=0 first_step_below_0p9=12 run_seconds=126.708 final_lr=0.002 final_momentum=0.5
+   5. run=11 N=9 M=0 first_step_below_0p9=13 run_seconds=158.321 final_lr=0.002 final_momentum=0.7
+   6. run=6 N=1 M=0 first_step_below_0p9=20 run_seconds=30.985 final_lr=0.0056 final_momentum=0
+
+First step below 0.88
+   1. run=8 N=3 M=0 first_step_below_0p88=7 run_seconds=182.001 final_lr=0.00073 final_momentum=0.9
+   2. run=7 N=2 M=0 first_step_below_0p88=14 run_seconds=119.91 final_lr=0.002 final_momentum=0.8
+   3. run=9 N=5 M=0 first_step_below_0p88=14 run_seconds=125.826 final_lr=0.002 final_momentum=0.8
+   4. run=11 N=9 M=0 first_step_below_0p88=16 run_seconds=158.321 final_lr=0.002 final_momentum=0.7
+   5. run=10 N=7 M=0 first_step_below_0p88=18 run_seconds=126.708 final_lr=0.002 final_momentum=0.5
+   6. run=6 N=1 M=0 first_step_below_0p88=26 run_seconds=30.985 final_lr=0.0056 final_momentum=0
+
+First step below 0.87
+   1. run=8 N=3 M=0 first_step_below_0p87=13 run_seconds=182.001 final_lr=0.00073 final_momentum=0.9
+   2. run=7 N=2 M=0 first_step_below_0p87=20 run_seconds=119.91 final_lr=0.002 final_momentum=0.8
+   3. run=9 N=5 M=0 first_step_below_0p87=20 run_seconds=125.826 final_lr=0.002 final_momentum=0.8
+   4. run=11 N=9 M=0 first_step_below_0p87=21 run_seconds=158.321 final_lr=0.002 final_momentum=0.7
+   5. run=10 N=7 M=0 first_step_below_0p87=24 run_seconds=126.708 final_lr=0.002 final_momentum=0.5
+  1 runs missing this metric
+
+Batch size: 10000
+
+Final loss
+  run=14 N=3 final_loss=0.867296 first_below_0p87=17 evaluated_configs=360
+  run=13 N=2 final_loss=0.877518 first_below_0p87=NA evaluated_configs=343
+  run=12 N=1 final_loss=0.881606 first_below_0p87=NA evaluated_configs=177
+  run=15 N=5 final_loss=0.883 first_below_0p87=NA evaluated_configs=112 partial
+
+Pareto frontier: first step below 0.87 vs run seconds
+  run=14 N=3 M=0 first_step_below_0p87=17 run_seconds=1159.99 final_lr=0.0034 final_momentum=0.9
+
+Loss after 30 steps
+   1. run=14 N=3 M=0 loss_after_30_steps=0.8673 run_seconds=1159.99 final_lr=0.0034 final_momentum=0.9
+   2. run=13 N=2 M=0 loss_after_30_steps=0.8775 run_seconds=593.864 final_lr=0.0056 final_momentum=0.7
+   3. run=12 N=1 M=0 loss_after_30_steps=0.8816 run_seconds=167.041 final_lr=0.0093 final_momentum=0.5
+  1 runs missing this metric
+
+Loss after 10 steps
+   1. run=14 N=3 M=0 loss_after_10_steps=0.8980 run_seconds=1159.99 final_lr=0.0034 final_momentum=0.9
+   2. run=15 N=5 M=0 loss_after_10_steps=0.9601 run_seconds=NA final_lr=NA final_momentum=NA
+   3. run=13 N=2 M=0 loss_after_10_steps=1.2347 run_seconds=593.864 final_lr=0.0056 final_momentum=0.7
+   4. run=12 N=1 M=0 loss_after_10_steps=1.3689 run_seconds=167.041 final_lr=0.0093 final_momentum=0.5
+
+Loss after 20 steps
+   1. run=14 N=3 M=0 loss_after_20_steps=0.8685 run_seconds=1159.99 final_lr=0.0034 final_momentum=0.9
+   2. run=13 N=2 M=0 loss_after_20_steps=0.9067 run_seconds=593.864 final_lr=0.0056 final_momentum=0.7
+   3. run=12 N=1 M=0 loss_after_20_steps=1.0044 run_seconds=167.041 final_lr=0.0093 final_momentum=0.5
+  1 runs missing this metric
+
+First step below 0.9
+   1. run=14 N=3 M=0 first_step_below_0p9=10 run_seconds=1159.99 final_lr=0.0034 final_momentum=0.9
+   2. run=15 N=5 M=0 first_step_below_0p9=13 run_seconds=NA final_lr=NA final_momentum=NA
+   3. run=13 N=2 M=0 first_step_below_0p9=22 run_seconds=593.864 final_lr=0.0056 final_momentum=0.7
+   4. run=12 N=1 M=0 first_step_below_0p9=25 run_seconds=167.041 final_lr=0.0093 final_momentum=0.5
+
+First step below 0.88
+   1. run=14 N=3 M=0 first_step_below_0p88=12 run_seconds=1159.99 final_lr=0.0034 final_momentum=0.9
+   2. run=13 N=2 M=0 first_step_below_0p88=29 run_seconds=593.864 final_lr=0.0056 final_momentum=0.7
+  2 runs missing this metric
+
+First step below 0.87
+   1. run=14 N=3 M=0 first_step_below_0p87=17 run_seconds=1159.99 final_lr=0.0034 final_momentum=0.9
+  3 runs missing this metric
+
