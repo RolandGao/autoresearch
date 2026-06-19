@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the CIFAR overfit continuous-LR search log."""
+"""Plot the CIFAR overfit global scheduler search log."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ import matplotlib.pyplot as plt
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_LOG = HERE / "cifar_overfit_search_continuous_lr2.log"
-DEFAULT_OUTPUT_DIR = HERE / "cifar_overfit_search_continuous_lr2_plots"
+DEFAULT_LOG = HERE / "cifar_overfit_search_global2.log"
+DEFAULT_OUTPUT_DIR = HERE / "cifar_overfit_search_global2_plots"
 OUTPUT_SUMMARY = "summary.txt"
 OUTPUT_PLOT = "curves.png"
 
@@ -285,6 +285,7 @@ def sorted_runs(runs: list[Run]) -> list[Run]:
             run.batch_size if run.batch_size is not None else -1,
             run.n_steps if run.n_steps is not None else -1,
             run.m_steps if run.m_steps is not None else -1,
+            run.interval_scheduler or "",
             run.lr_connectedness or "",
             run.run,
         ),
@@ -396,10 +397,16 @@ def final_muon_momentum(run: Run) -> float | None:
     return parse_optional_float(run.summary.get("Final Muon momentum"))
 
 
+def plot_row_label(run: Run) -> str:
+    scheduler = run.interval_scheduler or "NA"
+    loss = format_number(run.final_loss)
+    return f"run {run.run}\n{scheduler}\nloss {loss}"
+
+
 def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
     best = best_completed_run(runs)
     lines = [
-        "CIFAR overfit continuous-LR scheduler search summary",
+        "CIFAR overfit global scheduler search summary",
         f"Input log: {log_path}",
         f"Output directory: {output_dir}",
         f"Plot file: {output_dir / OUTPUT_PLOT}",
@@ -415,6 +422,7 @@ def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
                 (
                     f"  run={best.run} batch_size={best.batch_size} "
                     f"N={best.n_steps} M={best.m_steps} "
+                    f"interval_scheduler={best.interval_scheduler or 'NA'} "
                     f"lr_connectedness={best.lr_connectedness or 'NA'} "
                     f"final_loss={best.final_loss:.6f} "
                     f"run_seconds={format_number(best.run_seconds)}"
@@ -439,6 +447,7 @@ def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
             suffix = "" if run.completed else " partial"
             lines.append(
                 f"  run={run.run} N={run.n_steps} M={run.m_steps} "
+                f"interval_scheduler={run.interval_scheduler or 'NA'} "
                 f"lr_connectedness={run.lr_connectedness or 'NA'} "
                 f"final_loss={format_number(run.final_loss)} "
                 f"first_below_0p87={format_number(first_step_below(run, 0.87))} "
@@ -452,6 +461,7 @@ def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
         for run in frontier:
             lines.append(
                 f"  run={run.run} N={run.n_steps} M={run.m_steps} "
+                f"interval_scheduler={run.interval_scheduler or 'NA'} "
                 f"lr_connectedness={run.lr_connectedness or 'NA'} "
                 f"first_step_below_0p87={first_step_below(run, 0.87)} "
                 f"run_seconds={format_number(run.run_seconds)} "
@@ -473,6 +483,7 @@ def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
                 value = metric.value(run)
                 lines.append(
                     f"  {rank:2d}. run={run.run} N={run.n_steps} M={run.m_steps} "
+                    f"interval_scheduler={run.interval_scheduler or 'NA'} "
                     f"lr_connectedness={run.lr_connectedness or 'NA'} "
                     f"{metric.csv_name}={metric.format_value(value)} "
                     f"run_seconds={format_number(run.run_seconds)} "
@@ -510,20 +521,15 @@ def plot_curves(runs: list[Run], output_dir: Path) -> None:
 
     for row, run in enumerate(ordered):
         points = sorted(run.train, key=lambda item: item.step)
-        steps = [point.step for point in points]
-        label = (
-            f"run={run.run} bs={run.batch_size} N={run.n_steps} M={run.m_steps} "
-            f"lr_connectedness={run.lr_connectedness or 'NA'} "
-            f"loss={format_number(run.final_loss)}"
-        )
+        row_label = plot_row_label(run)
 
         for col, (title, attr) in enumerate(columns):
             ax = axes[row, col]
-            values = [getattr(point, attr) for point in points]
             filtered = [
-                (step, value)
-                for step, value in zip(steps, values)
-                if value is not None
+                (point.step, value)
+                for point in points
+                if (value := getattr(point, attr)) is not None
+                and (attr == "loss" or point.step > 0)
             ]
             if filtered:
                 plot_steps, plot_values = zip(*filtered)
@@ -546,14 +552,21 @@ def plot_curves(runs: list[Run], output_dir: Path) -> None:
             if row == 0:
                 ax.set_title(title)
             if col == 0:
-                ax.set_ylabel(label, fontsize=8)
+                ax.set_ylabel(
+                    row_label,
+                    fontsize=8,
+                    rotation=0,
+                    ha="right",
+                    va="center",
+                    labelpad=28,
+                )
             style_axes(ax)
 
     for ax in axes[-1, :]:
         ax.set_xlabel("Step")
 
-    fig.suptitle("CIFAR continuous-LR search curves", y=0.998)
-    fig.tight_layout()
+    fig.suptitle("CIFAR global scheduler search curves", y=0.998)
+    fig.tight_layout(rect=(0.03, 0, 1, 0.985))
     fig.savefig(output_dir / OUTPUT_PLOT, dpi=180)
     plt.close(fig)
 
@@ -566,7 +579,7 @@ def plot_all(runs: list[Run], log_path: Path, output_dir: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Parse and plot cifar_overfit_search_continuous_lr2.log."
+        description="Parse and plot cifar_overfit_search_global2.log."
     )
     parser.add_argument(
         "log",
@@ -601,6 +614,7 @@ def main() -> None:
         print(
             f"Best completed run: run={best.run} batch_size={best.batch_size} "
             f"N={best.n_steps} M={best.m_steps} "
+            f"interval_scheduler={best.interval_scheduler or 'NA'} "
             f"lr_connectedness={best.lr_connectedness or 'NA'} "
             f"final_loss={best.final_loss:.6f}"
         )

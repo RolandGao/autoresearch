@@ -1,0 +1,41 @@
+CIFAR overfit global scheduler search summary
+Input log: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_global2.log
+Output directory: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_global2_plots
+Plot file: /workspace/neural_networks_optimization/autoresearch/automatic_lr3/cifar_overfit_search_global2_plots/curves.png
+Runs parsed: 3
+Completed runs: 3
+Metrics are ranked lower-is-better.
+
+Best completed run by final loss:
+  run=0 batch_size=2000 N=10 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.945924 run_seconds=18.887
+
+Batch size: 2000
+
+Final loss
+  run=0 N=10 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.945924 first_below_0p87=NA evaluated_configs=28
+  run=1 N=10 M=0 interval_scheduler=exp_linear lr_connectedness=continuous_double final_loss=0.951823 first_below_0p87=NA evaluated_configs=28
+  run=2 N=10 M=0 interval_scheduler=constant lr_connectedness=continuous_double final_loss=1.00988 first_below_0p87=NA evaluated_configs=11
+
+Pareto frontier: first step below 0.87 vs run seconds
+  No runs reached 0.87.
+
+Loss after 30 steps
+  3 runs missing this metric
+
+Loss after 10 steps
+   1. run=0 N=10 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=0.9459 run_seconds=18.887 final_lr=0.043 final_momentum=0.6
+   2. run=1 N=10 M=0 interval_scheduler=exp_linear lr_connectedness=continuous_double loss_after_10_steps=0.9518 run_seconds=18.253 final_lr=0.043 final_momentum=0.6
+   3. run=2 N=10 M=0 interval_scheduler=constant lr_connectedness=continuous_double loss_after_10_steps=1.0099 run_seconds=7.31 final_lr=0.072 final_momentum=0.6
+
+Loss after 20 steps
+  3 runs missing this metric
+
+First step below 0.9
+  3 runs missing this metric
+
+First step below 0.88
+  3 runs missing this metric
+
+First step below 0.87
+  3 runs missing this metric
+
