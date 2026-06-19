@@ -490,14 +490,22 @@ def log_interval_lr_search_complete(
 #                Training                  #
 ############################################
 
-OVERFIT_BATCH_SIZES = [2000]
-SEARCH_STEP_CONFIGS = [(10, 0)]
+OVERFIT_BATCH_SIZES = [2000, 10000]
+TRAIN_STEPS_BY_BATCH_SIZE = {
+    2000: 20,
+    10000: 30,
+}
+SEARCH_STEP_CONFIGS = [(n_steps, 0) for n_steps in [1, 2, 3, 4, 5, 7, 9]]
 MUON_ORTHOGONALIZE = [True]
-INTERVAL_SCHEDULERS = ["linear", "exp_linear", "constant"]
+INTERVAL_SCHEDULERS = ["constant", "linear"]
 ENDPOINT_INTERVAL_SCHEDULERS = {"linear", "exp_linear"}
-LR_CONNECTEDNESSES = ["continuous_double"]
+LINEAR_LR_CONNECTEDNESSES = [
+    "jump_allowed",
+    "continuous_double",
+    "continuous_single",
+]
+DEFAULT_LR_CONNECTEDNESS = "jump_allowed"
 VALID_LR_CONNECTEDNESSES = ["jump_allowed", "continuous_double", "continuous_single"]
-OVERFIT_TRAIN_STEPS = 10
 LR_SEARCH_BASE = 0.2
 LR_SEARCH_FACTOR = 0.6
 LR_SEARCH_SIG_FIGS = 2
@@ -522,6 +530,7 @@ SGD_LR_MULTS = {
 RUN_CONFIGS = [
     dict(
         batch_size=batch_size,
+        train_steps=TRAIN_STEPS_BY_BATCH_SIZE[batch_size],
         initial_lr=LR_SEARCH_BASE,
         sgd_lr_mult=SGD_LR_MULTS[batch_size],
     )
@@ -1282,6 +1291,7 @@ def run_overfit_n_search(
     run,
     model,
     batch_size,
+    train_steps,
     n_steps,
     m_steps,
     muon_orthogonalize,
@@ -1317,7 +1327,7 @@ def run_overfit_n_search(
     log_train_loss(
         run=run,
         step=0,
-        total_steps=OVERFIT_TRAIN_STEPS,
+        total_steps=train_steps,
         loss=losses[-1],
         head_lr=optimizer1.param_groups[2]["lr"],
         muon_lr=optimizer2.param_groups[0]["lr"],
@@ -1331,8 +1341,8 @@ def run_overfit_n_search(
     interval_initial_momentum_index = initial_momentum_index
     completed_steps = 0
     interval_index = 0
-    while completed_steps < OVERFIT_TRAIN_STEPS:
-        interval_steps = min(n_steps, OVERFIT_TRAIN_STEPS - completed_steps)
+    while completed_steps < train_steps:
+        interval_steps = min(n_steps, train_steps - completed_steps)
         previous_interval_end_lr_k = None
         if interval_index > 0 and lr_connectedness.startswith("continuous_"):
             previous_interval_end_lr_k = interval_initial_lr_k
@@ -1347,7 +1357,7 @@ def run_overfit_n_search(
             initial_momentum_index=interval_initial_momentum_index,
             interval_steps=interval_steps,
             cooldown_steps=m_steps,
-            total_steps=OVERFIT_TRAIN_STEPS,
+            total_steps=train_steps,
             interval_index=interval_index,
             interval_start_step=completed_steps,
             batch_size=batch_size,
@@ -1383,7 +1393,7 @@ def run_overfit_n_search(
             log_train_loss(
                 run=run,
                 step=global_step,
-                total_steps=OVERFIT_TRAIN_STEPS,
+                total_steps=train_steps,
                 loss=loss,
                 head_lr=optimizer1.param_groups[2]["lr"],
                 muon_lr=muon_lr,
@@ -1396,7 +1406,7 @@ def run_overfit_n_search(
         if not torch.isfinite(torch.tensor(losses[-1])):
             break
 
-    while len(losses) <= OVERFIT_TRAIN_STEPS:
+    while len(losses) <= train_steps:
         losses.append(float("inf"))
 
     last_cooldown_result = next(
@@ -1411,6 +1421,7 @@ def run_overfit_n_search(
     return dict(
         run=run,
         batch_size=batch_size,
+        train_steps=train_steps,
         n_steps=n_steps,
         m_steps=m_steps,
         muon_orthogonalize=muon_orthogonalize,
@@ -1470,9 +1481,9 @@ def run_overfit_n_search(
         sgd_lr_mult=sgd_lr_mult,
         losses=losses,
         initial_train_loss=losses[0],
-        final_train_loss=losses[OVERFIT_TRAIN_STEPS],
+        final_train_loss=losses[train_steps],
         steps=completed_steps,
-        target_steps=OVERFIT_TRAIN_STEPS,
+        target_steps=train_steps,
         interval_results=interval_results,
         muon_grad_momentum_norm_ratios=[
             ratio
@@ -1494,15 +1505,20 @@ def main():
     for config in RUN_CONFIGS:
         for n_steps, m_steps in SEARCH_STEP_CONFIGS:
             for interval_scheduler in INTERVAL_SCHEDULERS:
-                for lr_connectedness in LR_CONNECTEDNESSES:
+                lr_connectednesses = (
+                    LINEAR_LR_CONNECTEDNESSES
+                    if interval_scheduler == "linear"
+                    else [DEFAULT_LR_CONNECTEDNESS]
+                )
+                for lr_connectedness in lr_connectednesses:
                     for muon_orthogonalize in MUON_ORTHOGONALIZE:
                         for momentum_config in MUON_MOMENTUM_CONFIGS:
                             initial_momentum = momentum_config["initial_momentum"]
                             run = len(results)
                             print(
                                 "cifar_baseline2_overfit_n_search run=%d "
-                                "batch_size=%d N=%d M=%d interval_scheduler=%s "
-                                "lr_connectedness=%s "
+                                "batch_size=%d train_steps=%d N=%d M=%d "
+                                "interval_scheduler=%s lr_connectedness=%s "
                                 "muon_orthogonalize=%s momentum_config=%s "
                                 "search_momentum=%s muon_nesterov=%s "
                                 "initial_muon_lr=%.6g initial_muon_lr_k=%d "
@@ -1511,6 +1527,7 @@ def main():
                                 % (
                                     run,
                                     config["batch_size"],
+                                    config["train_steps"],
                                     n_steps,
                                     m_steps,
                                     interval_scheduler,
@@ -1531,6 +1548,7 @@ def main():
                                 run=run,
                                 model=model,
                                 batch_size=config["batch_size"],
+                                train_steps=config["train_steps"],
                                 n_steps=n_steps,
                                 m_steps=m_steps,
                                 muon_orthogonalize=muon_orthogonalize,
