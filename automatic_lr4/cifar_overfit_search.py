@@ -51,16 +51,12 @@ if USE_COMPILED_MUON:
 
 
 class Muon(torch.optim.Optimizer):
-    def __init__(
-        self, params, lr=0.001, momentum=0, nesterov=False, orthogonalize=True
-    ):
+    def __init__(self, params, lr=0.001, momentum=0, nesterov=False):
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
         if momentum < 0.0:
             raise ValueError(f"Invalid momentum value: {momentum}")
-        defaults = dict(
-            lr=lr, momentum=momentum, nesterov=nesterov, orthogonalize=orthogonalize
-        )
+        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov)
         super().__init__(params, defaults)
 
     def grad_momentum_norm_ratio(self):
@@ -105,11 +101,9 @@ class Muon(torch.optim.Optimizer):
                 buf.mul_(momentum).add_(g)
                 g = g.add(buf, alpha=momentum) if group["nesterov"] else buf
                 p.data.mul_(len(p.data) ** 0.5 / p.data.norm())
-                update = g
-                if group["orthogonalize"]:
-                    update = zeropower_via_newtonschulz5(g.reshape(len(g), -1)).view(
-                        g.shape
-                    )
+                update = zeropower_via_newtonschulz5(g.reshape(len(g), -1)).view(
+                    g.shape
+                )
                 p.data.add_(update, alpha=-lr)
 
 
@@ -357,7 +351,7 @@ def optional_mapped(source, pairs):
 
 finite = lambda value: torch.isfinite(torch.tensor(value))
 FIELD_FORMATTERS = {"k": format_k, "momentum": format_momentum}
-RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nInterval scheduler:  %s|interval_scheduler\nLR connectedness:    %s|lr_connectedness\nMuon orthogonalize:  %s|muon_orthogonalize\nMomentum config:     %s|momentum_config_name\nSearch momentum:     %s|search_momentum\nMuon nesterov:       %s|muon_nesterov\nInitial Muon lr:     %.6g|initial_lr\nInitial Muon lr k:   %d|initial_lr_k\nInitial Muon mom:    %s|initial_momentum|momentum\nInitial Muon mom i:  %d|initial_momentum_index\nFinal start lr:      %.6g|final_start_muon_lr\nFinal start lr k:    %s|final_start_muon_lr_k|k\nFinal Muon lr:       %.6g|final_muon_lr\nFinal Muon lr k:     %s|final_muon_lr_k|k\nFinal end lr:        %.6g|final_end_muon_lr\nFinal end lr k:      %s|final_end_muon_lr_k|k\nFinal Muon momentum: %s|final_muon_momentum|momentum\nFinal Muon nesterov: %s|final_muon_nesterov\nFinal Muon mom i:    %s|final_muon_momentum_index|k\n".strip().splitlines()
+RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nInterval scheduler:  %s|interval_scheduler\nLR connectedness:    %s|lr_connectedness\nMomentum config:     %s|momentum_config_name\nSearch momentum:     %s|search_momentum\nMuon nesterov:       %s|muon_nesterov\nInitial Muon lr:     %.6g|initial_lr\nInitial Muon lr k:   %d|initial_lr_k\nInitial Muon mom:    %s|initial_momentum|momentum\nInitial Muon mom i:  %d|initial_momentum_index\nFinal start lr:      %.6g|final_start_muon_lr\nFinal start lr k:    %s|final_start_muon_lr_k|k\nFinal Muon lr:       %.6g|final_muon_lr\nFinal Muon lr k:     %s|final_muon_lr_k|k\nFinal end lr:        %.6g|final_end_muon_lr\nFinal end lr k:      %s|final_end_muon_lr_k|k\nFinal Muon momentum: %s|final_muon_momentum|momentum\nFinal Muon nesterov: %s|final_muon_nesterov\nFinal Muon mom i:    %s|final_muon_momentum_index|k\n".strip().splitlines()
 COOLDOWN_SUMMARY_SPECS = "\nFinal cooldown lr:   %.6g|final_cooldown_muon_lr\nFinal cooldown lr k: %s|final_cooldown_muon_lr_k|k\nFinal cooldown mom:  %s|final_cooldown_muon_momentum|momentum\nFinal cooldown nest: %s|final_cooldown_muon_nesterov\nFinal cooldown mom i: %s|final_cooldown_muon_momentum_index|k\n".strip().splitlines()
 RUN_FOOTER_SPECS = "\nSGD lr mult:         %.6g|sgd_lr_mult\nInitial train loss:  %.6f|initial_train_loss\nFinal train loss:    %.6f|final_train_loss\nRun seconds:         %.3f|run_seconds\n".strip().splitlines()
 
@@ -441,7 +435,6 @@ def log_interval_lr_search_complete(best_result, best_cooldown_result, results_b
 OVERFIT_BATCH_SIZES = [2000, 10000]
 TRAIN_STEPS_BY_BATCH_SIZE = {2000: 20, 10000: 30}
 SEARCH_STEP_CONFIGS = [(n_steps, 0) for n_steps in [1, 2, 3, 4, 5, 7, 9]]
-MUON_ORTHOGONALIZE = [True]
 INTERVAL_SCHEDULERS = ["constant", "linear"]
 ENDPOINT_INTERVAL_SCHEDULERS = {"linear", "exp_linear"}
 LINEAR_LR_CONNECTEDNESSES = ["jump_allowed", "continuous_double", "continuous_single"]
@@ -540,7 +533,6 @@ def make_optimizers(model, cfg):
         lr=cfg.muon_lr,
         momentum=cfg.muon_momentum,
         nesterov=cfg.muon_nesterov,
-        orthogonalize=cfg.muon_orthogonalize,
     )
     return optimizer1, optimizer2
 
@@ -1051,7 +1043,7 @@ def run_overfit_n_search(cfg):
         cfg.model,
         namespace(
             vars(cfg),
-            "muon_nesterov sgd_lr_mult muon_orthogonalize",
+            "muon_nesterov sgd_lr_mult",
             muon_lr=rounded_lr(initial_lr),
             muon_momentum=initial_momentum,
         ),
@@ -1144,7 +1136,7 @@ def run_overfit_n_search(cfg):
     last_interval = interval_results[-1] if interval_results else None
     result = pack(
         vars(cfg),
-        "run batch_size train_steps n_steps m_steps muon_orthogonalize momentum_config_name search_momentum muon_nesterov interval_scheduler lr_connectedness sgd_lr_mult",
+        "run batch_size train_steps n_steps m_steps momentum_config_name search_momentum muon_nesterov interval_scheduler lr_connectedness sgd_lr_mult",
     )
     result.update(
         initial_lr_k=initial_lr_k,
@@ -1191,13 +1183,13 @@ def iter_run_settings():
             if interval_scheduler == "linear"
             else [DEFAULT_LR_CONNECTEDNESS]
         )
-        for lr_connectedness, muon_orthogonalize, momentum_config in product(
-            lr_connectednesses, MUON_ORTHOGONALIZE, MUON_MOMENTUM_CONFIGS
+        for lr_connectedness, momentum_config in product(
+            lr_connectednesses, MUON_MOMENTUM_CONFIGS
         ):
             n_steps, m_steps = steps
             yield namespace(
                 locals(),
-                "n_steps m_steps interval_scheduler lr_connectedness muon_orthogonalize",
+                "n_steps m_steps interval_scheduler lr_connectedness",
                 batch_size=config["batch_size"],
                 train_steps=config["train_steps"],
                 initial_lr=config["initial_lr"],
@@ -1206,12 +1198,12 @@ def iter_run_settings():
             )
 
 
-RUN_BANNER_FIELDS = "run batch_size train_steps n_steps m_steps interval_scheduler lr_connectedness muon_orthogonalize momentum_config_name search_momentum muon_nesterov initial_lr initial_lr_k initial_momentum_text initial_momentum_index".split()
+RUN_BANNER_FIELDS = "run batch_size train_steps n_steps m_steps interval_scheduler lr_connectedness momentum_config_name search_momentum muon_nesterov initial_lr initial_lr_k initial_momentum_text initial_momentum_index".split()
 
 
 def print_run_banner(cfg):
     print(
-        "cifar_baseline2_overfit_n_search run=%d batch_size=%d train_steps=%d N=%d M=%d interval_scheduler=%s lr_connectedness=%s muon_orthogonalize=%s momentum_config=%s search_momentum=%s muon_nesterov=%s initial_muon_lr=%.6g initial_muon_lr_k=%d initial_muon_momentum=%s initial_muon_momentum_index=%d"
+        "cifar_baseline2_overfit_n_search run=%d batch_size=%d train_steps=%d N=%d M=%d interval_scheduler=%s lr_connectedness=%s momentum_config=%s search_momentum=%s muon_nesterov=%s initial_muon_lr=%.6g initial_muon_lr_k=%d initial_muon_momentum=%s initial_muon_momentum_index=%d"
         % tuple(getattr(cfg, field) for field in RUN_BANNER_FIELDS),
         flush=True,
     )
