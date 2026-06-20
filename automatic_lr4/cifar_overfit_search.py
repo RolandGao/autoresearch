@@ -5,20 +5,16 @@ Attains 94.01 mean accuracy (n=200 trials)
 Descends from https://github.com/tysam-code/hlb-CIFAR10/blob/main/main.py
 """
 
-#############################################
-#                  Setup                    #
-#############################################
-
 import copy
 import os
 import sys
 import time
+from types import SimpleNamespace
 
 with open(sys.argv[0]) as f:
     code = f.read()
 import uuid
 from math import ceil, floor, isclose, log, log10
-
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -36,11 +32,9 @@ CUDA_CAPABILITY = _cuda_capability()
 IS_AMPERE_OR_NEWER = CUDA_CAPABILITY[0] >= 8
 USE_CUDNN_BENCHMARK = False
 USE_TF32 = IS_AMPERE_OR_NEWER
-
 torch.backends.cudnn.benchmark = USE_CUDNN_BENCHMARK
 torch.backends.cudnn.allow_tf32 = USE_TF32
 torch.backends.cuda.matmul.allow_tf32 = USE_TF32
-
 USE_COMPILED_MUON = False
 MUON_DTYPE = torch.bfloat16
 TRAINING_SEED = 0
@@ -52,25 +46,20 @@ def set_training_seed():
         torch.cuda.manual_seed_all(TRAINING_SEED)
 
 
-#############################################
-#               Muon optimizer              #
-#############################################
-
-
 def zeropower_via_newtonschulz5(G, steps=3, eps=0):
-    r"""
+    """
     Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
     quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
     of minimizing steps, it turns out to be empirically effective to keep increasing the slope at
     zero even beyond the point where the iteration no longer converges all the way to one everywhere
     on the interval. This iteration therefore does not produce UV^T but rather something like US'V^T
-    where S' is diagonal with S_{ii}' \sim Uniform(0.5, 1.5), which turns out not to hurt model
+    where S' is diagonal with S_{ii}' \\sim Uniform(0.5, 1.5), which turns out not to hurt model
     performance at all relative to UV^T, where USV^T = G is the SVD.
     """
     assert len(G.shape) == 2
-    a, b, c = (3.4445, -4.7750, 2.0315)
+    a, b, c = (3.4445, -4.775, 2.0315)
     X = G.to(MUON_DTYPE)
-    X /= X.norm() + eps  # ensure top singular value <= 1
+    X /= X.norm() + eps
     if G.size(0) > G.size(1):
         X = X.T
     for _ in range(steps):
@@ -87,16 +76,15 @@ if USE_COMPILED_MUON:
 
 
 class Muon(torch.optim.Optimizer):
-    def __init__(self, params, lr=1e-3, momentum=0, nesterov=False, orthogonalize=True):
+    def __init__(
+        self, params, lr=0.001, momentum=0, nesterov=False, orthogonalize=True
+    ):
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
         if momentum < 0.0:
             raise ValueError(f"Invalid momentum value: {momentum}")
         defaults = dict(
-            lr=lr,
-            momentum=momentum,
-            nesterov=nesterov,
-            orthogonalize=orthogonalize,
+            lr=lr, momentum=momentum, nesterov=nesterov, orthogonalize=orthogonalize
         )
         super().__init__(params, defaults)
 
@@ -117,7 +105,6 @@ class Muon(torch.optim.Optimizer):
                     momentum_sq = m_sq if momentum_sq is None else momentum_sq + m_sq
         if grad_sq is None:
             return None
-
         grad_norm = grad_sq.sqrt()
         if momentum_sq is None:
             momentum_norm = torch.zeros((), device=grad_norm.device)
@@ -137,28 +124,22 @@ class Muon(torch.optim.Optimizer):
                 if g is None:
                     continue
                 state = self.state[p]
-
                 if "momentum_buffer" not in state.keys():
                     state["momentum_buffer"] = torch.zeros_like(g)
                 buf = state["momentum_buffer"]
                 buf.mul_(momentum).add_(g)
                 g = g.add(buf, alpha=momentum) if group["nesterov"] else buf
-
-                p.data.mul_(len(p.data) ** 0.5 / p.data.norm())  # normalize the weight
+                p.data.mul_(len(p.data) ** 0.5 / p.data.norm())
                 update = g
                 if group["orthogonalize"]:
                     update = zeropower_via_newtonschulz5(g.reshape(len(g), -1)).view(
                         g.shape
-                    )  # whiten the update
-                p.data.add_(update, alpha=-lr)  # take a step
+                    )
+                p.data.add_(update, alpha=-lr)
 
-
-#############################################
-#                DataLoader                 #
-#############################################
 
 CIFAR_MEAN = torch.tensor((0.4914, 0.4822, 0.4465))
-CIFAR_STD = torch.tensor((0.2470, 0.2435, 0.2616))
+CIFAR_STD = torch.tensor((0.247, 0.2435, 0.2616))
 
 
 def batch_flip_lr(inputs):
@@ -191,28 +172,23 @@ class CifarLoader:
             torch.save(
                 {"images": images, "labels": labels, "classes": dset.classes}, data_path
             )
-
         data = torch.load(data_path, map_location=torch.device("cuda"))
         self.images, self.labels, self.classes = (
             data["images"],
             data["labels"],
             data["classes"],
         )
-        # It's faster to load+process uint8 data than to load preprocessed data
         self.images = (
             (self.images.float() / 255)
             .permute(0, 3, 1, 2)
             .to(memory_format=torch.channels_last)
         )
-
         self.normalize = T.Normalize(CIFAR_MEAN, CIFAR_STD)
-        self.proc_images = {}  # Saved results of image processing to be done on the first epoch
+        self.proc_images = {}
         self.epoch = 0
-
         self.aug = aug or {}
         for k in self.aug.keys():
             assert k in ["flip", "translate"], "Unrecognized key: %s" % k
-
         self.batch_size = batch_size
         self.drop_last = train
         self.shuffle = train
@@ -239,23 +215,18 @@ class CifarLoader:
         )
 
     def __iter__(self):
-
         if self.epoch == 0:
             self._ensure_proc_images()
-
         if self.aug.get("translate", 0) > 0:
             images = batch_crop(self.proc_images["pad"], self.images.shape[-2])
         elif self.aug.get("flip", False):
             images = self.proc_images["flip"]
         else:
             images = self.proc_images["norm"]
-        # Flip all images together every other epoch. This increases diversity relative to random flipping
         if self.aug.get("flip", False):
             if self.epoch % 2 == 1:
                 images = images.flip(-1)
-
         self.epoch += 1
-
         indices = (torch.randperm if self.shuffle else torch.arange)(
             len(images), device=images.device
         )
@@ -264,17 +235,10 @@ class CifarLoader:
             yield (images[idxs], self.labels[idxs])
 
 
-#############################################
-#            Network Definition             #
-#############################################
-
-
-# note the use of low BatchNorm stats momentum
 class BatchNorm(nn.BatchNorm2d):
     def __init__(self, num_features, momentum=0.6, eps=1e-12):
         super().__init__(num_features, eps=eps, momentum=1 - momentum)
         self.weight.requires_grad = False
-        # Note that PyTorch already initializes the weights to one and bias to zero
 
     def train(self, mode=True):
         return super().train(True)
@@ -341,8 +305,8 @@ class CifarNet(nn.Module):
         w = self.head.weight.data
         w *= 1 / w.std()
 
-    def init_whiten(self, train_images, eps=5e-4):
-        c, (h, w) = train_images.shape[1], self.whiten.weight.shape[2:]
+    def init_whiten(self, train_images, eps=0.0005):
+        c, (h, w) = (train_images.shape[1], self.whiten.weight.shape[2:])
         patches = (
             train_images.unfold(2, h, 1)
             .unfold(3, w, 1)
@@ -351,7 +315,7 @@ class CifarNet(nn.Module):
             .float()
         )
         patches_flat = patches.view(len(patches), -1)
-        est_patch_covariance = (patches_flat.T @ patches_flat) / len(patches_flat)
+        est_patch_covariance = patches_flat.T @ patches_flat / len(patches_flat)
         eigenvalues, eigenvectors = torch.linalg.eigh(est_patch_covariance, UPLO="U")
         eigenvectors_scaled = eigenvectors.T.reshape(-1, c, h, w) / torch.sqrt(
             eigenvalues.view(-1, 1, 1, 1) + eps
@@ -366,11 +330,6 @@ class CifarNet(nn.Module):
         x = self.layers(x)
         x = x.view(len(x), -1)
         return self.head(x) / x.size(-1)
-
-
-############################################
-#                 Logging                  #
-############################################
 
 
 def log_train_loss(
@@ -390,11 +349,7 @@ def log_train_loss(
         else "%.6g" % muon_grad_momentum_norm_ratio
     )
     print(
-        f"train_loss run={run} step={step}/{total_steps} "
-        f"loss={loss:.4f} head_lr={head_lr:.6g} "
-        f"muon_lr={muon_lr:.6g} muon_momentum={format_momentum(muon_momentum)} "
-        f"muon_nesterov={muon_nesterov} "
-        f"muon_grad_momentum_norm_ratio={ratio_field}",
+        f"train_loss run={run} step={step}/{total_steps} loss={loss:.4f} head_lr={head_lr:.6g} muon_lr={muon_lr:.6g} muon_momentum={format_momentum(muon_momentum)} muon_nesterov={muon_nesterov} muon_grad_momentum_norm_ratio={ratio_field}",
         flush=True,
     )
 
@@ -412,71 +367,48 @@ def print_formatted_fields(fields, result):
         print(format_string % value_fn(result))
 
 
-RUN_SUMMARY_FIELDS = [
-    ("Batch size:          %d", lambda result: result["batch_size"]),
-    ("N steps:             %d", lambda result: result["n_steps"]),
-    ("M cooldown steps:    %d", lambda result: result["m_steps"]),
-    ("Interval scheduler:  %s", lambda result: result["interval_scheduler"]),
-    ("LR connectedness:    %s", lambda result: result["lr_connectedness"]),
-    ("Muon orthogonalize:  %s", lambda result: result["muon_orthogonalize"]),
-    ("Momentum config:     %s", lambda result: result["momentum_config_name"]),
-    ("Search momentum:     %s", lambda result: result["search_momentum"]),
-    ("Muon nesterov:       %s", lambda result: result["muon_nesterov"]),
-    ("Initial Muon lr:     %.6g", lambda result: result["initial_lr"]),
-    ("Initial Muon lr k:   %d", lambda result: result["initial_lr_k"]),
-    (
-        "Initial Muon mom:    %s",
-        lambda result: format_momentum(result["initial_momentum"]),
-    ),
-    ("Initial Muon mom i:  %d", lambda result: result["initial_momentum_index"]),
-    ("Final start lr:      %.6g", lambda result: result["final_start_muon_lr"]),
-    ("Final start lr k:    %s", lambda result: format_k(result["final_start_muon_lr_k"])),
-    ("Final Muon lr:       %.6g", lambda result: result["final_muon_lr"]),
-    ("Final Muon lr k:     %s", lambda result: format_k(result["final_muon_lr_k"])),
-    ("Final end lr:        %.6g", lambda result: result["final_end_muon_lr"]),
-    ("Final end lr k:      %s", lambda result: format_k(result["final_end_muon_lr_k"])),
-    (
-        "Final Muon momentum: %s",
-        lambda result: format_momentum(result["final_muon_momentum"]),
-    ),
-    ("Final Muon nesterov: %s", lambda result: result["final_muon_nesterov"]),
-    (
-        "Final Muon mom i:    %s",
-        lambda result: format_k(result["final_muon_momentum_index"]),
-    ),
-]
-COOLDOWN_SUMMARY_FIELDS = [
-    ("Final cooldown lr:   %.6g", lambda result: result["final_cooldown_muon_lr"]),
-    (
-        "Final cooldown lr k: %s",
-        lambda result: format_k(result["final_cooldown_muon_lr_k"]),
-    ),
-    (
-        "Final cooldown mom:  %s",
-        lambda result: format_momentum(result["final_cooldown_muon_momentum"]),
-    ),
-    (
-        "Final cooldown nest: %s",
-        lambda result: result["final_cooldown_muon_nesterov"],
-    ),
-    (
-        "Final cooldown mom i: %s",
-        lambda result: format_k(result["final_cooldown_muon_momentum_index"]),
-    ),
-]
-RUN_FOOTER_FIELDS = [
-    ("SGD lr mult:         %.6g", lambda result: result["sgd_lr_mult"]),
-    ("Initial train loss:  %.6f", lambda result: result["initial_train_loss"]),
-    ("Final train loss:    %.6f", lambda result: result["final_train_loss"]),
-    ("Run seconds:         %.3f", lambda result: result["run_seconds"]),
-]
+def copy_fields(source, fields, list_fields=()):
+    list_fields = set(list_fields)
+    return {
+        key: list(source[key]) if key in list_fields else source[key] for key in fields
+    }
+
+
+def pack(values, fields):
+    return {key: values[key] for key in fields.split()}
+
+
+def optional_mapped(source, pairs):
+    return {
+        dst: source[src] if source is not None else None
+        for dst, src in (pair.split(":") for pair in pairs.split())
+    }
+
+
+def finite(value):
+    return torch.isfinite(torch.tensor(value))
+
+
+FIELD_FORMATTERS = {"k": format_k, "momentum": format_momentum}
+RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nInterval scheduler:  %s|interval_scheduler\nLR connectedness:    %s|lr_connectedness\nMuon orthogonalize:  %s|muon_orthogonalize\nMomentum config:     %s|momentum_config_name\nSearch momentum:     %s|search_momentum\nMuon nesterov:       %s|muon_nesterov\nInitial Muon lr:     %.6g|initial_lr\nInitial Muon lr k:   %d|initial_lr_k\nInitial Muon mom:    %s|initial_momentum|momentum\nInitial Muon mom i:  %d|initial_momentum_index\nFinal start lr:      %.6g|final_start_muon_lr\nFinal start lr k:    %s|final_start_muon_lr_k|k\nFinal Muon lr:       %.6g|final_muon_lr\nFinal Muon lr k:     %s|final_muon_lr_k|k\nFinal end lr:        %.6g|final_end_muon_lr\nFinal end lr k:      %s|final_end_muon_lr_k|k\nFinal Muon momentum: %s|final_muon_momentum|momentum\nFinal Muon nesterov: %s|final_muon_nesterov\nFinal Muon mom i:    %s|final_muon_momentum_index|k\n".strip().splitlines()
+COOLDOWN_SUMMARY_SPECS = "\nFinal cooldown lr:   %.6g|final_cooldown_muon_lr\nFinal cooldown lr k: %s|final_cooldown_muon_lr_k|k\nFinal cooldown mom:  %s|final_cooldown_muon_momentum|momentum\nFinal cooldown nest: %s|final_cooldown_muon_nesterov\nFinal cooldown mom i: %s|final_cooldown_muon_momentum_index|k\n".strip().splitlines()
+RUN_FOOTER_SPECS = "\nSGD lr mult:         %.6g|sgd_lr_mult\nInitial train loss:  %.6f|initial_train_loss\nFinal train loss:    %.6f|final_train_loss\nRun seconds:         %.3f|run_seconds\n".strip().splitlines()
+
+
+def print_summary_specs(specs, result):
+    for spec in specs:
+        format_string, key, *formatter_key = spec.split("|")
+        value = result[key]
+        if formatter_key:
+            value = FIELD_FORMATTERS[formatter_key[0]](value)
+        print(format_string % value)
 
 
 def log_run_summary(result):
-    print_formatted_fields(RUN_SUMMARY_FIELDS, result)
+    print_summary_specs(RUN_SUMMARY_SPECS, result)
     if result["final_cooldown_muon_lr"] is not None:
-        print_formatted_fields(COOLDOWN_SUMMARY_FIELDS, result)
-    print_formatted_fields(RUN_FOOTER_FIELDS, result)
+        print_summary_specs(COOLDOWN_SUMMARY_SPECS, result)
+    print_summary_specs(RUN_FOOTER_SPECS, result)
 
 
 def log_interval_lr_landscape(results_by_point):
@@ -494,7 +426,6 @@ def log_interval_lr_landscape(results_by_point):
         )
         if cooldown_result is None:
             continue
-
         for cooldown_eval in cooldown_result["search_evaluations"]:
             print(
                 "%.6g %.6g -> %.6f"
@@ -519,25 +450,15 @@ def count_evaluated_configs(results_by_point):
     return count
 
 
-def log_interval_lr_search_complete(
-    best_result,
-    best_cooldown_result,
-    results_by_k,
-):
+def log_interval_lr_search_complete(best_result, best_cooldown_result, results_by_k):
     best_muon_lrs = [best_result["start_muon_lr"], best_result["end_muon_lr"]]
     if best_cooldown_result is not None:
         best_muon_lrs.extend(
-            [
-                best_cooldown_result["start_muon_lr"],
-                best_cooldown_result["end_muon_lr"],
-            ]
+            [best_cooldown_result["start_muon_lr"], best_cooldown_result["end_muon_lr"]]
         )
-    best_muon_lr = "[%s]" % ",".join("%.6g" % lr for lr in best_muon_lrs)
+    best_muon_lr = "[%s]" % ",".join(("%.6g" % lr for lr in best_muon_lrs))
     print(
-        "best_muon_lr=%s "
-        "best_muon_momentum=%s "
-        "interval_loss=%.6f final_loss=%.6f evaluated_interval_configs=%d "
-        "evaluated_configs=%d"
+        "best_muon_lr=%s best_muon_momentum=%s interval_loss=%.6f final_loss=%.6f evaluated_interval_configs=%d evaluated_configs=%d"
         % (
             best_muon_lr,
             format_momentum(best_result["muon_momentum"]),
@@ -550,24 +471,13 @@ def log_interval_lr_search_complete(
     )
 
 
-############################################
-#                Training                  #
-############################################
-
 OVERFIT_BATCH_SIZES = [2000, 10000]
-TRAIN_STEPS_BY_BATCH_SIZE = {
-    2000: 20,
-    10000: 30,
-}
+TRAIN_STEPS_BY_BATCH_SIZE = {2000: 20, 10000: 30}
 SEARCH_STEP_CONFIGS = [(n_steps, 0) for n_steps in [1, 2, 3, 4, 5, 7, 9]]
 MUON_ORTHOGONALIZE = [True]
 INTERVAL_SCHEDULERS = ["constant", "linear"]
 ENDPOINT_INTERVAL_SCHEDULERS = {"linear", "exp_linear"}
-LINEAR_LR_CONNECTEDNESSES = [
-    "jump_allowed",
-    "continuous_double",
-    "continuous_single",
-]
+LINEAR_LR_CONNECTEDNESSES = ["jump_allowed", "continuous_double", "continuous_single"]
 DEFAULT_LR_CONNECTEDNESS = "jump_allowed"
 VALID_LR_CONNECTEDNESSES = ["jump_allowed", "continuous_double", "continuous_single"]
 LR_SEARCH_BASE = 0.2
@@ -581,16 +491,10 @@ MUON_MOMENTUM_CONFIGS = [
         initial_momentum=0.6,
         search_momentum=True,
         muon_nesterov=False,
-    ),
+    )
 ]
 LABEL_SMOOTHING = 0.2
-SGD_LR_MULTS = {
-    125: 1.0,
-    500: 1.0,
-    2000: 0.8,
-    5000: 0.8,
-    10000: 0.8,
-}
+SGD_LR_MULTS = {125: 1.0, 500: 1.0, 2000: 0.8, 5000: 0.8, 10000: 0.8}
 RUN_CONFIGS = [
     dict(
         batch_size=batch_size,
@@ -636,7 +540,7 @@ def make_first_train_batch(batch_size):
     train_loader.shuffle = False
     inputs, labels = next(iter(train_loader))
     train_images = train_loader.normalized_images()[:5000]
-    return inputs.detach(), labels.detach(), train_images
+    return (inputs.detach(), labels.detach(), train_images)
 
 
 def first_batch_loss(model, inputs, labels):
@@ -644,10 +548,7 @@ def first_batch_loss(model, inputs, labels):
     with torch.inference_mode():
         outputs = model(inputs)
         loss = F.cross_entropy(
-            outputs.float(),
-            labels,
-            label_smoothing=LABEL_SMOOTHING,
-            reduction="mean",
+            outputs.float(), labels, label_smoothing=LABEL_SMOOTHING, reduction="mean"
         )
     return loss.item()
 
@@ -684,7 +585,7 @@ def make_optimizers(
         nesterov=muon_nesterov,
         orthogonalize=muon_orthogonalize,
     )
-    return optimizer1, optimizer2
+    return (optimizer1, optimizer2)
 
 
 def set_muon_hparams(muon_optimizer, muon_lr, muon_momentum, muon_nesterov):
@@ -727,10 +628,7 @@ def train_one_step(
     model.zero_grad(set_to_none=True)
     outputs = model(inputs, whiten_bias_grad=True)
     loss = F.cross_entropy(
-        outputs,
-        labels,
-        label_smoothing=LABEL_SMOOTHING,
-        reduction="mean",
+        outputs, labels, label_smoothing=LABEL_SMOOTHING, reduction="mean"
     )
     loss.backward()
     muon_grad_momentum_norm_ratio = muon_optimizer.grad_momentum_norm_ratio()
@@ -771,7 +669,7 @@ def train_interval(
         step_loss = first_batch_loss(model, inputs, labels)
         losses.append(step_loss)
         completed_steps += 1
-        if not torch.isfinite(torch.tensor(step_loss)):
+        if not finite(step_loss):
             break
     while len(losses) <= interval_steps:
         losses.append(float("inf"))
@@ -803,7 +701,7 @@ def lr_schedule_from_endpoints(
             interval_scheduler in ENDPOINT_INTERVAL_SCHEDULERS
             and interval_steps == 1
             and fixed_start
-            and lr_connectedness == "continuous_single"
+            and (lr_connectedness == "continuous_single")
         ):
             return [rounded_lr(end_lr)]
         return [rounded_lr(start_lr)] * interval_steps
@@ -862,23 +760,19 @@ def unpack_search_point(
 ):
     if lr_connectedness_uses_fixed_start(lr_connectedness, fixed_start_lr_k):
         end_k, momentum_index = point
-        return fixed_start_lr_k, end_k, momentum_index
+        return (fixed_start_lr_k, end_k, momentum_index)
     if interval_scheduler in ENDPOINT_INTERVAL_SCHEDULERS and interval_steps > 1:
         start_k, end_k, momentum_index = point
     else:
         start_k, momentum_index = point
         end_k = start_k
-    return start_k, end_k, momentum_index
+    return (start_k, end_k, momentum_index)
 
 
 def point_sort_key(point):
     lr_ks = point[:-1]
     momentum_index = point[-1]
-    return (
-        sum(abs(k) for k in lr_ks),
-        tuple(lr_ks),
-        momentum_index,
-    )
+    return (sum((abs(k) for k in lr_ks)), tuple(lr_ks), momentum_index)
 
 
 def better_point(point, incumbent_point, results_by_point):
@@ -924,10 +818,7 @@ def best_neighbor_point(middle_point, results_by_point, lr_step, search_momentum
 
 
 def find_best_lr_momentum_point(
-    initial_point,
-    evaluate,
-    results_by_point,
-    search_momentum,
+    initial_point, evaluate, results_by_point, search_momentum
 ):
     middle_point = initial_point
     initial_points = [middle_point]
@@ -935,11 +826,9 @@ def find_best_lr_momentum_point(
     for point in neighbor_points(middle_point, 1, search_momentum):
         evaluate(point)
         initial_points.append(point)
-
     for point in initial_points:
         if better_point(point, middle_point, results_by_point):
             middle_point = point
-
     for _ in range(LR_SEARCH_MAX_MOVES):
         for point in neighbor_points(middle_point, 1, search_momentum):
             evaluate(point)
@@ -951,8 +840,7 @@ def find_best_lr_momentum_point(
         middle_point = next_point
     else:
         print(
-            "lr_momentum_search_warning did_not_converge_within=%d "
-            "using_point=%s final_loss=%.6f"
+            "lr_momentum_search_warning did_not_converge_within=%d using_point=%s final_loss=%.6f"
             % (
                 LR_SEARCH_MAX_MOVES,
                 middle_point,
@@ -960,7 +848,6 @@ def find_best_lr_momentum_point(
             ),
             flush=True,
         )
-
     return middle_point
 
 
@@ -989,300 +876,127 @@ def add_search_point_metadata(
 
 
 def search_evaluation_summary(
-    result,
-    include_interval_final_loss=False,
-    include_cooldown_result=False,
+    result, include_interval_final_loss=False, include_cooldown_result=False
 ):
-    summary = dict(
-        k=result["k"],
-        start_lr_k=result["start_lr_k"],
-        end_lr_k=result["end_lr_k"],
-        momentum_index=result["momentum_index"],
-        muon_lr=result["muon_lr"],
-        muon_lrs=list(result["muon_lrs"]),
-        start_muon_lr=result["start_muon_lr"],
-        end_muon_lr=result["end_muon_lr"],
-        muon_momentum=result["muon_momentum"],
-        muon_nesterov=result["muon_nesterov"],
-        initial_lr_k=result["initial_lr_k"],
-        initial_lr=result["initial_lr"],
-        initial_momentum_index=result["initial_momentum_index"],
-        initial_momentum=result["initial_momentum"],
-    )
+    fields = "k start_lr_k end_lr_k momentum_index muon_lr muon_lrs start_muon_lr end_muon_lr muon_momentum muon_nesterov initial_lr_k initial_lr initial_momentum_index initial_momentum".split()
+    summary = copy_fields(result, fields, list_fields=("muon_lrs",))
     if include_interval_final_loss:
         summary["interval_final_loss"] = result["interval_final_loss"]
     summary.update(
-        losses=list(result["losses"]),
-        muon_grad_momentum_norm_ratios=list(
-            result["muon_grad_momentum_norm_ratios"]
-        ),
-        final_loss=result["final_loss"],
-        completed_steps=result["completed_steps"],
+        copy_fields(
+            result,
+            "losses muon_grad_momentum_norm_ratios final_loss completed_steps".split(),
+            list_fields=("losses", "muon_grad_momentum_norm_ratios"),
+        )
     )
     if include_cooldown_result:
         summary["cooldown_result"] = result["cooldown_result"]
     return summary
 
 
-def search_cooldown_lr(
+def search_lr_segment(
+    ctx,
     search_name,
-    model,
-    optimizers,
-    muon_optimizer,
-    inputs,
-    labels,
     initial_lr_k,
     initial_momentum_index,
-    muon_nesterov,
-    cooldown_steps,
+    steps,
     start_state,
     search_momentum,
-    interval_scheduler,
-    lr_connectedness,
     fixed_start_lr_k=None,
+    interval_info=None,
 ):
     results_by_point = {}
     initial_lr = lr_from_k(initial_lr_k)
     initial_momentum = momentum_from_index(initial_momentum_index)
     fixed_start = lr_connectedness_uses_fixed_start(
-        lr_connectedness, fixed_start_lr_k
+        ctx.lr_connectedness, fixed_start_lr_k
     )
     initial_point = make_initial_search_point(
-        interval_scheduler,
-        cooldown_steps,
+        ctx.interval_scheduler,
+        steps,
         initial_lr_k,
         initial_momentum_index,
-        lr_connectedness=lr_connectedness,
+        lr_connectedness=ctx.lr_connectedness,
         fixed_start_lr_k=fixed_start_lr_k,
     )
 
     def evaluate(point):
         start_k, end_k, momentum_index = unpack_search_point(
-            interval_scheduler,
-            cooldown_steps,
+            ctx.interval_scheduler,
+            steps,
             point,
-            lr_connectedness=lr_connectedness,
+            lr_connectedness=ctx.lr_connectedness,
             fixed_start_lr_k=fixed_start_lr_k,
         )
-        if point not in results_by_point:
-            start_lr = lr_from_k(start_k)
-            end_lr = lr_from_k(end_k)
-            momentum = momentum_from_index(momentum_index)
-            load_training_state(model, optimizers, start_state)
-            result = train_interval(
-                model=model,
-                optimizers=optimizers,
-                muon_optimizer=muon_optimizer,
-                inputs=inputs,
-                labels=labels,
-                muon_lrs=lr_schedule_from_endpoints(
-                    interval_scheduler,
-                    start_lr,
-                    end_lr,
-                    cooldown_steps,
-                    lr_connectedness=lr_connectedness,
-                    fixed_start=fixed_start,
-                ),
-                muon_momentum=momentum,
-                muon_nesterov=muon_nesterov,
-                interval_steps=cooldown_steps,
-            )
-            result["start_muon_lr"] = start_lr
-            result["end_muon_lr"] = end_lr
-            add_search_point_metadata(
-                result,
-                start_k,
-                end_k,
-                momentum_index,
-                initial_lr_k,
-                initial_lr,
-                initial_momentum_index,
-                initial_momentum,
-            )
-            results_by_point[point] = result
-        return results_by_point[point]
-
-    best_point = find_best_lr_momentum_point(
-        initial_point=initial_point,
-        evaluate=evaluate,
-        results_by_point=results_by_point,
-        search_momentum=search_momentum,
-    )
-    best_start_k, best_end_k, best_momentum_index = unpack_search_point(
-        interval_scheduler,
-        cooldown_steps,
-        best_point,
-        lr_connectedness=lr_connectedness,
-        fixed_start_lr_k=fixed_start_lr_k,
-    )
-    best_result = results_by_point[best_point]
-    load_training_state(model, optimizers, start_state)
-    return dict(
-        search_name=search_name,
-        cooldown_steps=cooldown_steps,
-        search_momentum=search_momentum,
-        interval_scheduler=interval_scheduler,
-        lr_connectedness=lr_connectedness,
-        best_k=best_end_k,
-        best_start_lr_k=best_start_k,
-        best_end_lr_k=best_end_k,
-        best_momentum_index=best_momentum_index,
-        muon_lr=best_result["muon_lr"],
-        muon_lrs=list(best_result["muon_lrs"]),
-        start_muon_lr=best_result["start_muon_lr"],
-        end_muon_lr=best_result["end_muon_lr"],
-        muon_momentum=best_result["muon_momentum"],
-        muon_nesterov=best_result["muon_nesterov"],
-        initial_lr_k=initial_lr_k,
-        initial_lr=initial_lr,
-        initial_momentum_index=initial_momentum_index,
-        initial_momentum=initial_momentum,
-        initial_train_loss=best_result["losses"][0],
-        final_train_loss=best_result["final_loss"],
-        completed_steps=best_result["completed_steps"],
-        losses=list(best_result["losses"]),
-        muon_grad_momentum_norm_ratios=list(
-            best_result["muon_grad_momentum_norm_ratios"]
-        ),
-        search_evaluations=[
-            search_evaluation_summary(result) for result in results_by_point.values()
-        ],
-    )
-
-
-def search_interval_lr(
-    run,
-    model,
-    optimizers,
-    muon_optimizer,
-    inputs,
-    labels,
-    initial_lr_k,
-    initial_momentum_index,
-    interval_steps,
-    cooldown_steps,
-    total_steps,
-    interval_index,
-    interval_start_step,
-    batch_size,
-    n_steps,
-    search_momentum,
-    muon_nesterov,
-    interval_scheduler,
-    lr_connectedness,
-    fixed_start_lr_k=None,
-):
-    search_name = "run%d_bs%d_N%d_M%d_%s_%s_interval%d_step%d" % (
-        run,
-        batch_size,
-        n_steps,
-        cooldown_steps,
-        interval_scheduler,
-        lr_connectedness,
-        interval_index,
-        interval_start_step,
-    )
-    start_state = snapshot_training_state(model, optimizers)
-    results_by_point = {}
-    initial_lr = lr_from_k(initial_lr_k)
-    initial_momentum = momentum_from_index(initial_momentum_index)
-    fixed_start = lr_connectedness_uses_fixed_start(
-        lr_connectedness, fixed_start_lr_k
-    )
-    initial_point = make_initial_search_point(
-        interval_scheduler,
-        interval_steps,
-        initial_lr_k,
-        initial_momentum_index,
-        lr_connectedness=lr_connectedness,
-        fixed_start_lr_k=fixed_start_lr_k,
-    )
-    use_cooldown = interval_start_step + interval_steps + cooldown_steps <= total_steps
-    use_cooldown = use_cooldown and cooldown_steps > 0
-
-    def evaluate(point):
-        start_k, end_k, momentum_index = unpack_search_point(
-            interval_scheduler,
-            interval_steps,
-            point,
-            lr_connectedness=lr_connectedness,
-            fixed_start_lr_k=fixed_start_lr_k,
+        if point in results_by_point:
+            return results_by_point[point]
+        start_lr = lr_from_k(start_k)
+        end_lr = lr_from_k(end_k)
+        momentum = momentum_from_index(momentum_index)
+        load_training_state(ctx.model, ctx.optimizers, start_state)
+        muon_lrs = lr_schedule_from_endpoints(
+            ctx.interval_scheduler,
+            start_lr,
+            end_lr,
+            steps,
+            lr_connectedness=ctx.lr_connectedness,
+            fixed_start=fixed_start,
         )
-        if point not in results_by_point:
-            start_lr = lr_from_k(start_k)
-            end_lr = lr_from_k(end_k)
-            momentum = momentum_from_index(momentum_index)
-            load_training_state(model, optimizers, start_state)
-            result = train_interval(
-                model=model,
-                optimizers=optimizers,
-                muon_optimizer=muon_optimizer,
-                inputs=inputs,
-                labels=labels,
-                muon_lrs=lr_schedule_from_endpoints(
-                    interval_scheduler,
-                    start_lr,
-                    end_lr,
-                    interval_steps,
-                    lr_connectedness=lr_connectedness,
-                    fixed_start=fixed_start,
-                ),
-                muon_momentum=momentum,
-                muon_nesterov=muon_nesterov,
-                interval_steps=interval_steps,
-            )
-            interval_end_state = result["end_state"]
-            result["start_muon_lr"] = start_lr
-            result["end_muon_lr"] = end_lr
+        result = train_interval(
+            ctx.model,
+            ctx.optimizers,
+            ctx.muon_optimizer,
+            ctx.inputs,
+            ctx.labels,
+            muon_lrs,
+            momentum,
+            ctx.muon_nesterov,
+            steps,
+        )
+        result["start_muon_lr"] = start_lr
+        result["end_muon_lr"] = end_lr
+        if interval_info is not None:
             result["interval_final_loss"] = result["final_loss"]
             result["cooldown_result"] = None
             if (
-                use_cooldown
-                and result["completed_steps"] == interval_steps
-                and torch.isfinite(torch.tensor(result["final_loss"]))
+                interval_info["use_cooldown"]
+                and result["completed_steps"] == steps
+                and finite(result["final_loss"])
             ):
                 cooldown_search_name = "%s_cooldown_for_start%s_end%s_m%s_n%s" % (
                     search_name,
                     format_k(start_k),
                     format_k(end_k),
                     format_momentum(momentum),
-                    muon_nesterov,
+                    ctx.muon_nesterov,
                 )
-                cooldown_result = search_cooldown_lr(
-                    search_name=cooldown_search_name,
-                    model=model,
-                    optimizers=optimizers,
-                    muon_optimizer=muon_optimizer,
-                    inputs=inputs,
-                    labels=labels,
-                    initial_lr_k=end_k,
-                    initial_momentum_index=momentum_index,
-                    muon_nesterov=muon_nesterov,
-                    cooldown_steps=cooldown_steps,
-                    start_state=interval_end_state,
-                    search_momentum=False,
-                    interval_scheduler=interval_scheduler,
-                    lr_connectedness=lr_connectedness,
-                    fixed_start_lr_k=(
-                        end_k
-                        if lr_connectedness.startswith("continuous_")
-                        else None
-                    ),
+                fixed_cooldown_start = (
+                    end_k if ctx.lr_connectedness.startswith("continuous_") else None
+                )
+                cooldown_result = search_lr_segment(
+                    ctx,
+                    cooldown_search_name,
+                    end_k,
+                    momentum_index,
+                    ctx.cooldown_steps,
+                    result["end_state"],
+                    False,
+                    fixed_cooldown_start,
                 )
                 result["cooldown_result"] = cooldown_result
                 result["final_loss"] = cooldown_result["final_train_loss"]
-            add_search_point_metadata(
-                result,
-                start_k,
-                end_k,
-                momentum_index,
-                initial_lr_k,
-                initial_lr,
-                initial_momentum_index,
-                initial_momentum,
-            )
-            results_by_point[point] = result
-        return results_by_point[point]
+        add_search_point_metadata(
+            result,
+            start_k,
+            end_k,
+            momentum_index,
+            initial_lr_k,
+            initial_lr,
+            initial_momentum_index,
+            initial_momentum,
+        )
+        results_by_point[point] = result
+        return result
 
     best_point = find_best_lr_momentum_point(
         initial_point=initial_point,
@@ -1291,61 +1005,61 @@ def search_interval_lr(
         search_momentum=search_momentum,
     )
     best_start_k, best_end_k, best_momentum_index = unpack_search_point(
-        interval_scheduler,
-        interval_steps,
+        ctx.interval_scheduler,
+        steps,
         best_point,
-        lr_connectedness=lr_connectedness,
+        lr_connectedness=ctx.lr_connectedness,
         fixed_start_lr_k=fixed_start_lr_k,
     )
     best_result = results_by_point[best_point]
-    load_training_state(model, optimizers, best_result["end_state"])
+    if interval_info is None:
+        load_training_state(ctx.model, ctx.optimizers, start_state)
+        result = pack(
+            locals(),
+            "search_name search_momentum initial_lr_k initial_lr initial_momentum_index initial_momentum",
+        )
+        result.update(
+            cooldown_steps=steps,
+            interval_scheduler=ctx.interval_scheduler,
+            lr_connectedness=ctx.lr_connectedness,
+            best_k=best_end_k,
+            best_start_lr_k=best_start_k,
+            best_end_lr_k=best_end_k,
+            best_momentum_index=best_momentum_index,
+            initial_train_loss=best_result["losses"][0],
+            final_train_loss=best_result["final_loss"],
+        )
+        result.update(
+            copy_fields(
+                best_result,
+                "muon_lr muon_lrs start_muon_lr end_muon_lr muon_momentum muon_nesterov completed_steps losses muon_grad_momentum_norm_ratios".split(),
+                list_fields=("muon_lrs", "losses", "muon_grad_momentum_norm_ratios"),
+            )
+        )
+        result.update(
+            search_evaluations=[
+                search_evaluation_summary(result)
+                for result in results_by_point.values()
+            ]
+        )
+        return result
+    load_training_state(ctx.model, ctx.optimizers, best_result["end_state"])
     best_cooldown_result = best_result["cooldown_result"]
     log_interval_lr_landscape(results_by_point)
-    log_interval_lr_search_complete(
-        best_result,
-        best_cooldown_result,
-        results_by_point,
+    log_interval_lr_search_complete(best_result, best_cooldown_result, results_by_point)
+    result = pack(
+        locals(),
+        "search_name search_momentum initial_lr_k initial_lr initial_momentum_index initial_momentum",
     )
-    return dict(
-        search_name=search_name,
-        interval_index=interval_index,
-        interval_start_step=interval_start_step,
-        interval_steps=interval_steps,
-        cooldown_steps=cooldown_steps if use_cooldown else 0,
-        search_momentum=search_momentum,
-        interval_scheduler=interval_scheduler,
-        lr_connectedness=lr_connectedness,
+    result.update(
+        pack(interval_info, "interval_index interval_start_step cooldown_steps"),
+        interval_steps=steps,
+        interval_scheduler=ctx.interval_scheduler,
+        lr_connectedness=ctx.lr_connectedness,
         best_k=best_end_k,
         best_start_lr_k=best_start_k,
         best_end_lr_k=best_end_k,
         best_momentum_index=best_momentum_index,
-        muon_lr=best_result["muon_lr"],
-        muon_lrs=list(best_result["muon_lrs"]),
-        start_muon_lr=best_result["start_muon_lr"],
-        end_muon_lr=best_result["end_muon_lr"],
-        muon_momentum=best_result["muon_momentum"],
-        muon_nesterov=best_result["muon_nesterov"],
-        cooldown_best_k=(
-            best_cooldown_result["best_k"] if best_cooldown_result else None
-        ),
-        cooldown_best_momentum_index=(
-            best_cooldown_result["best_momentum_index"]
-            if best_cooldown_result
-            else None
-        ),
-        cooldown_muon_lr=(
-            best_cooldown_result["muon_lr"] if best_cooldown_result else None
-        ),
-        cooldown_muon_momentum=(
-            best_cooldown_result["muon_momentum"] if best_cooldown_result else None
-        ),
-        cooldown_muon_nesterov=(
-            best_cooldown_result["muon_nesterov"] if best_cooldown_result else None
-        ),
-        initial_lr_k=initial_lr_k,
-        initial_lr=initial_lr,
-        initial_momentum_index=initial_momentum_index,
-        initial_momentum=initial_momentum,
         cooldown_initial_lr_k=best_end_k,
         cooldown_initial_lr=lr_from_k(best_end_k),
         cooldown_initial_momentum_index=best_momentum_index,
@@ -1353,20 +1067,71 @@ def search_interval_lr(
         initial_train_loss=best_result["losses"][0],
         interval_final_train_loss=best_result["interval_final_loss"],
         final_train_loss=best_result["final_loss"],
-        completed_steps=best_result["completed_steps"],
-        losses=list(best_result["losses"]),
-        muon_grad_momentum_norm_ratios=list(
-            best_result["muon_grad_momentum_norm_ratios"]
-        ),
         cooldown_result=best_cooldown_result,
+    )
+    result.update(
+        copy_fields(
+            best_result,
+            "muon_lr muon_lrs start_muon_lr end_muon_lr muon_momentum muon_nesterov completed_steps losses muon_grad_momentum_norm_ratios".split(),
+            list_fields=("muon_lrs", "losses", "muon_grad_momentum_norm_ratios"),
+        )
+    )
+    result.update(
+        optional_mapped(
+            best_cooldown_result,
+            "cooldown_best_k:best_k cooldown_best_momentum_index:best_momentum_index cooldown_muon_lr:muon_lr cooldown_muon_momentum:muon_momentum cooldown_muon_nesterov:muon_nesterov",
+        )
+    )
+    result.update(
         search_evaluations=[
             search_evaluation_summary(
-                result,
-                include_interval_final_loss=True,
-                include_cooldown_result=True,
+                result, include_interval_final_loss=True, include_cooldown_result=True
             )
             for result in results_by_point.values()
-        ],
+        ]
+    )
+    return result
+
+
+def search_interval_lr(
+    ctx,
+    initial_lr_k,
+    initial_momentum_index,
+    interval_steps,
+    interval_index,
+    interval_start_step,
+    fixed_start_lr_k=None,
+):
+    search_name = "run%d_bs%d_N%d_M%d_%s_%s_interval%d_step%d" % (
+        ctx.run,
+        ctx.batch_size,
+        ctx.n_steps,
+        ctx.cooldown_steps,
+        ctx.interval_scheduler,
+        ctx.lr_connectedness,
+        interval_index,
+        interval_start_step,
+    )
+    use_cooldown = (
+        interval_start_step + interval_steps + ctx.cooldown_steps <= ctx.total_steps
+    )
+    use_cooldown = use_cooldown and ctx.cooldown_steps > 0
+    interval_info = dict(
+        interval_index=interval_index,
+        interval_start_step=interval_start_step,
+        cooldown_steps=ctx.cooldown_steps if use_cooldown else 0,
+        use_cooldown=use_cooldown,
+    )
+    return search_lr_segment(
+        ctx,
+        search_name,
+        initial_lr_k,
+        initial_momentum_index,
+        interval_steps,
+        snapshot_training_state(ctx.model, ctx.optimizers),
+        ctx.search_momentum,
+        fixed_start_lr_k,
+        interval_info,
     )
 
 
@@ -1405,7 +1170,22 @@ def run_overfit_n_search(
         muon_orthogonalize=muon_orthogonalize,
     )
     optimizers = [optimizer1, optimizer2]
-
+    search_ctx = SimpleNamespace(
+        run=run,
+        model=model,
+        optimizers=optimizers,
+        muon_optimizer=optimizer2,
+        inputs=inputs,
+        labels=labels,
+        cooldown_steps=m_steps,
+        total_steps=train_steps,
+        batch_size=batch_size,
+        n_steps=n_steps,
+        search_momentum=search_momentum,
+        muon_nesterov=muon_nesterov,
+        interval_scheduler=interval_scheduler,
+        lr_connectedness=lr_connectedness,
+    )
     losses = [first_batch_loss(model, inputs, labels)]
     log_train_loss(
         run=run,
@@ -1418,7 +1198,6 @@ def run_overfit_n_search(
         muon_nesterov=optimizer2.param_groups[0]["nesterov"],
         muon_grad_momentum_norm_ratio=None,
     )
-
     interval_results = []
     interval_initial_lr_k = initial_lr_k
     interval_initial_momentum_index = initial_momentum_index
@@ -1430,26 +1209,13 @@ def run_overfit_n_search(
         if interval_index > 0 and lr_connectedness.startswith("continuous_"):
             previous_interval_end_lr_k = interval_initial_lr_k
         interval_result = search_interval_lr(
-            run=run,
-            model=model,
-            optimizers=optimizers,
-            muon_optimizer=optimizer2,
-            inputs=inputs,
-            labels=labels,
-            initial_lr_k=interval_initial_lr_k,
-            initial_momentum_index=interval_initial_momentum_index,
-            interval_steps=interval_steps,
-            cooldown_steps=m_steps,
-            total_steps=train_steps,
-            interval_index=interval_index,
-            interval_start_step=completed_steps,
-            batch_size=batch_size,
-            n_steps=n_steps,
-            search_momentum=search_momentum,
-            muon_nesterov=muon_nesterov,
-            interval_scheduler=interval_scheduler,
-            lr_connectedness=lr_connectedness,
-            fixed_start_lr_k=previous_interval_end_lr_k,
+            search_ctx,
+            interval_initial_lr_k,
+            interval_initial_momentum_index,
+            interval_steps,
+            interval_index,
+            completed_steps,
+            previous_interval_end_lr_k,
         )
         interval_results.append(interval_result)
         interval_initial_lr_k = interval_result["best_k"]
@@ -1464,11 +1230,7 @@ def run_overfit_n_search(
             "muon_grad_momentum_norm_ratios"
         ][: interval_result["completed_steps"]]
         for local_offset, (loss, muon_lr, muon_grad_momentum_norm_ratio) in enumerate(
-            zip(
-                actual_losses,
-                actual_muon_lrs,
-                actual_muon_grad_momentum_norm_ratios,
-            ),
+            zip(actual_losses, actual_muon_lrs, actual_muon_grad_momentum_norm_ratios),
             start=1,
         ):
             global_step = completed_steps + local_offset
@@ -1488,10 +1250,8 @@ def run_overfit_n_search(
         interval_index += 1
         if not torch.isfinite(torch.tensor(losses[-1])):
             break
-
     while len(losses) <= train_steps:
         losses.append(float("inf"))
-
     last_cooldown_result = next(
         (
             interval_result
@@ -1500,74 +1260,28 @@ def run_overfit_n_search(
         ),
         None,
     )
-
-    return dict(
-        run=run,
-        batch_size=batch_size,
-        train_steps=train_steps,
-        n_steps=n_steps,
-        m_steps=m_steps,
-        muon_orthogonalize=muon_orthogonalize,
-        momentum_config_name=momentum_config_name,
-        search_momentum=search_momentum,
-        muon_nesterov=muon_nesterov,
-        interval_scheduler=interval_scheduler,
-        lr_connectedness=lr_connectedness,
-        initial_lr_k=initial_lr_k,
-        initial_lr=initial_lr,
-        initial_momentum_index=initial_momentum_index,
-        initial_momentum=initial_momentum,
-        final_muon_lr=interval_results[-1]["muon_lr"] if interval_results else None,
-        final_muon_lr_k=interval_results[-1]["best_k"] if interval_results else None,
-        final_start_muon_lr=(
-            interval_results[-1]["start_muon_lr"] if interval_results else None
-        ),
-        final_start_muon_lr_k=(
-            interval_results[-1]["best_start_lr_k"] if interval_results else None
-        ),
-        final_end_muon_lr=(
-            interval_results[-1]["end_muon_lr"] if interval_results else None
-        ),
-        final_end_muon_lr_k=(
-            interval_results[-1]["best_end_lr_k"] if interval_results else None
-        ),
-        final_muon_momentum=(
-            interval_results[-1]["muon_momentum"] if interval_results else None
-        ),
-        final_muon_nesterov=(
-            interval_results[-1]["muon_nesterov"] if interval_results else None
-        ),
-        final_muon_momentum_index=(
-            interval_results[-1]["best_momentum_index"] if interval_results else None
-        ),
-        final_cooldown_muon_lr=(
-            last_cooldown_result["cooldown_muon_lr"] if last_cooldown_result else None
-        ),
-        final_cooldown_muon_momentum=(
-            last_cooldown_result["cooldown_muon_momentum"]
-            if last_cooldown_result
-            else None
-        ),
-        final_cooldown_muon_nesterov=(
-            last_cooldown_result["cooldown_muon_nesterov"]
-            if last_cooldown_result
-            else None
-        ),
-        final_cooldown_muon_lr_k=(
-            last_cooldown_result["cooldown_best_k"] if last_cooldown_result else None
-        ),
-        final_cooldown_muon_momentum_index=(
-            last_cooldown_result["cooldown_best_momentum_index"]
-            if last_cooldown_result
-            else None
-        ),
-        sgd_lr_mult=sgd_lr_mult,
-        losses=losses,
+    last_interval = interval_results[-1] if interval_results else None
+    result = pack(
+        locals(),
+        "run batch_size train_steps n_steps m_steps muon_orthogonalize momentum_config_name search_momentum muon_nesterov interval_scheduler lr_connectedness initial_lr_k initial_lr initial_momentum_index initial_momentum sgd_lr_mult losses interval_results",
+    )
+    result.update(
+        optional_mapped(
+            last_interval,
+            "final_muon_lr:muon_lr final_muon_lr_k:best_k final_start_muon_lr:start_muon_lr final_start_muon_lr_k:best_start_lr_k final_end_muon_lr:end_muon_lr final_end_muon_lr_k:best_end_lr_k final_muon_momentum:muon_momentum final_muon_nesterov:muon_nesterov final_muon_momentum_index:best_momentum_index",
+        )
+    )
+    result.update(
+        optional_mapped(
+            last_cooldown_result,
+            "final_cooldown_muon_lr:cooldown_muon_lr final_cooldown_muon_momentum:cooldown_muon_momentum final_cooldown_muon_nesterov:cooldown_muon_nesterov final_cooldown_muon_lr_k:cooldown_best_k final_cooldown_muon_momentum_index:cooldown_best_momentum_index",
+        )
+    )
+    result.update(
         initial_train_loss=losses[0],
         final_train_loss=losses[train_steps],
         steps=completed_steps,
         target_steps=train_steps,
-        interval_results=interval_results,
         muon_grad_momentum_norm_ratios=[
             ratio
             for interval_result in interval_results
@@ -1576,14 +1290,12 @@ def run_overfit_n_search(
             ]
         ],
     )
+    return result
 
 
 def main():
-    # We re-use the model object between runs to save non-data-dependent setup time.
     set_training_seed()
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
-    # model.compile(mode="max-autotune")
-
     results = []
     for config in RUN_CONFIGS:
         for n_steps, m_steps in SEARCH_STEP_CONFIGS:
@@ -1599,14 +1311,7 @@ def main():
                             initial_momentum = momentum_config["initial_momentum"]
                             run = len(results)
                             print(
-                                "cifar_baseline2_overfit_n_search run=%d "
-                                "batch_size=%d train_steps=%d N=%d M=%d "
-                                "interval_scheduler=%s lr_connectedness=%s "
-                                "muon_orthogonalize=%s momentum_config=%s "
-                                "search_momentum=%s muon_nesterov=%s "
-                                "initial_muon_lr=%.6g initial_muon_lr_k=%d "
-                                "initial_muon_momentum=%s "
-                                "initial_muon_momentum_index=%d"
+                                "cifar_baseline2_overfit_n_search run=%d batch_size=%d train_steps=%d N=%d M=%d interval_scheduler=%s lr_connectedness=%s muon_orthogonalize=%s momentum_config=%s search_momentum=%s muon_nesterov=%s initial_muon_lr=%.6g initial_muon_lr_k=%d initial_muon_momentum=%s initial_muon_momentum_index=%d"
                                 % (
                                     run,
                                     config["batch_size"],
@@ -1649,7 +1354,6 @@ def main():
                             result["run_seconds"] = time.perf_counter() - run_start_time
                             results.append(result)
                             log_run_summary(result)
-
     log_dir = os.path.join("logs", str(uuid.uuid4()))
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "log.pt")
