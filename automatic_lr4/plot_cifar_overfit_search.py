@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the CIFAR overfit global scheduler search log."""
+"""Plot the CIFAR overfit scheduler search log."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ import matplotlib.pyplot as plt
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_LOG = HERE / "cifar_overfit_search_global2.log"
-DEFAULT_OUTPUT_DIR = HERE / "cifar_overfit_search_global2_plots"
+DEFAULT_LOG = HERE / "cifar_overfit_search_exp1.log"
+DEFAULT_OUTPUT_DIR = HERE / "cifar_overfit_search_exp1_plots"
 OUTPUT_SUMMARY = "summary.txt"
 OUTPUT_PLOT = "curves.png"
 
@@ -398,15 +398,35 @@ def final_muon_momentum(run: Run) -> float | None:
 
 
 def plot_row_label(run: Run) -> str:
-    scheduler = run.interval_scheduler or "NA"
     loss = format_number(run.final_loss)
-    return f"run {run.run}\n{scheduler}\nloss {loss}"
+    scheduler = run.interval_scheduler or "NA"
+    connectedness = run.lr_connectedness or "NA"
+    return (
+        f"bs {format_number(run.batch_size)}\n"
+        f"(N,M)=({format_number(run.n_steps)},{format_number(run.m_steps)})\n"
+        f"{scheduler}\n"
+        f"{connectedness}\n"
+        f"loss {loss}"
+    )
+
+
+def sorted_runs_for_plot(runs: list[Run]) -> list[Run]:
+    return sorted(
+        runs,
+        key=lambda run: (
+            run.batch_size if run.batch_size is not None else math.inf,
+            run.final_loss if run.final_loss is not None else math.inf,
+            run.n_steps if run.n_steps is not None else math.inf,
+            run.m_steps if run.m_steps is not None else math.inf,
+            run.run,
+        ),
+    )
 
 
 def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
     best = best_completed_run(runs)
     lines = [
-        "CIFAR overfit global scheduler search summary",
+        "CIFAR overfit scheduler search summary",
         f"Input log: {log_path}",
         f"Output directory: {output_dir}",
         f"Plot file: {output_dir / OUTPUT_PLOT}",
@@ -501,7 +521,7 @@ def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
 
 
 def plot_curves(runs: list[Run], output_dir: Path) -> None:
-    ordered = sorted_runs(runs)
+    ordered = sorted_runs_for_plot(runs)
     if not ordered:
         return
 
@@ -565,7 +585,7 @@ def plot_curves(runs: list[Run], output_dir: Path) -> None:
     for ax in axes[-1, :]:
         ax.set_xlabel("Step")
 
-    fig.suptitle("CIFAR global scheduler search curves", y=0.998)
+    fig.suptitle("CIFAR scheduler search curves", y=0.998)
     fig.tight_layout(rect=(0.03, 0, 1, 0.985))
     fig.savefig(output_dir / OUTPUT_PLOT, dpi=180)
     plt.close(fig)
@@ -579,7 +599,7 @@ def plot_all(runs: list[Run], log_path: Path, output_dir: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Parse and plot cifar_overfit_search_global2.log."
+        description="Parse and plot cifar_overfit_search_exp1.log."
     )
     parser.add_argument(
         "log",

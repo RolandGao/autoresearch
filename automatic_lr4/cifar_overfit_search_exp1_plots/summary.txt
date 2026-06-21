@@ -1,0 +1,378 @@
+CIFAR overfit scheduler search summary
+Input log: /workspace/neural_networks_optimization/autoresearch/automatic_lr4/cifar_overfit_search_exp1.log
+Output directory: /workspace/neural_networks_optimization/autoresearch/automatic_lr4/cifar_overfit_search_exp1_plots
+Plot file: /workspace/neural_networks_optimization/autoresearch/automatic_lr4/cifar_overfit_search_exp1_plots/curves.png
+Runs parsed: 56
+Completed runs: 56
+Metrics are ranked lower-is-better.
+
+Best completed run by final loss:
+  run=9 batch_size=2000 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.867148 run_seconds=63.509
+
+Batch size: 2000
+
+Final loss
+  run=9 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.867148 first_below_0p87=13 evaluated_configs=314
+  run=16 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.867575 first_below_0p87=16 evaluated_configs=58
+  run=11 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.867809 first_below_0p87=16 evaluated_configs=145
+  run=19 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.86797 first_below_0p87=17 evaluated_configs=82
+  run=8 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.867999 first_below_0p87=16 evaluated_configs=84
+  run=15 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.868113 first_below_0p87=19 evaluated_configs=109
+  run=18 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.868561 first_below_0p87=19 evaluated_configs=77
+  run=14 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.868886 first_below_0p87=16 evaluated_configs=161
+  run=6 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.868951 first_below_0p87=19 evaluated_configs=200
+  run=13 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.869077 first_below_0p87=19 evaluated_configs=194
+  run=5 N=2 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.869097 first_below_0p87=20 evaluated_configs=272
+  run=17 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.869392 first_below_0p87=20 evaluated_configs=107
+  run=26 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.869505 first_below_0p87=20 evaluated_configs=55
+  run=27 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.869507 first_below_0p87=20 evaluated_configs=53
+  run=12 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.869585 first_below_0p87=20 evaluated_configs=70
+  run=25 N=9 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.869636 first_below_0p87=20 evaluated_configs=86
+  run=10 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.869848 first_below_0p87=20 evaluated_configs=136
+  run=21 N=7 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.870055 first_below_0p87=NA evaluated_configs=121
+  run=22 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.870182 first_below_0p87=NA evaluated_configs=53
+  run=23 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.870317 first_below_0p87=NA evaluated_configs=55
+  run=20 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.870795 first_below_0p87=NA evaluated_configs=35
+  run=24 N=9 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.872145 first_below_0p87=NA evaluated_configs=35
+  run=7 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.872177 first_below_0p87=NA evaluated_configs=169
+  run=4 N=2 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.873002 first_below_0p87=NA evaluated_configs=96
+  run=0 N=1 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.889546 first_below_0p87=NA evaluated_configs=110
+  run=3 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.889546 first_below_0p87=NA evaluated_configs=110
+  run=1 N=1 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.889546 first_below_0p87=NA evaluated_configs=110
+  run=2 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=1.11448 first_below_0p87=NA evaluated_configs=104
+
+Pareto frontier: first step below 0.87 vs run seconds
+  run=8 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p87=16 run_seconds=16.876 final_lr=0.0056 final_momentum=0.8
+  run=9 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p87=13 run_seconds=63.509 final_lr=0.002 final_momentum=0.9
+
+Loss after 30 steps
+  28 runs missing this metric
+
+Loss after 10 steps
+   1. run=9 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=0.8711 run_seconds=63.509 final_lr=0.002 final_momentum=0.9
+   2. run=14 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=0.8810 run_seconds=43.487 final_lr=0.0034 final_momentum=0.5
+   3. run=11 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=0.8825 run_seconds=29.461 final_lr=0.0034 final_momentum=0.99
+   4. run=6 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=0.8877 run_seconds=28.43 final_lr=0.002 final_momentum=0.99
+   5. run=8 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=0.8953 run_seconds=16.876 final_lr=0.0056 final_momentum=0.8
+   6. run=7 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=0.8980 run_seconds=24.14 final_lr=0.0056 final_momentum=0.7
+   7. run=16 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=0.8986 run_seconds=19.476 final_lr=0.0093 final_momentum=0.8
+   8. run=10 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=0.8990 run_seconds=27.37 final_lr=0.0034 final_momentum=0.7
+   9. run=5 N=2 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=0.8994 run_seconds=38.56 final_lr=0.0056 final_momentum=0.7
+  10. run=19 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=0.9022 run_seconds=27.487 final_lr=0.0093 final_momentum=0.99
+  11. run=15 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=0.9053 run_seconds=29.434 final_lr=0.0056 final_momentum=0.99
+  12. run=17 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=0.9093 run_seconds=35.775 final_lr=0.0034 final_momentum=0.6
+  13. run=18 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=0.9118 run_seconds=25.809 final_lr=0.0093 final_momentum=0.95
+  14. run=12 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=0.9224 run_seconds=19.032 final_lr=0.0056 final_momentum=0.95
+  15. run=4 N=2 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=0.9257 run_seconds=13.654 final_lr=0.0034 final_momentum=0.7
+  16. run=13 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=0.9548 run_seconds=52.402 final_lr=0.0056 final_momentum=0.8
+  17. run=23 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=0.9596 run_seconds=24.671 final_lr=0.0056 final_momentum=0.8
+  18. run=22 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=0.9603 run_seconds=23.877 final_lr=0.0034 final_momentum=0.6
+  19. run=21 N=7 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=0.9698 run_seconds=52.388 final_lr=0.0034 final_momentum=0.9
+  20. run=27 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=0.9838 run_seconds=27.783 final_lr=0.0034 final_momentum=0.6
+  21. run=24 N=9 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=0.9848 run_seconds=17.174 final_lr=0.0093 final_momentum=0.7
+  22. run=20 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=0.9892 run_seconds=15.62 final_lr=0.0093 final_momentum=0.7
+  23. run=26 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=0.9948 run_seconds=28.072 final_lr=0.0034 final_momentum=0.7
+  24. run=25 N=9 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=0.9977 run_seconds=40.029 final_lr=0.0056 final_momentum=0.7
+  25. run=0 N=1 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=1.0836 run_seconds=9.375 final_lr=0.0093 final_momentum=0
+  26. run=1 N=1 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=1.0836 run_seconds=8.535 final_lr=0.0093 final_momentum=0
+  27. run=3 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=1.0836 run_seconds=8.562 final_lr=0.0093 final_momentum=0
+  28. run=2 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=1.5601 run_seconds=8.083 final_lr=0.33 final_momentum=0
+
+Loss after 20 steps
+   1. run=9 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.8671 run_seconds=63.509 final_lr=0.002 final_momentum=0.9
+   2. run=16 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.8676 run_seconds=19.476 final_lr=0.0093 final_momentum=0.8
+   3. run=11 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.8678 run_seconds=29.461 final_lr=0.0034 final_momentum=0.99
+   4. run=8 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.8680 run_seconds=16.876 final_lr=0.0056 final_momentum=0.8
+   5. run=19 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.8680 run_seconds=27.487 final_lr=0.0093 final_momentum=0.99
+   6. run=15 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.8681 run_seconds=29.434 final_lr=0.0056 final_momentum=0.99
+   7. run=18 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=0.8686 run_seconds=25.809 final_lr=0.0093 final_momentum=0.95
+   8. run=14 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=0.8689 run_seconds=43.487 final_lr=0.0034 final_momentum=0.5
+   9. run=6 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=0.8690 run_seconds=28.43 final_lr=0.002 final_momentum=0.99
+  10. run=5 N=2 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.8691 run_seconds=38.56 final_lr=0.0056 final_momentum=0.7
+  11. run=13 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.8691 run_seconds=52.402 final_lr=0.0056 final_momentum=0.8
+  12. run=17 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.8694 run_seconds=35.775 final_lr=0.0034 final_momentum=0.6
+  13. run=26 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=0.8695 run_seconds=28.072 final_lr=0.0034 final_momentum=0.7
+  14. run=27 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.8695 run_seconds=27.783 final_lr=0.0034 final_momentum=0.6
+  15. run=12 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.8696 run_seconds=19.032 final_lr=0.0056 final_momentum=0.95
+  16. run=25 N=9 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.8696 run_seconds=40.029 final_lr=0.0056 final_momentum=0.7
+  17. run=10 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=0.8698 run_seconds=27.37 final_lr=0.0034 final_momentum=0.7
+  18. run=21 N=7 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.8701 run_seconds=52.388 final_lr=0.0034 final_momentum=0.9
+  19. run=22 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=0.8702 run_seconds=23.877 final_lr=0.0034 final_momentum=0.6
+  20. run=23 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.8703 run_seconds=24.671 final_lr=0.0056 final_momentum=0.8
+  21. run=20 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.8708 run_seconds=15.62 final_lr=0.0093 final_momentum=0.7
+  22. run=24 N=9 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.8721 run_seconds=17.174 final_lr=0.0093 final_momentum=0.7
+  23. run=7 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.8722 run_seconds=24.14 final_lr=0.0056 final_momentum=0.7
+  24. run=4 N=2 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.8730 run_seconds=13.654 final_lr=0.0034 final_momentum=0.7
+  25. run=0 N=1 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.8895 run_seconds=9.375 final_lr=0.0093 final_momentum=0
+  26. run=1 N=1 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.8895 run_seconds=8.535 final_lr=0.0093 final_momentum=0
+  27. run=3 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.8895 run_seconds=8.562 final_lr=0.0093 final_momentum=0
+  28. run=2 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=1.1145 run_seconds=8.083 final_lr=0.33 final_momentum=0
+
+First step below 0.9
+   1. run=9 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=7 run_seconds=63.509 final_lr=0.002 final_momentum=0.9
+   2. run=11 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=9 run_seconds=29.461 final_lr=0.0034 final_momentum=0.99
+   3. run=14 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p9=9 run_seconds=43.487 final_lr=0.0034 final_momentum=0.5
+   4. run=16 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p9=9 run_seconds=19.476 final_lr=0.0093 final_momentum=0.8
+   5. run=5 N=2 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=10 run_seconds=38.56 final_lr=0.0056 final_momentum=0.7
+   6. run=6 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p9=10 run_seconds=28.43 final_lr=0.002 final_momentum=0.99
+   7. run=7 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=10 run_seconds=24.14 final_lr=0.0056 final_momentum=0.7
+   8. run=8 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p9=10 run_seconds=16.876 final_lr=0.0056 final_momentum=0.8
+   9. run=10 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p9=10 run_seconds=27.37 final_lr=0.0034 final_momentum=0.7
+  10. run=15 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=11 run_seconds=29.434 final_lr=0.0056 final_momentum=0.99
+  11. run=18 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p9=11 run_seconds=25.809 final_lr=0.0093 final_momentum=0.95
+  12. run=19 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=11 run_seconds=27.487 final_lr=0.0093 final_momentum=0.99
+  13. run=4 N=2 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p9=12 run_seconds=13.654 final_lr=0.0034 final_momentum=0.7
+  14. run=12 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p9=12 run_seconds=19.032 final_lr=0.0056 final_momentum=0.95
+  15. run=13 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=12 run_seconds=52.402 final_lr=0.0056 final_momentum=0.8
+  16. run=17 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=12 run_seconds=35.775 final_lr=0.0034 final_momentum=0.6
+  17. run=21 N=7 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=12 run_seconds=52.388 final_lr=0.0034 final_momentum=0.9
+  18. run=22 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p9=12 run_seconds=23.877 final_lr=0.0034 final_momentum=0.6
+  19. run=23 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=12 run_seconds=24.671 final_lr=0.0056 final_momentum=0.8
+  20. run=20 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p9=13 run_seconds=15.62 final_lr=0.0093 final_momentum=0.7
+  21. run=25 N=9 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=13 run_seconds=40.029 final_lr=0.0056 final_momentum=0.7
+  22. run=26 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p9=13 run_seconds=28.072 final_lr=0.0034 final_momentum=0.7
+  23. run=27 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=13 run_seconds=27.783 final_lr=0.0034 final_momentum=0.6
+  24. run=24 N=9 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p9=14 run_seconds=17.174 final_lr=0.0093 final_momentum=0.7
+  25. run=0 N=1 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p9=20 run_seconds=9.375 final_lr=0.0093 final_momentum=0
+  26. run=1 N=1 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=20 run_seconds=8.535 final_lr=0.0093 final_momentum=0
+  27. run=3 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=20 run_seconds=8.562 final_lr=0.0093 final_momentum=0
+  1 runs missing this metric
+
+First step below 0.88
+   1. run=9 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p88=7 run_seconds=63.509 final_lr=0.002 final_momentum=0.9
+   2. run=11 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p88=11 run_seconds=29.461 final_lr=0.0034 final_momentum=0.99
+   3. run=14 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p88=11 run_seconds=43.487 final_lr=0.0034 final_momentum=0.5
+   4. run=6 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p88=12 run_seconds=28.43 final_lr=0.002 final_momentum=0.99
+   5. run=8 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p88=12 run_seconds=16.876 final_lr=0.0056 final_momentum=0.8
+   6. run=16 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p88=12 run_seconds=19.476 final_lr=0.0093 final_momentum=0.8
+   7. run=10 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p88=13 run_seconds=27.37 final_lr=0.0034 final_momentum=0.7
+   8. run=15 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p88=13 run_seconds=29.434 final_lr=0.0056 final_momentum=0.99
+   9. run=19 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p88=13 run_seconds=27.487 final_lr=0.0093 final_momentum=0.99
+  10. run=5 N=2 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p88=14 run_seconds=38.56 final_lr=0.0056 final_momentum=0.7
+  11. run=13 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p88=14 run_seconds=52.402 final_lr=0.0056 final_momentum=0.8
+  12. run=17 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p88=14 run_seconds=35.775 final_lr=0.0034 final_momentum=0.6
+  13. run=18 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p88=14 run_seconds=25.809 final_lr=0.0093 final_momentum=0.95
+  14. run=7 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p88=15 run_seconds=24.14 final_lr=0.0056 final_momentum=0.7
+  15. run=12 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p88=15 run_seconds=19.032 final_lr=0.0056 final_momentum=0.95
+  16. run=22 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p88=15 run_seconds=23.877 final_lr=0.0034 final_momentum=0.6
+  17. run=26 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p88=15 run_seconds=28.072 final_lr=0.0034 final_momentum=0.7
+  18. run=27 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p88=15 run_seconds=27.783 final_lr=0.0034 final_momentum=0.6
+  19. run=4 N=2 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p88=16 run_seconds=13.654 final_lr=0.0034 final_momentum=0.7
+  20. run=20 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p88=16 run_seconds=15.62 final_lr=0.0093 final_momentum=0.7
+  21. run=21 N=7 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p88=16 run_seconds=52.388 final_lr=0.0034 final_momentum=0.9
+  22. run=23 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p88=16 run_seconds=24.671 final_lr=0.0056 final_momentum=0.8
+  23. run=25 N=9 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p88=16 run_seconds=40.029 final_lr=0.0056 final_momentum=0.7
+  24. run=24 N=9 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p88=17 run_seconds=17.174 final_lr=0.0093 final_momentum=0.7
+  4 runs missing this metric
+
+First step below 0.87
+   1. run=9 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p87=13 run_seconds=63.509 final_lr=0.002 final_momentum=0.9
+   2. run=8 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p87=16 run_seconds=16.876 final_lr=0.0056 final_momentum=0.8
+   3. run=11 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p87=16 run_seconds=29.461 final_lr=0.0034 final_momentum=0.99
+   4. run=14 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p87=16 run_seconds=43.487 final_lr=0.0034 final_momentum=0.5
+   5. run=16 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p87=16 run_seconds=19.476 final_lr=0.0093 final_momentum=0.8
+   6. run=19 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p87=17 run_seconds=27.487 final_lr=0.0093 final_momentum=0.99
+   7. run=6 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p87=19 run_seconds=28.43 final_lr=0.002 final_momentum=0.99
+   8. run=13 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p87=19 run_seconds=52.402 final_lr=0.0056 final_momentum=0.8
+   9. run=15 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p87=19 run_seconds=29.434 final_lr=0.0056 final_momentum=0.99
+  10. run=18 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p87=19 run_seconds=25.809 final_lr=0.0093 final_momentum=0.95
+  11. run=5 N=2 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p87=20 run_seconds=38.56 final_lr=0.0056 final_momentum=0.7
+  12. run=10 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p87=20 run_seconds=27.37 final_lr=0.0034 final_momentum=0.7
+  13. run=12 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p87=20 run_seconds=19.032 final_lr=0.0056 final_momentum=0.95
+  14. run=17 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p87=20 run_seconds=35.775 final_lr=0.0034 final_momentum=0.6
+  15. run=25 N=9 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p87=20 run_seconds=40.029 final_lr=0.0056 final_momentum=0.7
+  16. run=26 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p87=20 run_seconds=28.072 final_lr=0.0034 final_momentum=0.7
+  17. run=27 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p87=20 run_seconds=27.783 final_lr=0.0034 final_momentum=0.6
+  11 runs missing this metric
+
+Batch size: 10000
+
+Final loss
+  run=45 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.867157 first_below_0p87=22 evaluated_configs=173
+  run=41 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.867418 first_below_0p87=23 evaluated_configs=366
+  run=48 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.867711 first_below_0p87=25 evaluated_configs=58
+  run=40 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.868115 first_below_0p87=26 evaluated_configs=90
+  run=49 N=7 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.868572 first_below_0p87=27 evaluated_configs=207
+  run=44 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.868896 first_below_0p87=29 evaluated_configs=67
+  run=47 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.869043 first_below_0p87=28 evaluated_configs=82
+  run=42 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.869695 first_below_0p87=27 evaluated_configs=130
+  run=50 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.869745 first_below_0p87=30 evaluated_configs=151
+  run=43 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.869793 first_below_0p87=30 evaluated_configs=133
+  run=53 N=9 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.870111 first_below_0p87=NA evaluated_configs=144
+  run=54 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.87017 first_below_0p87=NA evaluated_configs=81
+  run=55 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.870637 first_below_0p87=NA evaluated_configs=79
+  run=38 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.870875 first_below_0p87=NA evaluated_configs=248
+  run=51 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.871095 first_below_0p87=NA evaluated_configs=126
+  run=46 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.871603 first_below_0p87=NA evaluated_configs=81
+  run=39 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.873621 first_below_0p87=NA evaluated_configs=163
+  run=36 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.873943 first_below_0p87=NA evaluated_configs=121
+  run=37 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.874344 first_below_0p87=NA evaluated_configs=391
+  run=35 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.877124 first_below_0p87=NA evaluated_configs=204
+  run=52 N=9 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.877275 first_below_0p87=NA evaluated_configs=46
+  run=33 N=2 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.882489 first_below_0p87=NA evaluated_configs=371
+  run=34 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=0.884162 first_below_0p87=NA evaluated_configs=209
+  run=32 N=2 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.901031 first_below_0p87=NA evaluated_configs=154
+  run=28 N=1 M=0 interval_scheduler=constant lr_connectedness=jump_allowed final_loss=0.977756 first_below_0p87=NA evaluated_configs=148
+  run=31 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_single final_loss=0.977756 first_below_0p87=NA evaluated_configs=148
+  run=29 N=1 M=0 interval_scheduler=linear lr_connectedness=jump_allowed final_loss=0.977756 first_below_0p87=NA evaluated_configs=148
+  run=30 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_double final_loss=1.06971 first_below_0p87=NA evaluated_configs=142
+
+Pareto frontier: first step below 0.87 vs run seconds
+  run=44 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p87=29 run_seconds=85.668 final_lr=0.0093 final_momentum=0.9
+  run=40 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p87=26 run_seconds=89.266 final_lr=0.0093 final_momentum=0.9
+  run=48 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p87=25 run_seconds=92.661 final_lr=0.0093 final_momentum=0.9
+  run=45 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p87=22 run_seconds=220.966 final_lr=0.0056 final_momentum=0.9
+
+Loss after 30 steps
+   1. run=45 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_30_steps=0.8672 run_seconds=220.966 final_lr=0.0056 final_momentum=0.9
+   2. run=41 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_30_steps=0.8674 run_seconds=369.4 final_lr=0.00073 final_momentum=0.99
+   3. run=48 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_30_steps=0.8677 run_seconds=92.661 final_lr=0.0093 final_momentum=0.9
+   4. run=40 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_30_steps=0.8681 run_seconds=89.266 final_lr=0.0093 final_momentum=0.9
+   5. run=49 N=7 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_30_steps=0.8686 run_seconds=345.414 final_lr=0.0056 final_momentum=0.7
+   6. run=44 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_30_steps=0.8689 run_seconds=85.668 final_lr=0.0093 final_momentum=0.9
+   7. run=47 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_30_steps=0.8690 run_seconds=104.791 final_lr=0.0034 final_momentum=0.99
+   8. run=42 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_30_steps=0.8697 run_seconds=128.432 final_lr=0.0012 final_momentum=0.9
+   9. run=50 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_30_steps=0.8697 run_seconds=213.708 final_lr=0.0034 final_momentum=0
+  10. run=43 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_30_steps=0.8698 run_seconds=133.475 final_lr=0.0056 final_momentum=0.95
+  11. run=53 N=9 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_30_steps=0.8701 run_seconds=280.207 final_lr=0.002 final_momentum=0.7
+  12. run=54 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_30_steps=0.8702 run_seconds=161.852 final_lr=0.002 final_momentum=0.9
+  13. run=55 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_30_steps=0.8706 run_seconds=157.289 final_lr=0.0034 final_momentum=0.9
+  14. run=38 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_30_steps=0.8709 run_seconds=196.405 final_lr=0.0034 final_momentum=0.95
+  15. run=51 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_30_steps=0.8711 run_seconds=202.54 final_lr=0.002 final_momentum=0.99
+  16. run=46 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_30_steps=0.8716 run_seconds=103.503 final_lr=0.0034 final_momentum=0.8
+  17. run=39 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_30_steps=0.8736 run_seconds=130.152 final_lr=0.0056 final_momentum=0.9
+  18. run=36 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_30_steps=0.8739 run_seconds=95.685 final_lr=0.0093 final_momentum=0.95
+  19. run=37 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_30_steps=0.8743 run_seconds=308.669 final_lr=1.2e-07 final_momentum=0.99
+  20. run=35 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_30_steps=0.8771 run_seconds=110.978 final_lr=0.0012 final_momentum=0.9
+  21. run=52 N=9 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_30_steps=0.8773 run_seconds=91.96 final_lr=0.0093 final_momentum=0.8
+  22. run=33 N=2 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_30_steps=0.8825 run_seconds=202.009 final_lr=0.0034 final_momentum=0.9
+  23. run=34 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_30_steps=0.8842 run_seconds=113.685 final_lr=0.0093 final_momentum=0.9
+  24. run=32 N=2 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_30_steps=0.9010 run_seconds=83.976 final_lr=0.0034 final_momentum=0.6
+  25. run=28 N=1 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_30_steps=0.9778 run_seconds=45.035 final_lr=0.016 final_momentum=0
+  26. run=29 N=1 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_30_steps=0.9778 run_seconds=44.625 final_lr=0.016 final_momentum=0
+  27. run=31 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_30_steps=0.9778 run_seconds=44.591 final_lr=0.016 final_momentum=0
+  28. run=30 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_30_steps=1.0697 run_seconds=42.957 final_lr=0.2 final_momentum=0
+
+Loss after 10 steps
+   1. run=37 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=0.8876 run_seconds=308.669 final_lr=1.2e-07 final_momentum=0.99
+   2. run=41 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=0.9547 run_seconds=369.4 final_lr=0.00073 final_momentum=0.99
+   3. run=45 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=0.9665 run_seconds=220.966 final_lr=0.0056 final_momentum=0.9
+   4. run=46 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=1.0061 run_seconds=103.503 final_lr=0.0034 final_momentum=0.8
+   5. run=43 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=1.0112 run_seconds=133.475 final_lr=0.0056 final_momentum=0.95
+   6. run=47 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=1.0324 run_seconds=104.791 final_lr=0.0034 final_momentum=0.99
+   7. run=38 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=1.0409 run_seconds=196.405 final_lr=0.0034 final_momentum=0.95
+   8. run=40 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=1.0849 run_seconds=89.266 final_lr=0.0093 final_momentum=0.9
+   9. run=42 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=1.1055 run_seconds=128.432 final_lr=0.0012 final_momentum=0.9
+  10. run=44 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=1.1080 run_seconds=85.668 final_lr=0.0093 final_momentum=0.9
+  11. run=48 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=1.1300 run_seconds=92.661 final_lr=0.0093 final_momentum=0.9
+  12. run=35 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=1.1948 run_seconds=110.978 final_lr=0.0012 final_momentum=0.9
+  13. run=51 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=1.1948 run_seconds=202.54 final_lr=0.002 final_momentum=0.99
+  14. run=36 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=1.2003 run_seconds=95.685 final_lr=0.0093 final_momentum=0.95
+  15. run=50 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=1.2070 run_seconds=213.708 final_lr=0.0034 final_momentum=0
+  16. run=34 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=1.2210 run_seconds=113.685 final_lr=0.0093 final_momentum=0.9
+  17. run=33 N=2 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=1.2399 run_seconds=202.009 final_lr=0.0034 final_momentum=0.9
+  18. run=49 N=7 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=1.2451 run_seconds=345.414 final_lr=0.0056 final_momentum=0.7
+  19. run=32 N=2 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=1.2501 run_seconds=83.976 final_lr=0.0034 final_momentum=0.6
+  20. run=55 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=1.3157 run_seconds=157.289 final_lr=0.0034 final_momentum=0.9
+  21. run=54 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=1.3198 run_seconds=161.852 final_lr=0.002 final_momentum=0.9
+  22. run=39 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=1.3478 run_seconds=130.152 final_lr=0.0056 final_momentum=0.9
+  23. run=52 N=9 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=1.3850 run_seconds=91.96 final_lr=0.0093 final_momentum=0.8
+  24. run=28 N=1 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_10_steps=1.4570 run_seconds=45.035 final_lr=0.016 final_momentum=0
+  25. run=29 N=1 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=1.4570 run_seconds=44.625 final_lr=0.016 final_momentum=0
+  26. run=31 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_10_steps=1.4570 run_seconds=44.591 final_lr=0.016 final_momentum=0
+  27. run=53 N=9 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_10_steps=1.5271 run_seconds=280.207 final_lr=0.002 final_momentum=0.7
+  28. run=30 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_10_steps=1.6231 run_seconds=42.957 final_lr=0.2 final_momentum=0
+
+Loss after 20 steps
+   1. run=45 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.8702 run_seconds=220.966 final_lr=0.0056 final_momentum=0.9
+   2. run=41 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.8728 run_seconds=369.4 final_lr=0.00073 final_momentum=0.99
+   3. run=37 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.8746 run_seconds=308.669 final_lr=1.2e-07 final_momentum=0.99
+   4. run=47 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.8755 run_seconds=104.791 final_lr=0.0034 final_momentum=0.99
+   5. run=43 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.8767 run_seconds=133.475 final_lr=0.0056 final_momentum=0.95
+   6. run=48 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.8784 run_seconds=92.661 final_lr=0.0093 final_momentum=0.9
+   7. run=40 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.8785 run_seconds=89.266 final_lr=0.0093 final_momentum=0.9
+   8. run=42 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=0.8787 run_seconds=128.432 final_lr=0.0012 final_momentum=0.9
+   9. run=44 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.8788 run_seconds=85.668 final_lr=0.0093 final_momentum=0.9
+  10. run=38 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=0.8789 run_seconds=196.405 final_lr=0.0034 final_momentum=0.95
+  11. run=46 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=0.8789 run_seconds=103.503 final_lr=0.0034 final_momentum=0.8
+  12. run=49 N=7 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.8796 run_seconds=345.414 final_lr=0.0056 final_momentum=0.7
+  13. run=51 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.8815 run_seconds=202.54 final_lr=0.002 final_momentum=0.99
+  14. run=50 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=0.8817 run_seconds=213.708 final_lr=0.0034 final_momentum=0
+  15. run=53 N=9 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.8896 run_seconds=280.207 final_lr=0.002 final_momentum=0.7
+  16. run=39 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.8905 run_seconds=130.152 final_lr=0.0056 final_momentum=0.9
+  17. run=54 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=0.8933 run_seconds=161.852 final_lr=0.002 final_momentum=0.9
+  18. run=36 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.8970 run_seconds=95.685 final_lr=0.0093 final_momentum=0.95
+  19. run=35 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.8993 run_seconds=110.978 final_lr=0.0012 final_momentum=0.9
+  20. run=55 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=0.9081 run_seconds=157.289 final_lr=0.0034 final_momentum=0.9
+  21. run=34 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=0.9102 run_seconds=113.685 final_lr=0.0093 final_momentum=0.9
+  22. run=33 N=2 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=0.9160 run_seconds=202.009 final_lr=0.0034 final_momentum=0.9
+  23. run=52 N=9 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.9307 run_seconds=91.96 final_lr=0.0093 final_momentum=0.8
+  24. run=32 N=2 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=0.9790 run_seconds=83.976 final_lr=0.0034 final_momentum=0.6
+  25. run=28 N=1 M=0 interval_scheduler=constant lr_connectedness=jump_allowed loss_after_20_steps=1.2265 run_seconds=45.035 final_lr=0.016 final_momentum=0
+  26. run=29 N=1 M=0 interval_scheduler=linear lr_connectedness=jump_allowed loss_after_20_steps=1.2265 run_seconds=44.625 final_lr=0.016 final_momentum=0
+  27. run=31 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_single loss_after_20_steps=1.2265 run_seconds=44.591 final_lr=0.016 final_momentum=0
+  28. run=30 N=1 M=0 interval_scheduler=linear lr_connectedness=continuous_double loss_after_20_steps=1.2863 run_seconds=42.957 final_lr=0.2 final_momentum=0
+
+First step below 0.9
+   1. run=37 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=10 run_seconds=308.669 final_lr=1.2e-07 final_momentum=0.99
+   2. run=41 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=13 run_seconds=369.4 final_lr=0.00073 final_momentum=0.99
+   3. run=43 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=13 run_seconds=133.475 final_lr=0.0056 final_momentum=0.95
+   4. run=45 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=13 run_seconds=220.966 final_lr=0.0056 final_momentum=0.9
+   5. run=46 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p9=13 run_seconds=103.503 final_lr=0.0034 final_momentum=0.8
+   6. run=47 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=13 run_seconds=104.791 final_lr=0.0034 final_momentum=0.99
+   7. run=38 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p9=14 run_seconds=196.405 final_lr=0.0034 final_momentum=0.95
+   8. run=42 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p9=15 run_seconds=128.432 final_lr=0.0012 final_momentum=0.9
+   9. run=44 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p9=15 run_seconds=85.668 final_lr=0.0093 final_momentum=0.9
+  10. run=40 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p9=16 run_seconds=89.266 final_lr=0.0093 final_momentum=0.9
+  11. run=48 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p9=16 run_seconds=92.661 final_lr=0.0093 final_momentum=0.9
+  12. run=49 N=7 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=17 run_seconds=345.414 final_lr=0.0056 final_momentum=0.7
+  13. run=50 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p9=17 run_seconds=213.708 final_lr=0.0034 final_momentum=0
+  14. run=51 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=17 run_seconds=202.54 final_lr=0.002 final_momentum=0.99
+  15. run=36 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p9=19 run_seconds=95.685 final_lr=0.0093 final_momentum=0.95
+  16. run=53 N=9 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=19 run_seconds=280.207 final_lr=0.002 final_momentum=0.7
+  17. run=35 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=20 run_seconds=110.978 final_lr=0.0012 final_momentum=0.9
+  18. run=39 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=20 run_seconds=130.152 final_lr=0.0056 final_momentum=0.9
+  19. run=54 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p9=20 run_seconds=161.852 final_lr=0.002 final_momentum=0.9
+  20. run=55 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p9=21 run_seconds=157.289 final_lr=0.0034 final_momentum=0.9
+  21. run=34 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p9=23 run_seconds=113.685 final_lr=0.0093 final_momentum=0.9
+  22. run=52 N=9 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p9=23 run_seconds=91.96 final_lr=0.0093 final_momentum=0.8
+  23. run=33 N=2 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p9=24 run_seconds=202.009 final_lr=0.0034 final_momentum=0.9
+  5 runs missing this metric
+
+First step below 0.88
+   1. run=37 N=3 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p88=12 run_seconds=308.669 final_lr=1.2e-07 final_momentum=0.99
+   2. run=45 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p88=16 run_seconds=220.966 final_lr=0.0056 final_momentum=0.9
+   3. run=38 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p88=17 run_seconds=196.405 final_lr=0.0034 final_momentum=0.95
+   4. run=41 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p88=17 run_seconds=369.4 final_lr=0.00073 final_momentum=0.99
+   5. run=47 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p88=17 run_seconds=104.791 final_lr=0.0034 final_momentum=0.99
+   6. run=43 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p88=18 run_seconds=133.475 final_lr=0.0056 final_momentum=0.95
+   7. run=44 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p88=19 run_seconds=85.668 final_lr=0.0093 final_momentum=0.9
+   8. run=40 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p88=20 run_seconds=89.266 final_lr=0.0093 final_momentum=0.9
+   9. run=42 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p88=20 run_seconds=128.432 final_lr=0.0012 final_momentum=0.9
+  10. run=46 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p88=20 run_seconds=103.503 final_lr=0.0034 final_momentum=0.8
+  11. run=48 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p88=20 run_seconds=92.661 final_lr=0.0093 final_momentum=0.9
+  12. run=49 N=7 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p88=20 run_seconds=345.414 final_lr=0.0056 final_momentum=0.7
+  13. run=50 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p88=22 run_seconds=213.708 final_lr=0.0034 final_momentum=0
+  14. run=51 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p88=22 run_seconds=202.54 final_lr=0.002 final_momentum=0.99
+  15. run=53 N=9 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p88=23 run_seconds=280.207 final_lr=0.002 final_momentum=0.7
+  16. run=54 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p88=23 run_seconds=161.852 final_lr=0.002 final_momentum=0.9
+  17. run=55 N=9 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p88=24 run_seconds=157.289 final_lr=0.0034 final_momentum=0.9
+  18. run=39 N=3 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p88=25 run_seconds=130.152 final_lr=0.0056 final_momentum=0.9
+  19. run=36 N=3 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p88=26 run_seconds=95.685 final_lr=0.0093 final_momentum=0.95
+  20. run=35 N=2 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p88=27 run_seconds=110.978 final_lr=0.0012 final_momentum=0.9
+  21. run=52 N=9 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p88=29 run_seconds=91.96 final_lr=0.0093 final_momentum=0.8
+  7 runs missing this metric
+
+First step below 0.87
+   1. run=45 N=5 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p87=22 run_seconds=220.966 final_lr=0.0056 final_momentum=0.9
+   2. run=41 N=4 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p87=23 run_seconds=369.4 final_lr=0.00073 final_momentum=0.99
+   3. run=48 N=7 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p87=25 run_seconds=92.661 final_lr=0.0093 final_momentum=0.9
+   4. run=40 N=4 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p87=26 run_seconds=89.266 final_lr=0.0093 final_momentum=0.9
+   5. run=42 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p87=27 run_seconds=128.432 final_lr=0.0012 final_momentum=0.9
+   6. run=49 N=7 M=0 interval_scheduler=linear lr_connectedness=jump_allowed first_step_below_0p87=27 run_seconds=345.414 final_lr=0.0056 final_momentum=0.7
+   7. run=47 N=5 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p87=28 run_seconds=104.791 final_lr=0.0034 final_momentum=0.99
+   8. run=44 N=5 M=0 interval_scheduler=constant lr_connectedness=jump_allowed first_step_below_0p87=29 run_seconds=85.668 final_lr=0.0093 final_momentum=0.9
+   9. run=43 N=4 M=0 interval_scheduler=linear lr_connectedness=continuous_single first_step_below_0p87=30 run_seconds=133.475 final_lr=0.0056 final_momentum=0.95
+  10. run=50 N=7 M=0 interval_scheduler=linear lr_connectedness=continuous_double first_step_below_0p87=30 run_seconds=213.708 final_lr=0.0034 final_momentum=0
+  18 runs missing this metric
+
