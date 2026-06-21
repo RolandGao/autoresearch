@@ -464,12 +464,13 @@ def log_interval_lr_landscape(results_by_point):
     for interval_result in results_by_point.values():
         cooldown_result = interval_result["cooldown_result"]
         print(
-            "main interval: %.6g %.6g %s loss=%.6f"
+            "main interval: %.6g %.6g %s loss=%.6f tta_val_acc=%.4f"
             % (
                 interval_result["start_muon_lr"],
                 interval_result["end_muon_lr"],
                 format_momentum(interval_result["muon_momentum"]),
                 interval_result["interval_final_loss"],
+                interval_result["tta_val_acc"],
             ),
             flush=True,
         )
@@ -477,11 +478,12 @@ def log_interval_lr_landscape(results_by_point):
             continue
         for cooldown_eval in cooldown_result["search_evaluations"]:
             print(
-                "%.6g %.6g -> %.6f"
+                "%.6g %.6g -> loss=%.6f tta_val_acc=%.4f"
                 % (
                     cooldown_eval["start_muon_lr"],
                     cooldown_eval["end_muon_lr"],
                     cooldown_eval["final_loss"],
+                    cooldown_eval["tta_val_acc"],
                 ),
                 flush=True,
             )
@@ -508,12 +510,14 @@ def log_interval_lr_search_complete(best_result, best_cooldown_result, results_b
     best_muon_lr = "[%s]" % ",".join("%.6g" % lr for lr in best_muon_lrs)
     print(
         "best_muon_lr=%s best_muon_momentum=%s interval_loss=%.6f "
-        "final_loss=%.6f evaluated_interval_configs=%d evaluated_configs=%d"
+        "final_loss=%.6f tta_val_acc=%.4f evaluated_interval_configs=%d "
+        "evaluated_configs=%d"
         % (
             best_muon_lr,
             format_momentum(best_result["muon_momentum"]),
             best_result["interval_final_loss"],
             best_result["final_loss"],
+            best_result["tta_val_acc"],
             len(results_by_k),
             count_evaluated_configs(results_by_k),
         ),
@@ -557,7 +561,7 @@ def infer(model, loader, tta_level=0):
         logits_translate = torch.stack(logits_translate_list).mean(0)
         return 0.5 * logits + 0.5 * logits_translate
 
-    model.eval()
+    model.train()
     test_images = loader.normalized_images()
     infer_fn = [infer_basic, infer_mirror, infer_mirror_translate][tta_level]
     with torch.inference_mode():
@@ -569,6 +573,10 @@ def infer(model, loader, tta_level=0):
 def evaluate(model, loader, tta_level=0):
     logits = infer(model, loader, tta_level)
     return (logits.argmax(1) == loader.labels).float().mean().item()
+
+
+def evaluate_tta_val_acc(model, loader):
+    return evaluate(model, loader, tta_level=2)
 
 
 ############################################
@@ -694,22 +702,6 @@ class FullDatasetBatchStream:
         return self.images[idxs], self.loader.labels[idxs]
 
 
-def peek_stream_loss(model, batch_stream):
-    state = batch_stream.state_dict()
-    inputs, labels = batch_stream.next_batch()
-    model.train()
-    with torch.inference_mode():
-        outputs = model(inputs)
-        loss = F.cross_entropy(
-            outputs.float(),
-            labels,
-            label_smoothing=LABEL_SMOOTHING,
-            reduction="mean",
-        )
-    batch_stream.load_state_dict(state)
-    return loss.item()
-
-
 def make_optimizers(model, cfg):
     bias_lr = 104 * cfg.sgd_lr_mult
     head_lr = 1340 * cfg.sgd_lr_mult
@@ -799,7 +791,7 @@ def train_one_step(ctx, muon_lr, muon_momentum, global_step):
 def train_interval(ctx, muon_lrs, muon_momentum, interval_steps, start_step):
     muon_lrs = [rounded_lr(muon_lr) for muon_lr in muon_lrs]
     assert len(muon_lrs) == interval_steps
-    losses = [peek_stream_loss(ctx.model, ctx.batch_stream)]
+    losses = []
     step_losses = []
     head_lrs = []
     muon_grad_momentum_norm_ratios = []
@@ -809,14 +801,13 @@ def train_interval(ctx, muon_lrs, muon_momentum, interval_steps, start_step):
             ctx, muon_lr, muon_momentum, start_step + offset
         )
         step_losses.append(step_loss)
+        losses.append(step_loss)
         head_lrs.append(head_lr)
         muon_grad_momentum_norm_ratios.append(muon_grad_momentum_norm_ratio)
-        eval_loss = peek_stream_loss(ctx.model, ctx.batch_stream)
-        losses.append(eval_loss)
         completed_steps += 1
-        if not finite(eval_loss):
+        if not finite(step_loss):
             break
-    while len(losses) <= interval_steps:
+    while len(losses) < interval_steps:
         losses.append(float("inf"))
     return dict(
         muon_lr=muon_lrs[-1] if muon_lrs else None,
@@ -830,7 +821,7 @@ def train_interval(ctx, muon_lrs, muon_momentum, interval_steps, start_step):
         head_lrs=head_lrs,
         muon_grad_momentum_norm_ratios=muon_grad_momentum_norm_ratios,
         completed_steps=completed_steps,
-        final_loss=losses[interval_steps],
+        final_loss=losses[interval_steps - 1],
         end_state=snapshot_training_state(ctx.model, ctx.optimizers, ctx.batch_stream),
     )
 
@@ -925,10 +916,10 @@ def point_sort_key(point):
 def better_point(point, incumbent_point, results_by_point):
     if incumbent_point is None:
         return True
-    loss = results_by_point[point]["final_loss"]
-    incumbent_loss = results_by_point[incumbent_point]["final_loss"]
-    return (loss, point_sort_key(point)) < (
-        incumbent_loss,
+    tta_val_acc = results_by_point[point]["tta_val_acc"]
+    incumbent_tta_val_acc = results_by_point[incumbent_point]["tta_val_acc"]
+    return (-tta_val_acc, point_sort_key(point)) < (
+        -incumbent_tta_val_acc,
         point_sort_key(incumbent_point),
     )
 
@@ -988,10 +979,11 @@ def find_best_lr_momentum_point(
     else:
         print(
             "lr_momentum_search_warning did_not_converge_within=%d "
-            "using_point=%s final_loss=%.6f"
+            "using_point=%s tta_val_acc=%.4f final_loss=%.6f"
             % (
                 LR_SEARCH_MAX_MOVES,
                 middle_point,
+                results_by_point[middle_point]["tta_val_acc"],
                 results_by_point[middle_point]["final_loss"],
             ),
             flush=True,
@@ -1033,7 +1025,7 @@ def search_evaluation_summary(
     summary.update(
         copy_fields(
             result,
-            "losses muon_grad_momentum_norm_ratios final_loss completed_steps".split(),
+            "losses muon_grad_momentum_norm_ratios final_loss tta_val_acc completed_steps".split(),
             list_fields=("losses", "muon_grad_momentum_norm_ratios"),
         )
     )
@@ -1042,7 +1034,7 @@ def search_evaluation_summary(
     return summary
 
 
-BEST_RESULT_FIELDS = "muon_lr muon_lrs start_muon_lr end_muon_lr muon_momentum muon_nesterov completed_steps losses step_losses head_lrs muon_grad_momentum_norm_ratios".split()
+BEST_RESULT_FIELDS = "muon_lr muon_lrs start_muon_lr end_muon_lr muon_momentum muon_nesterov completed_steps losses step_losses head_lrs muon_grad_momentum_norm_ratios tta_val_acc".split()
 BEST_RESULT_LIST_FIELDS = (
     "muon_lrs",
     "losses",
@@ -1118,14 +1110,13 @@ def search_lr_segment(
         result = train_interval(ctx, muon_lrs, momentum, steps, start_step)
         result["start_muon_lr"] = start_lr
         result["end_muon_lr"] = end_lr
+        should_evaluate_tta = (
+            result["completed_steps"] == steps and finite(result["final_loss"])
+        )
         if ii is not None:
             result["interval_final_loss"] = result["final_loss"]
             result["cooldown_result"] = None
-            if (
-                ii["use_cooldown"]
-                and result["completed_steps"] == steps
-                and finite(result["final_loss"])
-            ):
+            if ii["use_cooldown"] and should_evaluate_tta:
                 cooldown_search_name = "%s_cooldown_for_start%s_end%s_m%s_n%s" % (
                     search_name,
                     format_k(start_k),
@@ -1149,6 +1140,12 @@ def search_lr_segment(
                 )
                 result["cooldown_result"] = cooldown_result
                 result["final_loss"] = cooldown_result["final_train_loss"]
+                result["tta_val_acc"] = cooldown_result["tta_val_acc"]
+                should_evaluate_tta = False
+        if should_evaluate_tta:
+            result["tta_val_acc"] = evaluate_tta_val_acc(ctx.model, ctx.test_loader)
+        elif "tta_val_acc" not in result:
+            result["tta_val_acc"] = float("-inf")
         add_search_point_metadata(
             result,
             start_k,
@@ -1192,6 +1189,7 @@ def search_lr_segment(
             best_momentum_index=best_momentum_index,
             initial_train_loss=best_result["losses"][0],
             final_train_loss=best_result["final_loss"],
+            tta_val_acc=best_result["tta_val_acc"],
         )
         result.update(search_evaluations=segment_evaluations(results_by_point))
         add_best_result_fields(result, best_result)
@@ -1220,6 +1218,7 @@ def search_lr_segment(
         initial_train_loss=best_result["losses"][0],
         interval_final_train_loss=best_result["interval_final_loss"],
         final_train_loss=best_result["final_loss"],
+        tta_val_acc=best_result["tta_val_acc"],
         cooldown_result=best_cooldown_result,
     )
     add_best_result_fields(result, best_result)
@@ -1310,24 +1309,13 @@ def run_full_dataset_search(cfg):
         sgd_optimizer=optimizer1,
         muon_optimizer=optimizer2,
         batch_stream=batch_stream,
+        test_loader=test_loader,
         cooldown_steps=cfg.m_steps,
         total_steps=cfg.train_steps,
         whiten_bias_train_steps=cfg.whiten_bias_train_steps,
     )
 
-    losses = [peek_stream_loss(cfg.model, batch_stream)]
-    log_train_loss(
-        run=cfg.run,
-        step=0,
-        total_steps=cfg.train_steps,
-        loss=losses[-1],
-        head_lr=optimizer1.param_groups[2]["lr"],
-        muon_lr=optimizer2.param_groups[0]["lr"],
-        muon_momentum=optimizer2.param_groups[0]["momentum"],
-        muon_nesterov=optimizer2.param_groups[0]["nesterov"],
-        muon_grad_momentum_norm_ratio=None,
-    )
-
+    losses = []
     interval_results = []
     interval_initial_lr_k = initial_lr_k
     interval_initial_momentum_index = initial_momentum_index
@@ -1350,9 +1338,7 @@ def run_full_dataset_search(cfg):
         interval_results.append(interval_result)
         interval_initial_lr_k = interval_result["best_k"]
         interval_initial_momentum_index = interval_result["best_momentum_index"]
-        actual_losses = interval_result["losses"][
-            1 : 1 + interval_result["completed_steps"]
-        ]
+        actual_losses = interval_result["losses"][: interval_result["completed_steps"]]
         actual_muon_lrs = interval_result["muon_lrs"][
             : interval_result["completed_steps"]
         ]
@@ -1391,10 +1377,10 @@ def run_full_dataset_search(cfg):
             )
         completed_steps += interval_result["completed_steps"]
         interval_index += 1
-        if not torch.isfinite(torch.tensor(losses[-1])):
+        if losses and not torch.isfinite(torch.tensor(losses[-1])):
             break
 
-    while len(losses) <= cfg.train_steps:
+    while len(losses) < cfg.train_steps:
         losses.append(float("inf"))
     last_cooldown_result = next(
         (
@@ -1432,8 +1418,8 @@ def run_full_dataset_search(cfg):
         )
     )
     result.update(
-        initial_train_loss=losses[0],
-        final_train_loss=losses[cfg.train_steps],
+        initial_train_loss=losses[0] if losses else float("inf"),
+        final_train_loss=losses[cfg.train_steps - 1],
         val_acc=val_acc,
         tta_val_acc=tta_val_acc,
         steps=completed_steps,
