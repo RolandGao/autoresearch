@@ -585,10 +585,10 @@ def evaluate_tta_val_acc(model, loader):
 
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
-SEARCH_STEP_CONFIGS = [(n_steps, 0) for n_steps in [1, 2, 3, 4, 5, 7, 9]]
+SEARCH_STEP_CONFIGS = [(n_steps, 0) for n_steps in [40, 30, 20, 10, 5, 3]]
 INTERVAL_SCHEDULERS = ["constant", "linear"]
 ENDPOINT_INTERVAL_SCHEDULERS = {"linear", "exp_linear"}
-LINEAR_LR_CONNECTEDNESSES = ["jump_allowed", "continuous_double", "continuous_single"]
+LINEAR_LR_CONNECTEDNESSES = ["jump_allowed"]
 DEFAULT_LR_CONNECTEDNESS = "jump_allowed"
 VALID_LR_CONNECTEDNESSES = ["jump_allowed", "continuous_double", "continuous_single"]
 LR_SEARCH_BASE = 0.2
@@ -605,8 +605,6 @@ MUON_MOMENTUM_CONFIGS = [
     )
 ]
 RUN_CONFIGS = [
-    dict(batch_size=125, initial_lr=0.04),
-    dict(batch_size=500, initial_lr=0.079),
     dict(batch_size=2000, initial_lr=0.19),
 ]
 
@@ -788,7 +786,9 @@ def train_one_step(ctx, muon_lr, muon_momentum, global_step):
     return loss.item(), muon_grad_momentum_norm_ratio, head_lr
 
 
-def train_interval(ctx, muon_lrs, muon_momentum, interval_steps, start_step):
+def train_interval(
+    ctx, muon_lrs, muon_momentum, interval_steps, start_step, capture_end_state=True
+):
     muon_lrs = [rounded_lr(muon_lr) for muon_lr in muon_lrs]
     assert len(muon_lrs) == interval_steps
     losses = []
@@ -809,7 +809,7 @@ def train_interval(ctx, muon_lrs, muon_momentum, interval_steps, start_step):
             break
     while len(losses) < interval_steps:
         losses.append(float("inf"))
-    return dict(
+    result = dict(
         muon_lr=muon_lrs[-1] if muon_lrs else None,
         muon_lrs=muon_lrs,
         start_muon_lr=muon_lrs[0] if muon_lrs else None,
@@ -822,8 +822,12 @@ def train_interval(ctx, muon_lrs, muon_momentum, interval_steps, start_step):
         muon_grad_momentum_norm_ratios=muon_grad_momentum_norm_ratios,
         completed_steps=completed_steps,
         final_loss=losses[interval_steps - 1],
-        end_state=snapshot_training_state(ctx.model, ctx.optimizers, ctx.batch_stream),
     )
+    if capture_end_state:
+        result["end_state"] = snapshot_training_state(
+            ctx.model, ctx.optimizers, ctx.batch_stream
+        )
+    return result
 
 
 def lr_schedule_from_endpoints(
@@ -1107,7 +1111,15 @@ def search_lr_segment(
             lr_connectedness=connectedness,
             fixed_start=fixed_start,
         )
-        result = train_interval(ctx, muon_lrs, momentum, steps, start_step)
+        needs_cooldown_state = ii is not None and ii["use_cooldown"]
+        result = train_interval(
+            ctx,
+            muon_lrs,
+            momentum,
+            steps,
+            start_step,
+            capture_end_state=needs_cooldown_state,
+        )
         result["start_muon_lr"] = start_lr
         result["end_muon_lr"] = end_lr
         should_evaluate_tta = (
@@ -1127,6 +1139,7 @@ def search_lr_segment(
                 fixed_cooldown_start = (
                     end_k if connectedness.startswith("continuous_") else None
                 )
+                cooldown_start_state = result["end_state"]
                 cooldown_result = search_lr_segment(
                     ctx,
                     cooldown_search_name,
@@ -1134,7 +1147,7 @@ def search_lr_segment(
                     momentum_index,
                     ctx.cooldown_steps,
                     start_step + steps,
-                    result["end_state"],
+                    cooldown_start_state,
                     False,
                     fixed_cooldown_start,
                 )
@@ -1142,6 +1155,7 @@ def search_lr_segment(
                 result["final_loss"] = cooldown_result["final_train_loss"]
                 result["tta_val_acc"] = cooldown_result["tta_val_acc"]
                 should_evaluate_tta = False
+            result.pop("end_state", None)
         if should_evaluate_tta:
             result["tta_val_acc"] = evaluate_tta_val_acc(ctx.model, ctx.test_loader)
         elif "tta_val_acc" not in result:
@@ -1194,8 +1208,14 @@ def search_lr_segment(
         result.update(search_evaluations=segment_evaluations(results_by_point))
         add_best_result_fields(result, best_result)
         return result
-    load_training_state(
-        ctx.model, ctx.optimizers, ctx.batch_stream, best_result["end_state"]
+    load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
+    train_interval(
+        ctx,
+        best_result["muon_lrs"],
+        best_result["muon_momentum"],
+        steps,
+        start_step,
+        capture_end_state=False,
     )
     best_cooldown_result = best_result["cooldown_result"]
     log_interval_lr_landscape(results_by_point)
