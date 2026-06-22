@@ -558,7 +558,9 @@ def snapshot_training_state(model, optimizers):
 def load_training_state(model, optimizers, state):
     model.load_state_dict(state["model"])
     for optimizer, optimizer_state in zip(optimizers, state["optimizers"]):
-        optimizer.load_state_dict(optimizer_state)
+        # Optimizer state tensors are installed by reference and then mutated by
+        # optimizer.step(), so every replay/candidate needs its own copy.
+        optimizer.load_state_dict(copy.deepcopy(optimizer_state))
     model.zero_grad(set_to_none=True)
 
 

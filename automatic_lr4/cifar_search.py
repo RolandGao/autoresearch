@@ -439,9 +439,9 @@ def optional_mapped(source, pairs):
 
 finite = lambda value: torch.isfinite(torch.tensor(value))
 FIELD_FORMATTERS = {"k": format_k, "momentum": format_momentum}
-RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nTrain epochs:        %.3g|train_epochs\nTrain steps:         %d|train_steps\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nInterval scheduler:  %s|interval_scheduler\nLR connectedness:    %s|lr_connectedness\nMomentum config:     %s|momentum_config_name\nSearch momentum:     %s|search_momentum\nMuon nesterov:       %s|muon_nesterov\nInitial Muon lr:     %.6g|initial_lr\nInitial Muon lr k:   %d|initial_lr_k\nInitial Muon mom:    %s|initial_momentum|momentum\nInitial Muon mom i:  %d|initial_momentum_index\nFinal start lr:      %.6g|final_start_muon_lr\nFinal start lr k:    %s|final_start_muon_lr_k|k\nFinal Muon lr:       %.6g|final_muon_lr\nFinal Muon lr k:     %s|final_muon_lr_k|k\nFinal end lr:        %.6g|final_end_muon_lr\nFinal end lr k:      %s|final_end_muon_lr_k|k\nFinal Muon momentum: %s|final_muon_momentum|momentum\nFinal Muon nesterov: %s|final_muon_nesterov\nFinal Muon mom i:    %s|final_muon_momentum_index|k\n".strip().splitlines()
+RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nTrain epochs:        %.3g|train_epochs\nTrain steps:         %d|train_steps\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nInterval scheduler:  %s|interval_scheduler\nLR connectedness:    %s|lr_connectedness\nSearch momentum:     %s|search_momentum\nMuon nesterov:       %s|muon_nesterov\n".strip().splitlines()
 COOLDOWN_SUMMARY_SPECS = "\nFinal cooldown lr:   %.6g|final_cooldown_muon_lr\nFinal cooldown lr k: %s|final_cooldown_muon_lr_k|k\nFinal cooldown mom:  %s|final_cooldown_muon_momentum|momentum\nFinal cooldown nest: %s|final_cooldown_muon_nesterov\nFinal cooldown mom i: %s|final_cooldown_muon_momentum_index|k\n".strip().splitlines()
-RUN_FOOTER_SPECS = "\nSGD lr mult:         %.6g|sgd_lr_mult\nInitial train loss:  %.6f|initial_train_loss\nFinal train loss:    %.6f|final_train_loss\nVal acc:             %.4f|val_acc\nTTA val acc:         %.4f|tta_val_acc\nRun seconds:         %.3f|run_seconds\n".strip().splitlines()
+RUN_FOOTER_SPECS = "\nSGD lr mult:         %.6g|sgd_lr_mult\nVal acc:             %.4f|val_acc\nTTA val acc:         %.4f|tta_val_acc\nRun seconds:         %.3f|run_seconds\n".strip().splitlines()
 
 
 def print_summary_specs(specs, result):
@@ -463,26 +463,38 @@ def log_run_summary(result):
 def log_interval_lr_landscape(results_by_point):
     for interval_result in results_by_point.values():
         cooldown_result = interval_result["cooldown_result"]
+        main_tta_val_acc = interval_result.get(
+            "main_tta_val_acc", interval_result["tta_val_acc"]
+        )
+        if cooldown_result is None:
+            print(
+                "main interval: %.6g %.6g %s main=%.4f"
+                % (
+                    interval_result["start_muon_lr"],
+                    interval_result["end_muon_lr"],
+                    format_momentum(interval_result["muon_momentum"]),
+                    main_tta_val_acc,
+                ),
+                flush=True,
+            )
+            continue
         print(
-            "main interval: %.6g %.6g %s loss=%.6f tta_val_acc=%.4f"
+            "main interval: %.6g %.6g %s main=%.4f, best_cooldown=%.4f"
             % (
                 interval_result["start_muon_lr"],
                 interval_result["end_muon_lr"],
                 format_momentum(interval_result["muon_momentum"]),
-                interval_result["interval_final_loss"],
-                interval_result["tta_val_acc"],
+                main_tta_val_acc,
+                cooldown_result["tta_val_acc"],
             ),
             flush=True,
         )
-        if cooldown_result is None:
-            continue
         for cooldown_eval in cooldown_result["search_evaluations"]:
             print(
-                "%.6g %.6g -> loss=%.6f tta_val_acc=%.4f"
+                "%.6g %.6g -> tta_val_acc=%.4f"
                 % (
                     cooldown_eval["start_muon_lr"],
                     cooldown_eval["end_muon_lr"],
-                    cooldown_eval["final_loss"],
                     cooldown_eval["tta_val_acc"],
                 ),
                 flush=True,
@@ -585,7 +597,7 @@ def evaluate_tta_val_acc(model, loader):
 
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
-SEARCH_STEP_CONFIGS = [(n_steps, 0) for n_steps in [40, 30, 20, 10, 5, 3]]
+SEARCH_STEP_CONFIGS = [(steps, steps) for steps in [40, 30, 20, 10, 5, 3]]
 INTERVAL_SCHEDULERS = ["constant", "linear"]
 ENDPOINT_INTERVAL_SCHEDULERS = {"linear", "exp_linear"}
 LINEAR_LR_CONNECTEDNESSES = ["jump_allowed"]
@@ -760,7 +772,9 @@ def snapshot_training_state(model, optimizers, batch_stream):
 def load_training_state(model, optimizers, batch_stream, state):
     model.load_state_dict(state["model"])
     for optimizer, optimizer_state in zip(optimizers, state["optimizers"]):
-        optimizer.load_state_dict(optimizer_state)
+        # Optimizer state tensors are installed by reference and then mutated by
+        # optimizer.step(), so every replay/candidate needs its own copy.
+        optimizer.load_state_dict(copy.deepcopy(optimizer_state))
     batch_stream.load_state_dict(state["batch_stream"])
     model.zero_grad(set_to_none=True)
 
@@ -1026,6 +1040,8 @@ def search_evaluation_summary(
     summary = copy_fields(result, fields, list_fields=("muon_lrs",))
     if include_interval_final_loss:
         summary["interval_final_loss"] = result["interval_final_loss"]
+    if "main_tta_val_acc" in result:
+        summary["main_tta_val_acc"] = result["main_tta_val_acc"]
     summary.update(
         copy_fields(
             result,
@@ -1128,6 +1144,10 @@ def search_lr_segment(
         if ii is not None:
             result["interval_final_loss"] = result["final_loss"]
             result["cooldown_result"] = None
+            if should_evaluate_tta:
+                result["main_tta_val_acc"] = evaluate_tta_val_acc(
+                    ctx.model, ctx.test_loader
+                )
             if ii["use_cooldown"] and should_evaluate_tta:
                 cooldown_search_name = "%s_cooldown_for_start%s_end%s_m%s_n%s" % (
                     search_name,
@@ -1157,9 +1177,14 @@ def search_lr_segment(
                 should_evaluate_tta = False
             result.pop("end_state", None)
         if should_evaluate_tta:
-            result["tta_val_acc"] = evaluate_tta_val_acc(ctx.model, ctx.test_loader)
+            if "main_tta_val_acc" in result:
+                result["tta_val_acc"] = result["main_tta_val_acc"]
+            else:
+                result["tta_val_acc"] = evaluate_tta_val_acc(ctx.model, ctx.test_loader)
         elif "tta_val_acc" not in result:
             result["tta_val_acc"] = float("-inf")
+        if ii is not None and "main_tta_val_acc" not in result:
+            result["main_tta_val_acc"] = result["tta_val_acc"]
         add_search_point_metadata(
             result,
             start_k,
