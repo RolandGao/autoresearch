@@ -11,15 +11,11 @@ Descends from https://github.com/tysam-code/hlb-CIFAR10/blob/main/main.py
 
 import copy
 import os
-import sys
 import time
 from contextlib import redirect_stdout
 from itertools import product
 from types import SimpleNamespace
 
-with open(sys.argv[0]) as f:
-    code = f.read()
-import uuid
 from math import ceil, floor, isclose, log, log10
 
 import torch
@@ -793,7 +789,6 @@ def train_interval(
 ):
     muon_lr = rounded_lr(muon_lr)
     losses = []
-    step_losses = []
     head_lrs = []
     muon_grad_momentum_norm_ratios = []
     completed_steps = 0
@@ -801,7 +796,6 @@ def train_interval(
         step_loss, muon_grad_momentum_norm_ratio, head_lr = train_one_step(
             ctx, muon_lr, muon_momentum, start_step + offset
         )
-        step_losses.append(step_loss)
         losses.append(step_loss)
         head_lrs.append(head_lr)
         muon_grad_momentum_norm_ratios.append(muon_grad_momentum_norm_ratio)
@@ -815,17 +809,19 @@ def train_interval(
         muon_momentum=muon_momentum,
         muon_nesterov=ctx.muon_nesterov,
         losses=losses,
-        step_losses=step_losses,
         head_lrs=head_lrs,
         muon_grad_momentum_norm_ratios=muon_grad_momentum_norm_ratios,
         completed_steps=completed_steps,
-        final_loss=losses[interval_steps - 1],
     )
     if capture_end_state:
         result["end_state"] = snapshot_training_state(
             ctx.model, ctx.optimizers, ctx.batch_stream
         )
     return result
+
+
+def interval_result_loss(result):
+    return result["losses"][-1] if result["losses"] else float("inf")
 
 
 def point_sort_key(point):
@@ -939,12 +935,12 @@ def find_best_lr_momentum_point(
     else:
         print(
             "lr_momentum_search_warning did_not_converge_within=%d "
-            "using_point=%s tta_val_acc=%.4f final_loss=%.6f"
+            "using_point=%s tta_val_acc=%.4f loss=%.6f"
             % (
                 LR_SEARCH_MAX_MOVES,
                 middle_point,
                 results_by_point[middle_point]["tta_val_acc"],
-                results_by_point[middle_point]["final_loss"],
+                interval_result_loss(results_by_point[middle_point]),
             ),
             flush=True,
         )
@@ -987,7 +983,7 @@ def search_evaluation_summary(
     summary.update(
         copy_fields(
             result,
-            "losses muon_grad_momentum_norm_ratios final_loss tta_val_acc completed_steps".split(),
+            "losses muon_grad_momentum_norm_ratios tta_val_acc completed_steps".split(),
             list_fields=("losses", "muon_grad_momentum_norm_ratios"),
         )
     )
@@ -1000,10 +996,9 @@ def search_evaluation_summary(
     return summary
 
 
-BEST_RESULT_FIELDS = "muon_lr muon_momentum muon_nesterov completed_steps losses step_losses head_lrs muon_grad_momentum_norm_ratios tta_val_acc".split()
+BEST_RESULT_FIELDS = "muon_lr muon_momentum muon_nesterov completed_steps losses head_lrs muon_grad_momentum_norm_ratios tta_val_acc".split()
 BEST_RESULT_LIST_FIELDS = (
     "losses",
-    "step_losses",
     "head_lrs",
     "muon_grad_momentum_norm_ratios",
 )
@@ -1064,11 +1059,12 @@ def search_lr_segment(
             start_step,
             capture_end_state=needs_cooldown_state,
         )
+        result_loss = interval_result_loss(result)
         should_evaluate_tta = result["completed_steps"] == steps and finite(
-            result["final_loss"]
+            result_loss
         )
         if ii is not None:
-            result["interval_final_loss"] = result["final_loss"]
+            result["interval_final_loss"] = result_loss
             result["cooldown_result"] = None
             result["main_tta_val_acc"] = float("-inf")
             if should_evaluate_tta:
@@ -1107,7 +1103,6 @@ def search_lr_segment(
                 result["cooldown_result"] = cooldown_result
                 result["cooldown_best_lr_k"] = cooldown_result["best_k"]
                 result["cooldown_best_lr"] = lr_from_k(result["cooldown_best_lr_k"])
-                result["final_loss"] = cooldown_result["final_train_loss"]
                 result["tta_val_acc"] = cooldown_result["tta_val_acc"]
                 should_evaluate_tta = False
             result.pop("end_state", None)
@@ -1144,11 +1139,9 @@ def search_lr_segment(
             muon_momentum=momentum,
             muon_nesterov=ctx.muon_nesterov,
             losses=[],
-            step_losses=[],
             head_lrs=[],
             muon_grad_momentum_norm_ratios=[],
             completed_steps=0,
-            final_loss=float("inf"),
             tta_val_acc=float("-inf"),
         )
         if ii is not None:
@@ -1188,8 +1181,7 @@ def search_lr_segment(
             cooldown_steps=steps,
             best_k=best_lr_k,
             best_momentum_index=best_momentum_index,
-            initial_train_loss=best_result["losses"][0],
-            final_train_loss=best_result["final_loss"],
+            final_train_loss=interval_result_loss(best_result),
             tta_val_acc=best_result["tta_val_acc"],
         )
         result.update(search_evaluations=segment_evaluations(results_by_point))
@@ -1218,9 +1210,12 @@ def search_lr_segment(
         cooldown_initial_lr=best_result.get("cooldown_initial_lr"),
         cooldown_initial_momentum_index=best_momentum_index,
         cooldown_initial_momentum=momentum_from_index(best_momentum_index),
-        initial_train_loss=best_result["losses"][0],
         interval_final_train_loss=best_result["interval_final_loss"],
-        final_train_loss=best_result["final_loss"],
+        final_train_loss=(
+            best_cooldown_result["final_train_loss"]
+            if best_cooldown_result is not None
+            else best_result["interval_final_loss"]
+        ),
         tta_val_acc=best_result["tta_val_acc"],
         cooldown_result=best_cooldown_result,
     )
@@ -1445,7 +1440,6 @@ def run_full_dataset_search(cfg):
         )
     )
     result.update(
-        initial_train_loss=losses[0] if losses else float("inf"),
         final_train_loss=losses[cfg.train_steps - 1],
         val_acc=val_acc,
         tta_val_acc=tta_val_acc,
@@ -1515,9 +1509,8 @@ def main():
 def run_main():
     set_training_seed()
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
-    results = []
-    for cfg in iter_run_settings():
-        cfg.run = len(results)
+    for run, cfg in enumerate(iter_run_settings()):
+        cfg.run = run
         cfg.model = model
         cfg.initial_lr_k = nearest_lr_k(cfg.initial_lr)
         cfg.initial_momentum_text = format_momentum(cfg.initial_momentum)
@@ -1526,13 +1519,7 @@ def run_main():
         run_start_time = time.perf_counter()
         result = run_full_dataset_search(cfg)
         result["run_seconds"] = time.perf_counter() - run_start_time
-        results.append(result)
         log_run_summary(result)
-    log_dir = os.path.join("logs", str(uuid.uuid4()))
-    os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, "log.pt")
-    torch.save(dict(code=code, results=results), log_path)
-    print(os.path.abspath(log_path), flush=True)
 
 
 if __name__ == "__main__":
