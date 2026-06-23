@@ -13,6 +13,7 @@ import copy
 import os
 import sys
 import time
+from contextlib import redirect_stdout
 from itertools import product
 from types import SimpleNamespace
 
@@ -411,6 +412,16 @@ def log_eval(run, epoch, val_acc, time_seconds):
     )
 
 
+def log_interval_boundary_tta_val_acc(
+    run, interval_index, step, total_steps, tta_val_acc
+):
+    print(
+        "interval_tta_val_acc run=%s interval=%d step=%d/%d tta_val_acc=%.4f"
+        % (run, interval_index, step, total_steps, tta_val_acc),
+        flush=True,
+    )
+
+
 format_k = lambda k: "%g" % k
 format_momentum = lambda momentum: "%g" % momentum
 
@@ -459,6 +470,17 @@ def log_run_summary(result):
 
 def log_interval_lr_landscape(results_by_point):
     for interval_result in results_by_point.values():
+        if interval_result.get("blocked", False):
+            print(
+                "main interval: %.6g %.6g %s blocked"
+                % (
+                    interval_result["start_muon_lr"],
+                    interval_result["end_muon_lr"],
+                    format_momentum(interval_result["muon_momentum"]),
+                ),
+                flush=True,
+            )
+            continue
         cooldown_result = interval_result["cooldown_result"]
         main_tta_val_acc = interval_result.get(
             "main_tta_val_acc", interval_result["tta_val_acc"]
@@ -487,6 +509,16 @@ def log_interval_lr_landscape(results_by_point):
             flush=True,
         )
         for cooldown_eval in cooldown_result["search_evaluations"]:
+            if cooldown_eval.get("blocked", False):
+                print(
+                    "%.6g %.6g -> blocked"
+                    % (
+                        cooldown_eval["start_muon_lr"],
+                        cooldown_eval["end_muon_lr"],
+                    ),
+                    flush=True,
+                )
+                continue
             print(
                 "%.6g %.6g -> tta_val_acc=%.4f"
                 % (
@@ -501,9 +533,15 @@ def log_interval_lr_landscape(results_by_point):
 def count_evaluated_configs(results_by_point):
     count = 0
     for result in results_by_point.values():
+        if result.get("blocked", False):
+            continue
         cooldown_result = result["cooldown_result"]
         count += (
-            len(cooldown_result["search_evaluations"])
+            sum(
+                1
+                for cooldown_eval in cooldown_result["search_evaluations"]
+                if not cooldown_eval.get("blocked", False)
+            )
             if cooldown_result is not None
             else 1
         )
@@ -595,10 +633,9 @@ def evaluate_tta_val_acc(model, loader):
 
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
-SEARCH_STEP_CONFIGS = [(steps, 0) for steps in [40, 30, 20, 10, 5, 3]] + [
-    (steps, steps) for steps in [40, 30, 20, 10, 5, 3]
-]
-INTERVAL_SCHEDULERS = ["constant", "linear"]
+SEARCH_STEP_CONFIGS = [(steps, steps) for steps in [80, 70, 60, 50]]
+INTERVAL_SCHEDULERS = ["constant"]
+PRINT_OUTPUT_FILENAME = "cifar_search_exp2.txt"
 ENDPOINT_INTERVAL_SCHEDULERS = {"linear", "exp_linear"}
 LINEAR_LR_CONNECTEDNESSES = ["jump_allowed"]
 DEFAULT_LR_CONNECTEDNESS = "jump_allowed"
@@ -942,6 +979,17 @@ def better_point(point, incumbent_point, results_by_point):
     )
 
 
+def better_tta_val_acc(point, incumbent_point, results_by_point):
+    return (
+        results_by_point[point]["tta_val_acc"]
+        > results_by_point[incumbent_point]["tta_val_acc"]
+    )
+
+
+def lower_lr_first(points):
+    return sorted(points, key=lambda point: tuple(lr_from_k(k) for k in point[:-1]))
+
+
 def neighbor_points(point, lr_step, search_momentum):
     lr_ks = point[:-1]
     momentum_index = point[-1]
@@ -965,6 +1013,49 @@ def neighbor_points(point, lr_step, search_momentum):
             yield (*lr_ks, momentum_index + 1)
 
 
+def neighbor_point_groups(point, lr_step, search_momentum):
+    lr_ks = point[:-1]
+    momentum_index = point[-1]
+    if len(lr_ks) == 1:
+        k = lr_ks[0]
+        yield lower_lr_first(
+            [(k - lr_step, momentum_index), (k + lr_step, momentum_index)]
+        )
+    elif len(lr_ks) == 2:
+        start_k, end_k = lr_ks
+        paired_deltas = [
+            ((-lr_step, -lr_step), (lr_step, lr_step)),
+            ((-lr_step, 0), (lr_step, 0)),
+            ((-lr_step, lr_step), (lr_step, -lr_step)),
+            ((0, -lr_step), (0, lr_step)),
+        ]
+        for first_delta, second_delta in paired_deltas:
+            yield lower_lr_first(
+                [
+                    (
+                        start_k + first_delta[0],
+                        end_k + first_delta[1],
+                        momentum_index,
+                    ),
+                    (
+                        start_k + second_delta[0],
+                        end_k + second_delta[1],
+                        momentum_index,
+                    ),
+                ]
+            )
+    else:
+        raise ValueError(f"Unsupported LR point: {point}")
+    if search_momentum:
+        group = []
+        if momentum_index > 0:
+            group.append((*lr_ks, momentum_index - 1))
+        if momentum_index + 1 < len(MOMENTUM_SEARCH_VALUES):
+            group.append((*lr_ks, momentum_index + 1))
+        if group:
+            yield group
+
+
 def best_neighbor_point(middle_point, results_by_point, lr_step, search_momentum):
     best_point = middle_point
     for point in neighbor_points(middle_point, lr_step, search_momentum):
@@ -974,20 +1065,49 @@ def best_neighbor_point(middle_point, results_by_point, lr_step, search_momentum
 
 
 def find_best_lr_momentum_point(
-    initial_point, evaluate, results_by_point, search_momentum
+    initial_point,
+    evaluate,
+    results_by_point,
+    search_momentum,
+    block=None,
+    block_neighbor_pairs=False,
 ):
+    def evaluate_neighbors(middle_point):
+        if not block_neighbor_pairs:
+            return [
+                evaluate(point, cooldown_seed_point=middle_point)
+                for point in neighbor_points(middle_point, 1, search_momentum)
+            ]
+        results = []
+        for group in neighbor_point_groups(middle_point, 1, search_momentum):
+            first_point = group[0]
+            results.append(evaluate(first_point, cooldown_seed_point=middle_point))
+            if len(group) == 1:
+                continue
+            second_point = group[1]
+            if better_tta_val_acc(first_point, middle_point, results_by_point):
+                block(
+                    second_point,
+                    blocked_by_point=first_point,
+                    center_point=middle_point,
+                )
+                results.append(results_by_point[second_point])
+                continue
+            results.append(evaluate(second_point, cooldown_seed_point=middle_point))
+        return results
+
     middle_point = initial_point
     initial_points = [middle_point]
     evaluate(middle_point)
-    for point in neighbor_points(middle_point, 1, search_momentum):
-        evaluate(point)
-        initial_points.append(point)
+    evaluate_neighbors(middle_point)
+    initial_points.extend(
+        point for point in neighbor_points(middle_point, 1, search_momentum)
+    )
     for point in initial_points:
         if better_point(point, middle_point, results_by_point):
             middle_point = point
     for _ in range(LR_SEARCH_MAX_MOVES):
-        for point in neighbor_points(middle_point, 1, search_momentum):
-            evaluate(point)
+        evaluate_neighbors(middle_point)
         next_point = best_neighbor_point(
             middle_point, results_by_point, 1, search_momentum
         )
@@ -1042,6 +1162,12 @@ def search_evaluation_summary(
         summary["interval_final_loss"] = result["interval_final_loss"]
     if "main_tta_val_acc" in result:
         summary["main_tta_val_acc"] = result["main_tta_val_acc"]
+    if "cooldown_initial_lr_k" in result:
+        summary["cooldown_initial_lr_k"] = result["cooldown_initial_lr_k"]
+        summary["cooldown_initial_lr"] = result["cooldown_initial_lr"]
+    if "cooldown_best_lr_k" in result:
+        summary["cooldown_best_lr_k"] = result["cooldown_best_lr_k"]
+        summary["cooldown_best_lr"] = result["cooldown_best_lr"]
     summary.update(
         copy_fields(
             result,
@@ -1051,6 +1177,10 @@ def search_evaluation_summary(
     )
     if include_cooldown_result:
         summary["cooldown_result"] = result["cooldown_result"]
+    if result.get("blocked", False):
+        summary["blocked"] = True
+        summary["blocked_by_point"] = result["blocked_by_point"]
+        summary["blocked_center_point"] = result["blocked_center_point"]
     return summary
 
 
@@ -1083,6 +1213,15 @@ def segment_evaluations(results_by_point, include_interval=False):
     ]
 
 
+def best_cooldown_lr_k(result):
+    if "cooldown_best_lr_k" in result:
+        return result["cooldown_best_lr_k"]
+    cooldown_result = result.get("cooldown_result")
+    if cooldown_result is None:
+        return None
+    return cooldown_result["best_k"]
+
+
 def search_lr_segment(
     ctx,
     search_name,
@@ -1105,7 +1244,7 @@ def search_lr_segment(
         scheduler, steps, ilk, imi, lr_connectedness=connectedness, fixed_start_lr_k=fsk
     )
 
-    def evaluate(point):
+    def evaluate(point, cooldown_seed_point=None):
         start_k, end_k, momentum_index = unpack_search_point(
             scheduler,
             steps,
@@ -1160,18 +1299,31 @@ def search_lr_segment(
                     end_k if connectedness.startswith("continuous_") else None
                 )
                 cooldown_start_state = result["end_state"]
+                cooldown_initial_lr_k = ii["cooldown_initial_lr_k"]
+                if cooldown_seed_point is not None:
+                    seed_cooldown_lr_k = best_cooldown_lr_k(
+                        results_by_point[cooldown_seed_point]
+                    )
+                    if seed_cooldown_lr_k is not None:
+                        cooldown_initial_lr_k = seed_cooldown_lr_k
+                if cooldown_initial_lr_k is None:
+                    cooldown_initial_lr_k = end_k
+                result["cooldown_initial_lr_k"] = cooldown_initial_lr_k
+                result["cooldown_initial_lr"] = lr_from_k(cooldown_initial_lr_k)
                 cooldown_result = search_lr_segment(
                     ctx,
                     cooldown_search_name,
-                    end_k,
+                    cooldown_initial_lr_k,
                     momentum_index,
-                    ctx.cooldown_steps,
+                    ii["cooldown_steps"],
                     start_step + steps,
                     cooldown_start_state,
                     False,
                     fixed_cooldown_start,
                 )
                 result["cooldown_result"] = cooldown_result
+                result["cooldown_best_lr_k"] = cooldown_result["best_k"]
+                result["cooldown_best_lr"] = lr_from_k(result["cooldown_best_lr_k"])
                 result["final_loss"] = cooldown_result["final_train_loss"]
                 result["tta_val_acc"] = cooldown_result["tta_val_acc"]
                 should_evaluate_tta = False
@@ -1198,11 +1350,71 @@ def search_lr_segment(
         results_by_point[point] = result
         return result
 
+    def block(point, blocked_by_point, center_point):
+        if point in results_by_point:
+            return results_by_point[point]
+        start_k, end_k, momentum_index = unpack_search_point(
+            scheduler,
+            steps,
+            point,
+            lr_connectedness=connectedness,
+            fixed_start_lr_k=fsk,
+        )
+        start_lr = lr_from_k(start_k)
+        end_lr = lr_from_k(end_k)
+        momentum = momentum_from_index(momentum_index)
+        muon_lrs = lr_schedule_from_endpoints(
+            scheduler,
+            start_lr,
+            end_lr,
+            steps,
+            lr_connectedness=connectedness,
+            fixed_start=fixed_start,
+        )
+        result = dict(
+            blocked=True,
+            blocked_by_point=blocked_by_point,
+            blocked_center_point=center_point,
+            muon_lr=muon_lrs[-1] if muon_lrs else None,
+            muon_lrs=muon_lrs,
+            start_muon_lr=start_lr,
+            end_muon_lr=end_lr,
+            muon_momentum=momentum,
+            muon_nesterov=ctx.muon_nesterov,
+            losses=[],
+            step_losses=[],
+            head_lrs=[],
+            muon_grad_momentum_norm_ratios=[],
+            completed_steps=0,
+            final_loss=float("inf"),
+            tta_val_acc=float("-inf"),
+        )
+        if ii is not None:
+            result.update(
+                interval_final_loss=float("inf"),
+                main_tta_val_acc=float("-inf"),
+                cooldown_result=None,
+            )
+        add_search_point_metadata(
+            result,
+            start_k,
+            end_k,
+            momentum_index,
+            ilk,
+            initial_lr,
+            imi,
+            initial_momentum,
+        )
+        results_by_point[point] = result
+        return result
+
     best_point = find_best_lr_momentum_point(
         initial_point=initial_point,
         evaluate=evaluate,
         results_by_point=results_by_point,
         search_momentum=search_momentum,
+        block=block,
+        block_neighbor_pairs=scheduler == "constant",
     )
     best_start_k, best_end_k, best_momentum_index = unpack_search_point(
         scheduler,
@@ -1256,8 +1468,8 @@ def search_lr_segment(
         best_start_lr_k=best_start_k,
         best_end_lr_k=best_end_k,
         best_momentum_index=best_momentum_index,
-        cooldown_initial_lr_k=best_end_k,
-        cooldown_initial_lr=lr_from_k(best_end_k),
+        cooldown_initial_lr_k=best_result.get("cooldown_initial_lr_k"),
+        cooldown_initial_lr=best_result.get("cooldown_initial_lr"),
         cooldown_initial_momentum_index=best_momentum_index,
         cooldown_initial_momentum=momentum_from_index(best_momentum_index),
         initial_train_loss=best_result["losses"][0],
@@ -1285,6 +1497,7 @@ def search_interval_lr(
     interval_index,
     interval_start_step,
     fixed_start_lr_k=None,
+    cooldown_initial_lr_k=None,
 ):
     search_name = "run%d_bs%d_N%d_M%d_%s_%s_interval%d_step%d" % (
         ctx.run,
@@ -1296,14 +1509,16 @@ def search_interval_lr(
         interval_index,
         interval_start_step,
     )
-    use_cooldown = (
-        interval_start_step + interval_steps + ctx.cooldown_steps <= ctx.total_steps
+    remaining_steps_after_interval = (
+        ctx.total_steps - interval_start_step - interval_steps
     )
-    use_cooldown = use_cooldown and ctx.cooldown_steps > 0
+    cooldown_steps = min(ctx.cooldown_steps, remaining_steps_after_interval)
+    use_cooldown = cooldown_steps > 0
     interval_info = dict(
         interval_index=interval_index,
         interval_start_step=interval_start_step,
-        cooldown_steps=ctx.cooldown_steps if use_cooldown else 0,
+        cooldown_steps=cooldown_steps if use_cooldown else 0,
+        cooldown_initial_lr_k=cooldown_initial_lr_k,
         use_cooldown=use_cooldown,
     )
     return search_lr_segment(
@@ -1367,6 +1582,7 @@ def run_full_dataset_search(cfg):
     interval_results = []
     interval_initial_lr_k = initial_lr_k
     interval_initial_momentum_index = initial_momentum_index
+    interval_cooldown_initial_lr_k = None
     completed_steps = 0
     interval_index = 0
     while completed_steps < cfg.train_steps:
@@ -1382,10 +1598,13 @@ def run_full_dataset_search(cfg):
             interval_index,
             completed_steps,
             previous_interval_end_lr_k,
+            interval_cooldown_initial_lr_k,
         )
         interval_results.append(interval_result)
         interval_initial_lr_k = interval_result["best_k"]
         interval_initial_momentum_index = interval_result["best_momentum_index"]
+        if interval_result["cooldown_best_k"] is not None:
+            interval_cooldown_initial_lr_k = interval_result["cooldown_best_k"]
         actual_losses = interval_result["losses"][: interval_result["completed_steps"]]
         actual_muon_lrs = interval_result["muon_lrs"][
             : interval_result["completed_steps"]
@@ -1424,6 +1643,23 @@ def run_full_dataset_search(cfg):
                 muon_grad_momentum_norm_ratio=muon_grad_momentum_norm_ratio,
             )
         completed_steps += interval_result["completed_steps"]
+        interval_result["boundary_step"] = completed_steps
+        interval_result["boundary_tta_val_acc"] = None
+        if (
+            completed_steps < cfg.train_steps
+            and losses
+            and torch.isfinite(torch.tensor(losses[-1]))
+        ):
+            interval_result["boundary_tta_val_acc"] = evaluate_tta_val_acc(
+                cfg.model, test_loader
+            )
+            log_interval_boundary_tta_val_acc(
+                cfg.run,
+                interval_result["interval_index"],
+                completed_steps,
+                cfg.train_steps,
+                interval_result["boundary_tta_val_acc"],
+            )
         interval_index += 1
         if losses and not torch.isfinite(torch.tensor(losses[-1])):
             break
@@ -1452,6 +1688,11 @@ def run_full_dataset_search(cfg):
         initial_momentum=initial_momentum,
         losses=losses,
         interval_results=interval_results,
+        interval_boundary_tta_val_accs=[
+            interval_result["boundary_tta_val_acc"]
+            for interval_result in interval_results
+            if interval_result["boundary_tta_val_acc"] is not None
+        ],
     )
     result.update(
         optional_mapped(
@@ -1531,6 +1772,17 @@ def print_run_banner(cfg):
 
 
 def main():
+    print_output_dir = os.path.dirname(PRINT_OUTPUT_FILENAME)
+    if print_output_dir:
+        os.makedirs(print_output_dir, exist_ok=True)
+    with (
+        open(PRINT_OUTPUT_FILENAME, "w") as print_output_file,
+        redirect_stdout(print_output_file),
+    ):
+        run_main()
+
+
+def run_main():
     set_training_seed()
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
     results = []

@@ -105,3 +105,7 @@ suppose N = 3.
 step 1 to step 3 is a linear curve. if it's jump_allowed, both start_lr and end_lr are searched and step 4 to step 6 use the searched start_lr and end_lr. if it's continuous_double, we search for only end_lr and step 4's lr = step 3's lr and it linear curve down to step 6 end_lr. but if it's continuous_single, we search for only end_lr and step 4 lr != step 3's lr and the curve linear goes down from step 3 to step 6. 
 
 if M > 0 and and it's continuous_*, then it also only searches for end_lr
+
+
+tsp          # list jobs
+tsp -k 0     # terminate running job 0
