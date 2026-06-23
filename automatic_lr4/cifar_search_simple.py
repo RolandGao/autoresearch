@@ -450,7 +450,7 @@ def optional_mapped(source, pairs):
 
 finite = lambda value: torch.isfinite(torch.tensor(value))
 FIELD_FORMATTERS = {"k": format_k, "momentum": format_momentum}
-RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nTrain epochs:        %.3g|train_epochs\nTrain steps:         %d|train_steps\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nInterval scheduler:  %s|interval_scheduler\nLR connectedness:    %s|lr_connectedness\nSearch momentum:     %s|search_momentum\nMuon nesterov:       %s|muon_nesterov\n".strip().splitlines()
+RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nTrain epochs:        %.3g|train_epochs\nTrain steps:         %d|train_steps\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nSearch momentum:     %s|search_momentum\nMuon nesterov:       %s|muon_nesterov\n".strip().splitlines()
 RUN_FOOTER_SPECS = "\nVal acc:             %.4f|val_acc\nTTA val acc:         %.4f|tta_val_acc\nRun seconds:         %.3f|run_seconds\n".strip().splitlines()
 
 
@@ -1280,8 +1280,6 @@ def search_lr_segment(
         result.update(initial_lr_k=ilk, initial_momentum_index=imi)
         result.update(
             cooldown_steps=steps,
-            interval_scheduler="constant",
-            lr_connectedness="jump_allowed",
             best_k=best_end_k,
             best_start_lr_k=best_start_k,
             best_end_lr_k=best_end_k,
@@ -1310,8 +1308,6 @@ def search_lr_segment(
     result.update(
         pack(ii, "interval_index interval_start_step cooldown_steps"),
         interval_steps=steps,
-        interval_scheduler="constant",
-        lr_connectedness="jump_allowed",
         best_k=best_end_k,
         best_start_lr_k=best_start_k,
         best_end_lr_k=best_end_k,
@@ -1346,13 +1342,11 @@ def search_interval_lr(
     interval_start_step,
     cooldown_initial_lr_k=None,
 ):
-    search_name = "run%d_bs%d_N%d_M%d_%s_%s_interval%d_step%d" % (
+    search_name = "run%d_bs%d_N%d_M%d_interval%d_step%d" % (
         ctx.run,
         ctx.batch_size,
         ctx.n_steps,
         ctx.cooldown_steps,
-        ctx.interval_scheduler,
-        ctx.lr_connectedness,
         interval_index,
         interval_start_step,
     )
@@ -1413,7 +1407,7 @@ def run_full_dataset_search(cfg):
     optimizers = [optimizer1, optimizer2]
     search_ctx = namespace(
         vars(cfg),
-        "run model batch_size n_steps search_momentum muon_nesterov interval_scheduler lr_connectedness",
+        "run model batch_size n_steps search_momentum muon_nesterov",
         optimizers=optimizers,
         sgd_optimizer=optimizer1,
         muon_optimizer=optimizer2,
@@ -1521,7 +1515,7 @@ def run_full_dataset_search(cfg):
     tta_val_acc = evaluate(cfg.model, test_loader, tta_level=2)
     result = pack(
         vars(cfg),
-        "run batch_size train_epochs train_steps n_steps m_steps momentum_config_name search_momentum muon_nesterov interval_scheduler lr_connectedness sgd_lr_mult",
+        "run batch_size train_epochs train_steps n_steps m_steps momentum_config_name search_momentum muon_nesterov sgd_lr_mult",
     )
     result.update(
         initial_lr_k=initial_lr_k,
@@ -1584,21 +1578,19 @@ def iter_run_settings():
             "n_steps m_steps",
             batch_size=batch_size,
             train_epochs=TRAIN_EPOCHS,
-            interval_scheduler="constant",
-            lr_connectedness="jump_allowed",
             initial_lr=config["initial_lr"],
             sgd_lr_mult=batch_size / 2000,
             **momentum_config,
         )
 
 
-RUN_BANNER_FIELDS = "run batch_size train_epochs n_steps m_steps interval_scheduler lr_connectedness momentum_config_name search_momentum muon_nesterov initial_lr initial_lr_k initial_momentum_text initial_momentum_index".split()
+RUN_BANNER_FIELDS = "run batch_size train_epochs n_steps m_steps momentum_config_name search_momentum muon_nesterov initial_lr initial_lr_k initial_momentum_text initial_momentum_index".split()
 
 
 def print_run_banner(cfg):
     print(
         "cifar_baseline2_full_search run=%d batch_size=%d train_epochs=%.3g "
-        "N=%d M=%d interval_scheduler=%s lr_connectedness=%s "
+        "N=%d M=%d "
         "momentum_config=%s search_momentum=%s muon_nesterov=%s "
         "initial_muon_lr=%.6g initial_muon_lr_k=%d "
         "initial_muon_momentum=%s initial_muon_momentum_index=%d"
