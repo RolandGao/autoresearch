@@ -597,7 +597,9 @@ def evaluate_tta_val_acc(model, loader):
 
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
-SEARCH_STEP_CONFIGS = [(steps, steps) for steps in [40, 30, 20, 10, 5, 3]]
+SEARCH_STEP_CONFIGS = [(steps, 0) for steps in [40, 30, 20, 10, 5, 3]] + [
+    (steps, steps) for steps in [40, 30, 20, 10, 5, 3]
+]
 INTERVAL_SCHEDULERS = ["constant", "linear"]
 ENDPOINT_INTERVAL_SCHEDULERS = {"linear", "exp_linear"}
 LINEAR_LR_CONNECTEDNESSES = ["jump_allowed"]
@@ -1138,8 +1140,8 @@ def search_lr_segment(
         )
         result["start_muon_lr"] = start_lr
         result["end_muon_lr"] = end_lr
-        should_evaluate_tta = (
-            result["completed_steps"] == steps and finite(result["final_loss"])
+        should_evaluate_tta = result["completed_steps"] == steps and finite(
+            result["final_loss"]
         )
         if ii is not None:
             result["interval_final_loss"] = result["final_loss"]
@@ -1328,7 +1330,10 @@ def run_full_dataset_search(cfg):
     initial_momentum = momentum_from_index(initial_momentum_index)
 
     train_loader = CifarLoader(
-        "cifar10", train=True, batch_size=cfg.batch_size, aug=dict(flip=True, translate=2)
+        "cifar10",
+        train=True,
+        batch_size=cfg.batch_size,
+        aug=dict(flip=True, translate=2),
     )
     test_loader = CifarLoader("cifar10", train=False, batch_size=2000)
     batch_stream = FullDatasetBatchStream(train_loader)
