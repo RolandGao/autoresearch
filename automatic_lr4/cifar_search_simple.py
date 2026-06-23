@@ -472,9 +472,7 @@ def log_interval_lr_landscape(results_by_point):
             )
             continue
         cooldown_result = interval_result["cooldown_result"]
-        main_tta_val_acc = interval_result.get(
-            "main_tta_val_acc", interval_result["tta_val_acc"]
-        )
+        main_tta_val_acc = interval_result["main_tta_val_acc"]
         if cooldown_result is None:
             print(
                 "main lr: %.6g %s main=%.4f"
@@ -518,7 +516,7 @@ def log_interval_lr_search_complete(best_result, best_cooldown_result):
     if best_cooldown_result is not None:
         best_muon_lrs.append(best_cooldown_result["muon_lr"])
     best_muon_lr = "[%s]" % ",".join("%.6g" % lr for lr in best_muon_lrs)
-    main_tta_val_acc = best_result.get("main_tta_val_acc", best_result["tta_val_acc"])
+    main_tta_val_acc = best_result["main_tta_val_acc"]
     best_cooldown_tta_val_acc = (
         best_cooldown_result["tta_val_acc"]
         if best_cooldown_result is not None
@@ -899,15 +897,9 @@ def find_best_lr_momentum_point(
     evaluate,
     results_by_point,
     search_momentum,
-    block=None,
-    block_neighbor_pairs=False,
+    block,
 ):
     def evaluate_neighbors(middle_point):
-        if not block_neighbor_pairs:
-            return [
-                evaluate(point, cooldown_seed_point=middle_point)
-                for point in neighbor_points(middle_point, 1, search_momentum)
-            ]
         results = []
         for group in neighbor_point_groups(middle_point, 1, search_momentum):
             first_point = group[0]
@@ -969,9 +961,7 @@ def add_search_point_metadata(
     initial_momentum,
 ):
     result.update(
-        k=lr_k,
         lr_k=lr_k,
-        lr=lr_from_k(lr_k),
         momentum_index=momentum_index,
         initial_lr_k=initial_lr_k,
         initial_lr=initial_lr,
@@ -983,11 +973,10 @@ def add_search_point_metadata(
 def search_evaluation_summary(
     result, include_interval_final_loss=False, include_cooldown_result=False
 ):
-    fields = "k lr_k momentum_index muon_lr muon_momentum muon_nesterov initial_lr_k initial_lr initial_momentum_index initial_momentum".split()
+    fields = "lr_k momentum_index muon_lr muon_momentum muon_nesterov initial_lr_k initial_lr initial_momentum_index initial_momentum".split()
     summary = copy_fields(result, fields)
     if include_interval_final_loss:
         summary["interval_final_loss"] = result["interval_final_loss"]
-    if "main_tta_val_acc" in result:
         summary["main_tta_val_acc"] = result["main_tta_val_acc"]
     if "cooldown_initial_lr_k" in result:
         summary["cooldown_initial_lr_k"] = result["cooldown_initial_lr_k"]
@@ -1040,12 +1029,7 @@ def segment_evaluations(results_by_point, include_interval=False):
 
 
 def best_cooldown_lr_k(result):
-    if "cooldown_best_lr_k" in result:
-        return result["cooldown_best_lr_k"]
-    cooldown_result = result.get("cooldown_result")
-    if cooldown_result is None:
-        return None
-    return cooldown_result["best_k"]
+    return result.get("cooldown_best_lr_k")
 
 
 def search_lr_segment(
@@ -1086,6 +1070,7 @@ def search_lr_segment(
         if ii is not None:
             result["interval_final_loss"] = result["final_loss"]
             result["cooldown_result"] = None
+            result["main_tta_val_acc"] = float("-inf")
             if should_evaluate_tta:
                 result["main_tta_val_acc"] = evaluate_tta_val_acc(
                     ctx.model, ctx.test_loader
@@ -1127,14 +1112,12 @@ def search_lr_segment(
                 should_evaluate_tta = False
             result.pop("end_state", None)
         if should_evaluate_tta:
-            if "main_tta_val_acc" in result:
+            if ii is not None:
                 result["tta_val_acc"] = result["main_tta_val_acc"]
             else:
                 result["tta_val_acc"] = evaluate_tta_val_acc(ctx.model, ctx.test_loader)
         elif "tta_val_acc" not in result:
             result["tta_val_acc"] = float("-inf")
-        if ii is not None and "main_tta_val_acc" not in result:
-            result["main_tta_val_acc"] = result["tta_val_acc"]
         add_search_point_metadata(
             result,
             lr_k,
@@ -1192,7 +1175,6 @@ def search_lr_segment(
         results_by_point=results_by_point,
         search_momentum=search_momentum,
         block=block,
-        block_neighbor_pairs=True,
     )
     best_lr_k, best_momentum_index = best_point
     best_result = results_by_point[best_point]
