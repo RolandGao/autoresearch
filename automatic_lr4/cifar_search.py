@@ -440,8 +440,7 @@ def optional_mapped(source, pairs):
 finite = lambda value: torch.isfinite(torch.tensor(value))
 FIELD_FORMATTERS = {"k": format_k, "momentum": format_momentum}
 RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nTrain epochs:        %.3g|train_epochs\nTrain steps:         %d|train_steps\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nInterval scheduler:  %s|interval_scheduler\nLR connectedness:    %s|lr_connectedness\nSearch momentum:     %s|search_momentum\nMuon nesterov:       %s|muon_nesterov\n".strip().splitlines()
-COOLDOWN_SUMMARY_SPECS = "\nFinal cooldown lr:   %.6g|final_cooldown_muon_lr\nFinal cooldown lr k: %s|final_cooldown_muon_lr_k|k\nFinal cooldown mom:  %s|final_cooldown_muon_momentum|momentum\nFinal cooldown nest: %s|final_cooldown_muon_nesterov\nFinal cooldown mom i: %s|final_cooldown_muon_momentum_index|k\n".strip().splitlines()
-RUN_FOOTER_SPECS = "\nSGD lr mult:         %.6g|sgd_lr_mult\nVal acc:             %.4f|val_acc\nTTA val acc:         %.4f|tta_val_acc\nRun seconds:         %.3f|run_seconds\n".strip().splitlines()
+RUN_FOOTER_SPECS = "\nVal acc:             %.4f|val_acc\nTTA val acc:         %.4f|tta_val_acc\nRun seconds:         %.3f|run_seconds\n".strip().splitlines()
 
 
 def print_summary_specs(specs, result):
@@ -455,8 +454,6 @@ def print_summary_specs(specs, result):
 
 def log_run_summary(result):
     print_summary_specs(RUN_SUMMARY_SPECS, result)
-    if result["final_cooldown_muon_lr"] is not None:
-        print_summary_specs(COOLDOWN_SUMMARY_SPECS, result)
     print_summary_specs(RUN_FOOTER_SPECS, result)
 
 
@@ -520,18 +517,19 @@ def log_interval_lr_search_complete(best_result, best_cooldown_result, results_b
             [best_cooldown_result["start_muon_lr"], best_cooldown_result["end_muon_lr"]]
         )
     best_muon_lr = "[%s]" % ",".join("%.6g" % lr for lr in best_muon_lrs)
+    main_tta_val_acc = best_result.get("main_tta_val_acc", best_result["tta_val_acc"])
+    best_cooldown_tta_val_acc = (
+        best_cooldown_result["tta_val_acc"]
+        if best_cooldown_result is not None
+        else best_result["tta_val_acc"]
+    )
     print(
-        "best_muon_lr=%s best_muon_momentum=%s interval_loss=%.6f "
-        "final_loss=%.6f tta_val_acc=%.4f evaluated_interval_configs=%d "
-        "evaluated_configs=%d"
+        "best_muon_lr=%s best_muon_momentum=%s main=%.4f, best_cooldown=%.4f"
         % (
             best_muon_lr,
             format_momentum(best_result["muon_momentum"]),
-            best_result["interval_final_loss"],
-            best_result["final_loss"],
-            best_result["tta_val_acc"],
-            len(results_by_k),
-            count_evaluated_configs(results_by_k),
+            main_tta_val_acc,
+            best_cooldown_tta_val_acc,
         ),
         flush=True,
     )

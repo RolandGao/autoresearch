@@ -25,6 +25,13 @@ OUTPUT_PLOT = "curves.png"
 
 KV_RE = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>\S+)")
 SUMMARY_RE = re.compile(r"^(?P<key>[A-Za-z][A-Za-z0-9 ]+):\s+(?P<value>\S+)")
+MAIN_INTERVAL_RE = re.compile(
+    r"^main interval:\s+"
+    r"(?P<start_muon_lr>\S+)\s+"
+    r"(?P<end_muon_lr>\S+)\s+"
+    r"(?P<muon_momentum>\S+)\s+"
+    r"main=(?P<main_tta>[0-9.eE+-]+)"
+)
 
 
 @dataclass(frozen=True)
@@ -96,6 +103,7 @@ class SearchChoice:
     cooldown_muon_momentum: float | None
     interval_loss: float | None
     final_loss: float | None
+    main_tta_val_acc: float | None
     tta_val_acc: float | None
     evaluated_interval_configs: int
     evaluated_configs: int
@@ -153,6 +161,7 @@ class Run:
 def parse_optional_float(value: str | None) -> float | None:
     if value is None or value.lower() in {"none", "nan"}:
         return None
+    value = value.rstrip(",")
     try:
         return float(value)
     except ValueError:
@@ -185,6 +194,12 @@ def parse_float_list(value: str | None) -> list[float]:
     ]
 
 
+def config_key(*values: float | None) -> tuple[float, ...] | None:
+    if any(value is None for value in values):
+        return None
+    return tuple(round(value, 10) for value in values if value is not None)
+
+
 def style_axes(ax) -> None:
     ax.grid(True, color="#dddddd", linewidth=0.7, alpha=0.75)
     ax.spines["top"].set_visible(False)
@@ -202,6 +217,7 @@ def format_number(value: float | int | None) -> str:
 def parse_log(log_path: Path) -> list[Run]:
     runs: dict[int, Run] = {}
     current: Run | None = None
+    main_tta_by_config: dict[tuple[float, ...], float] = {}
 
     with log_path.open("r", encoding="utf-8") as log_file:
         for raw_line in log_file:
@@ -227,6 +243,19 @@ def parse_log(log_path: Path) -> list[Run]:
                     ),
                 )
                 runs[run_id] = current
+                main_tta_by_config = {}
+                continue
+
+            main_match = MAIN_INTERVAL_RE.match(line)
+            if main_match:
+                key = config_key(
+                    parse_optional_float(main_match["start_muon_lr"]),
+                    parse_optional_float(main_match["end_muon_lr"]),
+                    parse_optional_float(main_match["muon_momentum"]),
+                )
+                main_tta = parse_optional_float(main_match["main_tta"])
+                if key is not None and main_tta is not None:
+                    main_tta_by_config[key] = main_tta
                 continue
 
             if line.startswith("train_loss "):
@@ -257,6 +286,13 @@ def parse_log(log_path: Path) -> list[Run]:
                 fields = parse_kv_line(line)
                 best_muon_lrs = parse_float_list(fields.get("best_muon_lr"))
                 last_step = current.train[-1].step if current.train else 0
+                best_momentum = parse_optional_float(fields.get("best_muon_momentum"))
+                main_key = config_key(
+                    best_muon_lrs[0] if best_muon_lrs else None,
+                    best_muon_lrs[1] if len(best_muon_lrs) > 1 else None,
+                    best_momentum,
+                )
+                cooldown_tta = parse_optional_float(fields.get("tta_val_acc"))
                 current.choices.append(
                     SearchChoice(
                         start_step=last_step + 1,
@@ -265,24 +301,24 @@ def parse_log(log_path: Path) -> list[Run]:
                         if len(best_muon_lrs) > 1
                         else None,
                         muon_lr=best_muon_lrs[1] if len(best_muon_lrs) > 1 else None,
-                        muon_momentum=parse_optional_float(
-                            fields.get("best_muon_momentum")
-                        ),
+                        muon_momentum=best_momentum,
                         cooldown_muon_lr=best_muon_lrs[-1]
                         if len(best_muon_lrs) > 2
                         else None,
-                        cooldown_muon_momentum=parse_optional_float(
-                            fields.get("best_muon_momentum")
-                        ),
+                        cooldown_muon_momentum=best_momentum,
                         interval_loss=parse_optional_float(fields.get("interval_loss")),
                         final_loss=parse_optional_float(fields.get("final_loss")),
-                        tta_val_acc=parse_optional_float(fields.get("tta_val_acc")),
+                        main_tta_val_acc=main_tta_by_config.get(main_key)
+                        if main_key is not None
+                        else cooldown_tta,
+                        tta_val_acc=cooldown_tta,
                         evaluated_interval_configs=int(
                             fields.get("evaluated_interval_configs", "0")
                         ),
                         evaluated_configs=int(fields.get("evaluated_configs", "0")),
                     )
                 )
+                main_tta_by_config = {}
                 continue
 
             summary_match = SUMMARY_RE.match(line)
@@ -401,9 +437,9 @@ def choice_end_step(run: Run, choice_index: int) -> int:
 
 def choice_tta_points(run: Run) -> list[tuple[int, float]]:
     return [
-        (choice_end_step(run, index), choice.tta_val_acc)
+        (choice_end_step(run, index), value)
         for index, choice in enumerate(run.choices)
-        if choice.tta_val_acc is not None
+        if (value := choice.main_tta_val_acc or choice.tta_val_acc) is not None
     ]
 
 
@@ -550,7 +586,7 @@ def plot_curves(runs: list[Run], output_dir: Path) -> None:
         ("Muon LR", "muon_lr"),
         ("Muon momentum", "muon_momentum"),
         ("Grad/momentum norm ratio", "muon_grad_momentum_norm_ratio"),
-        ("TTA val acc", "tta_val_acc"),
+        ("Main TTA val acc", "tta_val_acc"),
     ]
 
     for row, run in enumerate(ordered):
