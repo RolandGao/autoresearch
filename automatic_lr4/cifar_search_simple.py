@@ -634,12 +634,7 @@ def evaluate_tta_val_acc(model, loader):
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
 SEARCH_STEP_CONFIGS = list(product([80, 60, 40, 20, 10], [80, 60, 40, 20, 10]))
-INTERVAL_SCHEDULERS = ["constant"]
 PRINT_OUTPUT_FILENAME = "cifar_search_NM.log"
-ENDPOINT_INTERVAL_SCHEDULERS = {"linear", "exp_linear"}
-LINEAR_LR_CONNECTEDNESSES = ["jump_allowed"]
-DEFAULT_LR_CONNECTEDNESS = "jump_allowed"
-VALID_LR_CONNECTEDNESSES = ["jump_allowed", "continuous_double", "continuous_single"]
 LR_SEARCH_BASE = 0.2
 LR_SEARCH_FACTOR = 0.6
 LR_SEARCH_SIG_FIGS = 2
@@ -881,84 +876,17 @@ def train_interval(
     return result
 
 
-def lr_schedule_from_endpoints(
-    interval_scheduler,
-    start_lr,
-    end_lr,
-    interval_steps,
-    lr_connectedness="jump_allowed",
-    fixed_start=False,
-):
-    if interval_scheduler == "constant" or interval_steps == 1:
-        if (
-            interval_scheduler in ENDPOINT_INTERVAL_SCHEDULERS
-            and interval_steps == 1
-            and fixed_start
-            and lr_connectedness == "continuous_single"
-        ):
-            return [rounded_lr(end_lr)]
-        return [rounded_lr(start_lr)] * interval_steps
-    if interval_scheduler == "linear":
-        if fixed_start and lr_connectedness == "continuous_single":
-            return [
-                rounded_lr(start_lr + (end_lr - start_lr) * i / interval_steps)
-                for i in range(1, interval_steps + 1)
-            ]
-        return [
-            rounded_lr(start_lr + (end_lr - start_lr) * i / (interval_steps - 1))
-            for i in range(interval_steps)
-        ]
-    if interval_scheduler == "exp_linear":
-        start_lr_k = nearest_lr_k(start_lr)
-        end_lr_k = nearest_lr_k(end_lr)
-        if fixed_start and lr_connectedness == "continuous_single":
-            return [
-                lr_from_k(start_lr_k + (end_lr_k - start_lr_k) * i / interval_steps)
-                for i in range(1, interval_steps + 1)
-            ]
-        return [
-            lr_from_k(start_lr_k + (end_lr_k - start_lr_k) * i / (interval_steps - 1))
-            for i in range(interval_steps)
-        ]
-    raise ValueError(f"Unknown interval scheduler: {interval_scheduler}")
+def lr_schedule(start_lr, interval_steps):
+    return [rounded_lr(start_lr)] * interval_steps
 
 
-def lr_connectedness_uses_fixed_start(lr_connectedness, fixed_start_lr_k):
-    if lr_connectedness not in VALID_LR_CONNECTEDNESSES:
-        raise ValueError(f"Unknown LR connectedness: {lr_connectedness}")
-    return lr_connectedness.startswith("continuous_") and fixed_start_lr_k is not None
-
-
-def make_initial_search_point(
-    interval_scheduler,
-    interval_steps,
-    initial_lr_k,
-    initial_momentum_index,
-    lr_connectedness="jump_allowed",
-    fixed_start_lr_k=None,
-):
-    if lr_connectedness_uses_fixed_start(lr_connectedness, fixed_start_lr_k):
-        return initial_lr_k, initial_momentum_index
-    if interval_scheduler in ENDPOINT_INTERVAL_SCHEDULERS and interval_steps > 1:
-        return initial_lr_k, initial_lr_k, initial_momentum_index
+def make_initial_search_point(initial_lr_k, initial_momentum_index):
     return initial_lr_k, initial_momentum_index
 
 
-def unpack_search_point(
-    interval_scheduler,
-    interval_steps,
-    point,
-    lr_connectedness="jump_allowed",
-    fixed_start_lr_k=None,
-):
-    if lr_connectedness_uses_fixed_start(lr_connectedness, fixed_start_lr_k):
-        end_k, momentum_index = point
-        return fixed_start_lr_k, end_k, momentum_index
-    if interval_scheduler in ENDPOINT_INTERVAL_SCHEDULERS and interval_steps > 1:
-        start_k, end_k, momentum_index = point
-    else:
-        start_k, momentum_index = point
-        end_k = start_k
+def unpack_search_point(point):
+    start_k, momentum_index = point
+    end_k = start_k
     return start_k, end_k, momentum_index
 
 
@@ -991,67 +919,29 @@ def lower_lr_first(points):
 
 
 def neighbor_points(point, lr_step, search_momentum):
-    lr_ks = point[:-1]
+    k = point[0]
     momentum_index = point[-1]
-    if len(lr_ks) == 1:
-        k = lr_ks[0]
-        yield (k - lr_step, momentum_index)
-        yield (k + lr_step, momentum_index)
-    elif len(lr_ks) == 2:
-        start_k, end_k = lr_ks
-        for start_delta in (-lr_step, 0, lr_step):
-            for end_delta in (-lr_step, 0, lr_step):
-                if start_delta == 0 and end_delta == 0:
-                    continue
-                yield (start_k + start_delta, end_k + end_delta, momentum_index)
-    else:
-        raise ValueError(f"Unsupported LR point: {point}")
+    yield (k - lr_step, momentum_index)
+    yield (k + lr_step, momentum_index)
     if search_momentum:
         if momentum_index > 0:
-            yield (*lr_ks, momentum_index - 1)
+            yield (k, momentum_index - 1)
         if momentum_index + 1 < len(MOMENTUM_SEARCH_VALUES):
-            yield (*lr_ks, momentum_index + 1)
+            yield (k, momentum_index + 1)
 
 
 def neighbor_point_groups(point, lr_step, search_momentum):
-    lr_ks = point[:-1]
+    k = point[0]
     momentum_index = point[-1]
-    if len(lr_ks) == 1:
-        k = lr_ks[0]
-        yield lower_lr_first(
-            [(k - lr_step, momentum_index), (k + lr_step, momentum_index)]
-        )
-    elif len(lr_ks) == 2:
-        start_k, end_k = lr_ks
-        paired_deltas = [
-            ((-lr_step, -lr_step), (lr_step, lr_step)),
-            ((-lr_step, 0), (lr_step, 0)),
-            ((-lr_step, lr_step), (lr_step, -lr_step)),
-            ((0, -lr_step), (0, lr_step)),
-        ]
-        for first_delta, second_delta in paired_deltas:
-            yield lower_lr_first(
-                [
-                    (
-                        start_k + first_delta[0],
-                        end_k + first_delta[1],
-                        momentum_index,
-                    ),
-                    (
-                        start_k + second_delta[0],
-                        end_k + second_delta[1],
-                        momentum_index,
-                    ),
-                ]
-            )
-    else:
-        raise ValueError(f"Unsupported LR point: {point}")
+    yield lower_lr_first(
+        [(k - lr_step, momentum_index), (k + lr_step, momentum_index)]
+    )
     if search_momentum:
         group = []
         if momentum_index > 0:
-            group.append((*lr_ks, momentum_index - 1))
+            group.append((k, momentum_index - 1))
         if momentum_index + 1 < len(MOMENTUM_SEARCH_VALUES):
-            group.append((*lr_ks, momentum_index + 1))
+            group.append((k, momentum_index + 1))
         if group:
             yield group
 
@@ -1231,41 +1121,22 @@ def search_lr_segment(
     start_step,
     start_state,
     search_momentum,
-    fsk=None,
     ii=None,
 ):
     results_by_point = {}
     initial_lr = lr_from_k(ilk)
     initial_momentum = momentum_from_index(imi)
-    scheduler = ctx.interval_scheduler
-    connectedness = ctx.lr_connectedness
-    fixed_start = lr_connectedness_uses_fixed_start(connectedness, fsk)
-    initial_point = make_initial_search_point(
-        scheduler, steps, ilk, imi, lr_connectedness=connectedness, fixed_start_lr_k=fsk
-    )
+    initial_point = make_initial_search_point(ilk, imi)
 
     def evaluate(point, cooldown_seed_point=None):
-        start_k, end_k, momentum_index = unpack_search_point(
-            scheduler,
-            steps,
-            point,
-            lr_connectedness=connectedness,
-            fixed_start_lr_k=fsk,
-        )
+        start_k, end_k, momentum_index = unpack_search_point(point)
         if point in results_by_point:
             return results_by_point[point]
         start_lr = lr_from_k(start_k)
         end_lr = lr_from_k(end_k)
         momentum = momentum_from_index(momentum_index)
         load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
-        muon_lrs = lr_schedule_from_endpoints(
-            scheduler,
-            start_lr,
-            end_lr,
-            steps,
-            lr_connectedness=connectedness,
-            fixed_start=fixed_start,
-        )
+        muon_lrs = lr_schedule(start_lr, steps)
         needs_cooldown_state = ii is not None and ii["use_cooldown"]
         result = train_interval(
             ctx,
@@ -1295,9 +1166,6 @@ def search_lr_segment(
                     format_momentum(momentum),
                     ctx.muon_nesterov,
                 )
-                fixed_cooldown_start = (
-                    end_k if connectedness.startswith("continuous_") else None
-                )
                 cooldown_start_state = result["end_state"]
                 cooldown_initial_lr_k = ii["cooldown_initial_lr_k"]
                 if cooldown_seed_point is not None:
@@ -1319,7 +1187,6 @@ def search_lr_segment(
                     start_step + steps,
                     cooldown_start_state,
                     False,
-                    fixed_cooldown_start,
                 )
                 result["cooldown_result"] = cooldown_result
                 result["cooldown_best_lr_k"] = cooldown_result["best_k"]
@@ -1353,24 +1220,11 @@ def search_lr_segment(
     def block(point, blocked_by_point, center_point):
         if point in results_by_point:
             return results_by_point[point]
-        start_k, end_k, momentum_index = unpack_search_point(
-            scheduler,
-            steps,
-            point,
-            lr_connectedness=connectedness,
-            fixed_start_lr_k=fsk,
-        )
+        start_k, end_k, momentum_index = unpack_search_point(point)
         start_lr = lr_from_k(start_k)
         end_lr = lr_from_k(end_k)
         momentum = momentum_from_index(momentum_index)
-        muon_lrs = lr_schedule_from_endpoints(
-            scheduler,
-            start_lr,
-            end_lr,
-            steps,
-            lr_connectedness=connectedness,
-            fixed_start=fixed_start,
-        )
+        muon_lrs = lr_schedule(start_lr, steps)
         result = dict(
             blocked=True,
             blocked_by_point=blocked_by_point,
@@ -1414,15 +1268,9 @@ def search_lr_segment(
         results_by_point=results_by_point,
         search_momentum=search_momentum,
         block=block,
-        block_neighbor_pairs=scheduler == "constant",
+        block_neighbor_pairs=True,
     )
-    best_start_k, best_end_k, best_momentum_index = unpack_search_point(
-        scheduler,
-        steps,
-        best_point,
-        lr_connectedness=connectedness,
-        fixed_start_lr_k=fsk,
-    )
+    best_start_k, best_end_k, best_momentum_index = unpack_search_point(best_point)
     best_result = results_by_point[best_point]
     if ii is None:
         load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
@@ -1432,8 +1280,8 @@ def search_lr_segment(
         result.update(initial_lr_k=ilk, initial_momentum_index=imi)
         result.update(
             cooldown_steps=steps,
-            interval_scheduler=scheduler,
-            lr_connectedness=connectedness,
+            interval_scheduler="constant",
+            lr_connectedness="jump_allowed",
             best_k=best_end_k,
             best_start_lr_k=best_start_k,
             best_end_lr_k=best_end_k,
@@ -1462,8 +1310,8 @@ def search_lr_segment(
     result.update(
         pack(ii, "interval_index interval_start_step cooldown_steps"),
         interval_steps=steps,
-        interval_scheduler=scheduler,
-        lr_connectedness=connectedness,
+        interval_scheduler="constant",
+        lr_connectedness="jump_allowed",
         best_k=best_end_k,
         best_start_lr_k=best_start_k,
         best_end_lr_k=best_end_k,
@@ -1496,7 +1344,6 @@ def search_interval_lr(
     interval_steps,
     interval_index,
     interval_start_step,
-    fixed_start_lr_k=None,
     cooldown_initial_lr_k=None,
 ):
     search_name = "run%d_bs%d_N%d_M%d_%s_%s_interval%d_step%d" % (
@@ -1530,7 +1377,6 @@ def search_interval_lr(
         interval_start_step,
         snapshot_training_state(ctx.model, ctx.optimizers, ctx.batch_stream),
         ctx.search_momentum,
-        fixed_start_lr_k,
         interval_info,
     )
 
@@ -1587,9 +1433,6 @@ def run_full_dataset_search(cfg):
     interval_index = 0
     while completed_steps < cfg.train_steps:
         interval_steps = min(cfg.n_steps, cfg.train_steps - completed_steps)
-        previous_interval_end_lr_k = None
-        if interval_index > 0 and cfg.lr_connectedness.startswith("continuous_"):
-            previous_interval_end_lr_k = interval_initial_lr_k
         interval_result = search_interval_lr(
             search_ctx,
             interval_initial_lr_k,
@@ -1597,7 +1440,6 @@ def run_full_dataset_search(cfg):
             interval_steps,
             interval_index,
             completed_steps,
-            previous_interval_end_lr_k,
             interval_cooldown_initial_lr_k,
         )
         interval_results.append(interval_result)
@@ -1732,28 +1574,22 @@ def run_full_dataset_search(cfg):
 
 
 def iter_run_settings():
-    for config, steps, interval_scheduler in product(
-        RUN_CONFIGS, SEARCH_STEP_CONFIGS, INTERVAL_SCHEDULERS
+    for config, steps, momentum_config in product(
+        RUN_CONFIGS, SEARCH_STEP_CONFIGS, MUON_MOMENTUM_CONFIGS
     ):
-        lr_connectednesses = (
-            LINEAR_LR_CONNECTEDNESSES
-            if interval_scheduler == "linear"
-            else [DEFAULT_LR_CONNECTEDNESS]
+        n_steps, m_steps = steps
+        batch_size = config["batch_size"]
+        yield namespace(
+            locals(),
+            "n_steps m_steps",
+            batch_size=batch_size,
+            train_epochs=TRAIN_EPOCHS,
+            interval_scheduler="constant",
+            lr_connectedness="jump_allowed",
+            initial_lr=config["initial_lr"],
+            sgd_lr_mult=batch_size / 2000,
+            **momentum_config,
         )
-        for lr_connectedness, momentum_config in product(
-            lr_connectednesses, MUON_MOMENTUM_CONFIGS
-        ):
-            n_steps, m_steps = steps
-            batch_size = config["batch_size"]
-            yield namespace(
-                locals(),
-                "n_steps m_steps interval_scheduler lr_connectedness",
-                batch_size=batch_size,
-                train_epochs=TRAIN_EPOCHS,
-                initial_lr=config["initial_lr"],
-                sgd_lr_mult=batch_size / 2000,
-                **momentum_config,
-            )
 
 
 RUN_BANNER_FIELDS = "run batch_size train_epochs n_steps m_steps interval_scheduler lr_connectedness momentum_config_name search_momentum muon_nesterov initial_lr initial_lr_k initial_momentum_text initial_momentum_index".split()
