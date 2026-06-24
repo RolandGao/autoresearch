@@ -1,0 +1,13 @@
+cifar_search_simple run=0 batch_size=2000 train_epochs=8 N=40 M=40 search_hparams=muon_lr,muon_momentum,bias_lr,head_lr cooldown_search_hparams=muon_lr,bias_lr,head_lr muon_nesterov=False extension_search=True initial_muon_lr=0.2 initial_muon_lr_k=0 initial_muon_momentum=0.6 initial_muon_momentum_index=6 initial_bias_lr=104 initial_bias_lr_k=0 initial_head_lr=1340 initial_head_lr_k=0
+center_path search=run0_bs2000_N40_M40_interval0_step0_cooldown_for_lr0_m0.6_nFalse step=0 muon_lr=0.2 muon_momentum=0.6 bias_lr=100 head_lr=1300 tta_val_acc=0.8284
+center_path search=run0_bs2000_N40_M40_interval0_step0_cooldown_for_lr0_m0.6_nFalse step=1 muon_lr=0.043 muon_momentum=0.6 bias_lr=100 head_lr=1300 tta_val_acc=0.9019
+center_path search=run0_bs2000_N40_M40_interval0_step0_cooldown_for_lr0_m0.6_nFalse step=2 muon_lr=0.043 muon_momentum=0.6 bias_lr=22 head_lr=1300 tta_val_acc=0.9106
+center_path search=run0_bs2000_N40_M40_interval0_step0_cooldown_for_lr1_m0.6_nFalse step=0 muon_lr=0.043 muon_momentum=0.6 bias_lr=22 head_lr=1300 tta_val_acc=0.9098
+center_path search=run0_bs2000_N40_M40_interval0_step0_cooldown_for_lr1_m0.6_nFalse step=1 muon_lr=0.043 muon_momentum=0.6 bias_lr=22 head_lr=170 tta_val_acc=0.9103
+center_path search=run0_bs2000_N40_M40_interval0_step0_cooldown_for_lr-1_m0.6_nFalse step=0 muon_lr=0.043 muon_momentum=0.6 bias_lr=22 head_lr=1300 tta_val_acc=0.8988
+center_path search=run0_bs2000_N40_M40_interval0_step0_cooldown_for_lr-1_m0.6_nFalse step=1 muon_lr=0.043 muon_momentum=0.6 bias_lr=13 head_lr=1300 tta_val_acc=0.8990
+center_path search=run0_bs2000_N40_M40_interval0_step0_cooldown_for_lr-1_m0.6_nFalse step=2 muon_lr=0.043 muon_momentum=0.6 bias_lr=13 head_lr=800 tta_val_acc=0.9001
+center_path search=run0_bs2000_N40_M40_interval0_step0_cooldown_for_lr0_m0.5_nFalse step=0 muon_lr=0.043 muon_momentum=0.5 bias_lr=22 head_lr=1300 tta_val_acc=0.9076
+center_path search=run0_bs2000_N40_M40_interval0_step0_cooldown_for_lr0_m0.7_nFalse step=0 muon_lr=0.043 muon_momentum=0.7 bias_lr=22 head_lr=1300 tta_val_acc=0.9048
+center_path search=run0_bs2000_N40_M40_interval0_step0_cooldown_for_lr0_m0.7_nFalse step=1 muon_lr=0.043 muon_momentum=0.7 bias_lr=8.1 head_lr=1300 tta_val_acc=0.9068
+center_path search=run0_bs2000_N40_M40_interval0_step0_cooldown_for_lr0_m0.7_nFalse step=2 muon_lr=0.043 muon_momentum=0.7 bias_lr=8.1 head_lr=2200 tta_val_acc=0.9082
