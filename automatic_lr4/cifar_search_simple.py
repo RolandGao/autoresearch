@@ -393,10 +393,6 @@ def log_interval_boundary_eval(
     )
 
 
-format_k = lambda k: "%g" % k
-format_momentum = lambda momentum: "%g" % momentum
-
-
 def hparam_log_fields(values, names=None):
     names = SEARCH_HPARAMS.keys() if names is None else names
     return {name: values[name] for name in names if name in values}
@@ -433,64 +429,43 @@ def log_run_summary(result):
     print_summary_specs(RUN_FOOTER_SPECS, result)
 
 
-def log_search_path(search_name, path):
-    for step, candidate in enumerate(path):
-        blocked = candidate.get("blocked", False)
-        fields = dict(
-            search=search_name,
-            step=step,
-            **hparam_log_fields(candidate),
-            blocked=blocked,
-        )
-        if not blocked:
-            fields["tta_val_acc"] = candidate["tta_val_acc"]
-        if "main_tta_val_acc" in candidate:
-            fields["main_tta_val_acc"] = candidate["main_tta_val_acc"]
-            fields["best_cooldown_tta_val_acc"] = (
-                candidate["tta_val_acc"]
-                if (
-                    not blocked
-                    and candidate["tta_val_acc"] != candidate["main_tta_val_acc"]
-                )
-                else None
-            )
-        log_event("search_path", **fields)
+def hparam_text(values):
+    return " ".join(
+        "%s=%s" % (name, format_log_value(values[name]))
+        for name in SEARCH_HPARAMS
+        if name in values
+    )
 
 
-def log_candidate_evaluation(result):
-    fields = hparam_log_fields(result)
+def log_line(text):
+    print(text, flush=True)
+
+
+def log_main_hparams(result):
+    prefix = "main hparams: %s" % hparam_text(result)
     if result.get("blocked", False):
-        log_event("candidate_eval", **fields, blocked=True)
+        log_line("%s -> blocked" % prefix)
         return
-    if "main_tta_val_acc" in result:
-        cooldown_result = result["cooldown_result"]
-        fields.update(
-            main_tta_val_acc=result["main_tta_val_acc"],
-            best_cooldown_tta_val_acc=(
-                cooldown_result["tta_val_acc"] if cooldown_result is not None else None
-            ),
+    metrics = ["main=%s" % format_log_value(result["main_tta_val_acc"])]
+    cooldown_result = result.get("cooldown_result")
+    if cooldown_result is not None:
+        metrics.append(
+            "best_cooldown=%s" % format_log_value(cooldown_result["tta_val_acc"])
         )
-    fields["tta_val_acc"] = result["tta_val_acc"]
-    log_event(
-        "candidate_eval",
-        **fields,
-    )
+    log_line("%s %s" % (prefix, ", ".join(metrics)))
 
 
-def log_selected_hparams(best_result, best_cooldown_result):
-    main_tta_val_acc = best_result["main_tta_val_acc"]
-    best_cooldown_tta_val_acc = (
-        best_cooldown_result["tta_val_acc"]
-        if best_cooldown_result is not None
-        else best_result["tta_val_acc"]
-    )
-    log_event(
-        "selected_hparams",
-        **hparam_log_fields(best_result),
-        tta_val_acc=best_result["tta_val_acc"],
-        main_tta_val_acc=main_tta_val_acc,
-        best_cooldown_tta_val_acc=best_cooldown_tta_val_acc,
-    )
+def log_search_path_result(result):
+    prefix = "search_path %s" % hparam_text(result)
+    if result.get("blocked", False):
+        log_line("%s -> blocked" % prefix)
+        return
+    log_line("%s -> tta_val_acc=%s" % (prefix, format_log_value(result["tta_val_acc"])))
+
+
+def log_search_path_results(results):
+    for result in results:
+        log_search_path_result(result)
 
 
 ############################################
@@ -1030,28 +1005,11 @@ def find_best_hparam_point(
     return middle_point, center_path
 
 
-def candidate_summary(result):
-    fields = [name for name in SEARCH_HPARAMS if name in result] + ["tta_val_acc"]
-    if "main_tta_val_acc" in result:
-        fields.append("main_tta_val_acc")
-    summary = copy_fields(result, fields)
-    if result.get("blocked", False):
-        summary["blocked"] = True
-    return summary
-
-
 BEST_RESULT_FIELDS = list(SEARCH_HPARAMS)
 
 
 def add_best_result_fields(result, best_result):
     result.update(copy_fields(best_result, BEST_RESULT_FIELDS))
-
-
-def search_path_summaries(center_path_points, results_by_point):
-    return [
-        candidate_summary(results_by_point[point])
-        for point in center_path_points
-    ]
 
 
 def point_states(point, search_names, names=None):
@@ -1066,7 +1024,6 @@ def point_states(point, search_names, names=None):
 
 def search_hparam_segment(
     ctx,
-    search_name,
     initial_point,
     search_names,
     fixed_hparams,
@@ -1076,6 +1033,8 @@ def search_hparam_segment(
     interval_info=None,
 ):
     results_by_point = {}
+    candidate_evaluations = []
+    is_main_interval = interval_info is not None
 
     def evaluate(point, cooldown_seed_point=None):
         if point in results_by_point:
@@ -1103,13 +1062,6 @@ def search_hparam_segment(
                 )
             if interval_info["use_cooldown"] and should_evaluate_tta:
                 cooldown_search_names = cooldown_search_hparam_names()
-                cooldown_lr_k = nearest_hparam_state("muon_lr", hparams["muon_lr"])
-                cooldown_search_name = "%s_cooldown_for_lr%s_m%s_n%s" % (
-                    search_name,
-                    format_k(cooldown_lr_k),
-                    format_momentum(hparams["muon_momentum"]),
-                    ctx.muon_nesterov,
-                )
                 cooldown_start_state = result["end_state"]
                 cooldown_initial_states = dict(
                     interval_info["cooldown_initial_states"] or {}
@@ -1130,7 +1082,6 @@ def search_hparam_segment(
                     )
                 cooldown_result = search_hparam_segment(
                     ctx,
-                    cooldown_search_name,
                     point_from_hparams(cooldown_initial_hparams, cooldown_search_names),
                     cooldown_search_names,
                     hparams,
@@ -1151,7 +1102,13 @@ def search_hparam_segment(
         elif "tta_val_acc" not in result:
             result["tta_val_acc"] = float("-inf")
         results_by_point[point] = result
-        log_candidate_evaluation(result)
+        candidate_evaluations.append(result)
+        if is_main_interval:
+            log_main_hparams(result)
+            cooldown_result = result.get("cooldown_result")
+            if cooldown_result is not None:
+                log_search_path_results(cooldown_result["candidate_evaluations"])
+                cooldown_result.pop("candidate_evaluations", None)
         return result
 
     def block(point):
@@ -1171,25 +1128,26 @@ def search_hparam_segment(
                 cooldown_result=None,
             )
         results_by_point[point] = result
-        log_candidate_evaluation(result)
+        candidate_evaluations.append(result)
+        if is_main_interval:
+            log_main_hparams(result)
         return result
 
-    best_point, center_path_points = find_best_hparam_point(
+    best_point, _ = find_best_hparam_point(
         initial_point=initial_point,
         search_names=search_names,
         evaluate=evaluate,
         results_by_point=results_by_point,
         block=block,
     )
-    search_path = search_path_summaries(center_path_points, results_by_point)
     best_result = results_by_point[best_point]
     if interval_info is None:
         best_states = point_states(best_point, search_names)
-        log_search_path(search_name, search_path)
         load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
         result = dict(
             best_states=best_states,
             tta_val_acc=best_result["tta_val_acc"],
+            candidate_evaluations=list(candidate_evaluations),
         )
         add_best_result_fields(result, best_result)
         return result
@@ -1204,8 +1162,6 @@ def search_hparam_segment(
         capture_step_metrics=True,
     )
     best_cooldown_result = best_result["cooldown_result"]
-    log_search_path(search_name, search_path)
-    log_selected_hparams(best_result, best_cooldown_result)
     result = dict(
         interval_index=interval_info["interval_index"],
         best_point=best_point,
@@ -1229,14 +1185,6 @@ def search_interval_hparams(
     interval_start_step,
     cooldown_initial_states=None,
 ):
-    search_name = "run%d_bs%d_N%d_M%d_interval%d_step%d" % (
-        ctx.run,
-        ctx.batch_size,
-        ctx.n_steps,
-        ctx.cooldown_steps,
-        interval_index,
-        interval_start_step,
-    )
     remaining_steps_after_interval = (
         ctx.total_steps - interval_start_step - interval_steps
     )
@@ -1250,7 +1198,6 @@ def search_interval_hparams(
     )
     return search_hparam_segment(
         ctx,
-        search_name,
         initial_point,
         ctx.search_names,
         ctx.fixed_hparams,
