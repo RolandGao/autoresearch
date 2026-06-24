@@ -95,34 +95,6 @@ class Muon(torch.optim.Optimizer):
         defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov)
         super().__init__(params, defaults)
 
-    def grad_momentum_norm_ratio(self):
-        grad_sq = None
-        momentum_sq = None
-        for group in self.param_groups:
-            momentum = group["momentum"]
-            for p in group["params"]:
-                g = p.grad
-                if g is None:
-                    continue
-                g_sq = g.detach().float().square().sum()
-                grad_sq = g_sq if grad_sq is None else grad_sq + g_sq
-                buf = self.state[p].get("momentum_buffer")
-                if buf is not None:
-                    m_sq = buf.detach().float().square().sum() * momentum * momentum
-                    momentum_sq = m_sq if momentum_sq is None else momentum_sq + m_sq
-        if grad_sq is None:
-            return None
-        grad_norm = grad_sq.sqrt()
-        momentum_norm = (
-            torch.zeros((), device=grad_norm.device)
-            if momentum_sq is None
-            else momentum_sq.sqrt()
-        )
-        denom = grad_norm + momentum_norm
-        if denom.item() == 0:
-            return float("nan")
-        return (grad_norm / denom).item()
-
     def step(self):
         for group in self.param_groups:
             lr = group["lr"]
@@ -377,43 +349,42 @@ def log_event(name, **fields):
     print(" ".join([name, *field_parts]), flush=True)
 
 
-def log_train_loss(
+def log_train_hparams(
     run,
-    step,
+    interval_index,
+    start_step,
+    completed_steps,
     total_steps,
-    loss,
-    bias_lr,
-    head_lr,
-    muon_lr,
-    muon_momentum,
+    result,
     muon_nesterov,
-    muon_grad_momentum_norm_ratio=None,
 ):
-    fields = dict(
+    log_event(
+        "train_hparams",
         run=run,
-        step=step,
+        interval=interval_index,
+        start_step=start_step,
+        completed_steps=completed_steps,
         total_steps=total_steps,
-        loss=loss,
-        bias_lr=bias_lr,
-        head_lr=head_lr,
-        muon_lr=muon_lr,
-        muon_momentum=muon_momentum,
+        **hparam_log_fields(result),
         muon_nesterov=muon_nesterov,
     )
-    if LOG_MUON_GRAD_MOMENTUM_NORM_RATIO:
-        fields["muon_grad_momentum_norm_ratio"] = (
-            None
-            if muon_grad_momentum_norm_ratio is None
-            else muon_grad_momentum_norm_ratio
-        )
-    log_event("train_loss", **fields)
 
 
-def log_interval_boundary_tta_val_acc(
+def log_train_loss(run, interval_index, step, loss):
+    log_event(
+        "train_loss",
+        run=run,
+        interval=interval_index,
+        step=step,
+        loss=loss,
+    )
+
+
+def log_interval_boundary_eval(
     run, interval_index, step, total_steps, tta_val_acc
 ):
     log_event(
-        "interval_tta_val_acc",
+        "interval_boundary_eval",
         run=run,
         interval=interval_index,
         step=step,
@@ -462,55 +433,51 @@ def log_run_summary(result):
     print_summary_specs(RUN_FOOTER_SPECS, result)
 
 
-def log_search_center_path(search_name, center_path):
-    for step, center in enumerate(center_path):
-        fields = dict(search=search_name, step=step, **hparam_log_fields(center))
-        if center.get("blocked", False):
-            fields["blocked"] = True
-        elif "main_tta_val_acc" in center:
-            fields["main_tta_val_acc"] = center["main_tta_val_acc"]
-            if center["tta_val_acc"] != center["main_tta_val_acc"]:
-                fields["best_cooldown_tta_val_acc"] = center["tta_val_acc"]
-        else:
-            fields["tta_val_acc"] = center["tta_val_acc"]
-        log_event("center_path", **fields)
+def log_search_path(search_name, path):
+    for step, candidate in enumerate(path):
+        blocked = candidate.get("blocked", False)
+        fields = dict(
+            search=search_name,
+            step=step,
+            **hparam_log_fields(candidate),
+            blocked=blocked,
+        )
+        if not blocked:
+            fields["tta_val_acc"] = candidate["tta_val_acc"]
+        if "main_tta_val_acc" in candidate:
+            fields["main_tta_val_acc"] = candidate["main_tta_val_acc"]
+            fields["best_cooldown_tta_val_acc"] = (
+                candidate["tta_val_acc"]
+                if (
+                    not blocked
+                    and candidate["tta_val_acc"] != candidate["main_tta_val_acc"]
+                )
+                else None
+            )
+        log_event("search_path", **fields)
 
 
-def log_search_evaluation(result):
+def log_candidate_evaluation(result):
     fields = hparam_log_fields(result)
     if result.get("blocked", False):
-        log_event("search_evaluation", **fields, blocked=True)
+        log_event("candidate_eval", **fields, blocked=True)
         return
-    log_event(
-        "search_evaluation",
-        **fields,
-        tta_val_acc=result["tta_val_acc"],
-    )
-
-
-def log_interval_lr_result(interval_result):
-    fields = hparam_log_fields(interval_result)
-    if interval_result.get("blocked", False):
-        log_event("main_hparams", **fields, blocked=True)
-        return
-    cooldown_result = interval_result["cooldown_result"]
-    main_tta_val_acc = interval_result["main_tta_val_acc"]
-    if cooldown_result is None:
-        log_event(
-            "main_hparams",
-            **fields,
-            main_tta_val_acc=main_tta_val_acc,
+    if "main_tta_val_acc" in result:
+        cooldown_result = result["cooldown_result"]
+        fields.update(
+            main_tta_val_acc=result["main_tta_val_acc"],
+            best_cooldown_tta_val_acc=(
+                cooldown_result["tta_val_acc"] if cooldown_result is not None else None
+            ),
         )
-        return
+    fields["tta_val_acc"] = result["tta_val_acc"]
     log_event(
-        "main_hparams",
+        "candidate_eval",
         **fields,
-        main_tta_val_acc=main_tta_val_acc,
-        best_cooldown_tta_val_acc=cooldown_result["tta_val_acc"],
     )
 
 
-def log_interval_lr_search_complete(best_result, best_cooldown_result):
+def log_selected_hparams(best_result, best_cooldown_result):
     main_tta_val_acc = best_result["main_tta_val_acc"]
     best_cooldown_tta_val_acc = (
         best_cooldown_result["tta_val_acc"]
@@ -518,8 +485,9 @@ def log_interval_lr_search_complete(best_result, best_cooldown_result):
         else best_result["tta_val_acc"]
     )
     log_event(
-        "best_hparams",
+        "selected_hparams",
         **hparam_log_fields(best_result),
+        tta_val_acc=best_result["tta_val_acc"],
         main_tta_val_acc=main_tta_val_acc,
         best_cooldown_tta_val_acc=best_cooldown_tta_val_acc,
     )
@@ -587,7 +555,6 @@ TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
 SEARCH_STEP_CONFIGS = [(40, 40)]
 PRINT_OUTPUT_FILENAME = "cifar_search_extension.log"
-LOG_MUON_GRAD_MOMENTUM_NORM_RATIO = False
 LR_SEARCH_FACTOR = 0.6
 LR_SEARCH_SIG_FIGS = 2
 LR_SEARCH_MAX_MOVES = 60
@@ -814,16 +781,16 @@ def make_optimizers(model, cfg):
             lr_name="head_lr",
         ),
     ]
-    optimizer1 = torch.optim.SGD(
+    sgd_optimizer = torch.optim.SGD(
         param_configs, momentum=0.85, nesterov=True, fused=True
     )
-    optimizer2 = Muon(
+    muon_optimizer = Muon(
         filter_params,
         lr=cfg.muon_lr,
         momentum=cfg.muon_momentum,
         nesterov=cfg.muon_nesterov,
     )
-    return optimizer1, optimizer2
+    return sgd_optimizer, muon_optimizer
 
 
 def set_muon_hparams(muon_optimizer, muon_lr, muon_momentum, muon_nesterov):
@@ -860,7 +827,7 @@ def load_training_state(model, optimizers, batch_stream, state):
     model.zero_grad(set_to_none=True)
 
 
-def train_one_step(ctx, hparams, global_step, capture_muon_grad_momentum_norm_ratio):
+def train_one_step(ctx, hparams, global_step):
     set_muon_hparams(
         ctx.muon_optimizer,
         hparams["muon_lr"],
@@ -878,15 +845,10 @@ def train_one_step(ctx, hparams, global_step, capture_muon_grad_momentum_norm_ra
         outputs, labels, label_smoothing=LABEL_SMOOTHING, reduction="mean"
     )
     loss.backward()
-    muon_grad_momentum_norm_ratio = (
-        ctx.muon_optimizer.grad_momentum_norm_ratio()
-        if capture_muon_grad_momentum_norm_ratio
-        else None
-    )
     for optimizer in ctx.optimizers:
         optimizer.step()
     ctx.model.zero_grad(set_to_none=True)
-    return loss.item(), muon_grad_momentum_norm_ratio
+    return loss.item()
 
 
 def train_interval(
@@ -900,24 +862,17 @@ def train_interval(
     hparams = dict(hparams)
     hparams["muon_lr"] = rounded_lr(hparams["muon_lr"])
     losses = [] if capture_step_metrics else None
-    capture_muon_ratio = (
-        capture_step_metrics and LOG_MUON_GRAD_MOMENTUM_NORM_RATIO
-    )
-    muon_grad_momentum_norm_ratios = [] if capture_muon_ratio else None
     last_train_loss = float("inf")
     completed_steps = 0
     for offset in range(interval_steps):
-        step_loss, muon_grad_momentum_norm_ratio = train_one_step(
+        step_loss = train_one_step(
             ctx,
             hparams,
             start_step + offset,
-            capture_muon_grad_momentum_norm_ratio=capture_muon_ratio,
         )
         last_train_loss = step_loss
         if capture_step_metrics:
             losses.append(step_loss)
-        if capture_muon_ratio:
-            muon_grad_momentum_norm_ratios.append(muon_grad_momentum_norm_ratio)
         completed_steps += 1
         if not finite(step_loss):
             break
@@ -928,10 +883,6 @@ def train_interval(
     result.update(hparams)
     if capture_step_metrics:
         result["losses"] = losses
-        if capture_muon_ratio:
-            result["muon_grad_momentum_norm_ratios"] = (
-                muon_grad_momentum_norm_ratios
-            )
     if capture_end_state:
         result["end_state"] = snapshot_training_state(
             ctx.model, ctx.optimizers, ctx.batch_stream
@@ -1198,7 +1149,7 @@ def find_best_hparam_point(
     return middle_point, center_path
 
 
-def search_evaluation_summary(result):
+def candidate_summary(result):
     fields = [name for name in SEARCH_HPARAMS if name in result] + ["tta_val_acc"]
     if "main_tta_val_acc" in result:
         fields.append("main_tta_val_acc")
@@ -1215,9 +1166,9 @@ def add_best_result_fields(result, best_result):
     result.update(copy_fields(best_result, BEST_RESULT_FIELDS))
 
 
-def center_path_evaluations(center_path_points, results_by_point):
+def search_path_summaries(center_path_points, results_by_point):
     return [
-        search_evaluation_summary(results_by_point[point])
+        candidate_summary(results_by_point[point])
         for point in center_path_points
     ]
 
@@ -1241,7 +1192,7 @@ def search_hparam_segment(
     steps,
     start_step,
     start_state,
-    ii=None,
+    interval_info=None,
 ):
     results_by_point = {}
 
@@ -1250,7 +1201,9 @@ def search_hparam_segment(
             return results_by_point[point]
         hparams = point_to_hparams(point, search_names, fixed_hparams)
         load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
-        needs_cooldown_state = ii is not None and ii["use_cooldown"]
+        needs_cooldown_state = (
+            interval_info is not None and interval_info["use_cooldown"]
+        )
         result = train_interval(
             ctx,
             hparams,
@@ -1260,14 +1213,14 @@ def search_hparam_segment(
         )
         result_loss = interval_result_loss(result)
         should_evaluate_tta = result["completed_steps"] == steps and finite(result_loss)
-        if ii is not None:
+        if interval_info is not None:
             result["cooldown_result"] = None
             result["main_tta_val_acc"] = float("-inf")
             if should_evaluate_tta:
                 result["main_tta_val_acc"] = evaluate_tta_val_acc(
                     ctx.model, ctx.test_loader
                 )
-            if ii["use_cooldown"] and should_evaluate_tta:
+            if interval_info["use_cooldown"] and should_evaluate_tta:
                 cooldown_search_names = cooldown_search_hparam_names()
                 cooldown_lr_k = nearest_hparam_state("muon_lr", hparams["muon_lr"])
                 cooldown_search_name = "%s_cooldown_for_lr%s_m%s_n%s" % (
@@ -1277,7 +1230,9 @@ def search_hparam_segment(
                     ctx.muon_nesterov,
                 )
                 cooldown_start_state = result["end_state"]
-                cooldown_initial_states = dict(ii["cooldown_initial_states"] or {})
+                cooldown_initial_states = dict(
+                    interval_info["cooldown_initial_states"] or {}
+                )
                 if cooldown_seed_point is not None:
                     seed_cooldown_states = results_by_point[
                         cooldown_seed_point
@@ -1298,7 +1253,7 @@ def search_hparam_segment(
                     point_from_hparams(cooldown_initial_hparams, cooldown_search_names),
                     cooldown_search_names,
                     hparams,
-                    ii["cooldown_steps"],
+                    interval_info["cooldown_steps"],
                     start_step + steps,
                     cooldown_start_state,
                 )
@@ -1308,17 +1263,14 @@ def search_hparam_segment(
                 should_evaluate_tta = False
             result.pop("end_state", None)
         if should_evaluate_tta:
-            if ii is not None:
+            if interval_info is not None:
                 result["tta_val_acc"] = result["main_tta_val_acc"]
             else:
                 result["tta_val_acc"] = evaluate_tta_val_acc(ctx.model, ctx.test_loader)
         elif "tta_val_acc" not in result:
             result["tta_val_acc"] = float("-inf")
         results_by_point[point] = result
-        if ii is None:
-            log_search_evaluation(result)
-        else:
-            log_interval_lr_result(result)
+        log_candidate_evaluation(result)
         return result
 
     def block(point):
@@ -1332,16 +1284,13 @@ def search_hparam_segment(
             tta_val_acc=float("-inf"),
         )
         result.update(hparams)
-        if ii is not None:
+        if interval_info is not None:
             result.update(
                 main_tta_val_acc=float("-inf"),
                 cooldown_result=None,
             )
         results_by_point[point] = result
-        if ii is None:
-            log_search_evaluation(result)
-        else:
-            log_interval_lr_result(result)
+        log_candidate_evaluation(result)
         return result
 
     best_point, center_path_points = find_best_hparam_point(
@@ -1352,11 +1301,11 @@ def search_hparam_segment(
         block=block,
         extension_search=ctx.extension_search,
     )
-    center_path = center_path_evaluations(center_path_points, results_by_point)
+    search_path = search_path_summaries(center_path_points, results_by_point)
     best_result = results_by_point[best_point]
-    if ii is None:
+    if interval_info is None:
         best_states = point_states(best_point, search_names)
-        log_search_center_path(search_name, center_path)
+        log_search_path(search_name, search_path)
         load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
         result = dict(
             best_states=best_states,
@@ -1365,20 +1314,20 @@ def search_hparam_segment(
         add_best_result_fields(result, best_result)
         return result
     load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
-    best_hparams = copy_fields(best_result, SEARCH_HPARAMS)
+    selected_hparams = copy_fields(best_result, SEARCH_HPARAMS)
     actual_result = train_interval(
         ctx,
-        best_hparams,
+        selected_hparams,
         steps,
         start_step,
         capture_end_state=False,
         capture_step_metrics=True,
     )
     best_cooldown_result = best_result["cooldown_result"]
-    log_search_center_path(search_name, center_path)
-    log_interval_lr_search_complete(best_result, best_cooldown_result)
+    log_search_path(search_name, search_path)
+    log_selected_hparams(best_result, best_cooldown_result)
     result = dict(
-        interval_index=ii["interval_index"],
+        interval_index=interval_info["interval_index"],
         best_point=best_point,
         cooldown_best_states=best_cooldown_result["best_states"]
         if best_cooldown_result is not None
@@ -1389,10 +1338,6 @@ def search_hparam_segment(
         completed_steps=actual_result["completed_steps"],
         losses=list(actual_result["losses"]),
     )
-    if LOG_MUON_GRAD_MOMENTUM_NORM_RATIO:
-        result["muon_grad_momentum_norm_ratios"] = list(
-            actual_result["muon_grad_momentum_norm_ratios"]
-        )
     return result
 
 
@@ -1455,7 +1400,7 @@ def run_full_dataset_search(cfg):
 
     cfg.model.reset()
     cfg.model.init_whiten(train_loader.normalized_images()[:5000])
-    optimizer1, optimizer2 = make_optimizers(
+    sgd_optimizer, muon_optimizer = make_optimizers(
         cfg.model,
         namespace(
             vars(cfg),
@@ -1463,13 +1408,13 @@ def run_full_dataset_search(cfg):
             **initial_hparams,
         ),
     )
-    optimizers = [optimizer1, optimizer2]
+    optimizers = [sgd_optimizer, muon_optimizer]
     search_ctx = namespace(
         vars(cfg),
         "run model batch_size n_steps muon_nesterov extension_search",
         optimizers=optimizers,
-        sgd_optimizer=optimizer1,
-        muon_optimizer=optimizer2,
+        sgd_optimizer=sgd_optimizer,
+        muon_optimizer=muon_optimizer,
         batch_stream=batch_stream,
         test_loader=test_loader,
         cooldown_steps=cfg.m_steps,
@@ -1498,28 +1443,23 @@ def run_full_dataset_search(cfg):
         if interval_result["cooldown_best_states"] is not None:
             interval_cooldown_initial_states = interval_result["cooldown_best_states"]
         actual_losses = interval_result["losses"][: interval_result["completed_steps"]]
-        actual_muon_grad_momentum_norm_ratios = interval_result.get(
-            "muon_grad_momentum_norm_ratios"
+        log_train_hparams(
+            cfg.run,
+            interval_result["interval_index"],
+            completed_steps,
+            interval_result["completed_steps"],
+            cfg.train_steps,
+            interval_result,
+            cfg.muon_nesterov,
         )
         for local_offset, loss in enumerate(actual_losses, start=1):
             global_step = completed_steps + local_offset
             last_loss = loss
-            muon_grad_momentum_norm_ratio = (
-                actual_muon_grad_momentum_norm_ratios[local_offset - 1]
-                if actual_muon_grad_momentum_norm_ratios is not None
-                else None
-            )
             log_train_loss(
                 run=cfg.run,
+                interval_index=interval_result["interval_index"],
                 step=global_step,
-                total_steps=cfg.train_steps,
                 loss=loss,
-                bias_lr=interval_result["bias_lr"],
-                head_lr=interval_result["head_lr"],
-                muon_lr=interval_result["muon_lr"],
-                muon_momentum=interval_result["muon_momentum"],
-                muon_nesterov=cfg.muon_nesterov,
-                muon_grad_momentum_norm_ratio=muon_grad_momentum_norm_ratio,
             )
         completed_steps += interval_result["completed_steps"]
         if (
@@ -1528,7 +1468,7 @@ def run_full_dataset_search(cfg):
             and finite(last_loss)
         ):
             boundary_tta_val_acc = evaluate_tta_val_acc(cfg.model, test_loader)
-            log_interval_boundary_tta_val_acc(
+            log_interval_boundary_eval(
                 cfg.run,
                 interval_result["interval_index"],
                 completed_steps,
