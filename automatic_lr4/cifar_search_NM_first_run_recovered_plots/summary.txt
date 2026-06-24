@@ -1,0 +1,41 @@
+CIFAR scheduler search summary
+Input log: /workspace/neural_networks_optimization/autoresearch/automatic_lr4/cifar_search_NM_first_run_recovered.log
+Output directory: /workspace/neural_networks_optimization/autoresearch/automatic_lr4/cifar_search_NM_first_run_recovered_plots
+Plot file: /workspace/neural_networks_optimization/autoresearch/automatic_lr4/cifar_search_NM_first_run_recovered_plots/curves.png
+TTA val acc grid file: /workspace/neural_networks_optimization/autoresearch/automatic_lr4/cifar_search_NM_first_run_recovered_plots/tta_val_acc_grid.png
+Runs parsed: 25
+Completed runs: 25
+Primary metric: TTA val acc (higher is better).
+
+Best completed run by TTA val acc:
+  run=22 batch_size=2000 N=10 M=40 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9407 final_loss=0.9353 run_seconds=1070.13
+
+Batch size: 2000
+
+TTA val acc
+  run=22 N=10 M=40 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9407 final_loss=0.9353 run_seconds=1070.13 final_lr=0.0093 final_momentum=0.1 evaluated_configs=0
+  run=21 N=10 M=60 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9402 final_loss=0.9408 run_seconds=1644.82 final_lr=0.0056 final_momentum=0.1 evaluated_configs=0
+  run=12 N=40 M=40 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.94 final_loss=0.9401 run_seconds=295.975 final_lr=0.016 final_momentum=0.4 evaluated_configs=0
+  run=16 N=20 M=60 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.94 final_loss=0.9328 run_seconds=768.953 final_lr=0.0093 final_momentum=0.3 evaluated_configs=0
+  run=5 N=60 M=80 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9396 final_loss=0.9409 run_seconds=417.465 final_lr=0.016 final_momentum=0.4 evaluated_configs=0
+  run=15 N=20 M=80 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9394 final_loss=0.946 run_seconds=957.353 final_lr=0.026 final_momentum=0.4 evaluated_configs=0
+  run=11 N=40 M=60 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9393 final_loss=0.9308 run_seconds=367.671 final_lr=0.0093 final_momentum=0.6 evaluated_configs=0
+  run=13 N=40 M=20 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.939 final_loss=0.9263 run_seconds=234.82 final_lr=0.016 final_momentum=0 evaluated_configs=0
+  run=6 N=60 M=60 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.939 final_loss=0.9551 run_seconds=330.208 final_lr=0.016 final_momentum=0.2 evaluated_configs=0
+  run=3 N=80 M=20 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9388 final_loss=0.9472 run_seconds=150.093 final_lr=0.016 final_momentum=0.4 evaluated_configs=0
+  run=2 N=80 M=40 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9388 final_loss=0.9472 run_seconds=198.474 final_lr=0.016 final_momentum=0.4 evaluated_configs=0
+  run=1 N=80 M=60 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9388 final_loss=0.9472 run_seconds=221.659 final_lr=0.016 final_momentum=0.4 evaluated_configs=0
+  run=0 N=80 M=80 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9388 final_loss=0.9472 run_seconds=238.688 final_lr=0.016 final_momentum=0.4 evaluated_configs=0
+  run=7 N=60 M=40 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9384 final_loss=0.941 run_seconds=276.516 final_lr=0.002 final_momentum=0.5 evaluated_configs=0
+  run=20 N=10 M=80 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9377 final_loss=0.9705 run_seconds=1801.73 final_lr=0.0093 final_momentum=0.6 evaluated_configs=0
+  run=18 N=20 M=20 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9374 final_loss=0.9337 run_seconds=415.087 final_lr=0.0093 final_momentum=0.5 evaluated_configs=0
+  run=4 N=80 M=10 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9371 final_loss=0.931 run_seconds=143.583 final_lr=0.0056 final_momentum=0.6 evaluated_configs=0
+  run=17 N=20 M=40 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.937 final_loss=0.9397 run_seconds=603.857 final_lr=0.016 final_momentum=0 evaluated_configs=0
+  run=8 N=60 M=20 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9359 final_loss=0.937 run_seconds=210.427 final_lr=0.0093 final_momentum=0.7 evaluated_configs=0
+  run=10 N=40 M=80 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9358 final_loss=0.9449 run_seconds=469.175 final_lr=0.026 final_momentum=0.5 evaluated_configs=0
+  run=9 N=60 M=10 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9355 final_loss=0.943 run_seconds=188.336 final_lr=0.0093 final_momentum=0.4 evaluated_configs=0
+  run=14 N=40 M=10 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9349 final_loss=0.9378 run_seconds=185.823 final_lr=0.016 final_momentum=0.2 evaluated_configs=0
+  run=23 N=10 M=20 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9346 final_loss=0.9399 run_seconds=824.056 final_lr=0.016 final_momentum=0.3 evaluated_configs=0
+  run=24 N=10 M=10 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9326 final_loss=0.9519 run_seconds=572.275 final_lr=0.002 final_momentum=0.7 evaluated_configs=0
+  run=19 N=20 M=10 interval_scheduler=constant lr_connectedness=jump_allowed tta_val_acc=0.9318 final_loss=0.94 run_seconds=296.691 final_lr=0.0093 final_momentum=0 evaluated_configs=0
+

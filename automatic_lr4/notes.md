@@ -109,3 +109,4 @@ if M > 0 and and it's continuous_*, then it also only searches for end_lr
 
 tsp          # list jobs
 tsp -k 0     # terminate running job 0
+tsp -r 5

@@ -18,10 +18,11 @@ import matplotlib.pyplot as plt
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_LOG = HERE / "cifar_search_post_momentum_fix.log"
-DEFAULT_OUTPUT_DIR = HERE / "cifar_search_post_momentum_fix_plots"
+DEFAULT_LOG = HERE / "cifar_search_NM_first_run_recovered.log"
+DEFAULT_OUTPUT_DIR = HERE / "cifar_search_NM_first_run_recovered_plots"
 OUTPUT_SUMMARY = "summary.txt"
 OUTPUT_PLOT = "curves.png"
+OUTPUT_TTA_GRID_PLOT = "tta_val_acc_grid.png"
 
 KV_RE = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>\S+)")
 SUMMARY_RE = re.compile(r"^(?P<key>[A-Za-z][A-Za-z0-9 ]+):\s+(?P<value>\S+)")
@@ -507,6 +508,15 @@ def sorted_runs_for_plot(runs: list[Run]) -> list[Run]:
     )
 
 
+def has_tta_grid_data(runs: list[Run]) -> bool:
+    return any(
+        run.n_steps is not None
+        and run.m_steps is not None
+        and run.tta_val_acc is not None
+        for run in runs
+    )
+
+
 def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
     best = best_completed_run(runs)
     lines = [
@@ -519,6 +529,8 @@ def write_summary(runs: list[Run], log_path: Path, output_dir: Path) -> None:
         "Primary metric: TTA val acc (higher is better).",
         "",
     ]
+    if has_tta_grid_data(runs):
+        lines.insert(4, f"TTA val acc grid file: {output_dir / OUTPUT_TTA_GRID_PLOT}")
     if best is not None:
         lines.extend(
             [
@@ -647,15 +659,96 @@ def plot_curves(runs: list[Run], output_dir: Path) -> None:
     plt.close(fig)
 
 
-def plot_all(runs: list[Run], log_path: Path, output_dir: Path) -> None:
+def plot_tta_grid(runs: list[Run], output_dir: Path) -> bool:
+    grid_runs = [
+        run
+        for run in runs
+        if run.n_steps is not None
+        and run.m_steps is not None
+        and run.tta_val_acc is not None
+    ]
+    if not grid_runs:
+        return False
+
+    best_by_cell: dict[tuple[int, int], Run] = {}
+    for run in grid_runs:
+        key = (run.n_steps, run.m_steps)
+        incumbent = best_by_cell.get(key)
+        if incumbent is None or (
+            run.tta_val_acc is not None
+            and incumbent.tta_val_acc is not None
+            and run.tta_val_acc > incumbent.tta_val_acc
+        ):
+            best_by_cell[key] = run
+
+    n_values = sorted({n for n, _ in best_by_cell})
+    m_values = sorted({m for _, m in best_by_cell})
+    matrix = [
+        [
+            best_by_cell[(n, m)].tta_val_acc
+            if (n, m) in best_by_cell
+            else float("nan")
+            for n in n_values
+        ]
+        for m in m_values
+    ]
+
+    values = [run.tta_val_acc for run in best_by_cell.values()]
+    assert all(value is not None for value in values)
+    low = min(value for value in values if value is not None)
+    high = max(value for value in values if value is not None)
+
+    fig_width = max(6.5, 1.15 * len(n_values) + 2.5)
+    fig_height = max(5.2, 0.95 * len(m_values) + 2.0)
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    image = ax.imshow(
+        matrix,
+        cmap="viridis",
+        vmin=max(0.0, low - 0.0005),
+        vmax=min(1.0, high + 0.0005),
+        aspect="auto",
+    )
+    colorbar = fig.colorbar(image, ax=ax)
+    colorbar.set_label("TTA val acc")
+
+    ax.set_xticks(range(len(n_values)), labels=[str(value) for value in n_values])
+    ax.set_yticks(range(len(m_values)), labels=[str(value) for value in m_values])
+    ax.set_xlabel("N steps")
+    ax.set_ylabel("M cooldown steps")
+    ax.set_title("TTA val acc by N x M")
+
+    threshold = low + (high - low) * 0.55
+    for row, m_steps in enumerate(m_values):
+        for col, n_steps in enumerate(n_values):
+            run = best_by_cell.get((n_steps, m_steps))
+            if run is None or run.tta_val_acc is None:
+                label = "NA"
+                color = "#222222"
+            else:
+                label = f"{run.tta_val_acc:.4f}"
+                color = "white" if run.tta_val_acc > threshold else "#111111"
+            ax.text(col, row, label, ha="center", va="center", color=color, fontsize=10)
+
+    ax.set_xticks([tick - 0.5 for tick in range(1, len(n_values))], minor=True)
+    ax.set_yticks([tick - 0.5 for tick in range(1, len(m_values))], minor=True)
+    ax.grid(which="minor", color="white", linewidth=1.2)
+    ax.tick_params(which="minor", bottom=False, left=False)
+    fig.tight_layout()
+    fig.savefig(output_dir / OUTPUT_TTA_GRID_PLOT, dpi=180)
+    plt.close(fig)
+    return True
+
+
+def plot_all(runs: list[Run], log_path: Path, output_dir: Path) -> bool:
     output_dir.mkdir(parents=True, exist_ok=True)
     write_summary(runs, log_path, output_dir)
     plot_curves(runs, output_dir)
+    return plot_tta_grid(runs, output_dir)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Parse and plot cifar_search_post_momentum_fix.log."
+        description="Parse and plot the CIFAR scheduler search log."
     )
     parser.add_argument(
         "log",
@@ -680,12 +773,14 @@ def main() -> None:
     if not runs:
         raise SystemExit(f"No runs parsed from {args.log}")
 
-    plot_all(runs, args.log, args.output_dir)
+    wrote_tta_grid = plot_all(runs, args.log, args.output_dir)
 
     best = best_completed_run(runs)
     print(f"Parsed {len(runs)} runs from {args.log}")
     print(f"Wrote {args.output_dir / OUTPUT_SUMMARY}")
     print(f"Wrote {args.output_dir / OUTPUT_PLOT}")
+    if wrote_tta_grid:
+        print(f"Wrote {args.output_dir / OUTPUT_TTA_GRID_PLOT}")
     if best is not None:
         print(
             f"Best completed run: run={best.run} batch_size={best.batch_size} "

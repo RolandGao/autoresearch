@@ -1,0 +1,1 @@
+cifar_baseline2_full_search run=0 batch_size=2000 train_epochs=8 N=80 M=80 interval_scheduler=constant lr_connectedness=jump_allowed momentum_config=search_momentum_fixed_nesterov_false search_momentum=True muon_nesterov=False initial_muon_lr=0.19 initial_muon_lr_k=0 initial_muon_momentum=0.6 initial_muon_momentum_index=6

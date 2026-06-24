@@ -24,6 +24,7 @@ results.tsv
 beam_search_checkpoints/
 *.pdf
 *.log
+!automatic_lr4/*.log
 sgd_ablation/
 softmax_hparam_plots/
 sgdh_ablation2_variant_plots/
