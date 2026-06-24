@@ -110,3 +110,8 @@ if M > 0 and and it's continuous_*, then it also only searches for end_lr
 tsp          # list jobs
 tsp -k 0     # terminate running job 0
 tsp -r 5
+
+
+best_hparams=muon_lr=0.016 muon_momentum=0.6 bias_lr=22 head_lr=800 main=0.9382, best_cooldown=0.9382
+
+muon_lr=0.0056 muon_momentum=0.7 bias_lr=13 head_lr=1300 -> tta_val_acc=0.9388
