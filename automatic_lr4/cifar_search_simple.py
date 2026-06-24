@@ -418,7 +418,7 @@ def finite(value):
     return bool(torch.isfinite(torch.as_tensor(value)).item())
 
 
-RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nTrain epochs:        %.3g|train_epochs\nTrain steps:         %d|train_steps\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nSearch hparams:      %s|search_names_text\nCooldown hparams:    %s|cooldown_search_names_text\nMuon nesterov:       %s|muon_nesterov\nExtension search:    %s|extension_search\n".strip().splitlines()
+RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nTrain epochs:        %.3g|train_epochs\nTrain steps:         %d|train_steps\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nSearch hparams:      %s|search_names_text\nCooldown hparams:    %s|cooldown_search_names_text\nMuon nesterov:       %s|muon_nesterov\n".strip().splitlines()
 RUN_FOOTER_SPECS = "\nVal acc:             %.4f|val_acc\nTTA val acc:         %.4f|tta_val_acc\nRun seconds:         %.3f|run_seconds\n".strip().splitlines()
 
 
@@ -558,7 +558,6 @@ PRINT_OUTPUT_FILENAME = "cifar_search_extension.log"
 LR_SEARCH_FACTOR = 0.6
 LR_SEARCH_SIG_FIGS = 2
 LR_SEARCH_MAX_MOVES = 60
-EXTENSION_SEARCH = True
 MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
 INITIAL_MOMENTUM = 0.6
 MUON_NESTEROV = False
@@ -966,85 +965,6 @@ def neighbor_points(point, search_names):
         yield from group
 
 
-def next_direction_state(name, state, direction):
-    spec = SEARCH_HPARAMS[name]
-    next_state = state + direction
-    if spec.kind == "log_lr":
-        return next_state
-    if spec.kind == "choice":
-        if 0 <= next_state < len(spec.values):
-            return next_state
-        return None
-    raise ValueError(f"Unrecognized hparam kind: {spec.kind}")
-
-
-def best_direction_point(
-    middle_point,
-    first_point,
-    search_names,
-    index,
-    evaluate,
-    results_by_point,
-):
-    name = search_names[index]
-    direction = first_point[index] - middle_point[index]
-    best_point = middle_point
-    point = first_point
-    for _ in range(LR_SEARCH_MAX_MOVES):
-        evaluate(point, cooldown_seed_point=middle_point)
-        if not better_point(point, best_point, results_by_point, search_names):
-            break
-        best_point = point
-        next_state = next_direction_state(name, point[index], direction)
-        if next_state is None:
-            break
-        point = point_with_state(middle_point, index, next_state)
-    return best_point
-
-
-def best_axis_point(
-    middle_point,
-    search_names,
-    index,
-    group,
-    evaluate,
-    results_by_point,
-    block,
-):
-    name = search_names[index]
-    axis_best_point = middle_point
-    first_point = group[0]
-    first_best_point = best_direction_point(
-        middle_point,
-        first_point,
-        search_names,
-        index,
-        evaluate,
-        results_by_point,
-    )
-    if better_point(first_best_point, axis_best_point, results_by_point, search_names):
-        axis_best_point = first_best_point
-    if len(group) == 1:
-        return axis_best_point
-    second_point = group[1]
-    if uses_opposite_neighbor_block(name) and better_tta_val_acc(
-        first_point, middle_point, results_by_point
-    ):
-        block(second_point)
-        return axis_best_point
-    second_best_point = best_direction_point(
-        middle_point,
-        second_point,
-        search_names,
-        index,
-        evaluate,
-        results_by_point,
-    )
-    if better_point(second_best_point, axis_best_point, results_by_point, search_names):
-        axis_best_point = second_best_point
-    return axis_best_point
-
-
 def best_neighbor_point(middle_point, results_by_point, search_names):
     best_point = middle_point
     for point in neighbor_points(middle_point, search_names):
@@ -1059,7 +979,6 @@ def find_best_hparam_point(
     evaluate,
     results_by_point,
     block,
-    extension_search=False,
 ):
     def evaluate_neighbors(middle_point):
         results = []
@@ -1078,47 +997,9 @@ def find_best_hparam_point(
             results.append(evaluate(second_point, cooldown_seed_point=middle_point))
         return results
 
-    def evaluate_axis_extensions(middle_point):
-        axis_best_points = []
-        for name, group in neighbor_point_groups(middle_point, search_names):
-            index = search_names.index(name)
-            axis_best_points.append(
-                best_axis_point(
-                    middle_point,
-                    search_names,
-                    index,
-                    group,
-                    evaluate,
-                    results_by_point,
-                    block,
-                )
-            )
-        return axis_best_points
-
     middle_point = initial_point
     center_path = [middle_point]
     evaluate(middle_point)
-    if extension_search:
-        for _ in range(LR_SEARCH_MAX_MOVES):
-            axis_best_points = evaluate_axis_extensions(middle_point)
-            next_point = middle_point
-            for point in axis_best_points:
-                if better_point(point, next_point, results_by_point, search_names):
-                    next_point = point
-            if next_point == middle_point:
-                break
-            middle_point = next_point
-            center_path.append(middle_point)
-        else:
-            log_event(
-                "lr_momentum_search_warning",
-                did_not_converge_within=LR_SEARCH_MAX_MOVES,
-                using_point=middle_point,
-                tta_val_acc=results_by_point[middle_point]["tta_val_acc"],
-                loss=interval_result_loss(results_by_point[middle_point]),
-            )
-        return middle_point, center_path
-
     initial_points = [middle_point]
     evaluate_neighbors(middle_point)
     initial_points.extend(
@@ -1299,7 +1180,6 @@ def search_hparam_segment(
         evaluate=evaluate,
         results_by_point=results_by_point,
         block=block,
-        extension_search=ctx.extension_search,
     )
     search_path = search_path_summaries(center_path_points, results_by_point)
     best_result = results_by_point[best_point]
@@ -1411,7 +1291,7 @@ def run_full_dataset_search(cfg):
     optimizers = [sgd_optimizer, muon_optimizer]
     search_ctx = namespace(
         vars(cfg),
-        "run model batch_size n_steps muon_nesterov extension_search",
+        "run model batch_size n_steps muon_nesterov",
         optimizers=optimizers,
         sgd_optimizer=sgd_optimizer,
         muon_optimizer=muon_optimizer,
@@ -1483,7 +1363,7 @@ def run_full_dataset_search(cfg):
     tta_val_acc = evaluate(cfg.model, test_loader, tta_level=2)
     result = pack(
         vars(cfg),
-        "run batch_size train_epochs train_steps n_steps m_steps search_names_text cooldown_search_names_text muon_nesterov extension_search",
+        "run batch_size train_epochs train_steps n_steps m_steps search_names_text cooldown_search_names_text muon_nesterov",
     )
     result.update(
         val_acc=val_acc,
@@ -1496,14 +1376,13 @@ def iter_run_settings():
     for config, steps in product(RUN_CONFIGS, SEARCH_STEP_CONFIGS):
         n_steps, m_steps = steps
         batch_size = config["batch_size"]
-        extension_search = config.get("extension_search", EXTENSION_SEARCH)
         bias_lr_mult = batch_size / 2000
         momentum_spec = SEARCH_HPARAMS["muon_momentum"]
         bias_lr_spec = SEARCH_HPARAMS["bias_lr"]
         head_lr_spec = SEARCH_HPARAMS["head_lr"]
         yield namespace(
             locals(),
-            "n_steps m_steps extension_search",
+            "n_steps m_steps",
             batch_size=batch_size,
             train_epochs=TRAIN_EPOCHS,
             initial_muon_momentum=momentum_spec.initial_value,
@@ -1526,7 +1405,6 @@ def print_run_banner(cfg):
         search_hparams=cfg.search_names_text,
         cooldown_search_hparams=cfg.cooldown_search_names_text,
         muon_nesterov=cfg.muon_nesterov,
-        extension_search=cfg.extension_search,
         initial_muon_lr=initial_hparams["muon_lr"],
         initial_muon_momentum=initial_muon_momentum,
         initial_muon_momentum_index=nearest_hparam_state(
