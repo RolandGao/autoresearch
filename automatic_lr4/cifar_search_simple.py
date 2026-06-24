@@ -343,8 +343,7 @@ def format_log_value(value):
 
 def log_event(name, **fields):
     field_parts = [
-        "%s=%s" % (key, format_log_value(value))
-        for key, value in fields.items()
+        "%s=%s" % (key, format_log_value(value)) for key, value in fields.items()
     ]
     print(" ".join([name, *field_parts]), flush=True)
 
@@ -380,9 +379,7 @@ def log_train_loss(run, interval_index, step, loss):
     )
 
 
-def log_interval_boundary_eval(
-    run, interval_index, step, total_steps, tta_val_acc
-):
+def log_interval_boundary_eval(run, interval_index, step, total_steps, tta_val_acc):
     log_event(
         "interval_boundary_eval",
         run=run,
@@ -455,17 +452,28 @@ def log_main_hparams(result):
     log_line("%s %s" % (prefix, ", ".join(metrics)))
 
 
-def log_search_path_result(result):
-    prefix = "search_path %s" % hparam_text(result)
+def log_candidate_result(result):
+    prefix = hparam_text(result)
     if result.get("blocked", False):
         log_line("%s -> blocked" % prefix)
         return
     log_line("%s -> tta_val_acc=%s" % (prefix, format_log_value(result["tta_val_acc"])))
 
 
-def log_search_path_results(results):
+def log_candidate_results(results):
     for result in results:
-        log_search_path_result(result)
+        log_candidate_result(result)
+
+
+def log_search_path(path):
+    for step, result in enumerate(path):
+        prefix = "search_path step=%d %s" % (step, hparam_text(result))
+        if result.get("blocked", False):
+            log_line("%s blocked=True" % prefix)
+            continue
+        log_line(
+            "%s tta_val_acc=%s" % (prefix, format_log_value(result["tta_val_acc"]))
+        )
 
 
 ############################################
@@ -529,7 +537,7 @@ def evaluate_tta_val_acc(model, loader):
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
 SEARCH_STEP_CONFIGS = [(40, 40)]
-PRINT_OUTPUT_FILENAME = "cifar_search_extension.log"
+PRINT_OUTPUT_FILENAME = "cifar_search_4hparam.log"
 LR_SEARCH_FACTOR = 0.6
 LR_SEARCH_SIG_FIGS = 2
 LR_SEARCH_MAX_MOVES = 60
@@ -1067,9 +1075,9 @@ def search_hparam_segment(
                     interval_info["cooldown_initial_states"] or {}
                 )
                 if cooldown_seed_point is not None:
-                    seed_cooldown_states = results_by_point[
-                        cooldown_seed_point
-                    ].get("cooldown_best_states")
+                    seed_cooldown_states = results_by_point[cooldown_seed_point].get(
+                        "cooldown_best_states"
+                    )
                     if seed_cooldown_states is not None:
                         cooldown_initial_states.update(seed_cooldown_states)
                 cooldown_initial_hparams = dict(hparams)
@@ -1107,8 +1115,10 @@ def search_hparam_segment(
             log_main_hparams(result)
             cooldown_result = result.get("cooldown_result")
             if cooldown_result is not None:
-                log_search_path_results(cooldown_result["candidate_evaluations"])
+                log_candidate_results(cooldown_result["candidate_evaluations"])
+                log_search_path(cooldown_result["search_path"])
                 cooldown_result.pop("candidate_evaluations", None)
+                cooldown_result.pop("search_path", None)
         return result
 
     def block(point):
@@ -1133,13 +1143,14 @@ def search_hparam_segment(
             log_main_hparams(result)
         return result
 
-    best_point, _ = find_best_hparam_point(
+    best_point, center_path_points = find_best_hparam_point(
         initial_point=initial_point,
         search_names=search_names,
         evaluate=evaluate,
         results_by_point=results_by_point,
         block=block,
     )
+    search_path = [results_by_point[point] for point in center_path_points]
     best_result = results_by_point[best_point]
     if interval_info is None:
         best_states = point_states(best_point, search_names)
@@ -1148,6 +1159,7 @@ def search_hparam_segment(
             best_states=best_states,
             tta_val_acc=best_result["tta_val_acc"],
             candidate_evaluations=list(candidate_evaluations),
+            search_path=list(search_path),
         )
         add_best_result_fields(result, best_result)
         return result
@@ -1162,6 +1174,7 @@ def search_hparam_segment(
         capture_step_metrics=True,
     )
     best_cooldown_result = best_result["cooldown_result"]
+    log_search_path(search_path)
     result = dict(
         interval_index=interval_info["interval_index"],
         best_point=best_point,
@@ -1372,11 +1385,6 @@ def main():
         open(print_output_path, "w") as print_output_file,
         redirect_stdout(print_output_file),
     ):
-        log_event(
-            "cifar_search_start",
-            time=current_time,
-            output=print_output_path,
-        )
         run_main()
 
 
