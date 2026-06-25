@@ -24,9 +24,6 @@ DEFAULT_OUTPUT_DIR = (
 
 OUTPUT_SUMMARY = "summary.txt"
 OUTPUT_CURVES = "curves.png"
-OUTPUT_SEARCH_PATHS = "search_paths.png"
-OUTPUT_MAIN_SEARCH = "main_search.png"
-OUTPUT_COOLDOWN = "cooldown_candidates.png"
 
 KV_RE = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>\S+)")
 SUMMARY_RE = re.compile(r"^(?P<key>[A-Za-z][A-Za-z0-9 ]+):\s+(?P<value>.+)$")
@@ -367,6 +364,42 @@ def interval_loss_ranges(run: Run) -> dict[int, tuple[float | None, float | None
     return ranges
 
 
+def format_hparams(hparams: HParams, prefix: str = "") -> str:
+    return (
+        f"{prefix}muon_lr={format_number(hparams.muon_lr)} "
+        f"{prefix}momentum={format_number(hparams.muon_momentum)} "
+        f"{prefix}bias_lr={format_number(hparams.bias_lr)} "
+        f"{prefix}head_lr={format_number(hparams.head_lr)}"
+    )
+
+
+def format_hparam_columns(hparams: HParams) -> str:
+    return (
+        f"muon_lr={format_number(hparams.muon_lr):<8} "
+        f"momentum={format_number(hparams.muon_momentum):<8} "
+        f"bias_lr={format_number(hparams.bias_lr):<8} "
+        f"head_lr={format_number(hparams.head_lr):<8}"
+    )
+
+
+def format_candidate_row(
+    phase: str,
+    score: str,
+    hparams: HParams,
+) -> str:
+    return (
+        f"phase={phase:<8} score={score:<8} {format_hparam_columns(hparams)}"
+    )
+
+
+def best_cooldown_candidate(main_eval: MainEval) -> CooldownCandidate | None:
+    return max(
+        (item for item in main_eval.candidates if item.tta_val_acc is not None),
+        key=lambda item: item.tta_val_acc or -math.inf,
+        default=None,
+    )
+
+
 def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
     selected_paths = selected_path_by_interval(run)
     loss_ranges = interval_loss_ranges(run)
@@ -391,9 +424,6 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
         f"Input log: {log_path}",
         f"Output directory: {output_dir}",
         f"Curves plot: {output_dir / OUTPUT_CURVES}",
-        f"Search paths plot: {output_dir / OUTPUT_SEARCH_PATHS}",
-        f"Main search plot: {output_dir / OUTPUT_MAIN_SEARCH}",
-        f"Cooldown candidates plot: {output_dir / OUTPUT_COOLDOWN}",
         "",
         (
             f"Run {run.run}: batch_size={format_number(run.batch_size)} "
@@ -420,30 +450,21 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
         lines.append(
             "Best main eval: "
             f"interval={best_main.interval} main={best_main.main_acc:.4f} "
-            f"muon_lr={format_number(best_main.hparams.muon_lr)} "
-            f"momentum={format_number(best_main.hparams.muon_momentum)} "
-            f"bias_lr={format_number(best_main.hparams.bias_lr)} "
-            f"head_lr={format_number(best_main.hparams.head_lr)}"
+            f"{format_hparams(best_main.hparams)}"
         )
     if best_cooldown is not None:
         lines.append(
             "Best eval cooldown: "
             f"interval={best_cooldown.interval} best_cooldown="
             f"{best_cooldown.best_cooldown_acc:.4f} "
-            f"main_muon_lr={format_number(best_cooldown.hparams.muon_lr)} "
-            f"main_momentum={format_number(best_cooldown.hparams.muon_momentum)} "
-            f"main_bias_lr={format_number(best_cooldown.hparams.bias_lr)} "
-            f"main_head_lr={format_number(best_cooldown.hparams.head_lr)}"
+            f"{format_hparams(best_cooldown.hparams, prefix='main_')}"
         )
     if best_candidate is not None:
         lines.append(
             "Best cooldown candidate: "
             f"interval={best_candidate.interval} tta_val_acc="
             f"{best_candidate.tta_val_acc:.4f} "
-            f"muon_lr={format_number(best_candidate.hparams.muon_lr)} "
-            f"momentum={format_number(best_candidate.hparams.muon_momentum)} "
-            f"bias_lr={format_number(best_candidate.hparams.bias_lr)} "
-            f"head_lr={format_number(best_candidate.hparams.head_lr)}"
+            f"{format_hparams(best_candidate.hparams)}"
         )
     lines.append("")
 
@@ -452,7 +473,7 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
         path = selected_paths.get(train_interval.interval)
         start_loss, end_loss = loss_ranges.get(train_interval.interval, (None, None))
         lines.append(
-            f"  interval={train_interval.interval} start_step="
+            f"interval={train_interval.interval} start_step="
             f"{train_interval.start_step} steps={train_interval.completed_steps} "
             f"muon_lr={format_number(train_interval.hparams.muon_lr)} "
             f"momentum={format_number(train_interval.hparams.muon_momentum)} "
@@ -461,6 +482,39 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
             f"path_final_tta={format_number(path.final_acc if path else None)} "
             f"loss={format_number(start_loss)}->{format_number(end_loss)}"
         )
+    lines.append("")
+
+    lines.append("Main interval candidates and best cooldown hparams")
+    for interval in sorted({item.interval for item in run.main_evals}):
+        lines.append(f"interval={interval}")
+        interval_evals = [
+            item for item in run.main_evals if item.interval == interval
+        ]
+        for main_eval in interval_evals:
+            best = best_cooldown_candidate(main_eval)
+            if best is None:
+                cooldown_hparams = HParams()
+                best_tta = format_number(main_eval.best_cooldown_acc)
+            else:
+                cooldown_hparams = best.hparams
+                best_tta = format_number(best.tta_val_acc)
+            main_status = "blocked" if main_eval.blocked else format_number(
+                main_eval.main_acc
+            )
+            lines.append(
+                format_candidate_row(
+                    "main",
+                    main_status,
+                    main_eval.hparams,
+                )
+            )
+            lines.append(
+                format_candidate_row(
+                    "cooldown",
+                    best_tta,
+                    cooldown_hparams,
+                )
+            )
 
     (output_dir / OUTPUT_SUMMARY).write_text(
         "\n".join(lines) + "\n", encoding="utf-8"
@@ -470,26 +524,17 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
 def plot_curves(run: Run, output_dir: Path) -> None:
     selected_paths = selected_path_by_interval(run)
     intervals = sorted({item.interval for item in run.train_intervals})
+    train_intervals = sorted(run.train_intervals, key=lambda item: item.interval)
+    end_step_by_interval = {
+        item.interval: item.start_step + item.completed_steps for item in train_intervals
+    }
+    interval_steps = [
+        end_step_by_interval.get(interval, interval) for interval in intervals
+    ]
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 8.2))
-    loss_ax, acc_ax, lr_ax, momentum_ax = axes.flat
-
-    for interval in intervals:
-        points = [point for point in run.train_loss if point.interval == interval]
-        if points:
-            loss_ax.plot(
-                [point.step for point in points],
-                [point.loss for point in points],
-                color=color_for_interval(interval),
-                linewidth=1.7,
-                label=f"interval {interval}",
-            )
-            loss_ax.axvline(points[0].step, color="#cccccc", linewidth=0.8)
-    loss_ax.set_title("Train Loss")
-    loss_ax.set_xlabel("Training step")
-    loss_ax.set_ylabel("Loss")
-    loss_ax.legend(fontsize=8, ncol=2)
-    style_axes(loss_ax)
+    fig, axes = plt.subplots(2, 3, figsize=(17, 8.2))
+    acc_ax, muon_lr_ax, bias_lr_ax, head_lr_ax, momentum_ax, empty_ax = axes.flat
+    empty_ax.set_visible(False)
 
     best_main_by_interval = []
     best_cooldown_by_interval = []
@@ -512,8 +557,8 @@ def plot_curves(run: Run, output_dir: Path) -> None:
 
     def plot_optional_series(ax, label: str, values: list[float | None], marker: str):
         filtered = [
-            (interval, value)
-            for interval, value in zip(intervals, values)
+            (step, value)
+            for step, value in zip(interval_steps, values)
             if value is not None
         ]
         if filtered:
@@ -527,52 +572,61 @@ def plot_curves(run: Run, output_dir: Path) -> None:
     if final_tta is not None:
         acc_ax.axhline(final_tta, color="#333333", linestyle="--", linewidth=1.1)
         acc_ax.text(
-            intervals[-1] if intervals else 0,
+            interval_steps[-1] if interval_steps else 0,
             final_tta,
             f" final {final_tta:.4f}",
             va="bottom",
             fontsize=9,
         )
-    acc_ax.set_title("Validation Accuracy by Interval")
-    acc_ax.set_xlabel("Interval")
+    acc_ax.set_title("Validation Accuracy by Step")
+    acc_ax.set_xlabel("Training step")
     acc_ax.set_ylabel("Accuracy")
     acc_ax.legend(fontsize=9)
     style_axes(acc_ax)
 
-    train_intervals = sorted(run.train_intervals, key=lambda item: item.interval)
-    xs = [item.interval for item in train_intervals]
-    lr_series = [
-        ("muon_lr", [item.hparams.muon_lr for item in train_intervals]),
-        ("bias_lr", [item.hparams.bias_lr for item in train_intervals]),
-        ("head_lr", [item.hparams.head_lr for item in train_intervals]),
+    lr_panels = [
+        (muon_lr_ax, "Muon LR", "muon_lr"),
+        (bias_lr_ax, "Bias LR", "bias_lr"),
+        (head_lr_ax, "Head LR", "head_lr"),
     ]
-    for label, values in lr_series:
-        filtered = [(x, value) for x, value in zip(xs, values) if value is not None]
-        if filtered:
-            plot_xs, plot_values = zip(*filtered)
-            lr_ax.plot(plot_xs, plot_values, marker="o", linewidth=1.8, label=label)
-    lr_ax.set_yscale("symlog", linthresh=1e-3)
-    lr_ax.set_title("Selected Learning Rates")
-    lr_ax.set_xlabel("Interval")
-    lr_ax.set_ylabel("Learning rate")
-    lr_ax.legend(fontsize=9)
-    style_axes(lr_ax)
 
-    momentum_values = [
-        item.hparams.muon_momentum for item in train_intervals if item.hparams.muon_momentum is not None
-    ]
-    momentum_xs = [
-        item.interval for item in train_intervals if item.hparams.muon_momentum is not None
-    ]
-    if momentum_values:
-        momentum_ax.plot(momentum_xs, momentum_values, marker="o", linewidth=1.8)
+    def plot_piecewise_hparam(ax, attr: str) -> None:
+        plot_steps: list[int] = []
+        plot_values: list[float] = []
+        for train_interval in train_intervals:
+            value = getattr(train_interval.hparams, attr)
+            if value is None:
+                continue
+            plot_steps.append(train_interval.start_step)
+            plot_values.append(value)
+        if not plot_steps:
+            return
+
+        last_interval = max(
+            train_intervals,
+            key=lambda item: item.start_step + item.completed_steps,
+        )
+        last_step = last_interval.start_step + last_interval.completed_steps
+        plot_steps.append(last_step)
+        plot_values.append(plot_values[-1])
+        ax.step(plot_steps, plot_values, where="post", linewidth=2.0)
+        ax.set_xlim(plot_steps[0], last_step)
+
+    for ax, title, attr in lr_panels:
+        plot_piecewise_hparam(ax, attr)
+        ax.set_title(title)
+        ax.set_xlabel("Training step")
+        ax.set_ylabel("Learning rate")
+        style_axes(ax)
+
+    plot_piecewise_hparam(momentum_ax, "muon_momentum")
     momentum_ax.set_ylim(-0.03, 1.03)
     momentum_ax.set_title("Selected Muon Momentum")
-    momentum_ax.set_xlabel("Interval")
+    momentum_ax.set_xlabel("Training step")
     momentum_ax.set_ylabel("Momentum")
     style_axes(momentum_ax)
 
-    fig.suptitle("CIFAR search training and selected schedule")
+    fig.suptitle("CIFAR search selected schedule")
     fig.tight_layout(rect=(0, 0, 1, 0.965))
     fig.savefig(output_dir / OUTPUT_CURVES, dpi=180)
     plt.close(fig)
@@ -774,9 +828,6 @@ def plot_all(run: Run, log_path: Path, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     write_summary(run, log_path, output_dir)
     plot_curves(run, output_dir)
-    plot_search_paths(run, output_dir)
-    plot_main_search(run, output_dir)
-    plot_cooldown_candidates(run, output_dir)
 
 
 def parse_args() -> argparse.Namespace:
@@ -811,9 +862,6 @@ def main() -> None:
     print(f"Parsed run {run.run} from {args.log}")
     print(f"Wrote {args.output_dir / OUTPUT_SUMMARY}")
     print(f"Wrote {args.output_dir / OUTPUT_CURVES}")
-    print(f"Wrote {args.output_dir / OUTPUT_SEARCH_PATHS}")
-    print(f"Wrote {args.output_dir / OUTPUT_MAIN_SEARCH}")
-    print(f"Wrote {args.output_dir / OUTPUT_COOLDOWN}")
     print(f"Final TTA val acc: {format_number(run.final_tta_val_acc)}")
 
 
