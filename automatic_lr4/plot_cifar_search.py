@@ -400,6 +400,26 @@ def best_cooldown_candidate(main_eval: MainEval) -> CooldownCandidate | None:
     )
 
 
+def hparams_key(hparams: HParams) -> tuple[float | None, float | None, float | None, float | None]:
+    return (
+        hparams.muon_lr,
+        hparams.muon_momentum,
+        hparams.bias_lr,
+        hparams.head_lr,
+    )
+
+
+def selected_main_eval(run: Run, train_interval: TrainInterval) -> MainEval | None:
+    selected_key = hparams_key(train_interval.hparams)
+    for main_eval in run.main_evals:
+        if (
+            main_eval.interval == train_interval.interval
+            and hparams_key(main_eval.hparams) == selected_key
+        ):
+            return main_eval
+    return None
+
+
 def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
     selected_paths = selected_path_by_interval(run)
     loss_ranges = interval_loss_ranges(run)
@@ -469,11 +489,31 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
     lines.append("")
 
     lines.append("Selected training intervals")
+    selected_main_lines = []
+    selected_cooldown_lines = []
     for train_interval in sorted(run.train_intervals, key=lambda item: item.interval):
         path = selected_paths.get(train_interval.interval)
         start_loss, end_loss = loss_ranges.get(train_interval.interval, (None, None))
-        lines.append(
-            f"interval={train_interval.interval} start_step="
+        main_eval = selected_main_eval(run, train_interval)
+        cooldown = best_cooldown_candidate(main_eval) if main_eval is not None else None
+        if cooldown is None:
+            if path is not None and path.final_hparams is not None:
+                cooldown_text = (
+                    f"best_cooldown={format_number(path.final_acc)} "
+                    f"{format_hparams(path.final_hparams, prefix='cooldown_')}"
+                )
+            else:
+                cooldown_text = (
+                    "best_cooldown=NA cooldown_muon_lr=NA cooldown_momentum=NA "
+                    "cooldown_bias_lr=NA cooldown_head_lr=NA"
+                )
+        else:
+            cooldown_text = (
+                f"best_cooldown={format_number(cooldown.tta_val_acc)} "
+                f"{format_hparams(cooldown.hparams, prefix='cooldown_')}"
+            )
+        selected_main_lines.append(
+            f"interval={train_interval.interval} phase=main     start_step="
             f"{train_interval.start_step} steps={train_interval.completed_steps} "
             f"muon_lr={format_number(train_interval.hparams.muon_lr)} "
             f"momentum={format_number(train_interval.hparams.muon_momentum)} "
@@ -482,6 +522,11 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
             f"path_final_tta={format_number(path.final_acc if path else None)} "
             f"loss={format_number(start_loss)}->{format_number(end_loss)}"
         )
+        selected_cooldown_lines.append(
+            f"interval={train_interval.interval} phase=cooldown {cooldown_text}"
+        )
+    lines.extend(selected_main_lines)
+    lines.extend(selected_cooldown_lines)
     lines.append("")
 
     lines.append("Main interval candidates and best cooldown hparams")
