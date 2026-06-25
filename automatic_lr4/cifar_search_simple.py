@@ -537,10 +537,12 @@ def evaluate_tta_val_acc(model, loader):
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
 SEARCH_STEP_CONFIGS = [(40, 40)]
-PRINT_OUTPUT_FILENAME = "cifar_search_4hparam.log"
+PRINT_OUTPUT_FILENAME = "cifar_search_abs_diff.log"
 LR_SEARCH_FACTOR = 0.6
 LR_SEARCH_SIG_FIGS = 2
-LR_SEARCH_MAX_MOVES = 60
+TTA_VAL_ACC_DIFF_THRESHOLD = 0.0005
+LR_ZERO_THRESHOLD_STEPS = 3
+LR_ZERO_STATE = "zero"
 MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
 INITIAL_MOMENTUM = 0.6
 MUON_NESTEROV = False
@@ -625,6 +627,8 @@ def cooldown_search_hparam_names():
 def hparam_from_state(name, state):
     spec = SEARCH_HPARAMS[name]
     if spec.kind == "log_lr":
+        if state == LR_ZERO_STATE:
+            return 0.0
         return lr_from_k(state, spec.initial_value, spec.factor)
     if spec.kind == "choice":
         return spec.values[state]
@@ -634,6 +638,8 @@ def hparam_from_state(name, state):
 def nearest_hparam_state(name, value):
     spec = SEARCH_HPARAMS[name]
     if spec.kind == "log_lr":
+        if value == 0:
+            return LR_ZERO_STATE
         return nearest_lr_k(value, spec.initial_value, spec.factor)
     if spec.kind == "choice":
         return nearest_momentum_index(value, spec.values)
@@ -885,7 +891,11 @@ def point_sort_key(point, search_names):
     values = tuple(
         hparam_from_state(name, state) for name, state in zip(search_names, point)
     )
-    return sum(abs(state) for state in log_states), values, point
+    log_distance = sum(
+        float("inf") if state == LR_ZERO_STATE else abs(state) for state in log_states
+    )
+    comparable_point = tuple(str(state) for state in point)
+    return log_distance, values, comparable_point
 
 
 def better_point(point, incumbent_point, results_by_point, search_names):
@@ -899,13 +909,6 @@ def better_point(point, incumbent_point, results_by_point, search_names):
     )
 
 
-def better_tta_val_acc(point, incumbent_point, results_by_point):
-    return (
-        results_by_point[point]["tta_val_acc"]
-        > results_by_point[incumbent_point]["tta_val_acc"]
-    )
-
-
 def point_with_state(point, index, state):
     return point[:index] + (state,) + point[index + 1 :]
 
@@ -913,6 +916,8 @@ def point_with_state(point, index, state):
 def neighbor_states(name, state, step=1):
     spec = SEARCH_HPARAMS[name]
     if spec.kind == "log_lr":
+        if state == LR_ZERO_STATE:
+            return []
         return [state - step, state + step]
     if spec.kind == "choice":
         states = []
@@ -929,10 +934,6 @@ def lower_value_first(points, search_names, index):
     return sorted(points, key=lambda point: hparam_from_state(name, point[index]))
 
 
-def uses_opposite_neighbor_block(name):
-    return SEARCH_HPARAMS[name].kind == "log_lr"
-
-
 def neighbor_point_groups(point, search_names):
     for index, name in enumerate(search_names):
         group = [
@@ -943,14 +944,11 @@ def neighbor_point_groups(point, search_names):
             yield name, lower_value_first(group, search_names, index)
 
 
-def neighbor_points(point, search_names):
-    for _, group in neighbor_point_groups(point, search_names):
-        yield from group
-
-
-def best_neighbor_point(middle_point, results_by_point, search_names):
+def best_candidate_point(
+    middle_point, candidate_points, results_by_point, search_names
+):
     best_point = middle_point
-    for point in neighbor_points(middle_point, search_names):
+    for point in candidate_points:
         if better_point(point, best_point, results_by_point, search_names):
             best_point = point
     return best_point
@@ -963,53 +961,129 @@ def find_best_hparam_point(
     results_by_point,
     block,
 ):
+    def point_in_direction(point, index, delta):
+        name = search_names[index]
+        spec = SEARCH_HPARAMS[name]
+        if point[index] == LR_ZERO_STATE:
+            return None
+        state = point[index] + delta
+        if spec.kind == "choice" and (state < 0 or state >= len(spec.values)):
+            return None
+        return point_with_state(point, index, state)
+
+    def lr_zero_point(point, index):
+        name = search_names[index]
+        if SEARCH_HPARAMS[name].kind != "log_lr":
+            return None
+        if point[index] == LR_ZERO_STATE:
+            return None
+        return point_with_state(point, index, LR_ZERO_STATE)
+
+    def moves_toward_smaller_lr(middle_point, index, neighbor_point):
+        name = search_names[index]
+        if SEARCH_HPARAMS[name].kind != "log_lr":
+            return False
+        middle_lr = hparam_from_state(name, middle_point[index])
+        neighbor_lr = hparam_from_state(name, neighbor_point[index])
+        return neighbor_lr < middle_lr
+
+    def tta_val_acc_diff(first_point, second_point):
+        first_acc = results_by_point[first_point]["tta_val_acc"]
+        second_acc = results_by_point[second_point]["tta_val_acc"]
+        if not finite(first_acc) or not finite(second_acc):
+            return float("inf")
+        return abs(first_acc - second_acc)
+
+    def better_by_tta_threshold(point, incumbent_point):
+        point_acc = results_by_point[point]["tta_val_acc"]
+        incumbent_acc = results_by_point[incumbent_point]["tta_val_acc"]
+        if not finite(point_acc) or not finite(incumbent_acc):
+            return False
+        return point_acc - incumbent_acc >= TTA_VAL_ACC_DIFF_THRESHOLD
+
+    def best_side_point(middle_point, side_points):
+        return best_candidate_point(
+            middle_point, side_points, results_by_point, search_names
+        )
+
+    def evaluate_close_direction(middle_point, index, neighbor_point):
+        evaluated_points = []
+        delta = neighbor_point[index] - middle_point[index]
+        current_point = neighbor_point
+        smaller_lr_direction = moves_toward_smaller_lr(
+            middle_point, index, neighbor_point
+        )
+        threshold_steps = 0
+        while (
+            tta_val_acc_diff(middle_point, current_point) < TTA_VAL_ACC_DIFF_THRESHOLD
+        ):
+            if smaller_lr_direction and threshold_steps >= LR_ZERO_THRESHOLD_STEPS:
+                zero_point = lr_zero_point(middle_point, index)
+                if zero_point is not None:
+                    evaluate(zero_point, cooldown_seed_point=middle_point)
+                    evaluated_points.append(zero_point)
+                break
+            next_point = point_in_direction(current_point, index, delta)
+            if next_point is None:
+                break
+            evaluate(next_point, cooldown_seed_point=middle_point)
+            evaluated_points.append(next_point)
+            current_point = next_point
+            threshold_steps += 1
+
+        return evaluated_points
+
     def evaluate_neighbors(middle_point):
-        results = []
+        evaluated_points = []
         for name, group in neighbor_point_groups(middle_point, search_names):
+            index = search_names.index(name)
             first_point = group[0]
-            results.append(evaluate(first_point, cooldown_seed_point=middle_point))
+            first_side_points = [first_point]
+            evaluate(first_point, cooldown_seed_point=middle_point)
+            evaluated_points.append(first_point)
+            first_side_extensions = evaluate_close_direction(
+                middle_point, index, first_point
+            )
+            first_side_points.extend(first_side_extensions)
+            evaluated_points.extend(first_side_extensions)
             if len(group) == 1:
                 continue
+            first_side_best = best_side_point(middle_point, first_side_points)
             second_point = group[1]
-            if uses_opposite_neighbor_block(name) and better_tta_val_acc(
-                first_point, middle_point, results_by_point
+            if (
+                SEARCH_HPARAMS[name].kind == "log_lr"
+                and first_side_best != middle_point
+                and better_by_tta_threshold(first_side_best, middle_point)
             ):
                 block(second_point)
-                results.append(results_by_point[second_point])
+                evaluated_points.append(second_point)
                 continue
-            results.append(evaluate(second_point, cooldown_seed_point=middle_point))
-        return results
+            evaluate(second_point, cooldown_seed_point=middle_point)
+            evaluated_points.append(second_point)
+            evaluated_points.extend(
+                evaluate_close_direction(middle_point, index, second_point)
+            )
+        return evaluated_points
 
     middle_point = initial_point
     center_path = [middle_point]
     evaluate(middle_point)
-    initial_points = [middle_point]
-    evaluate_neighbors(middle_point)
-    initial_points.extend(
-        point for point in neighbor_points(middle_point, search_names)
+    initial_points = evaluate_neighbors(middle_point)
+    best_initial_point = best_candidate_point(
+        middle_point, initial_points, results_by_point, search_names
     )
-    best_initial_point = middle_point
-    for point in initial_points:
-        if better_point(point, best_initial_point, results_by_point, search_names):
-            best_initial_point = point
     if best_initial_point != middle_point:
         middle_point = best_initial_point
         center_path.append(middle_point)
-    for _ in range(LR_SEARCH_MAX_MOVES):
-        evaluate_neighbors(middle_point)
-        next_point = best_neighbor_point(middle_point, results_by_point, search_names)
+    while True:
+        candidate_points = evaluate_neighbors(middle_point)
+        next_point = best_candidate_point(
+            middle_point, candidate_points, results_by_point, search_names
+        )
         if next_point == middle_point:
             break
         middle_point = next_point
         center_path.append(middle_point)
-    else:
-        log_event(
-            "lr_momentum_search_warning",
-            did_not_converge_within=LR_SEARCH_MAX_MOVES,
-            using_point=middle_point,
-            tta_val_acc=results_by_point[middle_point]["tta_val_acc"],
-            loss=interval_result_loss(results_by_point[middle_point]),
-        )
     return middle_point, center_path
 
 

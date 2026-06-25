@@ -544,6 +544,13 @@ LR_SEARCH_MAX_MOVES = 60
 MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
 INITIAL_MOMENTUM = 0.6
 MUON_NESTEROV = False
+CALIBRATION_ABS_DIFF_MIN = 0.005
+CALIBRATION_ABS_DIFF_MAX = 0.01
+CALIBRATION_BINARY_SEARCH_STEPS = 14
+CALIBRATION_MAX_LOWER_VALUES = 32
+CALIBRATION_MAX_UPPER_VALUES = 2
+CALIBRATION_MAX_UPPER_SWEEP_STEPS = 40
+RUN_MAIN_AFTER_CALIBRATION = False
 RUN_CONFIGS = [
     dict(batch_size=2000),
 ]
@@ -607,11 +614,15 @@ def nearest_lr_k(lr, initial_value, factor):
     return int(round(log(lr / initial_value) / log(factor)))
 
 
-def nearest_momentum_index(momentum, values=MOMENTUM_SEARCH_VALUES):
-    for index, search_momentum in enumerate(values):
-        if isclose(momentum, search_momentum, rel_tol=0.0, abs_tol=1e-12):
+def nearest_choice_index(value, values):
+    for index, search_value in enumerate(values):
+        if isclose(value, search_value, rel_tol=0.0, abs_tol=1e-12):
             return index
-    raise ValueError("momentum must be in %s, got %s" % (values, momentum))
+    raise ValueError("value must be in %s, got %s" % (values, value))
+
+
+def nearest_momentum_index(momentum, values=MOMENTUM_SEARCH_VALUES):
+    return nearest_choice_index(momentum, values)
 
 
 def active_search_hparam_names():
@@ -636,7 +647,7 @@ def nearest_hparam_state(name, value):
     if spec.kind == "log_lr":
         return nearest_lr_k(value, spec.initial_value, spec.factor)
     if spec.kind == "choice":
-        return nearest_momentum_index(value, spec.values)
+        return nearest_choice_index(value, spec.values)
     raise ValueError(f"Unrecognized hparam kind: {spec.kind}")
 
 
@@ -1190,6 +1201,422 @@ def search_hparam_segment(
     return result
 
 
+def calibration_value_bounds(name):
+    if name == "muon_momentum":
+        return 0.0, 1.0
+    return 0.0, None
+
+
+def calibration_value_key(name, value):
+    min_value, max_value = calibration_value_bounds(name)
+    value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    if name == "muon_lr" and value > 0:
+        value = rounded_lr(value)
+    return float("%.8g" % value)
+
+
+def calibration_hparams_key(hparams):
+    return tuple(
+        (name, calibration_value_key(name, hparams[name])) for name in SEARCH_HPARAMS
+    )
+
+
+def calibration_abs_diff(left, right):
+    if not finite(left) or not finite(right):
+        return float("inf")
+    return abs(left - right)
+
+
+def calibration_diff_ok(diff):
+    return CALIBRATION_ABS_DIFF_MIN <= diff <= CALIBRATION_ABS_DIFF_MAX
+
+
+def calibration_target_diff(total_diff):
+    if not finite(total_diff):
+        return CALIBRATION_ABS_DIFF_MAX
+    segments = max(1, ceil(total_diff / CALIBRATION_ABS_DIFF_MAX))
+    return min(
+        CALIBRATION_ABS_DIFF_MAX,
+        max(CALIBRATION_ABS_DIFF_MIN, total_diff / segments),
+    )
+
+
+def evaluate_calibration_hparams(
+    ctx,
+    hparams,
+    steps,
+    start_step,
+    start_state,
+    cache,
+    varied_hparam=None,
+):
+    hparams = {
+        name: calibration_value_key(name, hparams[name]) for name in SEARCH_HPARAMS
+    }
+    key = calibration_hparams_key(hparams)
+    if key in cache:
+        return cache[key]
+    load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
+    result = train_interval(
+        ctx,
+        hparams,
+        steps,
+        start_step,
+        capture_end_state=False,
+    )
+    result_loss = interval_result_loss(result)
+    if result["completed_steps"] == steps and finite(result_loss):
+        result["tta_val_acc"] = evaluate_tta_val_acc(ctx.model, ctx.test_loader)
+    else:
+        result["tta_val_acc"] = float("-inf")
+    cache[key] = result
+    log_event(
+        "calibration_candidate",
+        varied_hparam=varied_hparam or "none",
+        completed_steps=result["completed_steps"],
+        loss=result["last_train_loss"],
+        tta_val_acc=result["tta_val_acc"],
+        **hparam_log_fields(result),
+    )
+    return result
+
+
+def calibration_hparams_with_value(center_hparams, name, value):
+    hparams = dict(center_hparams)
+    hparams[name] = calibration_value_key(name, value)
+    return hparams
+
+
+def find_calibration_value_for_diff(
+    name,
+    anchor_value,
+    far_value,
+    anchor_acc,
+    target_diff,
+    evaluate_value,
+):
+    near_value = anchor_value
+    search_far_value = far_value
+    best = None
+    for _ in range(CALIBRATION_BINARY_SEARCH_STEPS):
+        mid_value = calibration_value_key(
+            name, (near_value + search_far_value) / 2
+        )
+        if isclose(mid_value, near_value, rel_tol=0.0, abs_tol=1e-12) or isclose(
+            mid_value, search_far_value, rel_tol=0.0, abs_tol=1e-12
+        ):
+            break
+        mid_result = evaluate_value(mid_value)
+        diff = calibration_abs_diff(anchor_acc, mid_result["tta_val_acc"])
+        score = abs(diff - target_diff) if finite(diff) else float("inf")
+        if best is None or score < best[0]:
+            best = (score, mid_value, mid_result, diff)
+        if calibration_diff_ok(diff):
+            return mid_value, mid_result
+        if diff < target_diff:
+            near_value = mid_value
+        else:
+            search_far_value = mid_value
+    if best is None:
+        return None
+    _, value, result, _ = best
+    return value, result
+
+
+def fallback_calibration_upper_step(name, center_value):
+    if name == "muon_momentum":
+        larger_values = [
+            value for value in MOMENTUM_SEARCH_VALUES if value > center_value
+        ]
+        if larger_values:
+            return min(larger_values) - center_value
+        return max(1.0 - center_value, 0.0)
+    spec = SEARCH_HPARAMS[name]
+    if spec.kind == "log_lr" and center_value > 0:
+        return center_value / spec.factor - center_value
+    return max(abs(center_value), 1.0)
+
+
+def calibration_upper_step(name, center_value, lower_values):
+    lower_than_center = [
+        value for value, _ in lower_values if value < center_value
+    ]
+    if lower_than_center:
+        step = center_value - max(lower_than_center)
+        if step > 0:
+            return step
+    return fallback_calibration_upper_step(name, center_value)
+
+
+def find_next_upper_calibration_value(
+    name,
+    anchor_value,
+    anchor_result,
+    step,
+    evaluate_value,
+):
+    _, max_value = calibration_value_bounds(name)
+    if step <= 0:
+        return None
+    anchor_acc = anchor_result["tta_val_acc"]
+    for sweep_index in range(1, CALIBRATION_MAX_UPPER_SWEEP_STEPS + 1):
+        far_value = anchor_value + step * sweep_index
+        if max_value is not None:
+            far_value = min(far_value, max_value)
+        far_value = calibration_value_key(name, far_value)
+        if far_value <= anchor_value or isclose(
+            far_value, anchor_value, rel_tol=0.0, abs_tol=1e-12
+        ):
+            return None
+        far_result = evaluate_value(far_value)
+        diff = calibration_abs_diff(anchor_acc, far_result["tta_val_acc"])
+        if calibration_diff_ok(diff):
+            return far_value, far_result
+        if diff < CALIBRATION_ABS_DIFF_MIN:
+            if max_value is not None and isclose(
+                far_value, max_value, rel_tol=0.0, abs_tol=1e-12
+            ):
+                return None
+            continue
+        found = find_calibration_value_for_diff(
+            name,
+            anchor_value,
+            far_value,
+            anchor_acc,
+            calibration_target_diff(diff),
+            evaluate_value,
+        )
+        if found is None:
+            return None
+        value, result = found
+        found_diff = calibration_abs_diff(anchor_acc, result["tta_val_acc"])
+        if calibration_diff_ok(found_diff):
+            return value, result
+        return None
+    return None
+
+
+def unique_sorted_calibration_results(value_results):
+    unique = []
+    for value, result in value_results:
+        value = float(value)
+        if any(
+            isclose(value, existing, rel_tol=0.0, abs_tol=1e-12)
+            for existing, _ in unique
+        ):
+            continue
+        unique.append((value, result))
+    return sorted(unique, key=lambda item: item[0])
+
+
+def log_calibration_gap_warnings(name, value_results):
+    for (left_value, left), (right_value, right) in zip(
+        value_results, value_results[1:]
+    ):
+        diff = calibration_abs_diff(left["tta_val_acc"], right["tta_val_acc"])
+        if calibration_diff_ok(diff):
+            continue
+        log_event(
+            "calibration_gap_warning",
+            hparam=name,
+            left_value=left_value,
+            right_value=right_value,
+            abs_diff=diff,
+            abs_diff_min=CALIBRATION_ABS_DIFF_MIN,
+            abs_diff_max=CALIBRATION_ABS_DIFF_MAX,
+        )
+
+
+def build_lower_calibration_values(name, center_value, center_result, evaluate_value):
+    zero_value = calibration_value_key(name, 0.0)
+    descending = [(center_value, center_result)]
+    if isclose(center_value, zero_value, rel_tol=0.0, abs_tol=1e-12):
+        return descending
+    current_value = center_value
+    current_result = center_result
+    zero_result = evaluate_value(zero_value)
+    for _ in range(CALIBRATION_MAX_LOWER_VALUES):
+        total_diff = calibration_abs_diff(
+            current_result["tta_val_acc"], zero_result["tta_val_acc"]
+        )
+        if calibration_diff_ok(total_diff) or total_diff < CALIBRATION_ABS_DIFF_MIN:
+            descending.append((zero_value, zero_result))
+            break
+        target_diff = calibration_target_diff(total_diff)
+        found = find_calibration_value_for_diff(
+            name,
+            current_value,
+            zero_value,
+            current_result["tta_val_acc"],
+            target_diff,
+            evaluate_value,
+        )
+        if found is None:
+            descending.append((zero_value, zero_result))
+            break
+        next_value, next_result = found
+        found_diff = calibration_abs_diff(
+            current_result["tta_val_acc"], next_result["tta_val_acc"]
+        )
+        if not calibration_diff_ok(found_diff):
+            descending.append((zero_value, zero_result))
+            break
+        if any(
+            isclose(next_value, value, rel_tol=0.0, abs_tol=1e-12)
+            for value, _ in descending
+        ):
+            descending.append((zero_value, zero_result))
+            break
+        descending.append((next_value, next_result))
+        current_value = next_value
+        current_result = next_result
+    else:
+        log_event(
+            "calibration_lower_warning",
+            hparam=name,
+            stopped_after=CALIBRATION_MAX_LOWER_VALUES,
+            center=center_value,
+        )
+        if not any(
+            isclose(zero_value, value, rel_tol=0.0, abs_tol=1e-12)
+            for value, _ in descending
+        ):
+            descending.append((zero_value, zero_result))
+    return unique_sorted_calibration_results(reversed(descending))
+
+
+def build_calibrated_hparam_values(
+    ctx,
+    center_hparams,
+    name,
+    steps,
+    start_step,
+    start_state,
+    cache,
+):
+    center_value = calibration_value_key(name, center_hparams[name])
+
+    def evaluate_value(value):
+        return evaluate_calibration_hparams(
+            ctx,
+            calibration_hparams_with_value(center_hparams, name, value),
+            steps,
+            start_step,
+            start_state,
+            cache,
+            varied_hparam=name,
+        )
+
+    center_result = evaluate_value(center_value)
+    lower_values = build_lower_calibration_values(
+        name, center_value, center_result, evaluate_value
+    )
+    upper_step = calibration_upper_step(name, center_value, lower_values)
+    upper_values = []
+    anchor_value = center_value
+    anchor_result = center_result
+    for _ in range(CALIBRATION_MAX_UPPER_VALUES):
+        found = find_next_upper_calibration_value(
+            name,
+            anchor_value,
+            anchor_result,
+            upper_step,
+            evaluate_value,
+        )
+        if found is None:
+            break
+        anchor_value, anchor_result = found
+        upper_values.append(found)
+
+    value_results = unique_sorted_calibration_results([*lower_values, *upper_values])
+    values = tuple(value for value, _ in value_results)
+    tta_val_accs = tuple(result["tta_val_acc"] for _, result in value_results)
+    abs_diffs = tuple(
+        calibration_abs_diff(left["tta_val_acc"], right["tta_val_acc"])
+        for (_, left), (_, right) in zip(value_results, value_results[1:])
+    )
+    log_calibration_gap_warnings(name, value_results)
+    log_event(
+        "calibration_hparam_values",
+        hparam=name,
+        values=values,
+        tta_val_accs=tta_val_accs,
+        abs_diffs=abs_diffs,
+        abs_diff_min=CALIBRATION_ABS_DIFF_MIN,
+        abs_diff_max=CALIBRATION_ABS_DIFF_MAX,
+    )
+    return values
+
+
+def apply_calibrated_search_spaces(center_hparams, values_by_name):
+    for name, values in values_by_name.items():
+        spec = SEARCH_HPARAMS[name]
+        SEARCH_HPARAMS[name] = SearchHparam(
+            kind="choice",
+            initial_value=calibration_value_key(name, center_hparams[name]),
+            search=spec.search,
+            cooldown_search=spec.cooldown_search,
+            factor=spec.factor,
+            values=tuple(values),
+        )
+
+
+def run_calibration_phase(ctx, initial_point, steps, start_step, start_state):
+    log_event(
+        "calibration_start",
+        steps=steps,
+        abs_diff_min=CALIBRATION_ABS_DIFF_MIN,
+        abs_diff_max=CALIBRATION_ABS_DIFF_MAX,
+        search_hparams=format_hparam_names(ctx.search_names),
+    )
+    center_search_result = search_hparam_segment(
+        ctx,
+        initial_point,
+        ctx.search_names,
+        ctx.fixed_hparams,
+        steps,
+        start_step,
+        start_state,
+    )
+    log_candidate_results(center_search_result["candidate_evaluations"])
+    log_search_path(center_search_result["search_path"])
+
+    center_hparams = copy_fields(center_search_result, SEARCH_HPARAMS)
+    log_event(
+        "calibration_center",
+        steps=steps,
+        tta_val_acc=center_search_result["tta_val_acc"],
+        **hparam_log_fields(center_search_result),
+    )
+
+    cache = {}
+    for result in center_search_result["candidate_evaluations"]:
+        cache[calibration_hparams_key(result)] = result
+
+    values_by_name = {}
+    for name in ctx.search_names:
+        values_by_name[name] = build_calibrated_hparam_values(
+            ctx,
+            center_hparams,
+            name,
+            steps,
+            start_step,
+            start_state,
+            cache,
+        )
+    apply_calibrated_search_spaces(center_hparams, values_by_name)
+    load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
+    return dict(
+        center_hparams=center_hparams,
+        values_by_name=values_by_name,
+        tta_val_acc=center_search_result["tta_val_acc"],
+        candidate_evaluations=center_search_result["candidate_evaluations"],
+        search_path=center_search_result["search_path"],
+    )
+
+
 def search_interval_hparams(
     ctx,
     initial_point,
@@ -1263,6 +1690,39 @@ def run_full_dataset_search(cfg):
         search_names=search_names,
         fixed_hparams=initial_hparams,
     )
+
+    initial_training_state = snapshot_training_state(
+        cfg.model, optimizers, batch_stream
+    )
+    calibration_result = run_calibration_phase(
+        search_ctx,
+        initial_point,
+        cfg.n_steps,
+        0,
+        initial_training_state,
+    )
+    if not RUN_MAIN_AFTER_CALIBRATION:
+        log_event(
+            "main_training_disabled",
+            reason="calibration_debug",
+            calibration_tta_val_acc=calibration_result["tta_val_acc"],
+        )
+        result = pack(
+            vars(cfg),
+            "run batch_size train_epochs train_steps n_steps m_steps search_names_text cooldown_search_names_text muon_nesterov",
+        )
+        result.update(
+            val_acc=float("nan"),
+            tta_val_acc=calibration_result["tta_val_acc"],
+        )
+        return result
+
+    initial_hparams = calibration_result["center_hparams"]
+    search_names = active_search_hparam_names()
+    initial_point = point_from_hparams(initial_hparams, search_names)
+    search_ctx.search_names = search_names
+    search_ctx.fixed_hparams = initial_hparams
+    load_training_state(cfg.model, optimizers, batch_stream, initial_training_state)
 
     last_loss = None
     interval_initial_point = initial_point
