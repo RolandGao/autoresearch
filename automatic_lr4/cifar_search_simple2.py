@@ -539,6 +539,10 @@ CALIBRATION_PRECISION_MAX_STEPS = 30
 CALIBRATION_INITIAL_LR_PRECISION = 1.0
 CALIBRATION_INITIAL_MOMENTUM_PRECISION = 0.1
 LOCAL_BEST_MOMENTUM_VALUES = (0.0, 0.5, 0.9)
+BIAS_LR_SWEEP_MIN = 0.01
+BIAS_LR_SWEEP_MAX = 100000.0
+BIAS_LR_SWEEP_SAMPLES = 800
+BIAS_LR_SWEEP_STEPS = 5
 RUN_MAIN_AFTER_CALIBRATION = False
 RUN_CONFIGS = [
     dict(batch_size=2000),
@@ -1515,6 +1519,72 @@ def calibration_search_hparam_names(search_names):
     return tuple(ordered_names)
 
 
+def run_bias_lr_sweep(ctx, center_hparams, start_step, start_state):
+    cache = {}
+
+    def sample_value(index):
+        if BIAS_LR_SWEEP_SAMPLES == 1:
+            return BIAS_LR_SWEEP_MIN
+        exponent = log10(BIAS_LR_SWEEP_MIN) + (
+            log10(BIAS_LR_SWEEP_MAX) - log10(BIAS_LR_SWEEP_MIN)
+        ) * index / (BIAS_LR_SWEEP_SAMPLES - 1)
+        return 10**exponent
+
+    log_event(
+        "bias_lr_sweep_start",
+        steps=BIAS_LR_SWEEP_STEPS,
+        min_value=BIAS_LR_SWEEP_MIN,
+        max_value=BIAS_LR_SWEEP_MAX,
+        samples=BIAS_LR_SWEEP_SAMPLES,
+    )
+    best_result = None
+    seen_keys = set()
+    skipped_duplicates = 0
+    for index in range(BIAS_LR_SWEEP_SAMPLES):
+        hparams = dict(center_hparams)
+        hparams["bias_lr"] = sample_value(index)
+        hparams = {
+            name: calibration_value_key(name, hparams[name]) for name in SEARCH_HPARAMS
+        }
+        key = calibration_hparams_key(hparams)
+        if key in seen_keys:
+            skipped_duplicates += 1
+            continue
+        seen_keys.add(key)
+        result = evaluate_calibration_hparams(
+            ctx,
+            hparams,
+            BIAS_LR_SWEEP_STEPS,
+            start_step,
+            start_state,
+            cache,
+            varied_hparam="bias_lr",
+        )
+        if best_result is None or result["tta_val_acc"] > best_result["tta_val_acc"]:
+            best_result = result
+        log_line(
+            "bias_lr_sweep_value index=%d %s -> %s"
+            % (
+                index,
+                format_log_value(result["bias_lr"]),
+                format_log_value(result["tta_val_acc"]),
+            )
+        )
+    log_event(
+        "bias_lr_sweep_complete",
+        samples=BIAS_LR_SWEEP_SAMPLES,
+        evaluated=len(seen_keys),
+        skipped_duplicates=skipped_duplicates,
+    )
+    if best_result is not None:
+        log_event(
+            "bias_lr_sweep_best",
+            bias_lr=best_result["bias_lr"],
+            tta_val_acc=best_result["tta_val_acc"],
+        )
+    return best_result
+
+
 def run_calibration_phase(ctx, initial_point, steps, start_step, start_state):
     local_best_search_steps = 1
     calibration_steps = CALIBRATION_EVAL_STEPS
@@ -1562,6 +1632,27 @@ def run_calibration_phase(ctx, initial_point, steps, start_step, start_state):
         steps=local_best_search_steps,
         tta_val_acc=center_search_result["tta_val_acc"],
         **hparam_log_fields(center_search_result),
+    )
+
+    bias_lr_sweep_result = run_bias_lr_sweep(
+        ctx,
+        center_hparams,
+        start_step,
+        start_state,
+    )
+    log_event(
+        "calibration_paused",
+        reason="bias_lr_sweep_debug",
+    )
+    load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
+    return dict(
+        center_hparams=center_hparams,
+        values_by_name={},
+        tta_val_acc=bias_lr_sweep_result["tta_val_acc"]
+        if bias_lr_sweep_result is not None
+        else center_search_result["tta_val_acc"],
+        candidate_evaluations=center_search_result["candidate_evaluations"],
+        search_path=center_search_result["search_path"],
     )
 
     cache = {}

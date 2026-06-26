@@ -18,11 +18,11 @@ import matplotlib.pyplot as plt
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_LOG = HERE / "20260625_230906_298601" / "cifar_search_4hparam.log"
+DEFAULT_LOG = HERE / "20260626_015916_132456" / "cifar_search_4hparam.log"
 DEFAULT_OUTPUT = (
-    HERE / "20260625_230906_298601" / "search_hparam_tta_val_acc.png"
+    HERE / "20260626_015916_132456" / "search_hparam_tta_val_acc.png"
 )
-DEFAULT_SUMMARY = HERE / "20260625_230906_298601" / "summary.txt"
+DEFAULT_SUMMARY = HERE / "20260626_015916_132456" / "summary.txt"
 
 KV_RE = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>\S+)")
 SUMMARY_SEARCH_HPARAMS_RE = re.compile(r"^Search hparams:\s+(?P<value>.+)$")
@@ -117,12 +117,25 @@ def format_number(value: float) -> str:
     return f"{value:.4g}"
 
 
-def evenly_spaced_values(points: list[CalibrationPoint]) -> tuple[list[float], list[float], list[str]]:
+def evenly_spaced_values(
+    points: list[CalibrationPoint],
+) -> tuple[list[float], list[float], list[str]]:
     values = sorted({point.value for point in points})
     value_to_x = {value: float(index) for index, value in enumerate(values)}
     xs = [value_to_x[point.value] for point in points]
     tick_labels = [format_number(value) for value in values]
     return xs, values, tick_labels
+
+
+def evenly_spaced_tick_indices(count: int, max_ticks: int = 12) -> list[int]:
+    if count <= max_ticks:
+        return list(range(count))
+
+    indices = {
+        round(index * (count - 1) / (max_ticks - 1))
+        for index in range(max_ticks)
+    }
+    return sorted(indices)
 
 
 def local_bests(points: list[CalibrationPoint]) -> list[CalibrationPoint]:
@@ -224,7 +237,7 @@ def plot_hparam_points(
     fig, axes = plt.subplots(
         rows,
         cols,
-        figsize=(7.0 * cols, 4.2 * rows),
+        figsize=(14.0 * cols, 4.2 * rows),
         squeeze=False,
     )
 
@@ -234,15 +247,27 @@ def plot_hparam_points(
     for ax, hparam in zip(axes.flat, hparams):
         ax.set_visible(True)
         hparam_points = sorted(points_by_hparam[hparam], key=lambda point: point.value)
-        xs, values, tick_labels = evenly_spaced_values(hparam_points)
-        ys = [point.tta_val_acc for point in hparam_points]
+        xs, values, _ = evenly_spaced_values(hparam_points)
         value_to_x = {value: float(index) for index, value in enumerate(values)}
+        ys = [point.tta_val_acc for point in hparam_points]
 
-        ax.plot(xs, ys, marker="o", linewidth=1.6, markersize=4.5)
+        dense_sweep = len(values) > 40
+        ax.plot(
+            xs,
+            ys,
+            marker="o",
+            linewidth=1.2 if dense_sweep else 1.6,
+            markersize=2.8 if dense_sweep else 4.5,
+            alpha=0.9,
+        )
         best = max(hparam_points, key=lambda point: point.tta_val_acc)
-        local_best_points = [
-            point for point in local_bests(hparam_points) if point.value != best.value
-        ]
+        local_best_points = []
+        if not dense_sweep:
+            local_best_points = [
+                point
+                for point in local_bests(hparam_points)
+                if point.value != best.value
+            ]
         if local_best_points:
             ax.scatter(
                 [value_to_x[point.value] for point in local_best_points],
@@ -265,40 +290,49 @@ def plot_hparam_points(
             label=f"best {format_number(best.value)} -> {best.tta_val_acc:.4f}",
         )
 
-        control_spans = local_control_spans(hparam_points)
-        lane_start = 0.035
-        lane_end = 0.16
-        lane_step = (
-            (lane_end - lane_start) / (len(control_spans) - 1)
-            if len(control_spans) > 1
-            else 0.0
-        )
-        for span_index, (_, left_point, right_point) in enumerate(control_spans):
-            control_y = lane_start + lane_step * span_index
-            ax.plot(
-                [value_to_x[left_point.value], value_to_x[right_point.value]],
-                [control_y, control_y],
-                marker="|",
-                markersize=12,
-                markeredgewidth=1.8,
-                linewidth=2.4,
-                color="#d89c28",
-                alpha=0.62,
-                solid_capstyle="round",
-                transform=ax.get_xaxis_transform(),
-                zorder=2,
-                label="local control span" if span_index == 0 else None,
+        if not dense_sweep:
+            control_spans = local_control_spans(hparam_points)
+            lane_start = 0.035
+            lane_end = 0.16
+            lane_step = (
+                (lane_end - lane_start) / (len(control_spans) - 1)
+                if len(control_spans) > 1
+                else 0.0
             )
+            for span_index, (_, left_point, right_point) in enumerate(control_spans):
+                control_y = lane_start + lane_step * span_index
+                ax.plot(
+                    [value_to_x[left_point.value], value_to_x[right_point.value]],
+                    [control_y, control_y],
+                    marker="|",
+                    markersize=12,
+                    markeredgewidth=1.8,
+                    linewidth=2.4,
+                    color="#d89c28",
+                    alpha=0.62,
+                    solid_capstyle="round",
+                    transform=ax.get_xaxis_transform(),
+                    zorder=2,
+                    label="local control span" if span_index == 0 else None,
+                )
 
         ax.set_title(hparam)
         ax.set_xlabel("value")
         ax.set_ylabel("tta_val_acc")
-        ax.set_xticks(range(len(values)))
-        ax.set_xticklabels(tick_labels, rotation=45, ha="right")
+        tick_indices = evenly_spaced_tick_indices(len(values))
+        ax.set_xticks(tick_indices)
+        ax.set_xticklabels(
+            [format_number(values[index]) for index in tick_indices],
+            rotation=45,
+            ha="right",
+        )
         ax.legend(fontsize=8)
         style_axes(ax)
 
-    fig.suptitle(f"TTA validation accuracy by search_hparam\n{log_path}", fontsize=12)
+    fig.suptitle(
+        f"TTA validation accuracy by search_hparam\n{log_path.parent.name}/{log_path.name}",
+        fontsize=12,
+    )
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=180)
