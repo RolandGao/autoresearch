@@ -18,11 +18,14 @@ import matplotlib.pyplot as plt
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_LOG = HERE / "20260626_015916_132456" / "cifar_search_4hparam.log"
+DEFAULT_LOG = HERE / "20260626_022201_204962" / "cifar_search_4hparam.log"
 DEFAULT_OUTPUT = (
-    HERE / "20260626_015916_132456" / "search_hparam_tta_val_acc.png"
+    HERE / "20260626_022201_204962" / "search_hparam_tta_val_acc.png"
 )
-DEFAULT_SUMMARY = HERE / "20260626_015916_132456" / "summary.txt"
+DEFAULT_TRUNCATED_OUTPUT = (
+    HERE / "20260626_022201_204962" / "search_hparam_tta_val_acc_max1600.png"
+)
+DEFAULT_SUMMARY = HERE / "20260626_022201_204962" / "summary.txt"
 
 KV_RE = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>\S+)")
 SUMMARY_SEARCH_HPARAMS_RE = re.compile(r"^Search hparams:\s+(?P<value>.+)$")
@@ -223,6 +226,7 @@ def plot_hparam_points(
     points: list[CalibrationPoint],
     log_path: Path,
     output_path: Path,
+    title_suffix: str | None = None,
 ) -> None:
     points_by_hparam: dict[str, list[CalibrationPoint]] = defaultdict(list)
     for point in points:
@@ -329,10 +333,10 @@ def plot_hparam_points(
         ax.legend(fontsize=8)
         style_axes(ax)
 
-    fig.suptitle(
-        f"TTA validation accuracy by search_hparam\n{log_path.parent.name}/{log_path.name}",
-        fontsize=12,
-    )
+    title = f"TTA validation accuracy by search_hparam\n{log_path.parent.name}/{log_path.name}"
+    if title_suffix:
+        title = f"{title}\n{title_suffix}"
+    fig.suptitle(title, fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=180)
@@ -361,6 +365,15 @@ def parse_args() -> argparse.Namespace:
         help=f"Output PNG path. Defaults to {DEFAULT_OUTPUT}.",
     )
     parser.add_argument(
+        "--truncated-output",
+        type=Path,
+        default=DEFAULT_TRUNCATED_OUTPUT,
+        help=(
+            "Output PNG path for the plot with hparam values above "
+            f"1600 omitted. Defaults to {DEFAULT_TRUNCATED_OUTPUT}."
+        ),
+    )
+    parser.add_argument(
         "-s",
         "--summary",
         type=Path,
@@ -374,9 +387,18 @@ def main() -> None:
     args = parse_args()
     search_hparams, points = parse_log(args.log)
     plot_hparam_points(search_hparams, points, args.log, args.output)
+    truncated_points = [point for point in points if point.value <= 1600]
+    plot_hparam_points(
+        search_hparams,
+        truncated_points,
+        args.log,
+        args.truncated_output,
+        title_suffix="hparam values > 1600 omitted",
+    )
     write_summary(search_hparams, points, args.summary)
     print(f"Parsed {len(points)} calibration points from {args.log}")
     print(f"Wrote {args.output}")
+    print(f"Wrote {args.truncated_output}")
     print(f"Wrote {args.summary}")
 
 

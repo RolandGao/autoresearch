@@ -2,6 +2,7 @@ CIFAR search summary
 Input log: /workspace/neural_networks_optimization/autoresearch/automatic_lr4/20260624_222539_669266/cifar_search_abs_diff.log
 Output directory: /workspace/neural_networks_optimization/autoresearch/automatic_lr4/20260624_222539_669266/cifar_search_abs_diff_plots
 Curves plot: /workspace/neural_networks_optimization/autoresearch/automatic_lr4/20260624_222539_669266/cifar_search_abs_diff_plots/curves.png
+Landscape plot: /workspace/neural_networks_optimization/autoresearch/automatic_lr4/20260624_222539_669266/cifar_search_abs_diff_plots/landscapes.png
 
 Run 0: batch_size=2000 train_epochs=8 n_steps=40 m_steps=40
 Final val_acc=0.9312 tta_val_acc=0.9425 run_seconds=7297

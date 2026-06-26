@@ -24,6 +24,7 @@ DEFAULT_OUTPUT_DIR = (
 
 OUTPUT_SUMMARY = "summary.txt"
 OUTPUT_CURVES = "curves.png"
+OUTPUT_LANDSCAPES = "landscapes.png"
 
 KV_RE = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>\S+)")
 SUMMARY_RE = re.compile(r"^(?P<key>[A-Za-z][A-Za-z0-9 ]+):\s+(?P<value>.+)$")
@@ -186,6 +187,12 @@ def style_axes(ax) -> None:
 
 def color_for_interval(interval: int) -> str:
     return f"C{interval % 10}"
+
+
+def parse_hparam_names(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def selected_path_by_interval(run: Run) -> dict[int, SearchPath]:
@@ -409,6 +416,21 @@ def hparams_key(hparams: HParams) -> tuple[float | None, float | None, float | N
     )
 
 
+def same_hparam_value(left: float | None, right: float | None) -> bool:
+    if left is None or right is None:
+        return left is right
+    return math.isclose(left, right, rel_tol=1e-9, abs_tol=1e-12)
+
+
+def hparams_match_except(candidate: HParams, center: HParams, varied_attr: str) -> bool:
+    for attr in ("muon_lr", "muon_momentum", "bias_lr", "head_lr"):
+        if attr == varied_attr:
+            continue
+        if not same_hparam_value(getattr(candidate, attr), getattr(center, attr)):
+            return False
+    return True
+
+
 def selected_main_eval(run: Run, train_interval: TrainInterval) -> MainEval | None:
     selected_key = hparams_key(train_interval.hparams)
     for main_eval in run.main_evals:
@@ -444,6 +466,7 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
         f"Input log: {log_path}",
         f"Output directory: {output_dir}",
         f"Curves plot: {output_dir / OUTPUT_CURVES}",
+        f"Landscape plot: {output_dir / OUTPUT_LANDSCAPES}",
         "",
         (
             f"Run {run.run}: batch_size={format_number(run.batch_size)} "
@@ -677,6 +700,196 @@ def plot_curves(run: Run, output_dir: Path) -> None:
     plt.close(fig)
 
 
+def hparam_axis_scale(attr: str) -> tuple[str, dict[str, float]]:
+    if attr == "head_lr":
+        return "symlog", {"linthresh": 1e-3}
+    if attr in {"muon_lr", "bias_lr"}:
+        return "log", {}
+    return "linear", {}
+
+
+def unique_accuracy_points(
+    points: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    best_by_x: dict[float, float] = {}
+    for x_value, score in points:
+        best_by_x[x_value] = max(score, best_by_x.get(x_value, -math.inf))
+    return sorted(best_by_x.items())
+
+
+def candidate_accuracy_landscape(
+    candidates,
+    center: HParams,
+    varied_attr: str,
+    score_attr: str,
+) -> list[tuple[float, float]]:
+    points: list[tuple[float, float]] = []
+    for candidate in candidates:
+        x_value = getattr(candidate.hparams, varied_attr)
+        score = getattr(candidate, score_attr)
+        if (
+            x_value is None
+            or score is None
+            or not hparams_match_except(candidate.hparams, center, varied_attr)
+        ):
+            continue
+        points.append((x_value, score))
+    return unique_accuracy_points(points)
+
+
+def landscape_ylabel(score_attr: str) -> str:
+    if score_attr == "best_cooldown_acc":
+        return "best cooldown tta_val_acc"
+    return score_attr
+
+
+def main_landscape_score_attr(run: Run, interval: int) -> str:
+    if any(
+        item.interval == interval and item.best_cooldown_acc is not None
+        for item in run.main_evals
+    ):
+        return "best_cooldown_acc"
+    return "main_acc"
+
+
+def plot_accuracy_landscapes(run: Run, output_dir: Path) -> None:
+    train_intervals = sorted(run.train_intervals, key=lambda item: item.interval)
+    if not train_intervals:
+        return
+
+    search_names = parse_hparam_names(run.header.get("search_hparams")) or [
+        "muon_lr",
+        "muon_momentum",
+        "bias_lr",
+        "head_lr",
+    ]
+    cooldown_names = parse_hparam_names(
+        run.header.get("cooldown_search_hparams")
+    ) or search_names
+    columns = search_names
+    row_count = len(train_intervals) * 2
+    col_count = len(columns)
+    fig, axes = plt.subplots(
+        row_count,
+        col_count,
+        figsize=(4.2 * col_count, 2.75 * row_count),
+        squeeze=False,
+    )
+    row_scores: dict[int, list[float]] = {row: [] for row in range(row_count)}
+
+    for row_index, train_interval in enumerate(train_intervals):
+        main_eval = selected_main_eval(run, train_interval)
+        main_score_attr = main_landscape_score_attr(run, train_interval.interval)
+        main_candidates = [
+            item
+            for item in run.main_evals
+            if (
+                item.interval == train_interval.interval
+                and getattr(item, main_score_attr) is not None
+            )
+        ]
+        cooldown = best_cooldown_candidate(main_eval) if main_eval is not None else None
+        cooldown_candidates = (
+            [item for item in main_eval.candidates if item.tta_val_acc is not None]
+            if main_eval is not None
+            else []
+        )
+
+        row_specs = [
+            (
+                row_index * 2,
+                "main",
+                train_interval.hparams,
+                main_candidates,
+                set(search_names),
+                main_score_attr,
+            ),
+            (
+                row_index * 2 + 1,
+                "cooldown",
+                cooldown.hparams if cooldown is not None else HParams(),
+                cooldown_candidates,
+                set(cooldown_names),
+                "tta_val_acc",
+            ),
+        ]
+
+        for row, phase, center, candidates, active_names, score_attr in row_specs:
+            for col, attr in enumerate(columns):
+                ax = axes[row][col]
+                if attr not in active_names:
+                    ax.set_visible(False)
+                    continue
+
+                points = candidate_accuracy_landscape(candidates, center, attr, score_attr)
+                center_value = getattr(center, attr)
+                color = color_for_interval(train_interval.interval)
+                if points:
+                    xs, ys = zip(*points)
+                    row_scores[row].extend(ys)
+                    ax.plot(xs, ys, marker="o", linewidth=1.6, color=color)
+                    if center_value is not None:
+                        ax.axvline(
+                            center_value,
+                            color="#333333",
+                            linestyle="--",
+                            linewidth=1.0,
+                        )
+                else:
+                    ax.text(
+                        0.5,
+                        0.5,
+                        "no 1D slice",
+                        transform=ax.transAxes,
+                        ha="center",
+                        va="center",
+                        fontsize=9,
+                        color="#777777",
+                    )
+
+                scale, scale_kwargs = hparam_axis_scale(attr)
+                ax.set_xscale(scale, **scale_kwargs)
+                ax.set_title(f"Interval {train_interval.interval} {phase}: {attr}")
+                ax.set_xlabel(attr)
+                ax.set_ylabel(landscape_ylabel(score_attr))
+                if attr == "muon_momentum":
+                    ax.set_xlim(-0.03, 1.03)
+                style_axes(ax)
+
+                if center_value is not None:
+                    ax.text(
+                        0.03,
+                        0.95,
+                        f"chosen={format_number(center_value, 3)}",
+                        transform=ax.transAxes,
+                        va="top",
+                        fontsize=8,
+                        bbox={
+                            "facecolor": "white",
+                            "edgecolor": "#dddddd",
+                            "alpha": 0.85,
+                        },
+                    )
+
+    for row, scores in row_scores.items():
+        if not scores:
+            continue
+        ymin = min(scores)
+        ymax = max(scores)
+        padding = (ymax - ymin) * 0.08 if ymax > ymin else 0.001
+        for ax in axes[row]:
+            if ax.get_visible():
+                ax.set_ylim(ymin - padding, ymax + padding)
+
+    fig.suptitle(
+        "1D accuracy landscapes around selected main and cooldown hparams",
+        fontsize=14,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.985))
+    fig.savefig(output_dir / OUTPUT_LANDSCAPES, dpi=180)
+    plt.close(fig)
+
+
 def plot_search_paths(run: Run, output_dir: Path) -> None:
     selected_paths = selected_path_by_interval(run)
     intervals = sorted(selected_paths)
@@ -873,6 +1086,7 @@ def plot_all(run: Run, log_path: Path, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     write_summary(run, log_path, output_dir)
     plot_curves(run, output_dir)
+    plot_accuracy_landscapes(run, output_dir)
 
 
 def parse_args() -> argparse.Namespace:
@@ -907,6 +1121,7 @@ def main() -> None:
     print(f"Parsed run {run.run} from {args.log}")
     print(f"Wrote {args.output_dir / OUTPUT_SUMMARY}")
     print(f"Wrote {args.output_dir / OUTPUT_CURVES}")
+    print(f"Wrote {args.output_dir / OUTPUT_LANDSCAPES}")
     print(f"Final TTA val acc: {format_number(run.final_tta_val_acc)}")
 
 

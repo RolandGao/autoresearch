@@ -1,2 +1,0 @@
-cifar_search_simple run=0 batch_size=2000 train_epochs=8 n_steps=40 m_steps=40 search_hparams=muon_lr,muon_momentum,bias_lr,head_lr cooldown_search_hparams=muon_lr,bias_lr,head_lr muon_nesterov=False initial_muon_lr=0.2 initial_muon_momentum=0.6 initial_muon_momentum_index=6 initial_bias_lr=104 initial_head_lr=1340
-calibration_start steps=40 abs_diff_min=0.005 abs_diff_max=0.01 search_hparams=muon_lr,muon_momentum,bias_lr,head_lr
