@@ -118,3 +118,27 @@ muon_lr=0.0056 muon_momentum=0.7 bias_lr=13 head_lr=1300 -> tta_val_acc=0.9388
 
 
 factor setter
+
+the point of the calibration is to find a list of values such that
+any local best is the global best.
+this list of values should be as precise as possible while still robustly holding the above property. 
+
+for a center point, going 8 steps towards each side should be convex. aka monotonically getting worse. 
+if this is false, double the step size. 
+if this is true, halve the step size. if halving the step size makes it false, then we are done. 
+
+it's ok if the best is no longer the best after halving the step size. we just recalculate the best after halving the step size. 
+
+we have a new algorithm for calibration.
+
+use N = 5 instead of N = 40.
+
+the lrs probe using their factor = 0.1. they try middle*factor^(k*precision) for k from -4 to 4 inclusive, integer. precision = 1.0 for now. then, we check if tta val acc is monotonically decreasing on each side of the middle. if not, precision = precision * 2, and we try again. if yes, then precision = precision / 2 and we try again. we stop when we have found the boundary where precision is yes and precision/2 is no. 
+
+for momentum, use middle+k*precision, where k is integer, from -4 to 4 inclusive. precision = 0.1 at the start. also do precision * 2 or precision / 2 as above. 
+
+lr has the constraint that lr >= 0. momentum has the constraint that momentum is in [0,1] inclusive. 
+
+if lr or momentum hits the boundary constraint, it's ok for |k| to stop shorter than 4 on that side. if it's monotonically decreasing with |k| smaller than 4, that's ok. 
+
+when doing the 1-step search at the beggining, for momentum, use [0,0.5,0.9]
