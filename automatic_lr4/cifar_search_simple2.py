@@ -534,12 +534,6 @@ LR_SEARCH_MAX_MOVES = 60
 MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
 INITIAL_MOMENTUM = 0.6
 MUON_NESTEROV = False
-CALIBRATION_ABS_DIFF_MIN = 0.005
-CALIBRATION_ABS_DIFF_MAX = 0.01
-CALIBRATION_BINARY_SEARCH_STEPS = 14
-CALIBRATION_MAX_LOWER_VALUES = 32
-CALIBRATION_MAX_UPPER_VALUES = 2
-CALIBRATION_MAX_UPPER_SWEEP_STEPS = 40
 CALIBRATION_EVAL_STEPS = 5
 CALIBRATION_PRECISION_MAX_STEPS = 30
 CALIBRATION_INITIAL_LR_PRECISION = 1.0
@@ -1230,26 +1224,6 @@ def calibration_hparams_key(hparams):
     )
 
 
-def calibration_abs_diff(left, right):
-    if not finite(left) or not finite(right):
-        return float("inf")
-    return abs(left - right)
-
-
-def calibration_diff_ok(diff):
-    return CALIBRATION_ABS_DIFF_MIN <= diff <= CALIBRATION_ABS_DIFF_MAX
-
-
-def calibration_target_diff(total_diff):
-    if not finite(total_diff):
-        return CALIBRATION_ABS_DIFF_MAX
-    segments = max(1, ceil(total_diff / CALIBRATION_ABS_DIFF_MAX))
-    return min(
-        CALIBRATION_ABS_DIFF_MAX,
-        max(CALIBRATION_ABS_DIFF_MIN, total_diff / segments),
-    )
-
-
 def evaluate_calibration_hparams(
     ctx,
     hparams,
@@ -1294,115 +1268,6 @@ def calibration_hparams_with_value(center_hparams, name, value):
     return hparams
 
 
-def find_calibration_value_for_diff(
-    name,
-    anchor_value,
-    far_value,
-    anchor_acc,
-    target_diff,
-    evaluate_value,
-):
-    near_value = anchor_value
-    search_far_value = far_value
-    best = None
-    for _ in range(CALIBRATION_BINARY_SEARCH_STEPS):
-        mid_value = calibration_value_key(
-            name, (near_value + search_far_value) / 2
-        )
-        if isclose(mid_value, near_value, rel_tol=0.0, abs_tol=1e-12) or isclose(
-            mid_value, search_far_value, rel_tol=0.0, abs_tol=1e-12
-        ):
-            break
-        mid_result = evaluate_value(mid_value)
-        diff = calibration_abs_diff(anchor_acc, mid_result["tta_val_acc"])
-        score = abs(diff - target_diff) if finite(diff) else float("inf")
-        if best is None or score < best[0]:
-            best = (score, mid_value, mid_result, diff)
-        if calibration_diff_ok(diff):
-            return mid_value, mid_result
-        if diff < target_diff:
-            near_value = mid_value
-        else:
-            search_far_value = mid_value
-    if best is None:
-        return None
-    _, value, result, _ = best
-    return value, result
-
-
-def fallback_calibration_upper_step(name, center_value):
-    if name == "muon_momentum":
-        larger_values = [
-            value for value in MOMENTUM_SEARCH_VALUES if value > center_value
-        ]
-        if larger_values:
-            return min(larger_values) - center_value
-        return max(1.0 - center_value, 0.0)
-    spec = SEARCH_HPARAMS[name]
-    if spec.kind == "log_lr" and center_value > 0:
-        return center_value / spec.factor - center_value
-    return max(abs(center_value), 1.0)
-
-
-def calibration_upper_step(name, center_value, lower_values):
-    lower_than_center = [
-        value for value, _ in lower_values if value < center_value
-    ]
-    if lower_than_center:
-        step = center_value - max(lower_than_center)
-        if step > 0:
-            return step
-    return fallback_calibration_upper_step(name, center_value)
-
-
-def find_next_upper_calibration_value(
-    name,
-    anchor_value,
-    anchor_result,
-    step,
-    evaluate_value,
-):
-    _, max_value = calibration_value_bounds(name)
-    if step <= 0:
-        return None
-    anchor_acc = anchor_result["tta_val_acc"]
-    for sweep_index in range(1, CALIBRATION_MAX_UPPER_SWEEP_STEPS + 1):
-        far_value = anchor_value + step * sweep_index
-        if max_value is not None:
-            far_value = min(far_value, max_value)
-        far_value = calibration_value_key(name, far_value)
-        if far_value <= anchor_value or isclose(
-            far_value, anchor_value, rel_tol=0.0, abs_tol=1e-12
-        ):
-            return None
-        far_result = evaluate_value(far_value)
-        diff = calibration_abs_diff(anchor_acc, far_result["tta_val_acc"])
-        if calibration_diff_ok(diff):
-            return far_value, far_result
-        if diff < CALIBRATION_ABS_DIFF_MIN:
-            if max_value is not None and isclose(
-                far_value, max_value, rel_tol=0.0, abs_tol=1e-12
-            ):
-                return None
-            continue
-        found = find_calibration_value_for_diff(
-            name,
-            anchor_value,
-            far_value,
-            anchor_acc,
-            calibration_target_diff(diff),
-            evaluate_value,
-        )
-        if found is None:
-            return None
-        value, result = found
-        found_diff = calibration_abs_diff(anchor_acc, result["tta_val_acc"])
-        if calibration_diff_ok(found_diff):
-            return value, result
-        return None
-    return None
-
-
 def unique_sorted_calibration_results(value_results):
     unique = []
     for value, result in value_results:
@@ -1414,64 +1279,6 @@ def unique_sorted_calibration_results(value_results):
             continue
         unique.append((value, result))
     return sorted(unique, key=lambda item: item[0])
-
-
-def build_lower_calibration_values(name, center_value, center_result, evaluate_value):
-    zero_value = calibration_value_key(name, 0.0)
-    descending = [(center_value, center_result)]
-    if isclose(center_value, zero_value, rel_tol=0.0, abs_tol=1e-12):
-        return descending
-    current_value = center_value
-    current_result = center_result
-    zero_result = evaluate_value(zero_value)
-    for _ in range(CALIBRATION_MAX_LOWER_VALUES):
-        total_diff = calibration_abs_diff(
-            current_result["tta_val_acc"], zero_result["tta_val_acc"]
-        )
-        if calibration_diff_ok(total_diff) or total_diff < CALIBRATION_ABS_DIFF_MIN:
-            descending.append((zero_value, zero_result))
-            break
-        target_diff = calibration_target_diff(total_diff)
-        found = find_calibration_value_for_diff(
-            name,
-            current_value,
-            zero_value,
-            current_result["tta_val_acc"],
-            target_diff,
-            evaluate_value,
-        )
-        if found is None:
-            descending.append((zero_value, zero_result))
-            break
-        next_value, next_result = found
-        found_diff = calibration_abs_diff(
-            current_result["tta_val_acc"], next_result["tta_val_acc"]
-        )
-        if not calibration_diff_ok(found_diff):
-            descending.append((zero_value, zero_result))
-            break
-        if any(
-            isclose(next_value, value, rel_tol=0.0, abs_tol=1e-12)
-            for value, _ in descending
-        ):
-            descending.append((zero_value, zero_result))
-            break
-        descending.append((next_value, next_result))
-        current_value = next_value
-        current_result = next_result
-    else:
-        log_event(
-            "calibration_lower_warning",
-            hparam=name,
-            stopped_after=CALIBRATION_MAX_LOWER_VALUES,
-            center=center_value,
-        )
-        if not any(
-            isclose(zero_value, value, rel_tol=0.0, abs_tol=1e-12)
-            for value, _ in descending
-        ):
-            descending.append((zero_value, zero_result))
-    return unique_sorted_calibration_results(reversed(descending))
 
 
 def build_calibrated_hparam_values(
@@ -1501,16 +1308,16 @@ def build_calibrated_hparam_values(
             return CALIBRATION_INITIAL_MOMENTUM_PRECISION
         return CALIBRATION_INITIAL_LR_PRECISION
 
-    def value_for_k(k, precision):
+    def value_for_k(middle_value, k, precision):
         if name == "muon_momentum":
-            return center_value + k * precision
-        return center_value * SEARCH_HPARAMS[name].factor ** (k * precision)
+            return middle_value + k * precision
+        return middle_value * SEARCH_HPARAMS[name].factor ** (k * precision)
 
-    def probe_points(precision):
+    def probe_points(middle_value, precision):
         min_value, max_value = calibration_value_bounds(name)
         points = []
         for k in range(-4, 5):
-            value = value_for_k(k, precision)
+            value = value_for_k(middle_value, k, precision)
             if value < min_value:
                 continue
             if max_value is not None and value > max_value:
@@ -1555,35 +1362,92 @@ def build_calibrated_hparam_values(
             [middle_acc, *upper_accs]
         )
 
-    def evaluate_precision(precision, iteration):
-        point_results = tuple(
-            (k, value, evaluate_value(value)) for k, value in probe_points(precision)
+    def best_probe_point(point_results, middle_value):
+        best_k, best_value, best_result = next(
+            item for item in point_results if item[0] == 0
         )
+        for k, value, result in point_results:
+            if result["tta_val_acc"] > best_result["tta_val_acc"]:
+                best_k, best_value, best_result = k, value, result
+        if isclose(best_value, middle_value, rel_tol=0.0, abs_tol=1e-12):
+            return 0, middle_value, best_result
+        return best_k, best_value, best_result
+
+    def evaluate_precision(start_middle_value, precision, iteration):
+        middle_value = start_middle_value
+        recenter_count = 0
+        while True:
+            point_results = tuple(
+                (k, value, evaluate_value(value))
+                for k, value in probe_points(middle_value, precision)
+            )
+            best_k, best_value, best_result = best_probe_point(
+                point_results, middle_value
+            )
+            if best_k == 0:
+                break
+            log_event(
+                "calibration_precision_recenter",
+                hparam=name,
+                iteration=iteration,
+                precision=precision,
+                old_middle=middle_value,
+                new_middle=best_value,
+                new_middle_tta_val_acc=best_result["tta_val_acc"],
+            )
+            middle_value = best_value
+            recenter_count += 1
+            if recenter_count >= CALIBRATION_PRECISION_MAX_STEPS:
+                log_event(
+                    "calibration_precision_recenter_warning",
+                    hparam=name,
+                    iteration=iteration,
+                    precision=precision,
+                    stopped_after=recenter_count,
+                    middle_value=middle_value,
+                )
+                point_results = tuple(
+                    (k, value, evaluate_value(value))
+                    for k, value in probe_points(middle_value, precision)
+                )
+                break
         monotonic = probe_is_monotonic(point_results)
         values = tuple(value for _, value, _ in point_results)
-        tta_val_accs = tuple(result["tta_val_acc"] for _, _, result in point_results)
         log_event(
             "calibration_precision_probe",
             hparam=name,
             iteration=iteration,
             precision=precision,
+            middle_value=middle_value,
             monotonic=monotonic,
-            values=values,
-            tta_val_accs=tta_val_accs,
         )
+        for _, value, result in point_results:
+            log_line(
+                "calibration_precision_probe_value hparam=%s iteration=%d precision=%s %s -> %s"
+                % (
+                    name,
+                    iteration,
+                    format_log_value(precision),
+                    format_log_value(value),
+                    format_log_value(result["tta_val_acc"]),
+                )
+            )
         return dict(
             precision=precision,
+            middle_value=middle_value,
             monotonic=monotonic,
             values=values,
             point_results=point_results,
         )
 
     precision = initial_precision()
+    middle_value = center_value
     last_yes = None
     last_no = None
     last_probe = None
     for iteration in range(CALIBRATION_PRECISION_MAX_STEPS):
-        probe = evaluate_precision(precision, iteration)
+        probe = evaluate_precision(middle_value, precision, iteration)
+        middle_value = probe["middle_value"]
         last_probe = probe
         if probe["monotonic"]:
             if last_no is not None and isclose(
@@ -1615,20 +1479,19 @@ def build_calibrated_hparam_values(
         (value, evaluate_value(value)) for value in probe_values
     )
     values = tuple(value for value, _ in value_results)
-    tta_val_accs = tuple(result["tta_val_acc"] for _, result in value_results)
-    abs_diffs = tuple(
-        calibration_abs_diff(left["tta_val_acc"], right["tta_val_acc"])
-        for (_, left), (_, right) in zip(value_results, value_results[1:])
-    )
     log_event(
         "calibration_hparam_values",
         hparam=name,
-        values=values,
-        tta_val_accs=tta_val_accs,
-        abs_diffs=abs_diffs,
-        abs_diff_min=CALIBRATION_ABS_DIFF_MIN,
-        abs_diff_max=CALIBRATION_ABS_DIFF_MAX,
     )
+    for value, result in value_results:
+        log_line(
+            "calibration_hparam_value hparam=%s %s -> %s"
+            % (
+                name,
+                format_log_value(value),
+                format_log_value(result["tta_val_acc"]),
+            )
+        )
     return values
 
 
@@ -1660,8 +1523,6 @@ def run_calibration_phase(ctx, initial_point, steps, start_step, start_state):
         "calibration_start",
         local_best_search_steps=local_best_search_steps,
         evaluation_steps=calibration_steps,
-        abs_diff_min=CALIBRATION_ABS_DIFF_MIN,
-        abs_diff_max=CALIBRATION_ABS_DIFF_MAX,
         search_hparams=format_hparam_names(calibration_names),
     )
     original_momentum_spec = SEARCH_HPARAMS["muon_momentum"]

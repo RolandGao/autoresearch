@@ -41,21 +41,23 @@ calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4857 muon_lr=0.1 muon_
 calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4861 muon_lr=0.1 muon_momentum=0 bias_lr=0.01 head_lr=10
 calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4864 muon_lr=0.1 muon_momentum=0 bias_lr=0.001 head_lr=10
 calibration_candidate varied_hparam=bias_lr tta_val_acc=0.485 muon_lr=0.1 muon_momentum=0 bias_lr=0.0001 head_lr=10
-calibration_precision_probe hparam=bias_lr iteration=0 precision=1 monotonic=False values=10000.0,1000.0,100.0,10.0,1.0,0.1,0.01,0.001,0.0001 tta_val_accs=0.26510000228881836,0.4926999807357788,0.49539998173713684,0.4878000020980835,0.48979997634887695,0.48569998145103455,0.4860999882221222,0.48639997839927673,0.48499998450279236
-calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+08 head_lr=10
+calibration_precision_recenter hparam=bias_lr iteration=0 precision=1 old_middle=1 new_middle=100 new_middle_tta_val_acc=0.4954
 calibration_candidate varied_hparam=bias_lr tta_val_acc=0.1 muon_lr=0.1 muon_momentum=0 bias_lr=1e+06 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.1 muon_lr=0.1 muon_momentum=0 bias_lr=100000 head_lr=10
+calibration_precision_probe hparam=bias_lr iteration=0 precision=1 middle_value=100 monotonic=False values=1000000.0,100000.0,10000.0,1000.0,100.0,10.0,1.0,0.1,0.01 tta_val_accs=0.09999999403953552,0.09999999403953552,0.26510000228881836,0.4926999807357788,0.49539998173713684,0.4878000020980835,0.48979997634887695,0.48569998145103455,0.4860999882221222
+calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+10 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+08 head_lr=10
 calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4887 muon_lr=0.1 muon_momentum=0 bias_lr=1e-06 head_lr=10
-calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4876 muon_lr=0.1 muon_momentum=0 bias_lr=1e-08 head_lr=10
-calibration_precision_probe hparam=bias_lr iteration=1 precision=2 monotonic=False values=100000000.0,1000000.0,10000.0,100.0,1.0,0.01,0.0001,1e-06,1e-08 tta_val_accs=-inf,0.09999999403953552,0.26510000228881836,0.49539998173713684,0.48979997634887695,0.4860999882221222,0.48499998450279236,0.4887000024318695,0.4875999987125397
-calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+16 head_lr=10
-calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+12 head_lr=10
-calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4872 muon_lr=0.1 muon_momentum=0 bias_lr=1e-12 head_lr=10
-calibration_precision_probe hparam=bias_lr iteration=2 precision=4 monotonic=False values=1e+16,1000000000000.0,100000000.0,10000.0,1.0,0.0001,1e-08,1e-12 tta_val_accs=-inf,-inf,-inf,0.26510000228881836,0.48979997634887695,0.48499998450279236,0.4875999987125397,0.487199991941452
-calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+32 head_lr=10
-calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+24 head_lr=10
-calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4872 muon_lr=0.1 muon_momentum=0 bias_lr=1e-16 head_lr=10
-calibration_precision_probe hparam=bias_lr iteration=3 precision=8 monotonic=True values=1e+32,1e+24,1e+16,100000000.0,1.0,1e-08,1e-16 tta_val_accs=-inf,-inf,-inf,-inf,0.48979997634887695,0.4875999987125397,0.487199991941452
-calibration_hparam_values hparam=bias_lr values=1e-16,1e-08,1.0,100000000.0,1e+16,1e+24,1e+32 tta_val_accs=0.487199991941452,0.4875999987125397,0.48979997634887695,-inf,-inf,-inf,-inf abs_diffs=0.0004000067710876465,0.0021999776363372803,inf,inf,inf,inf abs_diff_min=0.005 abs_diff_max=0.01
+calibration_precision_probe hparam=bias_lr iteration=1 precision=2 middle_value=100 monotonic=False values=10000000000.0,100000000.0,1000000.0,10000.0,100.0,1.0,0.01,0.0001,1e-06 tta_val_accs=-inf,-inf,0.09999999403953552,0.26510000228881836,0.49539998173713684,0.48979997634887695,0.4860999882221222,0.48499998450279236,0.4887000024318695
+calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+18 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+14 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4872 muon_lr=0.1 muon_momentum=0 bias_lr=1e-10 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4872 muon_lr=0.1 muon_momentum=0 bias_lr=1e-14 head_lr=10
+calibration_precision_probe hparam=bias_lr iteration=2 precision=4 middle_value=100 monotonic=False values=1e+18,100000000000000.0,10000000000.0,1000000.0,100.0,0.01,1e-06,1e-10,1e-14 tta_val_accs=-inf,-inf,-inf,0.09999999403953552,0.49539998173713684,0.4860999882221222,0.4887000024318695,0.487199991941452,0.487199991941452
+calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+34 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+26 head_lr=10
+calibration_precision_probe hparam=bias_lr iteration=3 precision=8 middle_value=100 monotonic=True values=1e+34,1e+26,1e+18,10000000000.0,100.0,1e-06,1e-14 tta_val_accs=-inf,-inf,-inf,-inf,0.49539998173713684,0.4887000024318695,0.487199991941452
+calibration_hparam_values hparam=bias_lr values=1e-14,1e-06,100.0,10000000000.0,1e+18,1e+26,1e+34 tta_val_accs=0.487199991941452,0.4887000024318695,0.49539998173713684,-inf,-inf,-inf,-inf abs_diffs=0.0015000104904174805,0.006699979305267334,inf,inf,inf,inf abs_diff_min=0.005 abs_diff_max=0.01
 calibration_candidate varied_hparam=head_lr tta_val_acc=0.1582 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=100000
 calibration_candidate varied_hparam=head_lr tta_val_acc=0.1813 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=10000
 calibration_candidate varied_hparam=head_lr tta_val_acc=0.4626 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1000
@@ -64,20 +66,20 @@ calibration_candidate varied_hparam=head_lr tta_val_acc=0.4861 muon_lr=0.1 muon_
 calibration_candidate varied_hparam=head_lr tta_val_acc=0.4863 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=0.1
 calibration_candidate varied_hparam=head_lr tta_val_acc=0.4866 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=0.01
 calibration_candidate varied_hparam=head_lr tta_val_acc=0.486 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=0.001
-calibration_precision_probe hparam=head_lr iteration=0 precision=1 monotonic=False values=100000.0,10000.0,1000.0,100.0,10.0,1.0,0.1,0.01,0.001 tta_val_accs=0.1581999957561493,0.18129999935626984,0.4625999927520752,0.4805999994277954,0.48979997634887695,0.4860999882221222,0.486299991607666,0.48659998178482056,0.4860000014305115
+calibration_precision_probe hparam=head_lr iteration=0 precision=1 middle_value=10 monotonic=False values=100000.0,10000.0,1000.0,100.0,10.0,1.0,0.1,0.01,0.001 tta_val_accs=0.1581999957561493,0.18129999935626984,0.4625999927520752,0.4805999994277954,0.48979997634887695,0.4860999882221222,0.486299991607666,0.48659998178482056,0.4860000014305115
 calibration_candidate varied_hparam=head_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e+09
 calibration_candidate varied_hparam=head_lr tta_val_acc=0.1002 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e+07
 calibration_candidate varied_hparam=head_lr tta_val_acc=0.4869 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e-05
 calibration_candidate varied_hparam=head_lr tta_val_acc=0.4889 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e-07
-calibration_precision_probe hparam=head_lr iteration=1 precision=2 monotonic=False values=1000000000.0,10000000.0,100000.0,1000.0,10.0,0.1,0.001,1e-05,1e-07 tta_val_accs=-inf,0.10019999742507935,0.1581999957561493,0.4625999927520752,0.48979997634887695,0.486299991607666,0.4860000014305115,0.4869000017642975,0.48889997601509094
+calibration_precision_probe hparam=head_lr iteration=1 precision=2 middle_value=10 monotonic=False values=1000000000.0,10000000.0,100000.0,1000.0,10.0,0.1,0.001,1e-05,1e-07 tta_val_accs=-inf,0.10019999742507935,0.1581999957561493,0.4625999927520752,0.48979997634887695,0.486299991607666,0.4860000014305115,0.4869000017642975,0.48889997601509094
 calibration_candidate varied_hparam=head_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e+17
 calibration_candidate varied_hparam=head_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e+13
 calibration_candidate varied_hparam=head_lr tta_val_acc=0.4889 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e-11
 calibration_candidate varied_hparam=head_lr tta_val_acc=0.4889 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e-15
-calibration_precision_probe hparam=head_lr iteration=2 precision=4 monotonic=False values=1e+17,10000000000000.0,1000000000.0,100000.0,10.0,0.001,1e-07,1e-11,1e-15 tta_val_accs=-inf,-inf,-inf,0.1581999957561493,0.48979997634887695,0.4860000014305115,0.48889997601509094,0.48889997601509094,0.48889997601509094
+calibration_precision_probe hparam=head_lr iteration=2 precision=4 middle_value=10 monotonic=False values=1e+17,10000000000000.0,1000000000.0,100000.0,10.0,0.001,1e-07,1e-11,1e-15 tta_val_accs=-inf,-inf,-inf,0.1581999957561493,0.48979997634887695,0.4860000014305115,0.48889997601509094,0.48889997601509094,0.48889997601509094
 calibration_candidate varied_hparam=head_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e+33
 calibration_candidate varied_hparam=head_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e+25
-calibration_precision_probe hparam=head_lr iteration=3 precision=8 monotonic=True values=1e+33,1e+25,1e+17,1000000000.0,10.0,1e-07,1e-15 tta_val_accs=-inf,-inf,-inf,-inf,0.48979997634887695,0.48889997601509094,0.48889997601509094
+calibration_precision_probe hparam=head_lr iteration=3 precision=8 middle_value=10 monotonic=True values=1e+33,1e+25,1e+17,1000000000.0,10.0,1e-07,1e-15 tta_val_accs=-inf,-inf,-inf,-inf,0.48979997634887695,0.48889997601509094,0.48889997601509094
 calibration_hparam_values hparam=head_lr values=1e-15,1e-07,10.0,1000000000.0,1e+17,1e+25,1e+33 tta_val_accs=0.48889997601509094,0.48889997601509094,0.48979997634887695,-inf,-inf,-inf,-inf abs_diffs=0.0,0.0009000003337860107,inf,inf,inf,inf abs_diff_min=0.005 abs_diff_max=0.01
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1159 muon_lr=1000 muon_momentum=0 bias_lr=1 head_lr=10
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1048 muon_lr=100 muon_momentum=0 bias_lr=1 head_lr=10
@@ -87,17 +89,17 @@ calibration_candidate varied_hparam=muon_lr tta_val_acc=0.2568 muon_lr=0.01 muon
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1169 muon_lr=0.001 muon_momentum=0 bias_lr=1 head_lr=10
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.103 muon_lr=0.0001 muon_momentum=0 bias_lr=1 head_lr=10
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1014 muon_lr=1e-05 muon_momentum=0 bias_lr=1 head_lr=10
-calibration_precision_probe hparam=muon_lr iteration=0 precision=1 monotonic=False values=1000.0,100.0,10.0,1.0,0.1,0.01,0.001,0.0001,1e-05 tta_val_accs=0.11589999496936798,0.10480000078678131,0.1340000033378601,0.2793999910354614,0.48979997634887695,0.25679999589920044,0.1168999969959259,0.10300000011920929,0.1013999953866005
+calibration_precision_probe hparam=muon_lr iteration=0 precision=1 middle_value=0.1 monotonic=False values=1000.0,100.0,10.0,1.0,0.1,0.01,0.001,0.0001,1e-05 tta_val_accs=0.11589999496936798,0.10480000078678131,0.1340000033378601,0.2793999910354614,0.48979997634887695,0.25679999589920044,0.1168999969959259,0.10300000011920929,0.1013999953866005
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1002 muon_lr=1e+07 muon_momentum=0 bias_lr=1 head_lr=10
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1255 muon_lr=100000 muon_momentum=0 bias_lr=1 head_lr=10
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1014 muon_lr=1e-07 muon_momentum=0 bias_lr=1 head_lr=10
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1013 muon_lr=1e-09 muon_momentum=0 bias_lr=1 head_lr=10
-calibration_precision_probe hparam=muon_lr iteration=1 precision=2 monotonic=False values=10000000.0,100000.0,1000.0,10.0,0.1,0.001,1e-05,1e-07,1e-09 tta_val_accs=0.10019999742507935,0.12549999356269836,0.11589999496936798,0.1340000033378601,0.48979997634887695,0.1168999969959259,0.1013999953866005,0.1013999953866005,0.10130000114440918
+calibration_precision_probe hparam=muon_lr iteration=1 precision=2 middle_value=0.1 monotonic=False values=10000000.0,100000.0,1000.0,10.0,0.1,0.001,1e-05,1e-07,1e-09 tta_val_accs=0.10019999742507935,0.12549999356269836,0.11589999496936798,0.1340000033378601,0.48979997634887695,0.1168999969959259,0.1013999953866005,0.1013999953866005,0.10130000114440918
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1066 muon_lr=1e+15 muon_momentum=0 bias_lr=1 head_lr=10
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1191 muon_lr=1e+11 muon_momentum=0 bias_lr=1 head_lr=10
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1014 muon_lr=1e-13 muon_momentum=0 bias_lr=1 head_lr=10
-calibration_precision_probe hparam=muon_lr iteration=2 precision=4 monotonic=False values=1000000000000000.0,100000000000.0,10000000.0,1000.0,0.1,1e-05,1e-09,1e-13 tta_val_accs=0.10659999400377274,0.11909999698400497,0.10019999742507935,0.11589999496936798,0.48979997634887695,0.1013999953866005,0.10130000114440918,0.1013999953866005
+calibration_precision_probe hparam=muon_lr iteration=2 precision=4 middle_value=0.1 monotonic=False values=1000000000000000.0,100000000000.0,10000000.0,1000.0,0.1,1e-05,1e-09,1e-13 tta_val_accs=0.10659999400377274,0.11909999698400497,0.10019999742507935,0.11589999496936798,0.48979997634887695,0.1013999953866005,0.10130000114440918,0.1013999953866005
 calibration_candidate varied_hparam=muon_lr tta_val_acc=-inf muon_lr=1e+31 muon_momentum=0 bias_lr=1 head_lr=10
 calibration_candidate varied_hparam=muon_lr tta_val_acc=-inf muon_lr=1e+23 muon_momentum=0 bias_lr=1 head_lr=10
 calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1014 muon_lr=1e-17 muon_momentum=0 bias_lr=1 head_lr=10
-calibration_precision_probe hparam=muon_lr iteration=3 precision=8 monotonic=False values=1e+31,1e+23,1000000000000000.0,10000000.0,0.1,1e-09,1e-17 tta_val_accs=-inf,-inf,0.10659999400377274,0.10019999742507935,0.48979997634887695,0.10130000114440918,0.1013999953866005
+calibration_precision_probe hparam=muon_lr iteration=3 precision=8 middle_value=0.1 monotonic=False values=1e+31,1e+23,1000000000000000.0,10000000.0,0.1,1e-09,1e-17 tta_val_accs=-inf,-inf,0.10659999400377274,0.10019999742507935,0.48979997634887695,0.10130000114440918,0.1013999953866005

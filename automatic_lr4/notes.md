@@ -142,3 +142,6 @@ lr has the constraint that lr >= 0. momentum has the constraint that momentum is
 if lr or momentum hits the boundary constraint, it's ok for |k| to stop shorter than 4 on that side. if it's monotonically decreasing with |k| smaller than 4, that's ok. 
 
 when doing the 1-step search at the beggining, for momentum, use [0,0.5,0.9]
+
+include zero. 
+suppose we accept two peaks, then we always evaluate both peaks. 

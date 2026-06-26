@@ -1,0 +1,220 @@
+cifar_search_simple run=0 batch_size=2000 train_epochs=8 n_steps=40 m_steps=40 search_hparams=muon_lr,muon_momentum,bias_lr,head_lr cooldown_search_hparams=muon_lr,bias_lr,head_lr muon_nesterov=False initial_muon_lr=1 initial_muon_momentum=1 initial_muon_momentum_index=0 initial_bias_lr=1 initial_head_lr=1
+calibration_start local_best_search_steps=1 evaluation_steps=5 search_hparams=bias_lr,head_lr,muon_lr,muon_momentum
+muon_lr=1 muon_momentum=0.5 bias_lr=1 head_lr=1 -> tta_val_acc=0.1854
+muon_lr=0.1 muon_momentum=0.5 bias_lr=1 head_lr=1 -> tta_val_acc=0.2477
+muon_lr=10 muon_momentum=0.5 bias_lr=1 head_lr=1 -> blocked
+muon_lr=1 muon_momentum=0 bias_lr=1 head_lr=1 -> tta_val_acc=0.1854
+muon_lr=1 muon_momentum=0.9 bias_lr=1 head_lr=1 -> tta_val_acc=0.1854
+muon_lr=1 muon_momentum=0.5 bias_lr=0.1 head_lr=1 -> tta_val_acc=0.1854
+muon_lr=1 muon_momentum=0.5 bias_lr=10 head_lr=1 -> tta_val_acc=0.1848
+muon_lr=1 muon_momentum=0.5 bias_lr=1 head_lr=0.1 -> tta_val_acc=0.1856
+muon_lr=1 muon_momentum=0.5 bias_lr=1 head_lr=10 -> blocked
+muon_lr=0.01 muon_momentum=0.5 bias_lr=1 head_lr=1 -> tta_val_acc=0.1108
+muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1 -> tta_val_acc=0.2477
+muon_lr=0.1 muon_momentum=0.9 bias_lr=1 head_lr=1 -> tta_val_acc=0.2477
+muon_lr=0.1 muon_momentum=0.5 bias_lr=0.1 head_lr=1 -> tta_val_acc=0.2478
+muon_lr=0.1 muon_momentum=0.5 bias_lr=10 head_lr=1 -> blocked
+muon_lr=0.1 muon_momentum=0.5 bias_lr=1 head_lr=0.1 -> tta_val_acc=0.2477
+muon_lr=0.1 muon_momentum=0.5 bias_lr=1 head_lr=10 -> tta_val_acc=0.2497
+muon_lr=0.01 muon_momentum=0.5 bias_lr=1 head_lr=10 -> tta_val_acc=0.1162
+muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=10 -> tta_val_acc=0.2497
+muon_lr=0.1 muon_momentum=0.9 bias_lr=1 head_lr=10 -> tta_val_acc=0.2497
+muon_lr=0.1 muon_momentum=0.5 bias_lr=0.1 head_lr=10 -> tta_val_acc=0.2494
+muon_lr=0.1 muon_momentum=0.5 bias_lr=10 head_lr=10 -> tta_val_acc=0.2496
+muon_lr=0.1 muon_momentum=0.5 bias_lr=1 head_lr=100 -> tta_val_acc=0.2493
+muon_lr=0.01 muon_momentum=0 bias_lr=1 head_lr=10 -> tta_val_acc=0.1162
+muon_lr=1 muon_momentum=0 bias_lr=1 head_lr=10 -> tta_val_acc=0.1851
+muon_lr=0.1 muon_momentum=0 bias_lr=0.1 head_lr=10 -> tta_val_acc=0.2494
+muon_lr=0.1 muon_momentum=0 bias_lr=10 head_lr=10 -> tta_val_acc=0.2496
+muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=100 -> tta_val_acc=0.2493
+search_path step=0 muon_lr=1 muon_momentum=0.5 bias_lr=1 head_lr=1 tta_val_acc=0.1854
+search_path step=1 muon_lr=0.1 muon_momentum=0.5 bias_lr=1 head_lr=1 tta_val_acc=0.2477
+search_path step=2 muon_lr=0.1 muon_momentum=0.5 bias_lr=1 head_lr=10 tta_val_acc=0.2497
+search_path step=3 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=10 tta_val_acc=0.2497
+calibration_local_best steps=1 tta_val_acc=0.2497 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.2651 muon_lr=0.1 muon_momentum=0 bias_lr=10000 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4927 muon_lr=0.1 muon_momentum=0 bias_lr=1000 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4954 muon_lr=0.1 muon_momentum=0 bias_lr=100 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4878 muon_lr=0.1 muon_momentum=0 bias_lr=10 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4898 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4857 muon_lr=0.1 muon_momentum=0 bias_lr=0.1 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4861 muon_lr=0.1 muon_momentum=0 bias_lr=0.01 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4864 muon_lr=0.1 muon_momentum=0 bias_lr=0.001 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.485 muon_lr=0.1 muon_momentum=0 bias_lr=0.0001 head_lr=10
+calibration_precision_recenter hparam=bias_lr iteration=0 precision=1 old_middle=1 new_middle=100 new_middle_tta_val_acc=0.4954
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.1 muon_lr=0.1 muon_momentum=0 bias_lr=1e+06 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.1 muon_lr=0.1 muon_momentum=0 bias_lr=100000 head_lr=10
+calibration_precision_probe hparam=bias_lr iteration=0 precision=1 middle_value=100 monotonic=False
+calibration_precision_probe_value hparam=bias_lr iteration=0 precision=1 1e+06 -> 0.1
+calibration_precision_probe_value hparam=bias_lr iteration=0 precision=1 100000 -> 0.1
+calibration_precision_probe_value hparam=bias_lr iteration=0 precision=1 10000 -> 0.2651
+calibration_precision_probe_value hparam=bias_lr iteration=0 precision=1 1000 -> 0.4927
+calibration_precision_probe_value hparam=bias_lr iteration=0 precision=1 100 -> 0.4954
+calibration_precision_probe_value hparam=bias_lr iteration=0 precision=1 10 -> 0.4878
+calibration_precision_probe_value hparam=bias_lr iteration=0 precision=1 1 -> 0.4898
+calibration_precision_probe_value hparam=bias_lr iteration=0 precision=1 0.1 -> 0.4857
+calibration_precision_probe_value hparam=bias_lr iteration=0 precision=1 0.01 -> 0.4861
+calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+10 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+08 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4887 muon_lr=0.1 muon_momentum=0 bias_lr=1e-06 head_lr=10
+calibration_precision_probe hparam=bias_lr iteration=1 precision=2 middle_value=100 monotonic=False
+calibration_precision_probe_value hparam=bias_lr iteration=1 precision=2 1e+10 -> -inf
+calibration_precision_probe_value hparam=bias_lr iteration=1 precision=2 1e+08 -> -inf
+calibration_precision_probe_value hparam=bias_lr iteration=1 precision=2 1e+06 -> 0.1
+calibration_precision_probe_value hparam=bias_lr iteration=1 precision=2 10000 -> 0.2651
+calibration_precision_probe_value hparam=bias_lr iteration=1 precision=2 100 -> 0.4954
+calibration_precision_probe_value hparam=bias_lr iteration=1 precision=2 1 -> 0.4898
+calibration_precision_probe_value hparam=bias_lr iteration=1 precision=2 0.01 -> 0.4861
+calibration_precision_probe_value hparam=bias_lr iteration=1 precision=2 0.0001 -> 0.485
+calibration_precision_probe_value hparam=bias_lr iteration=1 precision=2 1e-06 -> 0.4887
+calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+18 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+14 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4872 muon_lr=0.1 muon_momentum=0 bias_lr=1e-10 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=0.4872 muon_lr=0.1 muon_momentum=0 bias_lr=1e-14 head_lr=10
+calibration_precision_probe hparam=bias_lr iteration=2 precision=4 middle_value=100 monotonic=False
+calibration_precision_probe_value hparam=bias_lr iteration=2 precision=4 1e+18 -> -inf
+calibration_precision_probe_value hparam=bias_lr iteration=2 precision=4 1e+14 -> -inf
+calibration_precision_probe_value hparam=bias_lr iteration=2 precision=4 1e+10 -> -inf
+calibration_precision_probe_value hparam=bias_lr iteration=2 precision=4 1e+06 -> 0.1
+calibration_precision_probe_value hparam=bias_lr iteration=2 precision=4 100 -> 0.4954
+calibration_precision_probe_value hparam=bias_lr iteration=2 precision=4 0.01 -> 0.4861
+calibration_precision_probe_value hparam=bias_lr iteration=2 precision=4 1e-06 -> 0.4887
+calibration_precision_probe_value hparam=bias_lr iteration=2 precision=4 1e-10 -> 0.4872
+calibration_precision_probe_value hparam=bias_lr iteration=2 precision=4 1e-14 -> 0.4872
+calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+34 head_lr=10
+calibration_candidate varied_hparam=bias_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1e+26 head_lr=10
+calibration_precision_probe hparam=bias_lr iteration=3 precision=8 middle_value=100 monotonic=True
+calibration_precision_probe_value hparam=bias_lr iteration=3 precision=8 1e+34 -> -inf
+calibration_precision_probe_value hparam=bias_lr iteration=3 precision=8 1e+26 -> -inf
+calibration_precision_probe_value hparam=bias_lr iteration=3 precision=8 1e+18 -> -inf
+calibration_precision_probe_value hparam=bias_lr iteration=3 precision=8 1e+10 -> -inf
+calibration_precision_probe_value hparam=bias_lr iteration=3 precision=8 100 -> 0.4954
+calibration_precision_probe_value hparam=bias_lr iteration=3 precision=8 1e-06 -> 0.4887
+calibration_precision_probe_value hparam=bias_lr iteration=3 precision=8 1e-14 -> 0.4872
+calibration_hparam_values hparam=bias_lr
+calibration_hparam_value hparam=bias_lr 1e-14 -> 0.4872
+calibration_hparam_value hparam=bias_lr 1e-06 -> 0.4887
+calibration_hparam_value hparam=bias_lr 100 -> 0.4954
+calibration_hparam_value hparam=bias_lr 1e+10 -> -inf
+calibration_hparam_value hparam=bias_lr 1e+18 -> -inf
+calibration_hparam_value hparam=bias_lr 1e+26 -> -inf
+calibration_hparam_value hparam=bias_lr 1e+34 -> -inf
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.1582 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=100000
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.1813 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=10000
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.4626 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1000
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.4806 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=100
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.4861 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.4863 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=0.1
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.4866 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=0.01
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.486 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=0.001
+calibration_precision_probe hparam=head_lr iteration=0 precision=1 middle_value=10 monotonic=False
+calibration_precision_probe_value hparam=head_lr iteration=0 precision=1 100000 -> 0.1582
+calibration_precision_probe_value hparam=head_lr iteration=0 precision=1 10000 -> 0.1813
+calibration_precision_probe_value hparam=head_lr iteration=0 precision=1 1000 -> 0.4626
+calibration_precision_probe_value hparam=head_lr iteration=0 precision=1 100 -> 0.4806
+calibration_precision_probe_value hparam=head_lr iteration=0 precision=1 10 -> 0.4898
+calibration_precision_probe_value hparam=head_lr iteration=0 precision=1 1 -> 0.4861
+calibration_precision_probe_value hparam=head_lr iteration=0 precision=1 0.1 -> 0.4863
+calibration_precision_probe_value hparam=head_lr iteration=0 precision=1 0.01 -> 0.4866
+calibration_precision_probe_value hparam=head_lr iteration=0 precision=1 0.001 -> 0.486
+calibration_candidate varied_hparam=head_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e+09
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.1002 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e+07
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.4869 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e-05
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.4889 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e-07
+calibration_precision_probe hparam=head_lr iteration=1 precision=2 middle_value=10 monotonic=False
+calibration_precision_probe_value hparam=head_lr iteration=1 precision=2 1e+09 -> -inf
+calibration_precision_probe_value hparam=head_lr iteration=1 precision=2 1e+07 -> 0.1002
+calibration_precision_probe_value hparam=head_lr iteration=1 precision=2 100000 -> 0.1582
+calibration_precision_probe_value hparam=head_lr iteration=1 precision=2 1000 -> 0.4626
+calibration_precision_probe_value hparam=head_lr iteration=1 precision=2 10 -> 0.4898
+calibration_precision_probe_value hparam=head_lr iteration=1 precision=2 0.1 -> 0.4863
+calibration_precision_probe_value hparam=head_lr iteration=1 precision=2 0.001 -> 0.486
+calibration_precision_probe_value hparam=head_lr iteration=1 precision=2 1e-05 -> 0.4869
+calibration_precision_probe_value hparam=head_lr iteration=1 precision=2 1e-07 -> 0.4889
+calibration_candidate varied_hparam=head_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e+17
+calibration_candidate varied_hparam=head_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e+13
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.4889 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e-11
+calibration_candidate varied_hparam=head_lr tta_val_acc=0.4889 muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e-15
+calibration_precision_probe hparam=head_lr iteration=2 precision=4 middle_value=10 monotonic=False
+calibration_precision_probe_value hparam=head_lr iteration=2 precision=4 1e+17 -> -inf
+calibration_precision_probe_value hparam=head_lr iteration=2 precision=4 1e+13 -> -inf
+calibration_precision_probe_value hparam=head_lr iteration=2 precision=4 1e+09 -> -inf
+calibration_precision_probe_value hparam=head_lr iteration=2 precision=4 100000 -> 0.1582
+calibration_precision_probe_value hparam=head_lr iteration=2 precision=4 10 -> 0.4898
+calibration_precision_probe_value hparam=head_lr iteration=2 precision=4 0.001 -> 0.486
+calibration_precision_probe_value hparam=head_lr iteration=2 precision=4 1e-07 -> 0.4889
+calibration_precision_probe_value hparam=head_lr iteration=2 precision=4 1e-11 -> 0.4889
+calibration_precision_probe_value hparam=head_lr iteration=2 precision=4 1e-15 -> 0.4889
+calibration_candidate varied_hparam=head_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e+33
+calibration_candidate varied_hparam=head_lr tta_val_acc=-inf muon_lr=0.1 muon_momentum=0 bias_lr=1 head_lr=1e+25
+calibration_precision_probe hparam=head_lr iteration=3 precision=8 middle_value=10 monotonic=True
+calibration_precision_probe_value hparam=head_lr iteration=3 precision=8 1e+33 -> -inf
+calibration_precision_probe_value hparam=head_lr iteration=3 precision=8 1e+25 -> -inf
+calibration_precision_probe_value hparam=head_lr iteration=3 precision=8 1e+17 -> -inf
+calibration_precision_probe_value hparam=head_lr iteration=3 precision=8 1e+09 -> -inf
+calibration_precision_probe_value hparam=head_lr iteration=3 precision=8 10 -> 0.4898
+calibration_precision_probe_value hparam=head_lr iteration=3 precision=8 1e-07 -> 0.4889
+calibration_precision_probe_value hparam=head_lr iteration=3 precision=8 1e-15 -> 0.4889
+calibration_hparam_values hparam=head_lr
+calibration_hparam_value hparam=head_lr 1e-15 -> 0.4889
+calibration_hparam_value hparam=head_lr 1e-07 -> 0.4889
+calibration_hparam_value hparam=head_lr 10 -> 0.4898
+calibration_hparam_value hparam=head_lr 1e+09 -> -inf
+calibration_hparam_value hparam=head_lr 1e+17 -> -inf
+calibration_hparam_value hparam=head_lr 1e+25 -> -inf
+calibration_hparam_value hparam=head_lr 1e+33 -> -inf
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1159 muon_lr=1000 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1048 muon_lr=100 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.134 muon_lr=10 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.2794 muon_lr=1 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.2568 muon_lr=0.01 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1169 muon_lr=0.001 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.103 muon_lr=0.0001 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1014 muon_lr=1e-05 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_precision_probe hparam=muon_lr iteration=0 precision=1 middle_value=0.1 monotonic=False
+calibration_precision_probe_value hparam=muon_lr iteration=0 precision=1 1000 -> 0.1159
+calibration_precision_probe_value hparam=muon_lr iteration=0 precision=1 100 -> 0.1048
+calibration_precision_probe_value hparam=muon_lr iteration=0 precision=1 10 -> 0.134
+calibration_precision_probe_value hparam=muon_lr iteration=0 precision=1 1 -> 0.2794
+calibration_precision_probe_value hparam=muon_lr iteration=0 precision=1 0.1 -> 0.4898
+calibration_precision_probe_value hparam=muon_lr iteration=0 precision=1 0.01 -> 0.2568
+calibration_precision_probe_value hparam=muon_lr iteration=0 precision=1 0.001 -> 0.1169
+calibration_precision_probe_value hparam=muon_lr iteration=0 precision=1 0.0001 -> 0.103
+calibration_precision_probe_value hparam=muon_lr iteration=0 precision=1 1e-05 -> 0.1014
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1002 muon_lr=1e+07 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1255 muon_lr=100000 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1014 muon_lr=1e-07 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1013 muon_lr=1e-09 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_precision_probe hparam=muon_lr iteration=1 precision=2 middle_value=0.1 monotonic=False
+calibration_precision_probe_value hparam=muon_lr iteration=1 precision=2 1e+07 -> 0.1002
+calibration_precision_probe_value hparam=muon_lr iteration=1 precision=2 100000 -> 0.1255
+calibration_precision_probe_value hparam=muon_lr iteration=1 precision=2 1000 -> 0.1159
+calibration_precision_probe_value hparam=muon_lr iteration=1 precision=2 10 -> 0.134
+calibration_precision_probe_value hparam=muon_lr iteration=1 precision=2 0.1 -> 0.4898
+calibration_precision_probe_value hparam=muon_lr iteration=1 precision=2 0.001 -> 0.1169
+calibration_precision_probe_value hparam=muon_lr iteration=1 precision=2 1e-05 -> 0.1014
+calibration_precision_probe_value hparam=muon_lr iteration=1 precision=2 1e-07 -> 0.1014
+calibration_precision_probe_value hparam=muon_lr iteration=1 precision=2 1e-09 -> 0.1013
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1066 muon_lr=1e+15 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1191 muon_lr=1e+11 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1014 muon_lr=1e-13 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_precision_probe hparam=muon_lr iteration=2 precision=4 middle_value=0.1 monotonic=False
+calibration_precision_probe_value hparam=muon_lr iteration=2 precision=4 1e+15 -> 0.1066
+calibration_precision_probe_value hparam=muon_lr iteration=2 precision=4 1e+11 -> 0.1191
+calibration_precision_probe_value hparam=muon_lr iteration=2 precision=4 1e+07 -> 0.1002
+calibration_precision_probe_value hparam=muon_lr iteration=2 precision=4 1000 -> 0.1159
+calibration_precision_probe_value hparam=muon_lr iteration=2 precision=4 0.1 -> 0.4898
+calibration_precision_probe_value hparam=muon_lr iteration=2 precision=4 1e-05 -> 0.1014
+calibration_precision_probe_value hparam=muon_lr iteration=2 precision=4 1e-09 -> 0.1013
+calibration_precision_probe_value hparam=muon_lr iteration=2 precision=4 1e-13 -> 0.1014
+calibration_candidate varied_hparam=muon_lr tta_val_acc=-inf muon_lr=1e+31 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=-inf muon_lr=1e+23 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_candidate varied_hparam=muon_lr tta_val_acc=0.1014 muon_lr=1e-17 muon_momentum=0 bias_lr=1 head_lr=10
+calibration_precision_probe hparam=muon_lr iteration=3 precision=8 middle_value=0.1 monotonic=False
+calibration_precision_probe_value hparam=muon_lr iteration=3 precision=8 1e+31 -> -inf
+calibration_precision_probe_value hparam=muon_lr iteration=3 precision=8 1e+23 -> -inf
+calibration_precision_probe_value hparam=muon_lr iteration=3 precision=8 1e+15 -> 0.1066
+calibration_precision_probe_value hparam=muon_lr iteration=3 precision=8 1e+07 -> 0.1002
+calibration_precision_probe_value hparam=muon_lr iteration=3 precision=8 0.1 -> 0.4898
+calibration_precision_probe_value hparam=muon_lr iteration=3 precision=8 1e-09 -> 0.1013
+calibration_precision_probe_value hparam=muon_lr iteration=3 precision=8 1e-17 -> 0.1014
