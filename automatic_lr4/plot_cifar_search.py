@@ -25,6 +25,7 @@ DEFAULT_OUTPUT_DIR = (
 OUTPUT_SUMMARY = "summary.txt"
 OUTPUT_CURVES = "curves.png"
 OUTPUT_LANDSCAPES = "landscapes.png"
+OUTPUT_LANDSCAPES_MORE = "landscapes_more.png"
 
 KV_RE = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>\S+)")
 SUMMARY_RE = re.compile(r"^(?P<key>[A-Za-z][A-Za-z0-9 ]+):\s+(?P<value>.+)$")
@@ -467,6 +468,7 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
         f"Output directory: {output_dir}",
         f"Curves plot: {output_dir / OUTPUT_CURVES}",
         f"Landscape plot: {output_dir / OUTPUT_LANDSCAPES}",
+        f"More landscape plot: {output_dir / OUTPUT_LANDSCAPES_MORE}",
         "",
         (
             f"Run {run.run}: batch_size={format_number(run.batch_size)} "
@@ -752,6 +754,35 @@ def main_landscape_score_attr(run: Run, interval: int) -> str:
     return "main_acc"
 
 
+def best_main_interval_score(run: Run, interval: int, score_attr: str) -> float | None:
+    scores = [
+        getattr(item, score_attr)
+        for item in run.main_evals
+        if item.interval == interval and getattr(item, score_attr) is not None
+    ]
+    return max(scores) if scores else None
+
+
+def plot_baseline(ax, value: float | None, label: str) -> None:
+    if value is None:
+        return
+    ax.axhline(value, color="#555555", linestyle=":", linewidth=1.0)
+    ax.text(
+        0.98,
+        0.95,
+        f"{label}={format_number(value, 4)}",
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize=7,
+        bbox={
+            "facecolor": "white",
+            "edgecolor": "#dddddd",
+            "alpha": 0.85,
+        },
+    )
+
+
 def plot_accuracy_landscapes(run: Run, output_dir: Path) -> None:
     train_intervals = sorted(run.train_intervals, key=lambda item: item.interval)
     if not train_intervals:
@@ -794,7 +825,6 @@ def plot_accuracy_landscapes(run: Run, output_dir: Path) -> None:
             if main_eval is not None
             else []
         )
-
         row_specs = [
             (
                 row_index * 2,
@@ -887,6 +917,123 @@ def plot_accuracy_landscapes(run: Run, output_dir: Path) -> None:
     )
     fig.tight_layout(rect=(0, 0, 1, 0.985))
     fig.savefig(output_dir / OUTPUT_LANDSCAPES, dpi=180)
+    plt.close(fig)
+
+
+def plot_all_cooldown_landscapes(run: Run, output_dir: Path) -> None:
+    cooldown_names = parse_hparam_names(
+        run.header.get("cooldown_search_hparams")
+    ) or ["muon_lr", "bias_lr", "head_lr"]
+    main_evals = [
+        item
+        for item in sorted(
+            run.main_evals,
+            key=lambda main_eval: (main_eval.interval, main_eval.index),
+        )
+        if item.candidates
+    ]
+    if not main_evals:
+        return
+
+    row_count = len(main_evals)
+    col_count = len(cooldown_names)
+    fig, axes = plt.subplots(
+        row_count,
+        col_count,
+        figsize=(4.4 * col_count, 1.75 * row_count),
+        squeeze=False,
+    )
+    row_scores: dict[int, list[float]] = {row: [] for row in range(row_count)}
+
+    for row, main_eval in enumerate(main_evals):
+        best = best_cooldown_candidate(main_eval)
+        center = best.hparams if best is not None else HParams()
+        baseline = best_main_interval_score(
+            run, main_eval.interval, "best_cooldown_acc"
+        )
+        candidates = [
+            item for item in main_eval.candidates if item.tta_val_acc is not None
+        ]
+        color = color_for_interval(main_eval.interval)
+        if baseline is not None:
+            row_scores[row].append(baseline)
+
+        for col, attr in enumerate(cooldown_names):
+            ax = axes[row][col]
+            points = candidate_accuracy_landscape(
+                candidates,
+                center,
+                attr,
+                "tta_val_acc",
+            )
+            center_value = getattr(center, attr)
+            if points:
+                xs, ys = zip(*points)
+                row_scores[row].extend(ys)
+                ax.plot(xs, ys, marker="o", markersize=3.5, linewidth=1.2, color=color)
+                if center_value is not None:
+                    ax.axvline(
+                        center_value,
+                        color="#333333",
+                        linestyle="--",
+                        linewidth=0.9,
+                    )
+            else:
+                ax.text(
+                    0.5,
+                    0.5,
+                    "no 1D slice",
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color="#777777",
+                )
+            plot_baseline(ax, baseline, "interval_best")
+
+            scale, scale_kwargs = hparam_axis_scale(attr)
+            ax.set_xscale(scale, **scale_kwargs)
+            if col == 0:
+                ax.set_ylabel("tta_val_acc")
+            else:
+                ax.set_ylabel("")
+            ax.set_xlabel(attr)
+            ax.set_title(
+                f"Interval {main_eval.interval} eval {main_eval.index}: {attr}",
+                fontsize=9,
+            )
+            style_axes(ax)
+            if center_value is not None:
+                ax.text(
+                    0.03,
+                    0.95,
+                    f"best={format_number(center_value, 3)}",
+                    transform=ax.transAxes,
+                    va="top",
+                    fontsize=7,
+                    bbox={
+                        "facecolor": "white",
+                        "edgecolor": "#dddddd",
+                        "alpha": 0.85,
+                    },
+                )
+
+    for row, scores in row_scores.items():
+        if not scores:
+            continue
+        ymin = min(scores)
+        ymax = max(scores)
+        padding = (ymax - ymin) * 0.08 if ymax > ymin else 0.001
+        for ax in axes[row]:
+            if ax.get_visible():
+                ax.set_ylim(ymin - padding, ymax + padding)
+
+    fig.suptitle(
+        "Cooldown accuracy landscapes for every evaluated main hparam tuple",
+        fontsize=14,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.997))
+    fig.savefig(output_dir / OUTPUT_LANDSCAPES_MORE, dpi=140)
     plt.close(fig)
 
 
@@ -1087,6 +1234,7 @@ def plot_all(run: Run, log_path: Path, output_dir: Path) -> None:
     write_summary(run, log_path, output_dir)
     plot_curves(run, output_dir)
     plot_accuracy_landscapes(run, output_dir)
+    plot_all_cooldown_landscapes(run, output_dir)
 
 
 def parse_args() -> argparse.Namespace:
@@ -1122,6 +1270,7 @@ def main() -> None:
     print(f"Wrote {args.output_dir / OUTPUT_SUMMARY}")
     print(f"Wrote {args.output_dir / OUTPUT_CURVES}")
     print(f"Wrote {args.output_dir / OUTPUT_LANDSCAPES}")
+    print(f"Wrote {args.output_dir / OUTPUT_LANDSCAPES_MORE}")
     print(f"Final TTA val acc: {format_number(run.final_tta_val_acc)}")
 
 

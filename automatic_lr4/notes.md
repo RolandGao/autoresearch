@@ -145,3 +145,12 @@ when doing the 1-step search at the beggining, for momentum, use [0,0.5,0.9]
 
 include zero. 
 suppose we accept two peaks, then we always evaluate both peaks. 
+
+
+Given a 1D function with one large peak and some noise in the output that makes some little local peaks
+It is expensive to evaluate the function so we can only try a around 5 points. How do we find a robust peak?
+
+given a 1D function with some noise in the output. how to find a robust peak?
+what if it's expensive to evaluate the function f and we only can only spend time evaluating 5 points
+explain how to develop the acquisition function. and how to develop the surrogate model
+what if i know there's only one big peak and if i go near the boundary there's definitely no peak there
