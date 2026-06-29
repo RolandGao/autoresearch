@@ -369,6 +369,16 @@ def log_train_hparams(
     )
 
 
+def log_train_loss(run, interval_index, step, loss):
+    log_event(
+        "train_loss",
+        run=run,
+        interval=interval_index,
+        step=step,
+        loss=loss,
+    )
+
+
 def log_interval_boundary_eval(run, interval_index, step, total_steps, tta_val_acc):
     log_event(
         "interval_boundary_eval",
@@ -430,9 +440,6 @@ def log_line(text):
 
 def log_main_hparams(result):
     prefix = "main hparams: %s" % hparam_text(result)
-    if result.get("blocked", False):
-        log_line("%s -> blocked" % prefix)
-        return
     metrics = ["main=%s" % format_log_value(result["main_tta_val_acc"])]
     cooldown_result = result.get("cooldown_result")
     if cooldown_result is not None:
@@ -444,9 +451,6 @@ def log_main_hparams(result):
 
 def log_candidate_result(result):
     prefix = hparam_text(result)
-    if result.get("blocked", False):
-        log_line("%s -> blocked" % prefix)
-        return
     log_line("%s -> tta_val_acc=%s" % (prefix, format_log_value(result["tta_val_acc"])))
 
 
@@ -458,9 +462,6 @@ def log_candidate_results(results):
 def log_search_path(path):
     for step, result in enumerate(path):
         prefix = "search_path step=%d %s" % (step, hparam_text(result))
-        if result.get("blocked", False):
-            log_line("%s blocked=True" % prefix)
-            continue
         log_line(
             "%s tta_val_acc=%s" % (prefix, format_log_value(result["tta_val_acc"]))
         )
@@ -527,26 +528,24 @@ def evaluate_tta_val_acc(model, loader):
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
 SEARCH_STEP_CONFIGS = [(40, 40)]
-PRINT_OUTPUT_FILENAME = "cifar_search_4hparam.log"
-LR_SEARCH_FACTOR = 0.1
+PRINT_OUTPUT_FILENAME = "cifar_simplified_cooldown.log"
+LR_SEARCH_FACTOR = 0.6
 LR_SEARCH_SIG_FIGS = 2
-LR_SEARCH_MAX_MOVES = 60
+TTA_VAL_ACC_DIFF_THRESHOLD = 0.0005
+SMALL_LR_THRESHOLD_STEPS = 3
+LR_ZERO_STATE = "zero"
 MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
 INITIAL_MOMENTUM = 0.6
 MUON_NESTEROV = False
-CALIBRATION_EVAL_STEPS = 5
-CALIBRATION_PRECISION_MAX_STEPS = 30
-CALIBRATION_INITIAL_LR_PRECISION = 1.0
-CALIBRATION_INITIAL_MOMENTUM_PRECISION = 0.1
-LOCAL_BEST_MOMENTUM_VALUES = (0.0, 0.5, 0.9)
-BIAS_LR_SWEEP_MIN = 0.01
-BIAS_LR_SWEEP_MAX = 100000.0
-BIAS_LR_SWEEP_SAMPLES = 800
-BIAS_LR_SWEEP_STEPS = 5
-RUN_MAIN_AFTER_CALIBRATION = False
 RUN_CONFIGS = [
     dict(batch_size=2000),
 ]
+SEARCH_HPARAM_ORDER = ("muon_lr", "muon_momentum", "bias_lr", "head_lr")
+SEARCH_HPARAM_GROUPS = (
+    ("muon_lr", "muon_momentum"),
+    ("head_lr",),
+    ("bias_lr",),
+)
 
 
 @dataclass(frozen=True)
@@ -562,28 +561,28 @@ class SearchHparam:
 SEARCH_HPARAMS = {
     "muon_lr": SearchHparam(
         kind="log_lr",
-        initial_value=1.0,
+        initial_value=0.2,
         search=True,
         cooldown_search=True,
         factor=LR_SEARCH_FACTOR,
     ),
     "muon_momentum": SearchHparam(
-        kind="log_lr",
-        initial_value=1.0,
+        kind="choice",
+        initial_value=INITIAL_MOMENTUM,
         search=True,
         cooldown_search=False,
-        factor=LR_SEARCH_FACTOR,
+        values=tuple(MOMENTUM_SEARCH_VALUES),
     ),
     "bias_lr": SearchHparam(
         kind="log_lr",
-        initial_value=1.0,
+        initial_value=104,
         search=True,
         cooldown_search=True,
         factor=LR_SEARCH_FACTOR,
     ),
     "head_lr": SearchHparam(
         kind="log_lr",
-        initial_value=1.0,
+        initial_value=1340,
         search=True,
         cooldown_search=True,
         factor=LR_SEARCH_FACTOR,
@@ -597,20 +596,6 @@ def rounded_lr(value):
     return round(value, LR_SEARCH_SIG_FIGS - 1 - floor(log10(abs(value))))
 
 
-def rounded_search_hparam(name, value):
-    if value > 0 and SEARCH_HPARAMS[name].kind == "log_lr":
-        return rounded_lr(value)
-    return value
-
-
-def rounded_search_hparams(hparams):
-    hparams = dict(hparams)
-    for name in SEARCH_HPARAMS:
-        if name in hparams:
-            hparams[name] = rounded_search_hparam(name, hparams[name])
-    return hparams
-
-
 def lr_from_k(k, initial_value, factor):
     return rounded_lr(initial_value * factor**k)
 
@@ -621,28 +606,39 @@ def nearest_lr_k(lr, initial_value, factor):
     return int(round(log(lr / initial_value) / log(factor)))
 
 
-def nearest_choice_index(value, values):
-    for index, search_value in enumerate(values):
-        if isclose(value, search_value, rel_tol=0.0, abs_tol=1e-12):
-            return index
-    raise ValueError("value must be in %s, got %s" % (values, value))
-
-
 def nearest_momentum_index(momentum, values=MOMENTUM_SEARCH_VALUES):
-    return nearest_choice_index(momentum, values)
+    for index, search_momentum in enumerate(values):
+        if isclose(momentum, search_momentum, rel_tol=0.0, abs_tol=1e-12):
+            return index
+    raise ValueError("momentum must be in %s, got %s" % (values, momentum))
 
 
 def active_search_hparam_names():
-    return tuple(name for name, spec in SEARCH_HPARAMS.items() if spec.search)
+    return tuple(name for name in SEARCH_HPARAM_ORDER if SEARCH_HPARAMS[name].search)
 
 
 def cooldown_search_hparam_names():
-    return tuple(name for name, spec in SEARCH_HPARAMS.items() if spec.cooldown_search)
+    return tuple(
+        name for name in SEARCH_HPARAM_ORDER if SEARCH_HPARAMS[name].cooldown_search
+    )
+
+
+def cooldown_search_hparam_names_for_step(step_name):
+    for group in SEARCH_HPARAM_GROUPS:
+        if step_name in group:
+            return tuple(
+                name
+                for name in SEARCH_HPARAM_ORDER
+                if name in group and SEARCH_HPARAMS[name].cooldown_search
+            )
+    raise ValueError(f"Unrecognized search hparam group for: {step_name}")
 
 
 def hparam_from_state(name, state):
     spec = SEARCH_HPARAMS[name]
     if spec.kind == "log_lr":
+        if state == LR_ZERO_STATE:
+            return 0.0
         return lr_from_k(state, spec.initial_value, spec.factor)
     if spec.kind == "choice":
         return spec.values[state]
@@ -652,9 +648,11 @@ def hparam_from_state(name, state):
 def nearest_hparam_state(name, value):
     spec = SEARCH_HPARAMS[name]
     if spec.kind == "log_lr":
+        if value == 0:
+            return LR_ZERO_STATE
         return nearest_lr_k(value, spec.initial_value, spec.factor)
     if spec.kind == "choice":
-        return nearest_choice_index(value, spec.values)
+        return nearest_momentum_index(value, spec.values)
     raise ValueError(f"Unrecognized hparam kind: {spec.kind}")
 
 
@@ -795,7 +793,6 @@ def make_optimizers(model, cfg):
 
 def set_muon_hparams(muon_optimizer, muon_lr, muon_momentum, muon_nesterov):
     muon_lr = rounded_lr(muon_lr)
-    muon_momentum = rounded_lr(muon_momentum)
     for group in muon_optimizer.param_groups:
         group["lr"] = muon_lr
         group["momentum"] = muon_momentum
@@ -805,7 +802,7 @@ def set_muon_hparams(muon_optimizer, muon_lr, muon_momentum, muon_nesterov):
 
 def set_sgd_lrs(ctx, hparams):
     for group in ctx.sgd_optimizer.param_groups:
-        group["lr"] = rounded_search_hparam(group["lr_name"], hparams[group["lr_name"]])
+        group["lr"] = hparams[group["lr_name"]]
 
 
 def snapshot_training_state(model, optimizers, batch_stream):
@@ -860,7 +857,8 @@ def train_interval(
     capture_end_state=True,
     capture_step_metrics=False,
 ):
-    hparams = rounded_search_hparams(hparams)
+    hparams = dict(hparams)
+    hparams["muon_lr"] = rounded_lr(hparams["muon_lr"])
     losses = [] if capture_step_metrics else None
     last_train_loss = float("inf")
     completed_steps = 0
@@ -903,7 +901,11 @@ def point_sort_key(point, search_names):
     values = tuple(
         hparam_from_state(name, state) for name, state in zip(search_names, point)
     )
-    return sum(abs(state) for state in log_states), values, point
+    log_distance = sum(
+        float("inf") if state == LR_ZERO_STATE else abs(state) for state in log_states
+    )
+    comparable_point = tuple(str(state) for state in point)
+    return log_distance, values, comparable_point
 
 
 def better_point(point, incumbent_point, results_by_point, search_names):
@@ -917,13 +919,6 @@ def better_point(point, incumbent_point, results_by_point, search_names):
     )
 
 
-def better_tta_val_acc(point, incumbent_point, results_by_point):
-    return (
-        results_by_point[point]["tta_val_acc"]
-        > results_by_point[incumbent_point]["tta_val_acc"]
-    )
-
-
 def point_with_state(point, index, state):
     return point[:index] + (state,) + point[index + 1 :]
 
@@ -931,6 +926,8 @@ def point_with_state(point, index, state):
 def neighbor_states(name, state, step=1):
     spec = SEARCH_HPARAMS[name]
     if spec.kind == "log_lr":
+        if state == LR_ZERO_STATE:
+            return []
         return [state - step, state + step]
     if spec.kind == "choice":
         states = []
@@ -947,12 +944,15 @@ def lower_value_first(points, search_names, index):
     return sorted(points, key=lambda point: hparam_from_state(name, point[index]))
 
 
-def uses_opposite_neighbor_block(name):
-    return SEARCH_HPARAMS[name].kind == "log_lr"
+def ordered_search_indexes(search_names):
+    return [
+        search_names.index(name) for name in SEARCH_HPARAM_ORDER if name in search_names
+    ]
 
 
 def neighbor_point_groups(point, search_names):
-    for index, name in enumerate(search_names):
+    for index in ordered_search_indexes(search_names):
+        name = search_names[index]
         group = [
             point_with_state(point, index, state)
             for state in neighbor_states(name, point[index])
@@ -961,72 +961,160 @@ def neighbor_point_groups(point, search_names):
             yield name, lower_value_first(group, search_names, index)
 
 
-def neighbor_points(point, search_names):
-    for _, group in neighbor_point_groups(point, search_names):
-        yield from group
-
-
-def best_neighbor_point(middle_point, results_by_point, search_names):
-    best_point = middle_point
-    for point in neighbor_points(middle_point, search_names):
-        if better_point(point, best_point, results_by_point, search_names):
-            best_point = point
-    return best_point
-
-
 def find_best_hparam_point(
     initial_point,
     search_names,
     evaluate,
     results_by_point,
-    block,
 ):
-    def evaluate_neighbors(middle_point):
-        results = []
-        for name, group in neighbor_point_groups(middle_point, search_names):
-            first_point = group[0]
-            results.append(evaluate(first_point, cooldown_seed_point=middle_point))
-            if len(group) == 1:
-                continue
-            second_point = group[1]
-            if uses_opposite_neighbor_block(name) and better_tta_val_acc(
-                first_point, middle_point, results_by_point
+    def point_in_direction(point, index, delta):
+        name = search_names[index]
+        spec = SEARCH_HPARAMS[name]
+        if point[index] == LR_ZERO_STATE:
+            return None
+        state = point[index] + delta
+        if spec.kind == "choice" and (state < 0 or state >= len(spec.values)):
+            return None
+        return point_with_state(point, index, state)
+
+    def moves_toward_smaller_lr(middle_point, index, neighbor_point):
+        name = search_names[index]
+        if SEARCH_HPARAMS[name].kind != "log_lr":
+            return False
+        middle_lr = hparam_from_state(name, middle_point[index])
+        neighbor_lr = hparam_from_state(name, neighbor_point[index])
+        return neighbor_lr < middle_lr
+
+    def point_tta_val_acc(point):
+        return results_by_point[point]["tta_val_acc"]
+
+    def is_above_middle(point, middle_point):
+        point_acc = point_tta_val_acc(point)
+        middle_acc = point_tta_val_acc(middle_point)
+        return finite(point_acc) and finite(middle_acc) and point_acc > middle_acc
+
+    def is_below_middle_threshold(point, middle_point):
+        point_acc = point_tta_val_acc(point)
+        middle_acc = point_tta_val_acc(middle_point)
+        if not finite(point_acc) or not finite(middle_acc):
+            return True
+        return point_acc < middle_acc - TTA_VAL_ACC_DIFF_THRESHOLD
+
+    def is_below_best_threshold(point, best_point):
+        point_acc = point_tta_val_acc(point)
+        best_acc = point_tta_val_acc(best_point)
+        if not finite(point_acc) or not finite(best_acc):
+            return True
+        return point_acc < best_acc - TTA_VAL_ACC_DIFF_THRESHOLD
+
+    def best_line_point(incumbent_point, point):
+        if better_point(point, incumbent_point, results_by_point, search_names):
+            return point
+        return incumbent_point
+
+    def next_point_along_direction(current_point, index, delta):
+        if current_point[index] == LR_ZERO_STATE:
+            return None
+        return point_in_direction(current_point, index, delta)
+
+    def should_stop_after_candidate(
+        middle_point,
+        current_point,
+        index,
+        crossed_threshold,
+        small_lr_threshold_steps,
+    ):
+        if crossed_threshold:
+            return True, small_lr_threshold_steps
+        if not moves_toward_smaller_lr(middle_point, index, current_point):
+            return False, small_lr_threshold_steps
+        small_lr_threshold_steps += 1
+        return (
+            small_lr_threshold_steps >= SMALL_LR_THRESHOLD_STEPS,
+            small_lr_threshold_steps,
+        )
+
+    def search_direction(middle_point, index, first_point):
+        delta = first_point[index] - middle_point[index]
+        current_point = first_point
+        best_point = middle_point
+        went_above_middle = False
+        small_lr_threshold_steps = 0
+        while current_point is not None:
+            evaluate(
+                current_point,
+                cooldown_seed_point=middle_point,
+                cooldown_search_names=cooldown_search_hparam_names_for_step(
+                    search_names[index]
+                ),
+            )
+            prior_best_point = best_point
+            best_point = best_line_point(prior_best_point, current_point)
+            found_new_best_above_middle = (
+                best_point == current_point
+                and prior_best_point != current_point
+                and is_above_middle(current_point, middle_point)
+            )
+            if found_new_best_above_middle:
+                small_lr_threshold_steps = 0
+            if found_new_best_above_middle or is_above_middle(
+                prior_best_point, middle_point
             ):
-                block(second_point)
-                results.append(results_by_point[second_point])
-                continue
-            results.append(evaluate(second_point, cooldown_seed_point=middle_point))
-        return results
+                went_above_middle = True
+            if found_new_best_above_middle:
+                should_stop = False
+            elif went_above_middle:
+                should_stop, small_lr_threshold_steps = should_stop_after_candidate(
+                    middle_point,
+                    current_point,
+                    index,
+                    is_below_best_threshold(current_point, best_point),
+                    small_lr_threshold_steps,
+                )
+                if should_stop:
+                    break
+            else:
+                should_stop, small_lr_threshold_steps = should_stop_after_candidate(
+                    middle_point,
+                    current_point,
+                    index,
+                    is_below_middle_threshold(current_point, middle_point),
+                    small_lr_threshold_steps,
+                )
+                if should_stop:
+                    break
+            current_point = next_point_along_direction(current_point, index, delta)
+        if went_above_middle:
+            return best_point
+        return middle_point
+
+    def search_better_neighbor(middle_point):
+        for name, group in neighbor_point_groups(middle_point, search_names):
+            index = search_names.index(name)
+            for neighbor_point in group:
+                direction_best_point = search_direction(
+                    middle_point, index, neighbor_point
+                )
+                if direction_best_point != middle_point:
+                    evaluate(direction_best_point)
+                    if better_point(
+                        direction_best_point,
+                        middle_point,
+                        results_by_point,
+                        search_names,
+                    ):
+                        return direction_best_point
+        return middle_point
 
     middle_point = initial_point
     center_path = [middle_point]
     evaluate(middle_point)
-    initial_points = [middle_point]
-    evaluate_neighbors(middle_point)
-    initial_points.extend(
-        point for point in neighbor_points(middle_point, search_names)
-    )
-    best_initial_point = middle_point
-    for point in initial_points:
-        if better_point(point, best_initial_point, results_by_point, search_names):
-            best_initial_point = point
-    if best_initial_point != middle_point:
-        middle_point = best_initial_point
-        center_path.append(middle_point)
-    for _ in range(LR_SEARCH_MAX_MOVES):
-        evaluate_neighbors(middle_point)
-        next_point = best_neighbor_point(middle_point, results_by_point, search_names)
+    while True:
+        next_point = search_better_neighbor(middle_point)
         if next_point == middle_point:
             break
         middle_point = next_point
         center_path.append(middle_point)
-    else:
-        log_event(
-            "lr_momentum_search_warning",
-            did_not_converge_within=LR_SEARCH_MAX_MOVES,
-            using_point=middle_point,
-            tta_val_acc=results_by_point[middle_point]["tta_val_acc"],
-        )
     return middle_point, center_path
 
 
@@ -1061,14 +1149,31 @@ def search_hparam_segment(
     candidate_evaluations = []
     is_main_interval = interval_info is not None
 
-    def evaluate(point, cooldown_seed_point=None):
-        if point in results_by_point:
-            return results_by_point[point]
-        hparams = point_to_hparams(point, search_names, fixed_hparams)
-        load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
+    def evaluate(point, cooldown_seed_point=None, cooldown_search_names=None):
         needs_cooldown_state = (
             interval_info is not None and interval_info["use_cooldown"]
         )
+        requested_cooldown_search_names = None
+        if needs_cooldown_state:
+            all_cooldown_search_names = cooldown_search_hparam_names()
+            requested_cooldown_search_names = (
+                tuple(cooldown_search_names)
+                if cooldown_search_names is not None
+                else all_cooldown_search_names
+            )
+        cached_result = results_by_point.get(point)
+        if cached_result is not None:
+            cached_cooldown_search_names = cached_result.get("cooldown_search_names")
+            if (
+                requested_cooldown_search_names is None
+                or cached_cooldown_search_names is None
+                or set(requested_cooldown_search_names).issubset(
+                    cached_cooldown_search_names
+                )
+            ):
+                return cached_result
+        hparams = point_to_hparams(point, search_names, fixed_hparams)
+        load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
         result = train_interval(
             ctx,
             hparams,
@@ -1080,13 +1185,13 @@ def search_hparam_segment(
         should_evaluate_tta = result["completed_steps"] == steps and finite(result_loss)
         if interval_info is not None:
             result["cooldown_result"] = None
+            result["cooldown_search_names"] = requested_cooldown_search_names
             result["main_tta_val_acc"] = float("-inf")
             if should_evaluate_tta:
                 result["main_tta_val_acc"] = evaluate_tta_val_acc(
                     ctx.model, ctx.test_loader
                 )
             if interval_info["use_cooldown"] and should_evaluate_tta:
-                cooldown_search_names = cooldown_search_hparam_names()
                 cooldown_start_state = result["end_state"]
                 cooldown_initial_states = dict(
                     interval_info["cooldown_initial_states"] or {}
@@ -1098,18 +1203,24 @@ def search_hparam_segment(
                     if seed_cooldown_states is not None:
                         cooldown_initial_states.update(seed_cooldown_states)
                 cooldown_initial_hparams = dict(hparams)
-                for name in cooldown_search_names:
+                for name in cooldown_search_hparam_names():
                     initial_state = cooldown_initial_states.get(name)
-                    if initial_state is None:
+                    if (
+                        initial_state is None
+                        and name in requested_cooldown_search_names
+                    ):
                         initial_state = nearest_hparam_state(name, hparams[name])
-                    cooldown_initial_hparams[name] = hparam_from_state(
-                        name, initial_state
-                    )
+                    if initial_state is not None:
+                        cooldown_initial_hparams[name] = hparam_from_state(
+                            name, initial_state
+                        )
                 cooldown_result = search_hparam_segment(
                     ctx,
-                    point_from_hparams(cooldown_initial_hparams, cooldown_search_names),
-                    cooldown_search_names,
-                    hparams,
+                    point_from_hparams(
+                        cooldown_initial_hparams, requested_cooldown_search_names
+                    ),
+                    requested_cooldown_search_names,
+                    cooldown_initial_hparams,
                     interval_info["cooldown_steps"],
                     start_step + steps,
                     cooldown_start_state,
@@ -1138,34 +1249,11 @@ def search_hparam_segment(
                 cooldown_result.pop("search_path", None)
         return result
 
-    def block(point):
-        if point in results_by_point:
-            return results_by_point[point]
-        hparams = point_to_hparams(point, search_names, fixed_hparams)
-        result = dict(
-            blocked=True,
-            last_train_loss=float("inf"),
-            completed_steps=0,
-            tta_val_acc=float("-inf"),
-        )
-        result.update(hparams)
-        if interval_info is not None:
-            result.update(
-                main_tta_val_acc=float("-inf"),
-                cooldown_result=None,
-            )
-        results_by_point[point] = result
-        candidate_evaluations.append(result)
-        if is_main_interval:
-            log_main_hparams(result)
-        return result
-
     best_point, center_path_points = find_best_hparam_point(
         initial_point=initial_point,
         search_names=search_names,
         evaluate=evaluate,
         results_by_point=results_by_point,
-        block=block,
     )
     search_path = [results_by_point[point] for point in center_path_points]
     best_result = results_by_point[best_point]
@@ -1205,480 +1293,6 @@ def search_hparam_segment(
         losses=list(actual_result["losses"]),
     )
     return result
-
-
-def calibration_value_bounds(name):
-    if name == "muon_momentum":
-        return 0.0, 1.0
-    return 0.0, None
-
-
-def calibration_value_key(name, value):
-    min_value, max_value = calibration_value_bounds(name)
-    value = max(min_value, value)
-    if max_value is not None:
-        value = min(max_value, value)
-    value = rounded_search_hparam(name, value)
-    return float("%.8g" % value)
-
-
-def calibration_hparams_key(hparams):
-    return tuple(
-        (name, calibration_value_key(name, hparams[name])) for name in SEARCH_HPARAMS
-    )
-
-
-def evaluate_calibration_hparams(
-    ctx,
-    hparams,
-    steps,
-    start_step,
-    start_state,
-    cache,
-    varied_hparam=None,
-):
-    hparams = {
-        name: calibration_value_key(name, hparams[name]) for name in SEARCH_HPARAMS
-    }
-    key = calibration_hparams_key(hparams)
-    if key in cache:
-        return cache[key]
-    load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
-    result = train_interval(
-        ctx,
-        hparams,
-        steps,
-        start_step,
-        capture_end_state=False,
-    )
-    result_loss = interval_result_loss(result)
-    if result["completed_steps"] == steps and finite(result_loss):
-        result["tta_val_acc"] = evaluate_tta_val_acc(ctx.model, ctx.test_loader)
-    else:
-        result["tta_val_acc"] = float("-inf")
-    cache[key] = result
-    log_event(
-        "calibration_candidate",
-        varied_hparam=varied_hparam or "none",
-        tta_val_acc=result["tta_val_acc"],
-        **hparam_log_fields(result),
-    )
-    return result
-
-
-def calibration_hparams_with_value(center_hparams, name, value):
-    hparams = dict(center_hparams)
-    hparams[name] = calibration_value_key(name, value)
-    return hparams
-
-
-def unique_sorted_calibration_results(value_results):
-    unique = []
-    for value, result in value_results:
-        value = float(value)
-        if any(
-            isclose(value, existing, rel_tol=0.0, abs_tol=1e-12)
-            for existing, _ in unique
-        ):
-            continue
-        unique.append((value, result))
-    return sorted(unique, key=lambda item: item[0])
-
-
-def build_calibrated_hparam_values(
-    ctx,
-    center_hparams,
-    name,
-    steps,
-    start_step,
-    start_state,
-    cache,
-):
-    center_value = calibration_value_key(name, center_hparams[name])
-
-    def evaluate_value(value):
-        return evaluate_calibration_hparams(
-            ctx,
-            calibration_hparams_with_value(center_hparams, name, value),
-            steps,
-            start_step,
-            start_state,
-            cache,
-            varied_hparam=name,
-        )
-
-    def initial_precision():
-        if name == "muon_momentum":
-            return CALIBRATION_INITIAL_MOMENTUM_PRECISION
-        return CALIBRATION_INITIAL_LR_PRECISION
-
-    def value_for_k(middle_value, k, precision):
-        if name == "muon_momentum":
-            return middle_value + k * precision
-        return middle_value * SEARCH_HPARAMS[name].factor ** (k * precision)
-
-    def probe_points(middle_value, precision):
-        min_value, max_value = calibration_value_bounds(name)
-        points = []
-        for k in range(-4, 5):
-            value = value_for_k(middle_value, k, precision)
-            if value < min_value:
-                continue
-            if max_value is not None and value > max_value:
-                continue
-            points.append((k, calibration_value_key(name, value)))
-        unique_points = []
-        for k, value in sorted(points, key=lambda item: (abs(item[0]), item[0])):
-            if any(
-                isclose(value, existing_value, rel_tol=0.0, abs_tol=1e-12)
-                for _, existing_value in unique_points
-            ):
-                continue
-            unique_points.append((k, value))
-        return tuple(sorted(unique_points, key=lambda item: item[0]))
-
-    def nonincreasing(values):
-        return all(
-            left >= right
-            for left, right in zip(values, values[1:])
-        )
-
-    def probe_is_monotonic(point_results):
-        middle = next(
-            result for k, _, result in point_results if k == 0
-        )
-        middle_acc = middle["tta_val_acc"]
-        lower_accs = [
-            result["tta_val_acc"]
-            for k, _, result in sorted(
-                (item for item in point_results if item[0] < 0),
-                key=lambda item: abs(item[0]),
-            )
-        ]
-        upper_accs = [
-            result["tta_val_acc"]
-            for k, _, result in sorted(
-                (item for item in point_results if item[0] > 0),
-                key=lambda item: abs(item[0]),
-            )
-        ]
-        return nonincreasing([middle_acc, *lower_accs]) and nonincreasing(
-            [middle_acc, *upper_accs]
-        )
-
-    def best_probe_point(point_results, middle_value):
-        best_k, best_value, best_result = next(
-            item for item in point_results if item[0] == 0
-        )
-        for k, value, result in point_results:
-            if result["tta_val_acc"] > best_result["tta_val_acc"]:
-                best_k, best_value, best_result = k, value, result
-        if isclose(best_value, middle_value, rel_tol=0.0, abs_tol=1e-12):
-            return 0, middle_value, best_result
-        return best_k, best_value, best_result
-
-    def evaluate_precision(start_middle_value, precision, iteration):
-        middle_value = start_middle_value
-        recenter_count = 0
-        while True:
-            point_results = tuple(
-                (k, value, evaluate_value(value))
-                for k, value in probe_points(middle_value, precision)
-            )
-            best_k, best_value, best_result = best_probe_point(
-                point_results, middle_value
-            )
-            if best_k == 0:
-                break
-            log_event(
-                "calibration_precision_recenter",
-                hparam=name,
-                iteration=iteration,
-                precision=precision,
-                old_middle=middle_value,
-                new_middle=best_value,
-                new_middle_tta_val_acc=best_result["tta_val_acc"],
-            )
-            middle_value = best_value
-            recenter_count += 1
-            if recenter_count >= CALIBRATION_PRECISION_MAX_STEPS:
-                log_event(
-                    "calibration_precision_recenter_warning",
-                    hparam=name,
-                    iteration=iteration,
-                    precision=precision,
-                    stopped_after=recenter_count,
-                    middle_value=middle_value,
-                )
-                point_results = tuple(
-                    (k, value, evaluate_value(value))
-                    for k, value in probe_points(middle_value, precision)
-                )
-                break
-        monotonic = probe_is_monotonic(point_results)
-        values = tuple(value for _, value, _ in point_results)
-        log_event(
-            "calibration_precision_probe",
-            hparam=name,
-            iteration=iteration,
-            precision=precision,
-            middle_value=middle_value,
-            monotonic=monotonic,
-        )
-        for _, value, result in point_results:
-            log_line(
-                "calibration_precision_probe_value hparam=%s iteration=%d precision=%s %s -> %s"
-                % (
-                    name,
-                    iteration,
-                    format_log_value(precision),
-                    format_log_value(value),
-                    format_log_value(result["tta_val_acc"]),
-                )
-            )
-        return dict(
-            precision=precision,
-            middle_value=middle_value,
-            monotonic=monotonic,
-            values=values,
-            point_results=point_results,
-        )
-
-    precision = initial_precision()
-    middle_value = center_value
-    last_yes = None
-    last_no = None
-    last_probe = None
-    for iteration in range(CALIBRATION_PRECISION_MAX_STEPS):
-        probe = evaluate_precision(middle_value, precision, iteration)
-        middle_value = probe["middle_value"]
-        last_probe = probe
-        if probe["monotonic"]:
-            if last_no is not None and isclose(
-                last_no["precision"], precision / 2, rel_tol=0.0, abs_tol=1e-12
-            ):
-                last_yes = probe
-                break
-            last_yes = probe
-            precision /= 2
-            continue
-        if last_yes is not None and isclose(
-            precision, last_yes["precision"] / 2, rel_tol=0.0, abs_tol=1e-12
-        ):
-            break
-        last_no = probe
-        precision *= 2
-    else:
-        log_event(
-            "calibration_precision_warning",
-            hparam=name,
-            stopped_after=CALIBRATION_PRECISION_MAX_STEPS,
-            last_precision=precision,
-            found_monotonic=last_yes is not None,
-        )
-
-    selected_probe = last_yes if last_yes is not None else last_probe
-    probe_values = selected_probe["values"] if selected_probe is not None else ()
-    value_results = unique_sorted_calibration_results(
-        (value, evaluate_value(value)) for value in probe_values
-    )
-    values = tuple(value for value, _ in value_results)
-    log_event(
-        "calibration_hparam_values",
-        hparam=name,
-    )
-    for value, result in value_results:
-        log_line(
-            "calibration_hparam_value hparam=%s %s -> %s"
-            % (
-                name,
-                format_log_value(value),
-                format_log_value(result["tta_val_acc"]),
-            )
-        )
-    return values
-
-
-def apply_calibrated_search_spaces(center_hparams, values_by_name):
-    for name, values in values_by_name.items():
-        spec = SEARCH_HPARAMS[name]
-        SEARCH_HPARAMS[name] = SearchHparam(
-            kind="choice",
-            initial_value=calibration_value_key(name, center_hparams[name]),
-            search=spec.search,
-            cooldown_search=spec.cooldown_search,
-            factor=spec.factor,
-            values=tuple(values),
-        )
-
-
-def calibration_search_hparam_names(search_names):
-    order = ("bias_lr", "head_lr", "muon_lr", "muon_momentum")
-    ordered_names = [name for name in order if name in search_names]
-    ordered_names.extend(name for name in search_names if name not in ordered_names)
-    return tuple(ordered_names)
-
-
-def run_bias_lr_sweep(ctx, center_hparams, start_step, start_state):
-    cache = {}
-
-    def sample_value(index):
-        if BIAS_LR_SWEEP_SAMPLES == 1:
-            return BIAS_LR_SWEEP_MIN
-        exponent = log10(BIAS_LR_SWEEP_MIN) + (
-            log10(BIAS_LR_SWEEP_MAX) - log10(BIAS_LR_SWEEP_MIN)
-        ) * index / (BIAS_LR_SWEEP_SAMPLES - 1)
-        return 10**exponent
-
-    log_event(
-        "bias_lr_sweep_start",
-        steps=BIAS_LR_SWEEP_STEPS,
-        min_value=BIAS_LR_SWEEP_MIN,
-        max_value=BIAS_LR_SWEEP_MAX,
-        samples=BIAS_LR_SWEEP_SAMPLES,
-    )
-    best_result = None
-    seen_keys = set()
-    skipped_duplicates = 0
-    for index in range(BIAS_LR_SWEEP_SAMPLES):
-        hparams = dict(center_hparams)
-        hparams["bias_lr"] = sample_value(index)
-        hparams = {
-            name: calibration_value_key(name, hparams[name]) for name in SEARCH_HPARAMS
-        }
-        key = calibration_hparams_key(hparams)
-        if key in seen_keys:
-            skipped_duplicates += 1
-            continue
-        seen_keys.add(key)
-        result = evaluate_calibration_hparams(
-            ctx,
-            hparams,
-            BIAS_LR_SWEEP_STEPS,
-            start_step,
-            start_state,
-            cache,
-            varied_hparam="bias_lr",
-        )
-        if best_result is None or result["tta_val_acc"] > best_result["tta_val_acc"]:
-            best_result = result
-        log_line(
-            "bias_lr_sweep_value index=%d %s -> %s"
-            % (
-                index,
-                format_log_value(result["bias_lr"]),
-                format_log_value(result["tta_val_acc"]),
-            )
-        )
-    log_event(
-        "bias_lr_sweep_complete",
-        samples=BIAS_LR_SWEEP_SAMPLES,
-        evaluated=len(seen_keys),
-        skipped_duplicates=skipped_duplicates,
-    )
-    if best_result is not None:
-        log_event(
-            "bias_lr_sweep_best",
-            bias_lr=best_result["bias_lr"],
-            tta_val_acc=best_result["tta_val_acc"],
-        )
-    return best_result
-
-
-def run_calibration_phase(ctx, initial_point, steps, start_step, start_state):
-    local_best_search_steps = 1
-    calibration_steps = CALIBRATION_EVAL_STEPS
-    calibration_names = calibration_search_hparam_names(ctx.search_names)
-    log_event(
-        "calibration_start",
-        local_best_search_steps=local_best_search_steps,
-        evaluation_steps=calibration_steps,
-        search_hparams=format_hparam_names(calibration_names),
-    )
-    original_momentum_spec = SEARCH_HPARAMS["muon_momentum"]
-    if "muon_momentum" in ctx.search_names:
-        SEARCH_HPARAMS["muon_momentum"] = SearchHparam(
-            kind="choice",
-            initial_value=0.5,
-            search=original_momentum_spec.search,
-            cooldown_search=original_momentum_spec.cooldown_search,
-            factor=original_momentum_spec.factor,
-            values=LOCAL_BEST_MOMENTUM_VALUES,
-        )
-    try:
-        local_best_initial_hparams = dict(ctx.fixed_hparams)
-        if "muon_momentum" in ctx.search_names:
-            local_best_initial_hparams["muon_momentum"] = 0.5
-        local_best_initial_point = point_from_hparams(
-            local_best_initial_hparams, ctx.search_names
-        )
-        center_search_result = search_hparam_segment(
-            ctx,
-            local_best_initial_point,
-            ctx.search_names,
-            ctx.fixed_hparams,
-            local_best_search_steps,
-            start_step,
-            start_state,
-        )
-    finally:
-        SEARCH_HPARAMS["muon_momentum"] = original_momentum_spec
-    log_candidate_results(center_search_result["candidate_evaluations"])
-    log_search_path(center_search_result["search_path"])
-
-    center_hparams = copy_fields(center_search_result, SEARCH_HPARAMS)
-    log_event(
-        "calibration_local_best",
-        steps=local_best_search_steps,
-        tta_val_acc=center_search_result["tta_val_acc"],
-        **hparam_log_fields(center_search_result),
-    )
-
-    bias_lr_sweep_result = run_bias_lr_sweep(
-        ctx,
-        center_hparams,
-        start_step,
-        start_state,
-    )
-    log_event(
-        "calibration_paused",
-        reason="bias_lr_sweep_debug",
-    )
-    load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
-    return dict(
-        center_hparams=center_hparams,
-        values_by_name={},
-        tta_val_acc=bias_lr_sweep_result["tta_val_acc"]
-        if bias_lr_sweep_result is not None
-        else center_search_result["tta_val_acc"],
-        candidate_evaluations=center_search_result["candidate_evaluations"],
-        search_path=center_search_result["search_path"],
-    )
-
-    cache = {}
-    values_by_name = {}
-    for name in calibration_names:
-        values_by_name[name] = build_calibrated_hparam_values(
-            ctx,
-            center_hparams,
-            name,
-            calibration_steps,
-            start_step,
-            start_state,
-            cache,
-        )
-    calibration_center_result = cache.get(
-        calibration_hparams_key(center_hparams), center_search_result
-    )
-    apply_calibrated_search_spaces(center_hparams, values_by_name)
-    load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
-    return dict(
-        center_hparams=center_hparams,
-        values_by_name=values_by_name,
-        tta_val_acc=calibration_center_result["tta_val_acc"],
-        candidate_evaluations=center_search_result["candidate_evaluations"],
-        search_path=center_search_result["search_path"],
-    )
 
 
 def search_interval_hparams(
@@ -1755,39 +1369,6 @@ def run_full_dataset_search(cfg):
         fixed_hparams=initial_hparams,
     )
 
-    initial_training_state = snapshot_training_state(
-        cfg.model, optimizers, batch_stream
-    )
-    calibration_result = run_calibration_phase(
-        search_ctx,
-        initial_point,
-        cfg.n_steps,
-        0,
-        initial_training_state,
-    )
-    if not RUN_MAIN_AFTER_CALIBRATION:
-        log_event(
-            "main_training_disabled",
-            reason="calibration_debug",
-            calibration_tta_val_acc=calibration_result["tta_val_acc"],
-        )
-        result = pack(
-            vars(cfg),
-            "run batch_size train_epochs train_steps n_steps m_steps search_names_text cooldown_search_names_text muon_nesterov",
-        )
-        result.update(
-            val_acc=float("nan"),
-            tta_val_acc=calibration_result["tta_val_acc"],
-        )
-        return result
-
-    initial_hparams = calibration_result["center_hparams"]
-    search_names = active_search_hparam_names()
-    initial_point = point_from_hparams(initial_hparams, search_names)
-    search_ctx.search_names = search_names
-    search_ctx.fixed_hparams = initial_hparams
-    load_training_state(cfg.model, optimizers, batch_stream, initial_training_state)
-
     last_loss = None
     interval_initial_point = initial_point
     interval_cooldown_initial_states = None
@@ -1816,8 +1397,15 @@ def run_full_dataset_search(cfg):
             interval_result,
             cfg.muon_nesterov,
         )
-        if actual_losses:
-            last_loss = actual_losses[-1]
+        for local_offset, loss in enumerate(actual_losses, start=1):
+            global_step = completed_steps + local_offset
+            last_loss = loss
+            log_train_loss(
+                run=cfg.run,
+                interval_index=interval_result["interval_index"],
+                step=global_step,
+                loss=loss,
+            )
         completed_steps += interval_result["completed_steps"]
         if (
             completed_steps < cfg.train_steps
