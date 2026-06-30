@@ -528,11 +528,10 @@ def evaluate_tta_val_acc(model, loader):
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
 SEARCH_STEP_CONFIGS = [(40, 40)]
-PRINT_OUTPUT_FILENAME = "cifar_one_direction_greedy.log"
-LR_SEARCH_FACTOR = 0.6
+PRINT_OUTPUT_FILENAME = "cifar_search_baseline.log"
 LR_SEARCH_SIG_FIGS = 2
 TTA_VAL_ACC_DIFF_THRESHOLD = 0.0005
-LR_ZERO_THRESHOLD_STEPS = 3
+SMALL_LR_THRESHOLD_STEPS = 3
 LR_ZERO_STATE = "zero"
 MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
 INITIAL_MOMENTUM = 0.6
@@ -541,6 +540,11 @@ RUN_CONFIGS = [
     dict(batch_size=2000),
 ]
 SEARCH_HPARAM_ORDER = ("muon_lr", "muon_momentum", "bias_lr", "head_lr")
+SEARCH_HPARAM_GROUPS = (
+    ("muon_lr", "muon_momentum"),
+    ("head_lr",),
+    ("bias_lr",),
+)
 
 
 @dataclass(frozen=True)
@@ -559,7 +563,7 @@ SEARCH_HPARAMS = {
         initial_value=0.2,
         search=True,
         cooldown_search=True,
-        factor=LR_SEARCH_FACTOR,
+        factor=0.6,
     ),
     "muon_momentum": SearchHparam(
         kind="choice",
@@ -573,14 +577,14 @@ SEARCH_HPARAMS = {
         initial_value=104,
         search=True,
         cooldown_search=True,
-        factor=LR_SEARCH_FACTOR,
+        factor=0.6,
     ),
     "head_lr": SearchHparam(
         kind="log_lr",
         initial_value=1340,
         search=True,
         cooldown_search=True,
-        factor=LR_SEARCH_FACTOR,
+        factor=0.6,
     ),
 }
 
@@ -616,6 +620,17 @@ def cooldown_search_hparam_names():
     return tuple(
         name for name in SEARCH_HPARAM_ORDER if SEARCH_HPARAMS[name].cooldown_search
     )
+
+
+def cooldown_search_hparam_names_for_step(step_name):
+    for group in SEARCH_HPARAM_GROUPS:
+        if step_name in group:
+            return tuple(
+                name
+                for name in SEARCH_HPARAM_ORDER
+                if name in group and SEARCH_HPARAMS[name].cooldown_search
+            )
+    raise ValueError(f"Unrecognized search hparam group for: {step_name}")
 
 
 def hparam_from_state(name, state):
@@ -961,14 +976,6 @@ def find_best_hparam_point(
             return None
         return point_with_state(point, index, state)
 
-    def lr_zero_point(point, index):
-        name = search_names[index]
-        if SEARCH_HPARAMS[name].kind != "log_lr":
-            return None
-        if point[index] == LR_ZERO_STATE:
-            return None
-        return point_with_state(point, index, LR_ZERO_STATE)
-
     def moves_toward_smaller_lr(middle_point, index, neighbor_point):
         name = search_names[index]
         if SEARCH_HPARAMS[name].kind != "log_lr":
@@ -1004,36 +1011,78 @@ def find_best_hparam_point(
             return point
         return incumbent_point
 
-    def next_point_along_direction(middle_point, current_point, index, delta, steps):
+    def next_point_along_direction(current_point, index, delta):
         if current_point[index] == LR_ZERO_STATE:
             return None
-        if (
-            moves_toward_smaller_lr(middle_point, index, current_point)
-            and steps >= LR_ZERO_THRESHOLD_STEPS
-        ):
-            return lr_zero_point(middle_point, index)
         return point_in_direction(current_point, index, delta)
+
+    def should_stop_after_candidate(
+        middle_point,
+        current_point,
+        index,
+        crossed_threshold,
+        small_lr_threshold_steps,
+    ):
+        if crossed_threshold:
+            return True, small_lr_threshold_steps
+        if not moves_toward_smaller_lr(middle_point, index, current_point):
+            return False, small_lr_threshold_steps
+        small_lr_threshold_steps += 1
+        return (
+            small_lr_threshold_steps >= SMALL_LR_THRESHOLD_STEPS,
+            small_lr_threshold_steps,
+        )
 
     def search_direction(middle_point, index, first_point):
         delta = first_point[index] - middle_point[index]
         current_point = first_point
         best_point = middle_point
         went_above_middle = False
-        steps = 0
+        small_lr_threshold_steps = 0
         while current_point is not None:
-            evaluate(current_point, cooldown_seed_point=middle_point)
-            best_point = best_line_point(best_point, current_point)
-            if is_above_middle(current_point, middle_point):
-                went_above_middle = True
-            if went_above_middle:
-                if is_below_best_threshold(current_point, best_point):
-                    break
-            elif is_below_middle_threshold(current_point, middle_point):
-                break
-            steps += 1
-            current_point = next_point_along_direction(
-                middle_point, current_point, index, delta, steps
+            evaluate(
+                current_point,
+                cooldown_seed_point=middle_point,
+                cooldown_search_names=cooldown_search_hparam_names_for_step(
+                    search_names[index]
+                ),
             )
+            prior_best_point = best_point
+            best_point = best_line_point(prior_best_point, current_point)
+            found_new_best_above_middle = (
+                best_point == current_point
+                and prior_best_point != current_point
+                and is_above_middle(current_point, middle_point)
+            )
+            if found_new_best_above_middle:
+                small_lr_threshold_steps = 0
+            if found_new_best_above_middle or is_above_middle(
+                prior_best_point, middle_point
+            ):
+                went_above_middle = True
+            if found_new_best_above_middle:
+                should_stop = False
+            elif went_above_middle:
+                should_stop, small_lr_threshold_steps = should_stop_after_candidate(
+                    middle_point,
+                    current_point,
+                    index,
+                    is_below_best_threshold(current_point, best_point),
+                    small_lr_threshold_steps,
+                )
+                if should_stop:
+                    break
+            else:
+                should_stop, small_lr_threshold_steps = should_stop_after_candidate(
+                    middle_point,
+                    current_point,
+                    index,
+                    is_below_middle_threshold(current_point, middle_point),
+                    small_lr_threshold_steps,
+                )
+                if should_stop:
+                    break
+            current_point = next_point_along_direction(current_point, index, delta)
         if went_above_middle:
             return best_point
         return middle_point
@@ -1046,7 +1095,14 @@ def find_best_hparam_point(
                     middle_point, index, neighbor_point
                 )
                 if direction_best_point != middle_point:
-                    return direction_best_point
+                    evaluate(direction_best_point)
+                    if better_point(
+                        direction_best_point,
+                        middle_point,
+                        results_by_point,
+                        search_names,
+                    ):
+                        return direction_best_point
         return middle_point
 
     middle_point = initial_point
@@ -1087,19 +1143,41 @@ def search_hparam_segment(
     start_step,
     start_state,
     interval_info=None,
+    initial_results=None,
 ):
     results_by_point = {}
-    candidate_evaluations = []
+    candidate_evaluations = list(initial_results or [])
+    for initial_result in candidate_evaluations:
+        results_by_point[point_from_hparams(initial_result, search_names)] = (
+            initial_result
+        )
     is_main_interval = interval_info is not None
 
-    def evaluate(point, cooldown_seed_point=None):
-        if point in results_by_point:
-            return results_by_point[point]
-        hparams = point_to_hparams(point, search_names, fixed_hparams)
-        load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
+    def evaluate(point, cooldown_seed_point=None, cooldown_search_names=None):
         needs_cooldown_state = (
             interval_info is not None and interval_info["use_cooldown"]
         )
+        requested_cooldown_search_names = None
+        if needs_cooldown_state:
+            all_cooldown_search_names = cooldown_search_hparam_names()
+            requested_cooldown_search_names = (
+                tuple(cooldown_search_names)
+                if cooldown_search_names is not None
+                else all_cooldown_search_names
+            )
+        cached_result = results_by_point.get(point)
+        if cached_result is not None:
+            cached_cooldown_search_names = cached_result.get("cooldown_search_names")
+            if (
+                requested_cooldown_search_names is None
+                or cached_cooldown_search_names is None
+                or set(requested_cooldown_search_names).issubset(
+                    cached_cooldown_search_names
+                )
+            ):
+                return cached_result
+        hparams = point_to_hparams(point, search_names, fixed_hparams)
+        load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
         result = train_interval(
             ctx,
             hparams,
@@ -1111,42 +1189,62 @@ def search_hparam_segment(
         should_evaluate_tta = result["completed_steps"] == steps and finite(result_loss)
         if interval_info is not None:
             result["cooldown_result"] = None
+            result["cooldown_search_names"] = requested_cooldown_search_names
             result["main_tta_val_acc"] = float("-inf")
             if should_evaluate_tta:
                 result["main_tta_val_acc"] = evaluate_tta_val_acc(
                     ctx.model, ctx.test_loader
                 )
             if interval_info["use_cooldown"] and should_evaluate_tta:
-                cooldown_search_names = cooldown_search_hparam_names()
                 cooldown_start_state = result["end_state"]
                 cooldown_initial_states = dict(
                     interval_info["cooldown_initial_states"] or {}
                 )
+                initial_cooldown_results = []
                 if cooldown_seed_point is not None:
                     seed_cooldown_states = results_by_point[cooldown_seed_point].get(
                         "cooldown_best_states"
                     )
                     if seed_cooldown_states is not None:
                         cooldown_initial_states.update(seed_cooldown_states)
+                if cached_result is not None:
+                    cached_cooldown_states = cached_result.get("cooldown_best_states")
+                    if cached_cooldown_states is not None:
+                        cooldown_initial_states.update(cached_cooldown_states)
+                    cached_cooldown_result = cached_result.get("cooldown_result")
+                    if cached_cooldown_result is not None:
+                        initial_cooldown_results = cached_cooldown_result.get(
+                            "_candidate_evaluations", []
+                        )
                 cooldown_initial_hparams = dict(hparams)
-                for name in cooldown_search_names:
+                for name in cooldown_search_hparam_names():
                     initial_state = cooldown_initial_states.get(name)
-                    if initial_state is None:
+                    if (
+                        initial_state is None
+                        and name in requested_cooldown_search_names
+                    ):
                         initial_state = nearest_hparam_state(name, hparams[name])
-                    cooldown_initial_hparams[name] = hparam_from_state(
-                        name, initial_state
-                    )
+                    if initial_state is not None:
+                        cooldown_initial_hparams[name] = hparam_from_state(
+                            name, initial_state
+                        )
                 cooldown_result = search_hparam_segment(
                     ctx,
-                    point_from_hparams(cooldown_initial_hparams, cooldown_search_names),
-                    cooldown_search_names,
-                    hparams,
+                    point_from_hparams(
+                        cooldown_initial_hparams, requested_cooldown_search_names
+                    ),
+                    requested_cooldown_search_names,
+                    cooldown_initial_hparams,
                     interval_info["cooldown_steps"],
                     start_step + steps,
                     cooldown_start_state,
+                    initial_results=initial_cooldown_results,
                 )
                 result["cooldown_result"] = cooldown_result
-                result["cooldown_best_states"] = cooldown_result["best_states"]
+                result["cooldown_best_states"] = {
+                    name: nearest_hparam_state(name, cooldown_result[name])
+                    for name in cooldown_search_hparam_names()
+                }
                 result["tta_val_acc"] = cooldown_result["tta_val_acc"]
                 should_evaluate_tta = False
             result.pop("end_state", None)
@@ -1165,6 +1263,10 @@ def search_hparam_segment(
             if cooldown_result is not None:
                 log_candidate_results(cooldown_result["candidate_evaluations"])
                 log_search_path(cooldown_result["search_path"])
+                cooldown_result["_candidate_evaluations"] = list(
+                    cooldown_result["candidate_evaluations"]
+                )
+                cooldown_result["_search_path"] = list(cooldown_result["search_path"])
                 cooldown_result.pop("candidate_evaluations", None)
                 cooldown_result.pop("search_path", None)
         return result
@@ -1186,6 +1288,8 @@ def search_hparam_segment(
             candidate_evaluations=list(candidate_evaluations),
             search_path=list(search_path),
         )
+        result["_candidate_evaluations"] = list(candidate_evaluations)
+        result["_search_path"] = list(search_path)
         add_best_result_fields(result, best_result)
         return result
     load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
