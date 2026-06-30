@@ -176,3 +176,6 @@ search_path step=2 muon_lr=0.002 muon_momentum=0.8 bias_lr=37 head_lr=1300 tta_v
 
 search_path step=0 muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=8.1 tta_val_acc=0.941
 search_path step=1 muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=1.8 tta_val_acc=0.9412
+
+
+idea: just train bias_lr and head_lr and see what we get. 
