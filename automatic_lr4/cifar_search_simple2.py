@@ -531,7 +531,7 @@ SEARCH_STEP_CONFIGS = [(40, 40)]
 PRINT_OUTPUT_FILENAME = "cifar_simplified_cooldown.log"
 LR_SEARCH_FACTOR = 0.6
 LR_SEARCH_SIG_FIGS = 2
-TTA_VAL_ACC_DIFF_THRESHOLD = 0.0005
+TTA_VAL_ACC_DIFF_THRESHOLD = 0.001
 SMALL_LR_THRESHOLD_STEPS = 3
 LR_ZERO_STATE = "zero"
 MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
@@ -1144,9 +1144,14 @@ def search_hparam_segment(
     start_step,
     start_state,
     interval_info=None,
+    initial_results=None,
 ):
     results_by_point = {}
-    candidate_evaluations = []
+    candidate_evaluations = list(initial_results or [])
+    for initial_result in candidate_evaluations:
+        results_by_point[point_from_hparams(initial_result, search_names)] = (
+            initial_result
+        )
     is_main_interval = interval_info is not None
 
     def evaluate(point, cooldown_seed_point=None, cooldown_search_names=None):
@@ -1196,12 +1201,22 @@ def search_hparam_segment(
                 cooldown_initial_states = dict(
                     interval_info["cooldown_initial_states"] or {}
                 )
+                initial_cooldown_results = []
                 if cooldown_seed_point is not None:
                     seed_cooldown_states = results_by_point[cooldown_seed_point].get(
                         "cooldown_best_states"
                     )
                     if seed_cooldown_states is not None:
                         cooldown_initial_states.update(seed_cooldown_states)
+                if cached_result is not None:
+                    cached_cooldown_states = cached_result.get("cooldown_best_states")
+                    if cached_cooldown_states is not None:
+                        cooldown_initial_states.update(cached_cooldown_states)
+                    cached_cooldown_result = cached_result.get("cooldown_result")
+                    if cached_cooldown_result is not None:
+                        initial_cooldown_results = cached_cooldown_result.get(
+                            "_candidate_evaluations", []
+                        )
                 cooldown_initial_hparams = dict(hparams)
                 for name in cooldown_search_hparam_names():
                     initial_state = cooldown_initial_states.get(name)
@@ -1224,9 +1239,13 @@ def search_hparam_segment(
                     interval_info["cooldown_steps"],
                     start_step + steps,
                     cooldown_start_state,
+                    initial_results=initial_cooldown_results,
                 )
                 result["cooldown_result"] = cooldown_result
-                result["cooldown_best_states"] = cooldown_result["best_states"]
+                result["cooldown_best_states"] = {
+                    name: nearest_hparam_state(name, cooldown_result[name])
+                    for name in cooldown_search_hparam_names()
+                }
                 result["tta_val_acc"] = cooldown_result["tta_val_acc"]
                 should_evaluate_tta = False
             result.pop("end_state", None)
@@ -1245,6 +1264,10 @@ def search_hparam_segment(
             if cooldown_result is not None:
                 log_candidate_results(cooldown_result["candidate_evaluations"])
                 log_search_path(cooldown_result["search_path"])
+                cooldown_result["_candidate_evaluations"] = list(
+                    cooldown_result["candidate_evaluations"]
+                )
+                cooldown_result["_search_path"] = list(cooldown_result["search_path"])
                 cooldown_result.pop("candidate_evaluations", None)
                 cooldown_result.pop("search_path", None)
         return result
@@ -1266,6 +1289,8 @@ def search_hparam_segment(
             candidate_evaluations=list(candidate_evaluations),
             search_path=list(search_path),
         )
+        result["_candidate_evaluations"] = list(candidate_evaluations)
+        result["_search_path"] = list(search_path)
         add_best_result_fields(result, best_result)
         return result
     load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)

@@ -154,3 +154,25 @@ given a 1D function with some noise in the output. how to find a robust peak?
 what if it's expensive to evaluate the function f and we only can only spend time evaluating 5 points
 explain how to develop the acquisition function. and how to develop the surrogate model
 what if i know there's only one big peak and if i go near the boundary there's definitely no peak there
+
+muon_lr=0.0093 muon_momentum=0.8 bias_lr=2.9 head_lr=8.1 -> tta_val_acc=0.9398
+muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=8.1 -> tta_val_acc=0.941
+muon_lr=0.0034 muon_momentum=0.8 bias_lr=2.9 head_lr=8.1 -> tta_val_acc=0.9407
+muon_lr=0.002 muon_momentum=0.8 bias_lr=2.9 head_lr=8.1 -> tta_val_acc=0.9398
+muon_lr=0.0056 muon_momentum=0.8 bias_lr=1.7 head_lr=8.1 -> tta_val_acc=0.9409
+muon_lr=0.0056 muon_momentum=0.8 bias_lr=1 head_lr=8.1 -> tta_val_acc=0.9407
+muon_lr=0.0056 muon_momentum=0.8 bias_lr=0.63 head_lr=8.1 -> tta_val_acc=0.941
+muon_lr=0.0056 muon_momentum=0.8 bias_lr=4.9 head_lr=8.1 -> tta_val_acc=0.9404
+muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=4.9 -> tta_val_acc=0.941
+muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=2.9 -> tta_val_acc=0.941
+muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=1.8 -> tta_val_acc=0.9412
+muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=1.1 -> tta_val_acc=0.9411
+muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=0.63 -> tta_val_acc=0.9412
+muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=0.38 -> tta_val_acc=0.9412
+
+search_path step=0 muon_lr=0.026 muon_momentum=0.8 bias_lr=37 head_lr=800 tta_val_acc=0.9318
+search_path step=1 muon_lr=0.002 muon_momentum=0.8 bias_lr=37 head_lr=800 tta_val_acc=0.9402
+search_path step=2 muon_lr=0.002 muon_momentum=0.8 bias_lr=37 head_lr=1300 tta_val_acc=0.9404
+
+search_path step=0 muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=8.1 tta_val_acc=0.941
+search_path step=1 muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=1.8 tta_val_acc=0.9412

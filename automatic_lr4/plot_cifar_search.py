@@ -17,9 +17,9 @@ import matplotlib.pyplot as plt
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_LOG = HERE / "20260624_222539_669266" / "cifar_search_abs_diff.log"
+DEFAULT_LOG = HERE / "20260629_214720_593761" / "cifar_simplified_cooldown.log"
 DEFAULT_OUTPUT_DIR = (
-    HERE / "20260624_222539_669266" / "cifar_search_abs_diff_plots"
+    HERE / "20260629_214720_593761" / "cifar_simplified_cooldown_plots"
 )
 
 OUTPUT_SUMMARY = "summary.txt"
@@ -434,13 +434,27 @@ def hparams_match_except(candidate: HParams, center: HParams, varied_attr: str) 
 
 def selected_main_eval(run: Run, train_interval: TrainInterval) -> MainEval | None:
     selected_key = hparams_key(train_interval.hparams)
-    for main_eval in run.main_evals:
+    matches = [
+        main_eval
+        for main_eval in run.main_evals
         if (
             main_eval.interval == train_interval.interval
             and hparams_key(main_eval.hparams) == selected_key
-        ):
-            return main_eval
-    return None
+        )
+    ]
+    if not matches:
+        return None
+
+    return max(
+        matches,
+        key=lambda main_eval: (
+            main_eval.best_cooldown_acc is not None,
+            main_eval.best_cooldown_acc or -math.inf,
+            main_eval.main_acc or -math.inf,
+            len(main_eval.candidates),
+            main_eval.index,
+        ),
+    )
 
 
 def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
