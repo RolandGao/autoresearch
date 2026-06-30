@@ -436,7 +436,7 @@ TRAIN_EVAL_BATCHES = 25
 NUM_SAME_SEED_RUNS = 10
 NUM_DIFFERENT_SEED_RUNS = 10
 PRINT_OUTPUT_FILENAME = "cifar_reproducibility.log"
-RUN_CONFIG = dict(batch_size=2000, muon_lr=0.05)
+RUN_CONFIG = dict(batch_size=2000, muon_lr=0.20)
 
 
 def run_training(run, model, batch_size, muon_lr, seed, seed_group):
@@ -521,7 +521,7 @@ def run_training(run, model, batch_size, muon_lr, seed, seed_group):
             loss.backward()
             for group in optimizer1.param_groups[:1]:
                 group["lr"] = group["initial_lr"] * (1 - step / whiten_bias_train_steps)
-            for group in optimizer1.param_groups[1:]:
+            for group in optimizer1.param_groups[1:] + optimizer2.param_groups:
                 group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
             for opt in optimizers:
                 opt.step()

@@ -528,10 +528,10 @@ def evaluate_tta_val_acc(model, loader):
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
 SEARCH_STEP_CONFIGS = [(40, 40)]
-PRINT_OUTPUT_FILENAME = "cifar_0p33_factor_steps7.log"
+PRINT_OUTPUT_FILENAME = "cifar_search_baseline.log"
 LR_SEARCH_SIG_FIGS = 2
-TTA_VAL_ACC_DIFF_THRESHOLD = 0.001
-SMALL_LR_THRESHOLD_STEPS = 7
+TTA_VAL_ACC_DIFF_THRESHOLD = 0.0005
+SMALL_LR_THRESHOLD_STEPS = 3
 LR_ZERO_STATE = "zero"
 MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
 INITIAL_MOMENTUM = 0.6
@@ -577,14 +577,14 @@ SEARCH_HPARAMS = {
         initial_value=104,
         search=True,
         cooldown_search=True,
-        factor=0.33,
+        factor=0.6,
     ),
     "head_lr": SearchHparam(
         kind="log_lr",
         initial_value=1340,
         search=True,
         cooldown_search=True,
-        factor=0.33,
+        factor=0.6,
     ),
 }
 

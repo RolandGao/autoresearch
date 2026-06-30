@@ -462,7 +462,7 @@ def evaluate_train_loss(model, batches):
 TRAIN_EVAL_BATCHES = 25
 BATCH_SIZE = 2000
 BASE_HPARAMS = dict(muon_lr=0.19, bias_lr=104, head_lr=1340)
-LR_SWEEP_MULTIPLIERS = (0.2, 0.33, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0)
+LR_SWEEP_K_VALUES = range(-5, 6)
 
 
 def rounded_lr(value):
@@ -470,12 +470,15 @@ def rounded_lr(value):
 
 
 def sweep_values(base_value):
-    return [rounded_lr(base_value * multiplier) for multiplier in LR_SWEEP_MULTIPLIERS]
+    return [rounded_lr(base_value * 0.8**k) for k in LR_SWEEP_K_VALUES]
 
 
 def iter_run_configs():
+    yield dict(batch_size=BATCH_SIZE, search_hparam="baseline", **BASE_HPARAMS)
     for hparam_name in ("muon_lr", "bias_lr", "head_lr"):
-        for value in sweep_values(BASE_HPARAMS[hparam_name]):
+        for k, value in zip(LR_SWEEP_K_VALUES, sweep_values(BASE_HPARAMS[hparam_name])):
+            if k == 0:
+                continue
             hparams = dict(BASE_HPARAMS)
             hparams[hparam_name] = value
             yield dict(batch_size=BATCH_SIZE, search_hparam=hparam_name, **hparams)

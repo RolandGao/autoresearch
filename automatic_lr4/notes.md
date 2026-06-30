@@ -186,3 +186,15 @@ main hparams: muon_lr=0.026 muon_momentum=0.8 bias_lr=37 head_lr=800 main=0.9278
 
 python plot_cifar_search.py 20260630_193105_206769/cifar_simplified_cooldown.log
 python plot_cifar_search.py 20260630_205726_828854/cifar_0p1_factor.log
+
+factor=0.6 is pretty good. 
+
+main hparams: muon_lr=0.2 muon_momentum=0.6 bias_lr=62 head_lr=800 main=0.8094, best_cooldown=0.9141
+muon_lr=0.043 muon_momentum=0.6 bias_lr=4.9 head_lr=800 -> tta_val_acc=0.913
+muon_lr=0.043 muon_momentum=0.6 bias_lr=2.9 head_lr=800 -> tta_val_acc=0.9141
+muon_lr=0.043 muon_momentum=0.6 bias_lr=1.7 head_lr=800 -> tta_val_acc=0.9132
+
+main hparams: muon_lr=0.2 muon_momentum=0.6 bias_lr=62 head_lr=1300 main=0.81, best_cooldown=0.9088
+muon_lr=0.043 muon_momentum=0.6 bias_lr=22 head_lr=1300 -> tta_val_acc=0.9088
+muon_lr=0.043 muon_momentum=0.6 bias_lr=13 head_lr=1300 -> tta_val_acc=0.9073
+muon_lr=0.043 muon_momentum=0.6 bias_lr=37 head_lr=1300 -> tta_val_acc=0.908

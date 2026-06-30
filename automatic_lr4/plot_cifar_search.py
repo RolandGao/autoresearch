@@ -150,12 +150,23 @@ def parse_optional_float(value: str | None) -> float | None:
     if value is None:
         return None
     value = value.strip().rstrip(",")
-    if value.lower() in {"none", "nan"}:
+    if value.lower() in {"none", "nan", "inf", "+inf", "-inf"}:
         return None
     try:
-        return float(value)
+        parsed = float(value)
     except ValueError:
         return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
+
+
+def is_finite_number(value: float | int | None) -> bool:
+    return value is not None and math.isfinite(value)
+
+
+def finite_or_neg_inf(value: float | int | None) -> float:
+    return float(value) if is_finite_number(value) else -math.inf
 
 
 def parse_optional_int(value: str | None) -> int | None:
@@ -172,9 +183,7 @@ def parse_kv_line(line: str) -> dict[str, str]:
 
 
 def format_number(value: float | int | None, digits: int = 4) -> str:
-    if value is None:
-        return "NA"
-    if isinstance(value, float) and math.isnan(value):
+    if not is_finite_number(value):
         return "NA"
     if isinstance(value, float):
         return f"{value:.{digits}g}"
@@ -403,8 +412,8 @@ def format_candidate_row(
 
 def best_cooldown_candidate(main_eval: MainEval) -> CooldownCandidate | None:
     return max(
-        (item for item in main_eval.candidates if item.tta_val_acc is not None),
-        key=lambda item: item.tta_val_acc or -math.inf,
+        (item for item in main_eval.candidates if is_finite_number(item.tta_val_acc)),
+        key=lambda item: finite_or_neg_inf(item.tta_val_acc),
         default=None,
     )
 
@@ -449,9 +458,9 @@ def selected_main_eval(run: Run, train_interval: TrainInterval) -> MainEval | No
     return max(
         matches,
         key=lambda main_eval: (
-            main_eval.best_cooldown_acc is not None,
-            main_eval.best_cooldown_acc or -math.inf,
-            main_eval.main_acc or -math.inf,
+            is_finite_number(main_eval.best_cooldown_acc),
+            finite_or_neg_inf(main_eval.best_cooldown_acc),
+            finite_or_neg_inf(main_eval.main_acc),
             len(main_eval.candidates),
             main_eval.index,
         ),
@@ -462,18 +471,18 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
     selected_paths = selected_path_by_interval(run)
     loss_ranges = interval_loss_ranges(run)
     best_main = max(
-        (item for item in run.main_evals if item.main_acc is not None),
-        key=lambda item: item.main_acc or -math.inf,
+        (item for item in run.main_evals if is_finite_number(item.main_acc)),
+        key=lambda item: finite_or_neg_inf(item.main_acc),
         default=None,
     )
     best_cooldown = max(
-        (item for item in run.main_evals if item.best_cooldown_acc is not None),
-        key=lambda item: item.best_cooldown_acc or -math.inf,
+        (item for item in run.main_evals if is_finite_number(item.best_cooldown_acc)),
+        key=lambda item: finite_or_neg_inf(item.best_cooldown_acc),
         default=None,
     )
     best_candidate = max(
-        (item for item in run.cooldown_candidates if item.tta_val_acc is not None),
-        key=lambda item: item.tta_val_acc or -math.inf,
+        (item for item in run.cooldown_candidates if is_finite_number(item.tta_val_acc)),
+        key=lambda item: finite_or_neg_inf(item.tta_val_acc),
         default=None,
     )
 
@@ -628,12 +637,12 @@ def plot_curves(run: Run, output_dir: Path) -> None:
         main_values = [
             item.main_acc
             for item in run.main_evals
-            if item.interval == interval and item.main_acc is not None
+            if item.interval == interval and is_finite_number(item.main_acc)
         ]
         cooldown_values = [
             item.best_cooldown_acc
             for item in run.main_evals
-            if item.interval == interval and item.best_cooldown_acc is not None
+            if item.interval == interval and is_finite_number(item.best_cooldown_acc)
         ]
         best_main_by_interval.append(max(main_values) if main_values else None)
         best_cooldown_by_interval.append(max(cooldown_values) if cooldown_values else None)
@@ -644,7 +653,7 @@ def plot_curves(run: Run, output_dir: Path) -> None:
         filtered = [
             (step, value)
             for step, value in zip(interval_steps, values)
-            if value is not None
+            if is_finite_number(value)
         ]
         if filtered:
             xs, ys = zip(*filtered)
@@ -654,7 +663,7 @@ def plot_curves(run: Run, output_dir: Path) -> None:
     plot_optional_series(acc_ax, "best cooldown", best_cooldown_by_interval, "s")
     plot_optional_series(acc_ax, "selected path", selected_by_interval, "^")
     final_tta = run.final_tta_val_acc
-    if final_tta is not None:
+    if is_finite_number(final_tta):
         acc_ax.axhline(final_tta, color="#333333", linestyle="--", linewidth=1.1)
         acc_ax.text(
             interval_steps[-1] if interval_steps else 0,
@@ -730,6 +739,8 @@ def unique_accuracy_points(
 ) -> list[tuple[float, float]]:
     best_by_x: dict[float, float] = {}
     for x_value, score in points:
+        if not is_finite_number(x_value) or not is_finite_number(score):
+            continue
         best_by_x[x_value] = max(score, best_by_x.get(x_value, -math.inf))
     return sorted(best_by_x.items())
 
@@ -747,6 +758,8 @@ def candidate_accuracy_landscape(
         if (
             x_value is None
             or score is None
+            or not is_finite_number(x_value)
+            or not is_finite_number(score)
             or not hparams_match_except(candidate.hparams, center, varied_attr)
         ):
             continue
@@ -762,7 +775,7 @@ def landscape_ylabel(score_attr: str) -> str:
 
 def main_landscape_score_attr(run: Run, interval: int) -> str:
     if any(
-        item.interval == interval and item.best_cooldown_acc is not None
+        item.interval == interval and is_finite_number(item.best_cooldown_acc)
         for item in run.main_evals
     ):
         return "best_cooldown_acc"
@@ -773,13 +786,13 @@ def best_main_interval_score(run: Run, interval: int, score_attr: str) -> float 
     scores = [
         getattr(item, score_attr)
         for item in run.main_evals
-        if item.interval == interval and getattr(item, score_attr) is not None
+        if item.interval == interval and is_finite_number(getattr(item, score_attr))
     ]
     return max(scores) if scores else None
 
 
 def plot_baseline(ax, value: float | None, label: str) -> None:
-    if value is None:
+    if not is_finite_number(value):
         return
     ax.axhline(value, color="#555555", linestyle=":", linewidth=1.0)
     ax.text(
@@ -831,12 +844,16 @@ def plot_accuracy_landscapes(run: Run, output_dir: Path) -> None:
             for item in run.main_evals
             if (
                 item.interval == train_interval.interval
-                and getattr(item, main_score_attr) is not None
+                and is_finite_number(getattr(item, main_score_attr))
             )
         ]
         cooldown = best_cooldown_candidate(main_eval) if main_eval is not None else None
         cooldown_candidates = (
-            [item for item in main_eval.candidates if item.tta_val_acc is not None]
+            [
+                item
+                for item in main_eval.candidates
+                if is_finite_number(item.tta_val_acc)
+            ]
             if main_eval is not None
             else []
         )
@@ -967,7 +984,9 @@ def plot_all_cooldown_landscapes(run: Run, output_dir: Path) -> None:
             run, main_eval.interval, "best_cooldown_acc"
         )
         candidates = [
-            item for item in main_eval.candidates if item.tta_val_acc is not None
+            item
+            for item in main_eval.candidates
+            if is_finite_number(item.tta_val_acc)
         ]
         color = color_for_interval(main_eval.interval)
         if baseline is not None:
@@ -1101,17 +1120,14 @@ def plot_search_paths(run: Run, output_dir: Path) -> None:
 def scatter_hparam(ax, points, attr: str, ylabel: str, title: str, symlog=False) -> None:
     for interval in sorted({point.interval for point in points}):
         interval_points = [point for point in points if point.interval == interval]
-        xs = [
-            getattr(point.hparams, attr)
+        pairs = [
+            (getattr(point.hparams, attr), getattr(point, ylabel))
             for point in interval_points
-            if getattr(point.hparams, attr) is not None
+            if is_finite_number(getattr(point.hparams, attr))
+            and is_finite_number(getattr(point, ylabel))
         ]
-        ys = [
-            getattr(point, ylabel)
-            for point in interval_points
-            if getattr(point.hparams, attr) is not None
-        ]
-        if xs and ys:
+        if pairs:
+            xs, ys = zip(*pairs)
             ax.scatter(
                 xs,
                 ys,
@@ -1131,7 +1147,7 @@ def scatter_hparam(ax, points, attr: str, ylabel: str, title: str, symlog=False)
 
 
 def plot_main_search(run: Run, output_dir: Path) -> None:
-    evals = [item for item in run.main_evals if item.main_acc is not None]
+    evals = [item for item in run.main_evals if is_finite_number(item.main_acc)]
     if not evals:
         return
 
@@ -1145,7 +1161,7 @@ def plot_main_search(run: Run, output_dir: Path) -> None:
         alpha=0.72,
         label="main",
     )
-    cooldown = [item for item in evals if item.best_cooldown_acc is not None]
+    cooldown = [item for item in evals if is_finite_number(item.best_cooldown_acc)]
     if cooldown:
         order_ax.scatter(
             [item.index for item in cooldown],
@@ -1190,7 +1206,7 @@ def plot_main_search(run: Run, output_dir: Path) -> None:
 
 def plot_cooldown_candidates(run: Run, output_dir: Path) -> None:
     candidates = [
-        item for item in run.cooldown_candidates if item.tta_val_acc is not None
+        item for item in run.cooldown_candidates if is_finite_number(item.tta_val_acc)
     ]
     if not candidates:
         return
@@ -1206,17 +1222,14 @@ def plot_cooldown_candidates(run: Run, output_dir: Path) -> None:
     ]:
         for interval in sorted({item.interval for item in candidates}):
             interval_points = [item for item in candidates if item.interval == interval]
-            xs = [
-                getattr(item.hparams, attr)
+            pairs = [
+                (getattr(item.hparams, attr), item.tta_val_acc)
                 for item in interval_points
-                if getattr(item.hparams, attr) is not None
+                if is_finite_number(getattr(item.hparams, attr))
+                and is_finite_number(item.tta_val_acc)
             ]
-            ys = [
-                item.tta_val_acc
-                for item in interval_points
-                if getattr(item.hparams, attr) is not None
-            ]
-            if xs and ys:
+            if pairs:
+                xs, ys = zip(*pairs)
                 ax.scatter(
                     xs,
                     ys,
