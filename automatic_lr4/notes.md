@@ -179,3 +179,10 @@ search_path step=1 muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=1.8 tta_
 
 
 idea: just train bias_lr and head_lr and see what we get. 
+
+main hparams: muon_lr=0.026 muon_momentum=0.8 bias_lr=37 head_lr=800 main=0.9278, best_cooldown=0.9409
+
+
+
+python plot_cifar_search.py 20260630_193105_206769/cifar_simplified_cooldown.log
+python plot_cifar_search.py 20260630_205726_828854/cifar_0p1_factor.log

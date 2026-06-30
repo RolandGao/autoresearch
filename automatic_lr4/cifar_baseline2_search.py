@@ -10,15 +10,10 @@ Descends from https://github.com/tysam-code/hlb-CIFAR10/blob/main/main.py
 #############################################
 
 import os
-import sys
-
-with open(sys.argv[0]) as f:
-    code = f.read()
-import uuid
 from contextlib import redirect_stdout
 from datetime import datetime
+
 from math import ceil
-from statistics import mean, pstdev
 
 import torch
 from torch import nn
@@ -47,10 +42,10 @@ MUON_DTYPE = torch.bfloat16
 TRAINING_SEED = 0
 
 
-def set_training_seed(seed=TRAINING_SEED):
-    torch.manual_seed(seed)
+def set_training_seed():
+    torch.manual_seed(TRAINING_SEED)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+        torch.cuda.manual_seed_all(TRAINING_SEED)
 
 
 #############################################
@@ -337,8 +332,36 @@ class CifarNet(nn.Module):
 #                 Logging                  #
 ############################################
 
+PRINT_OUTPUT_FILENAME = "cifar_baseline2_search.log"
+LOG_TRAINING_PROGRESS = False
+
+
+def format_log_value(value):
+    if value is None:
+        return "none"
+    if isinstance(value, float):
+        return "%.6g" % value
+    return str(value)
+
+
+def hparam_text(result):
+    return " ".join(
+        "%s=%s" % (name, format_log_value(result[name]))
+        for name in ("muon_lr", "bias_lr", "head_lr")
+    )
+
+
+def log_candidate_result(result):
+    print(
+        "%s -> tta_val_acc=%s"
+        % (hparam_text(result), format_log_value(result["tta_val_acc"])),
+        flush=True,
+    )
+
 
 def log_step(epoch, step, total_steps, loss, head_lr, muon_lr):
+    if not LOG_TRAINING_PROGRESS:
+        return
     print(
         f"step={step}/{total_steps} epoch={epoch} "
         f"loss={loss:.4f} head_lr={head_lr:.6g} muon_lr={muon_lr:.6g}",
@@ -347,6 +370,8 @@ def log_step(epoch, step, total_steps, loss, head_lr, muon_lr):
 
 
 def log_eval(run, epoch, val_acc, time_seconds):
+    if not LOG_TRAINING_PROGRESS:
+        return
     run_info = f" run={run}" if run is not None else ""
     print(
         f"eval{run_info} epoch={epoch} val_acc={val_acc:.4f} "
@@ -356,6 +381,8 @@ def log_eval(run, epoch, val_acc, time_seconds):
 
 
 def log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds):
+    if not LOG_TRAINING_PROGRESS:
+        return
     print(
         f"eval epoch=final 25batch_train_loss={train25_loss:.4f} "
         f"val_acc={val_acc:.4f} tta_val_acc={tta_val_acc:.4f} "
@@ -433,19 +460,31 @@ def evaluate_train_loss(model, batches):
 ############################################
 
 TRAIN_EVAL_BATCHES = 25
-NUM_SAME_SEED_RUNS = 10
-NUM_DIFFERENT_SEED_RUNS = 10
-PRINT_OUTPUT_FILENAME = "cifar_reproducibility.log"
-RUN_CONFIG = dict(batch_size=2000, muon_lr=0.05)
+BATCH_SIZE = 2000
+BASE_HPARAMS = dict(muon_lr=0.19, bias_lr=104, head_lr=1340)
+LR_SWEEP_MULTIPLIERS = (0.2, 0.33, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0)
 
 
-def run_training(run, model, batch_size, muon_lr, seed, seed_group):
-    set_training_seed(seed)
-    run_id = run
+def rounded_lr(value):
+    return float("%.2g" % value)
+
+
+def sweep_values(base_value):
+    return [rounded_lr(base_value * multiplier) for multiplier in LR_SWEEP_MULTIPLIERS]
+
+
+def iter_run_configs():
+    for hparam_name in ("muon_lr", "bias_lr", "head_lr"):
+        for value in sweep_values(BASE_HPARAMS[hparam_name]):
+            hparams = dict(BASE_HPARAMS)
+            hparams[hparam_name] = value
+            yield dict(batch_size=BATCH_SIZE, search_hparam=hparam_name, **hparams)
+
+
+def train_and_evaluate(run, model, batch_size, muon_lr, bias_lr, head_lr):
+    set_training_seed()
 
     SGD_LR_MULT = batch_size / 2000
-    bias_lr = 104 * SGD_LR_MULT
-    head_lr = 1340 * SGD_LR_MULT
 
     test_loader = CifarLoader("cifar10", train=False, batch_size=2000)
     train_loader = CifarLoader(
@@ -496,6 +535,7 @@ def run_training(run, model, batch_size, muon_lr, seed, seed_group):
 
     model.reset()
     step = 0
+    val_acc = None
     train_eval_batches = []
 
     # Initialize the whitening layer using training images
@@ -512,8 +552,9 @@ def run_training(run, model, batch_size, muon_lr, seed, seed_group):
         start_timer()
         model.train()
         for inputs, labels in train_loader:
-            train_eval_batches.append((inputs.detach(), labels.detach()))
-            train_eval_batches = train_eval_batches[-TRAIN_EVAL_BATCHES:]
+            if LOG_TRAINING_PROGRESS:
+                train_eval_batches.append((inputs.detach(), labels.detach()))
+                train_eval_batches = train_eval_batches[-TRAIN_EVAL_BATCHES:]
             outputs = model(inputs, whiten_bias_grad=(step < whiten_bias_train_steps))
             loss = F.cross_entropy(
                 outputs, labels, label_smoothing=0.2, reduction="mean"
@@ -521,7 +562,7 @@ def run_training(run, model, batch_size, muon_lr, seed, seed_group):
             loss.backward()
             for group in optimizer1.param_groups[:1]:
                 group["lr"] = group["initial_lr"] * (1 - step / whiten_bias_train_steps)
-            for group in optimizer1.param_groups[1:]:
+            for group in optimizer1.param_groups[1:] + optimizer2.param_groups:
                 group["lr"] = group["initial_lr"] * (1 - step / total_train_steps)
             for opt in optimizers:
                 opt.step()
@@ -543,8 +584,9 @@ def run_training(run, model, batch_size, muon_lr, seed, seed_group):
         #    Evaluation    #
         ####################
 
-        val_acc = evaluate(model, test_loader, tta_level=0)
-        log_eval(run, epoch, val_acc, time_seconds)
+        if LOG_TRAINING_PROGRESS:
+            val_acc = evaluate(model, test_loader, tta_level=0)
+            log_eval(run, epoch, val_acc, time_seconds)
         run = None  # Only print the run number once
 
     ####################
@@ -552,54 +594,26 @@ def run_training(run, model, batch_size, muon_lr, seed, seed_group):
     ####################
 
     start_timer()
-    train25_loss = evaluate_train_loss(model, train_eval_batches)
+    train25_loss = None
+    if LOG_TRAINING_PROGRESS:
+        train25_loss = evaluate_train_loss(model, train_eval_batches)
+        if val_acc is None:
+            val_acc = evaluate(model, test_loader, tta_level=0)
     tta_val_acc = evaluate(model, test_loader, tta_level=2)
     stop_timer()
     log_final_eval(train25_loss, val_acc, tta_val_acc, time_seconds)
 
     return dict(
-        run=run_id,
-        seed=seed,
         train25_loss=train25_loss,
         **{"25batch_train_loss": train25_loss},
         val_acc=val_acc,
         tta_val_acc=tta_val_acc,
         batch_size=batch_size,
         muon_lr=muon_lr,
+        bias_lr=bias_lr,
+        head_lr=head_lr,
         sgd_lr_mult=SGD_LR_MULT,
-        seed_group=seed_group,
     )
-
-
-def iter_run_settings():
-    for run in range(NUM_SAME_SEED_RUNS):
-        yield dict(run=run, seed=TRAINING_SEED, seed_group="same_seed")
-    for run in range(NUM_SAME_SEED_RUNS, NUM_SAME_SEED_RUNS + NUM_DIFFERENT_SEED_RUNS):
-        yield dict(
-            run=run,
-            seed=TRAINING_SEED + run - NUM_SAME_SEED_RUNS + 1,
-            seed_group="different_seed",
-        )
-
-
-def tta_val_acc_summary(results):
-    tta_val_accs = [result["tta_val_acc"] for result in results]
-    return dict(
-        mean=mean(tta_val_accs),
-        std=pstdev(tta_val_accs),
-        min=min(tta_val_accs),
-        max=max(tta_val_accs),
-        range=max(tta_val_accs) - min(tta_val_accs),
-    )
-
-
-def print_tta_val_acc_summary(label, results):
-    summary = tta_val_acc_summary(results)
-    print("TTA val acc %s mean:   %.4f" % (label, summary["mean"]))
-    print("TTA val acc %s std:    %.4f" % (label, summary["std"]))
-    print("TTA val acc %s min:    %.4f" % (label, summary["min"]))
-    print("TTA val acc %s max:    %.4f" % (label, summary["max"]))
-    print("TTA val acc %s range:  %.4f" % (label, summary["range"]))
 
 
 def run_main():
@@ -608,85 +622,17 @@ def run_main():
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
     # model.compile(mode="max-autotune")
 
-    # main("warmup", model, RUN_CONFIG["batch_size"], RUN_CONFIG["muon_lr"], TRAINING_SEED)
-    results = []
-    for run_setting in iter_run_settings():
-        run = run_setting["run"]
-        seed = run_setting["seed"]
-        seed_group = run_setting["seed_group"]
-        print(
-            "cifar_reproducibility run=%d seed=%d seed_group=%s batch_size=%d muon_lr=%.6g"
-            % (
-                run,
-                seed,
-                seed_group,
-                RUN_CONFIG["batch_size"],
-                RUN_CONFIG["muon_lr"],
-            ),
-            flush=True,
+    for run, config in enumerate(iter_run_configs()):
+        result = train_and_evaluate(
+            run=run,
+            model=model,
+            batch_size=config["batch_size"],
+            muon_lr=config["muon_lr"],
+            bias_lr=config["bias_lr"],
+            head_lr=config["head_lr"],
         )
-        result = run_training(
-            run,
-            model,
-            RUN_CONFIG["batch_size"],
-            RUN_CONFIG["muon_lr"],
-            seed,
-            seed_group,
-        )
-        results.append(result)
-        print("Run:                %d" % result["run"])
-        print("Seed:               %d" % result["seed"])
-        print("Seed group:         %s" % result["seed_group"])
-        print("Batch size:         %d" % result["batch_size"])
-        print("Muon lr:            %.6g" % result["muon_lr"])
-        print("SGD lr mult:        %.6g" % result["sgd_lr_mult"])
-        print("25batch train loss: %.4f" % result["train25_loss"])
-        print("Val acc:            %.4f" % result["val_acc"])
-        print("TTA val:            %.4f" % result["tta_val_acc"])
-
-    tta_val_accs = [result["tta_val_acc"] for result in results]
-    print("TTA val acc comparison over %d runs:" % len(tta_val_accs))
-    for result in results:
-        print(
-            "  run=%d seed=%d seed_group=%s tta_val_acc=%.4f val_acc=%.4f train25_loss=%.4f"
-            % (
-                result["run"],
-                result["seed"],
-                result["seed_group"],
-                result["tta_val_acc"],
-                result["val_acc"],
-                result["train25_loss"],
-            )
-        )
-    grouped_results = {
-        "same_seed": [
-            result for result in results if result["seed_group"] == "same_seed"
-        ],
-        "different_seed": [
-            result for result in results if result["seed_group"] == "different_seed"
-        ],
-    }
-    print_tta_val_acc_summary("overall", results)
-    for seed_group, seed_group_results in grouped_results.items():
-        print_tta_val_acc_summary(seed_group, seed_group_results)
-
-    log_dir = os.path.join("logs", str(uuid.uuid4()))
-    os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, "log.pt")
-    torch.save(
-        dict(
-            code=code,
-            results=results,
-            tta_val_accs=tta_val_accs,
-            tta_val_acc_summary=tta_val_acc_summary(results),
-            tta_val_acc_summary_by_seed_group={
-                seed_group: tta_val_acc_summary(seed_group_results)
-                for seed_group, seed_group_results in grouped_results.items()
-            },
-        ),
-        log_path,
-    )
-    print(os.path.abspath(log_path))
+        result["search_hparam"] = config["search_hparam"]
+        log_candidate_result(result)
 
 
 def main():

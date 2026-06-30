@@ -17,10 +17,7 @@ import matplotlib.pyplot as plt
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_LOG = HERE / "20260629_214720_593761" / "cifar_simplified_cooldown.log"
-DEFAULT_OUTPUT_DIR = (
-    HERE / "20260629_214720_593761" / "cifar_simplified_cooldown_plots"
-)
+LOG_FILE_PATH = HERE / "20260630_014033_070828" / "cifar_simplified_cooldown.log"
 
 OUTPUT_SUMMARY = "summary.txt"
 OUTPUT_CURVES = "curves.png"
@@ -29,6 +26,10 @@ OUTPUT_LANDSCAPES_MORE = "landscapes_more.png"
 
 KV_RE = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>\S+)")
 SUMMARY_RE = re.compile(r"^(?P<key>[A-Za-z][A-Za-z0-9 ]+):\s+(?P<value>.+)$")
+
+
+def default_output_dir(log_path: Path) -> Path:
+    return log_path.parent / f"{log_path.stem}_plots"
 
 
 @dataclass(frozen=True)
@@ -1259,32 +1260,35 @@ def parse_args() -> argparse.Namespace:
         "log",
         nargs="?",
         type=Path,
-        default=DEFAULT_LOG,
-        help=f"Log file to plot. Defaults to {DEFAULT_LOG}.",
+        default=LOG_FILE_PATH,
+        help=f"Log file to plot. Defaults to {LOG_FILE_PATH}.",
     )
     parser.add_argument(
         "-o",
         "--output-dir",
         type=Path,
-        default=DEFAULT_OUTPUT_DIR,
-        help=f"Output directory. Defaults to {DEFAULT_OUTPUT_DIR}.",
+        default=None,
+        help="Output directory. Defaults to a sibling directory named <log-stem>_plots.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    run = parse_log(args.log)
+    log_path = args.log
+    output_dir = args.output_dir or default_output_dir(log_path)
+
+    run = parse_log(log_path)
     if not run.train_loss and not run.main_evals:
-        raise SystemExit(f"No CIFAR search data parsed from {args.log}")
+        raise SystemExit(f"No CIFAR search data parsed from {log_path}")
 
-    plot_all(run, args.log, args.output_dir)
+    plot_all(run, log_path, output_dir)
 
-    print(f"Parsed run {run.run} from {args.log}")
-    print(f"Wrote {args.output_dir / OUTPUT_SUMMARY}")
-    print(f"Wrote {args.output_dir / OUTPUT_CURVES}")
-    print(f"Wrote {args.output_dir / OUTPUT_LANDSCAPES}")
-    print(f"Wrote {args.output_dir / OUTPUT_LANDSCAPES_MORE}")
+    print(f"Parsed run {run.run} from {log_path}")
+    print(f"Wrote {output_dir / OUTPUT_SUMMARY}")
+    print(f"Wrote {output_dir / OUTPUT_CURVES}")
+    print(f"Wrote {output_dir / OUTPUT_LANDSCAPES}")
+    print(f"Wrote {output_dir / OUTPUT_LANDSCAPES_MORE}")
     print(f"Final TTA val acc: {format_number(run.final_tta_val_acc)}")
 
 
