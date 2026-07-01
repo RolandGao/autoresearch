@@ -1408,6 +1408,31 @@ def search_interval_hparams(
 
     start_state = snapshot_training_state(ctx.model, ctx.optimizers, ctx.batch_stream)
 
+    def evaluate_main_point(main_point):
+        hparams = point_to_hparams(main_point, ctx.search_names, ctx.fixed_hparams)
+        load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
+        result = train_interval(
+            ctx,
+            hparams,
+            interval_steps,
+            interval_start_step,
+            capture_end_state=False,
+        )
+        result_loss = interval_result_loss(result)
+        main_tta_val_acc = float("-inf")
+        if result["completed_steps"] == interval_steps and finite(result_loss):
+            main_tta_val_acc = evaluate_tta_val_acc(ctx.model, ctx.test_loader)
+        result.update(
+            interval_index=interval_index,
+            best_point=main_point,
+            main_tta_val_acc=main_tta_val_acc,
+            tta_val_acc=main_tta_val_acc,
+            cooldown_result=None,
+            cooldown_best_states=None,
+        )
+        load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
+        return result
+
     def search_main_phase(initial_main_point, fixed_cooldown_hparams=None):
         interval_info = dict(
             interval_index=interval_index,
@@ -1478,7 +1503,12 @@ def search_interval_hparams(
         load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
         return result
 
-    main_result = search_main_phase(initial_point)
+    cooldown_first = interval_index > 0 and use_cooldown
+    if cooldown_first:
+        main_result = evaluate_main_point(initial_point)
+    else:
+        main_result = search_main_phase(initial_point)
+        log_search_path(main_result["search_path"])
     selected_main_result = main_result
     selected_main_point = main_result["best_point"]
     selected_main_hparams = copy_fields(main_result, SEARCH_HPARAMS)
@@ -1514,6 +1544,7 @@ def search_interval_hparams(
             selected_main_point,
             fixed_cooldown_hparams=fixed_cooldown_hparams,
         )
+        log_search_path(main_result["search_path"])
         if not tta_val_acc_improved(
             main_result["tta_val_acc"],
             selected_tta_val_acc,
@@ -1525,7 +1556,6 @@ def search_interval_hparams(
         selected_main_hparams = copy_fields(main_result, SEARCH_HPARAMS)
         selected_tta_val_acc = main_result["tta_val_acc"]
 
-    log_search_path(selected_main_result["search_path"])
     load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
     actual_result = train_interval(
         ctx,

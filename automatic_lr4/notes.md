@@ -198,3 +198,8 @@ main hparams: muon_lr=0.2 muon_momentum=0.6 bias_lr=62 head_lr=1300 main=0.81, b
 muon_lr=0.043 muon_momentum=0.6 bias_lr=22 head_lr=1300 -> tta_val_acc=0.9088
 muon_lr=0.043 muon_momentum=0.6 bias_lr=13 head_lr=1300 -> tta_val_acc=0.9073
 muon_lr=0.043 muon_momentum=0.6 bias_lr=37 head_lr=1300 -> tta_val_acc=0.908
+
+
+Search main interval. Search cooldown interval. Then search main interval while fixing the cooldown interval. 
+main interval is more expensive than the cooldown. so find the best cooldown early on.
+we need to start from arbitrary values and still be able to converge. 
