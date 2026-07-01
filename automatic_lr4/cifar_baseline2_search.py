@@ -352,9 +352,20 @@ def hparam_text(result):
 
 
 def log_candidate_result(result):
+    search_info = ""
+    if "search_round" in result:
+        search_info = "round=%s search_hparam=%s k=%s " % (
+            result["search_round"],
+            result["search_hparam"],
+            result["search_k"],
+        )
     print(
-        "%s -> tta_val_acc=%s"
-        % (hparam_text(result), format_log_value(result["tta_val_acc"])),
+        "%s%s -> tta_val_acc=%s"
+        % (
+            search_info,
+            hparam_text(result),
+            format_log_value(result["tta_val_acc"]),
+        ),
         flush=True,
     )
 
@@ -462,26 +473,39 @@ def evaluate_train_loss(model, batches):
 TRAIN_EVAL_BATCHES = 25
 BATCH_SIZE = 2000
 BASE_HPARAMS = dict(muon_lr=0.19, bias_lr=104, head_lr=1340)
-LR_SWEEP_K_VALUES = range(-5, 6)
+SEARCH_HPARAMS = ("muon_lr", "bias_lr", "head_lr")
+LR_SWEEP_K_VALUES = range(-2, 3)
 
 
 def rounded_lr(value):
     return float("%.2g" % value)
 
 
-def sweep_values(base_value):
-    return [rounded_lr(base_value * 0.8**k) for k in LR_SWEEP_K_VALUES]
+def sweep_value(base_value, k):
+    return rounded_lr(base_value * 0.8**k)
 
 
-def iter_run_configs():
-    yield dict(batch_size=BATCH_SIZE, search_hparam="baseline", **BASE_HPARAMS)
-    for hparam_name in ("muon_lr", "bias_lr", "head_lr"):
-        for k, value in zip(LR_SWEEP_K_VALUES, sweep_values(BASE_HPARAMS[hparam_name])):
+def iter_round_configs(center_hparams):
+    yield dict(
+        batch_size=BATCH_SIZE,
+        search_hparam="center",
+        search_k=0,
+        is_center=True,
+        **center_hparams,
+    )
+    for hparam_name in SEARCH_HPARAMS:
+        for k in LR_SWEEP_K_VALUES:
             if k == 0:
                 continue
-            hparams = dict(BASE_HPARAMS)
-            hparams[hparam_name] = value
-            yield dict(batch_size=BATCH_SIZE, search_hparam=hparam_name, **hparams)
+            hparams = dict(center_hparams)
+            hparams[hparam_name] = sweep_value(center_hparams[hparam_name], k)
+            yield dict(
+                batch_size=BATCH_SIZE,
+                search_hparam=hparam_name,
+                search_k=k,
+                is_center=False,
+                **hparams,
+            )
 
 
 def train_and_evaluate(run, model, batch_size, muon_lr, bias_lr, head_lr):
@@ -625,17 +649,34 @@ def run_main():
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
     # model.compile(mode="max-autotune")
 
-    for run, config in enumerate(iter_run_configs()):
-        result = train_and_evaluate(
-            run=run,
-            model=model,
-            batch_size=config["batch_size"],
-            muon_lr=config["muon_lr"],
-            bias_lr=config["bias_lr"],
-            head_lr=config["head_lr"],
-        )
-        result["search_hparam"] = config["search_hparam"]
-        log_candidate_result(result)
+    center_hparams = dict(BASE_HPARAMS)
+    run = 0
+    search_round = 0
+    while True:
+        round_results = []
+        for config in iter_round_configs(center_hparams):
+            result = train_and_evaluate(
+                run=run,
+                model=model,
+                batch_size=config["batch_size"],
+                muon_lr=config["muon_lr"],
+                bias_lr=config["bias_lr"],
+                head_lr=config["head_lr"],
+            )
+            result["search_round"] = search_round
+            result["search_hparam"] = config["search_hparam"]
+            result["search_k"] = config["search_k"]
+            result["is_center"] = config["is_center"]
+            log_candidate_result(result)
+            round_results.append(result)
+            run += 1
+
+        best_result = max(round_results, key=lambda result: result["tta_val_acc"])
+        if best_result["is_center"]:
+            break
+
+        center_hparams = {name: best_result[name] for name in SEARCH_HPARAMS}
+        search_round += 1
 
 
 def main():

@@ -1124,6 +1124,14 @@ def add_best_result_fields(result, best_result):
     result.update(copy_fields(best_result, BEST_RESULT_FIELDS))
 
 
+def tta_val_acc_improved(tta_val_acc, incumbent_tta_val_acc):
+    if not finite(tta_val_acc):
+        return False
+    if incumbent_tta_val_acc is None or not finite(incumbent_tta_val_acc):
+        return True
+    return tta_val_acc > incumbent_tta_val_acc
+
+
 def point_states(point, search_names, names=None):
     if names is None:
         names = search_names
@@ -1152,10 +1160,22 @@ def search_hparam_segment(
             initial_result
         )
     is_main_interval = interval_info is not None
+    fixed_cooldown_hparams = (
+        interval_info.get("fixed_cooldown_hparams")
+        if interval_info is not None
+        else None
+    )
+    train_selected = (
+        interval_info.get("train_selected", True)
+        if interval_info is not None
+        else False
+    )
 
     def evaluate(point, cooldown_seed_point=None, cooldown_search_names=None):
         needs_cooldown_state = (
-            interval_info is not None and interval_info["use_cooldown"]
+            interval_info is not None
+            and interval_info["use_cooldown"]
+            and fixed_cooldown_hparams is None
         )
         requested_cooldown_search_names = None
         if needs_cooldown_state:
@@ -1195,7 +1215,11 @@ def search_hparam_segment(
                 result["main_tta_val_acc"] = evaluate_tta_val_acc(
                     ctx.model, ctx.test_loader
                 )
-            if interval_info["use_cooldown"] and should_evaluate_tta:
+            if (
+                interval_info["use_cooldown"]
+                and fixed_cooldown_hparams is None
+                and should_evaluate_tta
+            ):
                 cooldown_start_state = result["end_state"]
                 cooldown_initial_states = dict(
                     interval_info["cooldown_initial_states"] or {}
@@ -1247,6 +1271,35 @@ def search_hparam_segment(
                 }
                 result["tta_val_acc"] = cooldown_result["tta_val_acc"]
                 should_evaluate_tta = False
+            elif (
+                interval_info["use_cooldown"]
+                and fixed_cooldown_hparams is not None
+                and should_evaluate_tta
+            ):
+                cooldown_hparams = dict(hparams)
+                for name in cooldown_search_hparam_names():
+                    cooldown_hparams[name] = fixed_cooldown_hparams[name]
+                cooldown_result = train_interval(
+                    ctx,
+                    cooldown_hparams,
+                    interval_info["cooldown_steps"],
+                    start_step + steps,
+                    capture_end_state=False,
+                )
+                cooldown_loss = interval_result_loss(cooldown_result)
+                cooldown_tta_val_acc = float("-inf")
+                if (
+                    cooldown_result["completed_steps"]
+                    == interval_info["cooldown_steps"]
+                    and finite(cooldown_loss)
+                ):
+                    cooldown_tta_val_acc = evaluate_tta_val_acc(
+                        ctx.model, ctx.test_loader
+                    )
+                cooldown_result["tta_val_acc"] = cooldown_tta_val_acc
+                result["cooldown_result"] = cooldown_result
+                result["tta_val_acc"] = cooldown_tta_val_acc
+                should_evaluate_tta = False
             result.pop("end_state", None)
         if should_evaluate_tta:
             if interval_info is not None:
@@ -1260,7 +1313,10 @@ def search_hparam_segment(
         if is_main_interval:
             log_main_hparams(result)
             cooldown_result = result.get("cooldown_result")
-            if cooldown_result is not None:
+            if (
+                cooldown_result is not None
+                and "candidate_evaluations" in cooldown_result
+            ):
                 log_candidate_results(cooldown_result["candidate_evaluations"])
                 log_search_path(cooldown_result["search_path"])
                 cooldown_result["_candidate_evaluations"] = list(
@@ -1291,6 +1347,23 @@ def search_hparam_segment(
         result["_candidate_evaluations"] = list(candidate_evaluations)
         result["_search_path"] = list(search_path)
         add_best_result_fields(result, best_result)
+        return result
+    if not train_selected:
+        best_cooldown_result = best_result.get("cooldown_result")
+        result = dict(
+            interval_index=interval_info["interval_index"],
+            best_point=best_point,
+            tta_val_acc=best_result["tta_val_acc"],
+            main_tta_val_acc=best_result["main_tta_val_acc"],
+            cooldown_result=best_cooldown_result,
+            cooldown_best_states=best_cooldown_result.get("best_states")
+            if best_cooldown_result is not None
+            else None,
+            candidate_evaluations=list(candidate_evaluations),
+            search_path=list(search_path),
+        )
+        add_best_result_fields(result, best_result)
+        load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
         return result
     load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
     selected_hparams = copy_fields(best_result, SEARCH_HPARAMS)
@@ -1332,22 +1405,151 @@ def search_interval_hparams(
     )
     cooldown_steps = min(ctx.cooldown_steps, remaining_steps_after_interval)
     use_cooldown = cooldown_steps > 0
-    interval_info = dict(
-        interval_index=interval_index,
-        cooldown_steps=cooldown_steps,
-        cooldown_initial_states=cooldown_initial_states,
-        use_cooldown=use_cooldown,
-    )
-    return search_hparam_segment(
+
+    start_state = snapshot_training_state(ctx.model, ctx.optimizers, ctx.batch_stream)
+
+    def search_main_phase(initial_main_point, fixed_cooldown_hparams=None):
+        interval_info = dict(
+            interval_index=interval_index,
+            cooldown_steps=cooldown_steps,
+            cooldown_initial_states=None,
+            use_cooldown=use_cooldown and fixed_cooldown_hparams is not None,
+            fixed_cooldown_hparams=fixed_cooldown_hparams,
+            train_selected=False,
+        )
+        return search_hparam_segment(
+            ctx,
+            initial_main_point,
+            ctx.search_names,
+            ctx.fixed_hparams,
+            interval_steps,
+            interval_start_step,
+            start_state,
+            interval_info,
+        )
+
+    def cooldown_hparams_from_states(main_hparams, states):
+        hparams = dict(main_hparams)
+        states = dict(states or {})
+        for name in cooldown_search_hparam_names():
+            state = states.get(name)
+            if state is None:
+                state = nearest_hparam_state(name, main_hparams[name])
+            hparams[name] = hparam_from_state(name, state)
+        return hparams
+
+    def search_cooldown_phase(main_hparams, initial_states):
+        load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
+        main_result = train_interval(
+            ctx,
+            main_hparams,
+            interval_steps,
+            interval_start_step,
+            capture_end_state=True,
+        )
+        main_loss = interval_result_loss(main_result)
+        if main_result["completed_steps"] != interval_steps or not finite(main_loss):
+            failed_result = dict(
+                best_states=dict(initial_states or {}),
+                tta_val_acc=float("-inf"),
+                candidate_evaluations=[],
+                search_path=[],
+            )
+            failed_result.update(main_hparams)
+            load_training_state(
+                ctx.model, ctx.optimizers, ctx.batch_stream, start_state
+            )
+            return failed_result
+
+        cooldown_search_names = cooldown_search_hparam_names()
+        cooldown_initial_hparams = cooldown_hparams_from_states(
+            main_hparams,
+            initial_states,
+        )
+        result = search_hparam_segment(
+            ctx,
+            point_from_hparams(cooldown_initial_hparams, cooldown_search_names),
+            cooldown_search_names,
+            cooldown_initial_hparams,
+            cooldown_steps,
+            interval_start_step + interval_steps,
+            main_result["end_state"],
+        )
+        load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
+        return result
+
+    main_result = search_main_phase(initial_point)
+    selected_main_result = main_result
+    selected_main_point = main_result["best_point"]
+    selected_main_hparams = copy_fields(main_result, SEARCH_HPARAMS)
+    selected_tta_val_acc = main_result["tta_val_acc"]
+    selected_cooldown_states = dict(cooldown_initial_states or {})
+    fixed_cooldown_hparams = None
+
+    while use_cooldown:
+        cooldown_result = search_cooldown_phase(
+            selected_main_hparams,
+            selected_cooldown_states,
+        )
+        log_main_hparams(
+            dict(
+                selected_main_hparams,
+                main_tta_val_acc=selected_main_result["main_tta_val_acc"],
+                cooldown_result=cooldown_result,
+            )
+        )
+        log_candidate_results(cooldown_result["candidate_evaluations"])
+        log_search_path(cooldown_result["search_path"])
+        if not tta_val_acc_improved(
+            cooldown_result["tta_val_acc"],
+            selected_tta_val_acc,
+        ):
+            break
+
+        selected_tta_val_acc = cooldown_result["tta_val_acc"]
+        selected_cooldown_states = cooldown_result["best_states"]
+        fixed_cooldown_hparams = copy_fields(cooldown_result, SEARCH_HPARAMS)
+
+        main_result = search_main_phase(
+            selected_main_point,
+            fixed_cooldown_hparams=fixed_cooldown_hparams,
+        )
+        if not tta_val_acc_improved(
+            main_result["tta_val_acc"],
+            selected_tta_val_acc,
+        ):
+            break
+
+        selected_main_result = main_result
+        selected_main_point = main_result["best_point"]
+        selected_main_hparams = copy_fields(main_result, SEARCH_HPARAMS)
+        selected_tta_val_acc = main_result["tta_val_acc"]
+
+    log_search_path(selected_main_result["search_path"])
+    load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
+    actual_result = train_interval(
         ctx,
-        initial_point,
-        ctx.search_names,
-        ctx.fixed_hparams,
+        selected_main_hparams,
         interval_steps,
         interval_start_step,
-        snapshot_training_state(ctx.model, ctx.optimizers, ctx.batch_stream),
-        interval_info,
+        capture_end_state=False,
+        capture_step_metrics=True,
     )
+    result = dict(
+        interval_index=interval_index,
+        best_point=selected_main_point,
+        cooldown_best_states=selected_cooldown_states
+        if fixed_cooldown_hparams is not None
+        else None,
+        tta_val_acc=selected_tta_val_acc,
+        main_tta_val_acc=selected_main_result["main_tta_val_acc"],
+    )
+    add_best_result_fields(result, selected_main_hparams)
+    result.update(
+        completed_steps=actual_result["completed_steps"],
+        losses=list(actual_result["losses"]),
+    )
+    return result
 
 
 def run_full_dataset_search(cfg):
