@@ -39,9 +39,16 @@ torch.backends.cudnn.benchmark = USE_CUDNN_BENCHMARK
 torch.backends.cudnn.allow_tf32 = USE_TF32
 torch.backends.cuda.matmul.allow_tf32 = USE_TF32
 
-USE_COMPILED_MUON = False
+USE_COMPILED_MODEL = True
+USE_COMPILED_MUON = True
 MUON_DTYPE = torch.bfloat16
 TRAINING_SEED = 0
+
+
+def maybe_compile_model(model):
+    if USE_COMPILED_MODEL:
+        return torch.compile(model, dynamic=False)
+    return model
 
 
 def set_training_seed():
@@ -81,7 +88,9 @@ def zeropower_via_newtonschulz5(G, steps=3, eps=0):
 
 
 if USE_COMPILED_MUON:
-    zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
+    zeropower_via_newtonschulz5 = torch.compile(
+        zeropower_via_newtonschulz5, dynamic=False
+    )
 
 
 class Muon(torch.optim.Optimizer):
@@ -527,8 +536,8 @@ def evaluate_tta_val_acc(model, loader):
 
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
-SEARCH_STEP_CONFIGS = [(40, 40)]
-PRINT_OUTPUT_FILENAME = "cifar_search_baseline.log"
+SEARCH_STEP_CONFIGS = [(640, 640)]
+PRINT_OUTPUT_FILENAME = "cifar_search_125bs_640N_good_init.log"
 LR_SEARCH_SIG_FIGS = 2
 TTA_VAL_ACC_DIFF_THRESHOLD = 0.0005
 SMALL_LR_THRESHOLD_STEPS = 3
@@ -537,7 +546,7 @@ MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
 INITIAL_MOMENTUM = 0.6
 MUON_NESTEROV = False
 RUN_CONFIGS = [
-    dict(batch_size=2000),
+    dict(batch_size=125),
 ]
 SEARCH_HPARAM_ORDER = ("muon_lr", "muon_momentum", "bias_lr", "head_lr")
 SEARCH_HPARAM_GROUPS = (
@@ -560,7 +569,7 @@ class SearchHparam:
 SEARCH_HPARAMS = {
     "muon_lr": SearchHparam(
         kind="log_lr",
-        initial_value=0.2,
+        initial_value=0.04,
         search=True,
         cooldown_search=True,
         factor=0.6,
@@ -574,14 +583,14 @@ SEARCH_HPARAMS = {
     ),
     "bias_lr": SearchHparam(
         kind="log_lr",
-        initial_value=104,
+        initial_value=104 * 125 / 2000,
         search=True,
         cooldown_search=True,
         factor=0.6,
     ),
     "head_lr": SearchHparam(
         kind="log_lr",
-        initial_value=1340,
+        initial_value=1340 * 125 / 2000,
         search=True,
         cooldown_search=True,
         factor=0.6,
@@ -1519,7 +1528,9 @@ def main():
 
 def run_main():
     set_training_seed()
-    model = CifarNet().cuda().to(memory_format=torch.channels_last)
+    model = maybe_compile_model(
+        CifarNet().cuda().to(memory_format=torch.channels_last)
+    )
     for run, cfg in enumerate(iter_run_settings()):
         cfg.run = run
         cfg.model = model

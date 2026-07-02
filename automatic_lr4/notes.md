@@ -203,3 +203,15 @@ muon_lr=0.043 muon_momentum=0.6 bias_lr=37 head_lr=1300 -> tta_val_acc=0.908
 Search main interval. Search cooldown interval. Then search main interval while fixing the cooldown interval. 
 main interval is more expensive than the cooldown. so find the best cooldown early on.
 we need to start from arbitrary values and still be able to converge. 
+
+Selected training intervals
+interval=0 phase=main     start_step=0 steps=40 muon_lr=0.2 momentum=0.6 bias_lr=62 head_lr=800 path_final_tta=0.9136 loss=2.31->1.317
+interval=1 phase=main     start_step=40 steps=40 muon_lr=0.12 momentum=0.6 bias_lr=37 head_lr=800 path_final_tta=0.931 loss=1.297->1.134
+interval=2 phase=main     start_step=80 steps=40 muon_lr=0.043 momentum=0.8 bias_lr=37 head_lr=800 path_final_tta=0.9379 loss=1.154->1.033
+interval=3 phase=main     start_step=120 steps=40 muon_lr=0.026 momentum=0.8 bias_lr=37 head_lr=800 path_final_tta=0.9412 loss=1.046->0.9712
+interval=4 phase=main     start_step=160 steps=40 muon_lr=0.002 momentum=0.8 bias_lr=37 head_lr=1300 path_final_tta=0.9404 loss=0.9622->0.929
+interval=0 phase=cooldown best_cooldown=0.9136 cooldown_muon_lr=0.043 cooldown_momentum=0.6 cooldown_bias_lr=8.1 cooldown_head_lr=480
+interval=1 phase=cooldown best_cooldown=0.931 cooldown_muon_lr=0.026 cooldown_momentum=0.6 cooldown_bias_lr=22 cooldown_head_lr=8.1
+interval=2 phase=cooldown best_cooldown=0.9379 cooldown_muon_lr=0.0093 cooldown_momentum=0.8 cooldown_bias_lr=0.38 cooldown_head_lr=8.1
+interval=3 phase=cooldown best_cooldown=0.9412 cooldown_muon_lr=0.0056 cooldown_momentum=0.8 cooldown_bias_lr=2.9 cooldown_head_lr=1.8
+interval=4 phase=cooldown best_cooldown=0.9404 cooldown_muon_lr=0.002 cooldown_momentum=0.8 cooldown_bias_lr=37 cooldown_head_lr=1300
