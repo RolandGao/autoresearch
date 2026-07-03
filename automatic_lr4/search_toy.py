@@ -9,6 +9,8 @@ import random
 import re
 from pathlib import Path
 
+import numpy as np
+
 
 SUMMARY_PATH = Path(__file__).parent / "20260626_022201_204962" / "summary.txt"
 NUM_TRANSFORMED_FUNCTIONS = 10
@@ -16,6 +18,7 @@ RANDOM_SEED = 0
 PROBE_COUNT = 122
 PROBE_MIN = 1e-3
 PROBE_MAX = 1e6
+SHORT_BUDGET = 20
 EXTRA_STRESS_FUNCTIONS = 1000
 EXTRA_STRESS_SEED = 1
 
@@ -172,6 +175,220 @@ class LogCoverageSearch:
         return SearchResult(best_x, best_fx, evaluator.count)
 
 
+class CoarseToFineLogSearch:
+    def __init__(
+        self,
+        budget: int,
+        probe_min: float,
+        probe_max: float,
+        coarse_points: int = 8,
+        top_regions: int = 4,
+    ) -> None:
+        self.budget = budget
+        self.log_min = math.log(probe_min)
+        self.log_max = math.log(probe_max)
+        self.coarse_points = coarse_points
+        self.top_regions = top_regions
+
+    def search(self, evaluator: EvaluationCounter) -> SearchResult:
+        observations: list[tuple[float, float, float]] = []
+        seen_logs = set()
+
+        def evaluate_log(log_x: float) -> None:
+            if evaluator.count >= self.budget:
+                return
+            log_x = max(self.log_min, min(self.log_max, log_x))
+            key = round(log_x, 12)
+            if key in seen_logs:
+                return
+            seen_logs.add(key)
+            x = math.exp(log_x)
+            observations.append((log_x, x, evaluator.evaluate(x)))
+
+        coarse_step = (self.log_max - self.log_min) / (self.coarse_points - 1)
+        for index in range(self.coarse_points):
+            evaluate_log(self.log_min + coarse_step * index)
+
+        top_observations = sorted(observations, key=lambda row: row[2], reverse=True)[: self.top_regions]
+        for log_x, _, _ in top_observations:
+            evaluate_log(log_x - coarse_step / 2)
+            evaluate_log(log_x + coarse_step / 2)
+
+        offsets = (coarse_step / 4, -coarse_step / 4, coarse_step / 8, -coarse_step / 8)
+        while evaluator.count < self.budget:
+            added = False
+            for log_x, _, _ in sorted(observations, key=lambda row: row[2], reverse=True)[:3]:
+                for offset in offsets:
+                    before = evaluator.count
+                    evaluate_log(log_x + offset)
+                    added = added or evaluator.count > before
+                    if evaluator.count >= self.budget:
+                        break
+                if evaluator.count >= self.budget:
+                    break
+            if not added:
+                break
+
+        best_log_x, best_x, best_fx = max(observations, key=lambda row: row[2])
+        return SearchResult(best_x, best_fx, evaluator.count)
+
+
+class LogSpaceGPUCBSearch:
+    def __init__(
+        self,
+        budget: int,
+        probe_min: float,
+        probe_max: float,
+        initial_points: int = 7,
+        candidate_points: int = 300,
+        length_scale: float = 0.3,
+        beta: float = 0.5,
+        noise: float = 1e-5,
+    ) -> None:
+        self.budget = budget
+        self.log_min = math.log(probe_min)
+        self.log_max = math.log(probe_max)
+        self.initial_points = initial_points
+        self.candidate_logs = np.linspace(self.log_min, self.log_max, candidate_points)
+        self.length_scale = length_scale
+        self.beta = beta
+        self.noise = noise
+
+    def search(self, evaluator: EvaluationCounter) -> SearchResult:
+        observed_logs: list[float] = []
+        observed_values: list[float] = []
+        seen_candidates = set()
+
+        def evaluate_log(log_x: float) -> None:
+            if evaluator.count >= self.budget:
+                return
+            log_x = max(self.log_min, min(self.log_max, log_x))
+            candidate_index = int(round((log_x - self.log_min) / (self.log_max - self.log_min) * (len(self.candidate_logs) - 1)))
+            candidate_index = max(0, min(len(self.candidate_logs) - 1, candidate_index))
+            if candidate_index in seen_candidates:
+                return
+            seen_candidates.add(candidate_index)
+            log_x = float(self.candidate_logs[candidate_index])
+            observed_logs.append(log_x)
+            observed_values.append(evaluator.evaluate(math.exp(log_x)))
+
+        for log_x in np.linspace(self.log_min, self.log_max, self.initial_points):
+            evaluate_log(float(log_x))
+
+        while evaluator.count < self.budget:
+            x_train = np.asarray(observed_logs)
+            y_train = np.asarray(observed_values)
+            y_std = y_train.std()
+            if y_std == 0:
+                y_std = max(abs(float(y_train.mean())), 1.0)
+            y_norm = (y_train - y_train.mean()) / y_std
+
+            distances = x_train[:, None] - x_train[None, :]
+            kernel = np.exp(-0.5 * distances * distances / (self.length_scale * self.length_scale))
+            kernel += self.noise * np.eye(len(x_train))
+
+            try:
+                cholesky = np.linalg.cholesky(kernel)
+                alpha = np.linalg.solve(cholesky.T, np.linalg.solve(cholesky, y_norm))
+                cross_kernel = np.exp(
+                    -0.5
+                    * ((self.candidate_logs[:, None] - x_train[None, :]) ** 2)
+                    / (self.length_scale * self.length_scale)
+                )
+                mean = cross_kernel @ alpha
+                uncertainty_basis = np.linalg.solve(cholesky, cross_kernel.T)
+                variance = np.maximum(1.0 - np.sum(uncertainty_basis * uncertainty_basis, axis=0), 0.0)
+            except np.linalg.LinAlgError:
+                break
+
+            acquisition = mean + self.beta * np.sqrt(variance)
+            for candidate_index in seen_candidates:
+                acquisition[candidate_index] = -np.inf
+            evaluate_log(float(self.candidate_logs[int(np.argmax(acquisition))]))
+
+        best_index = max(range(len(observed_values)), key=lambda index: observed_values[index])
+        return SearchResult(math.exp(observed_logs[best_index]), observed_values[best_index], evaluator.count)
+
+
+class SmoothIntervalUCBSearch:
+    def __init__(
+        self,
+        budget: int,
+        probe_min: float,
+        probe_max: float,
+        initial_points: int = 8,
+        initial_phase: float = 0.75,
+        exploration_weight: float = 0.05,
+        continuity_weight: float = 0.0,
+    ) -> None:
+        self.budget = budget
+        self.log_min = math.log(probe_min)
+        self.log_max = math.log(probe_max)
+        self.initial_points = initial_points
+        self.initial_phase = initial_phase
+        self.exploration_weight = exploration_weight
+        self.continuity_weight = continuity_weight
+
+    def search(self, evaluator: EvaluationCounter) -> SearchResult:
+        observed_logs: list[float] = []
+        observed_xs: list[float] = []
+        observed_values: list[float] = []
+        seen_logs = set()
+
+        def evaluate_log(log_x: float) -> bool:
+            if evaluator.count >= self.budget:
+                return False
+            log_x = max(self.log_min, min(self.log_max, float(log_x)))
+            key = round(log_x, 12)
+            if key in seen_logs:
+                return False
+
+            seen_logs.add(key)
+            x = math.exp(log_x)
+            fx = evaluator.evaluate(x)
+            observed_logs.append(log_x)
+            observed_xs.append(x)
+            observed_values.append(fx)
+            return True
+
+        search_width = self.log_max - self.log_min
+        initial_step = search_width / self.initial_points
+        for index in range(self.initial_points):
+            evaluate_log(self.log_min + initial_step * (index + self.initial_phase))
+
+        while evaluator.count < self.budget:
+            ordered = sorted(zip(observed_logs, observed_xs, observed_values))
+            min_value = min(observed_values)
+            max_value = max(observed_values)
+            value_scale = max(max_value - min_value, abs(max_value), 1e-9)
+            best_score = -math.inf
+            best_log_x = None
+
+            for left, right in zip(ordered, ordered[1:]):
+                left_log, _, left_value = left
+                right_log, _, right_value = right
+                candidate_log_x = (left_log + right_log) / 2.0
+                if round(candidate_log_x, 12) in seen_logs:
+                    continue
+
+                interval_width = right_log - left_log
+                score = (
+                    max(left_value, right_value)
+                    + self.continuity_weight * min(left_value, right_value)
+                    + self.exploration_weight * value_scale * interval_width / search_width
+                )
+                if score > best_score:
+                    best_score = score
+                    best_log_x = candidate_log_x
+
+            if best_log_x is None:
+                break
+            evaluate_log(best_log_x)
+
+        best_index = max(range(len(observed_values)), key=lambda index: observed_values[index])
+        return SearchResult(observed_xs[best_index], observed_values[best_index], evaluator.count)
+
+
 def fmt_x(value: float) -> str:
     return f"{value:.2g}"
 
@@ -201,6 +418,17 @@ def print_accuracy_table(rows: list[dict[str, float | str]]) -> None:
             print("  " + "  ".join("-" * width for width in widths))
 
 
+def print_stress_summary(rows: list[dict[str, float | str]]) -> None:
+    accuracies = [row["accuracy"] for row in rows]
+    evals = [row["evals"] for row in rows]
+    print("fresh random stress")
+    print(f"  functions={len(rows)}")
+    print(f"  max_evaluations={max(evals)}")
+    print(f"  min_accuracy={min(accuracies):.6f}")
+    print(f"  mean_accuracy={sum(accuracies) / len(accuracies):.6f}")
+    print(f"  below_0.99={sum(accuracy < 0.99 for accuracy in accuracies)}")
+
+
 def sample_extra_functions(points: list[tuple[float, float]], count: int) -> list[FixedFunction]:
     rng = random.Random(EXTRA_STRESS_SEED)
     functions = []
@@ -219,7 +447,7 @@ def sample_extra_functions(points: list[tuple[float, float]], count: int) -> lis
     return functions
 
 
-def run_search(function: FixedFunction, search: LogCoverageSearch) -> dict[str, float | str]:
+def run_search(function: FixedFunction, search) -> dict[str, float | str]:
     actual_max = function.ground_truth.max_value()
     evaluator = EvaluationCounter(function.ground_truth)
     result = search.search(evaluator)
@@ -236,48 +464,27 @@ def run_search(function: FixedFunction, search: LogCoverageSearch) -> dict[str, 
 def main() -> None:
     points = parse_summary(SUMMARY_PATH)
     functions = make_fixed_functions(points)
-    search = LogCoverageSearch(PROBE_COUNT, PROBE_MIN, PROBE_MAX)
+    stress_functions = sample_extra_functions(points, EXTRA_STRESS_FUNCTIONS)
+    searches = [
+        ("log_coverage_sweep", LogCoverageSearch(PROBE_COUNT, PROBE_MIN, PROBE_MAX)),
+        ("coarse_to_fine_log", CoarseToFineLogSearch(SHORT_BUDGET, PROBE_MIN, PROBE_MAX)),
+        ("log_space_gp_ucb", LogSpaceGPUCBSearch(SHORT_BUDGET, PROBE_MIN, PROBE_MAX)),
+        ("smooth_interval_ucb", SmoothIntervalUCBSearch(SHORT_BUDGET, PROBE_MIN, PROBE_MAX)),
+    ]
 
     print(f"summary={SUMMARY_PATH}")
     print(f"fixed transformed functions={NUM_TRANSFORMED_FUNCTIONS}")
-    print(f"algorithm=log_coverage_sweep")
-    print(f"probe_count={PROBE_COUNT}")
-    print(f"probe_range=[{PROBE_MIN:g}, {PROBE_MAX:g}]\n")
+    print(f"probe_range=[{PROBE_MIN:g}, {PROBE_MAX:g}]")
+    print(f"stress_functions={EXTRA_STRESS_FUNCTIONS}\n")
 
-    accuracy_rows = []
-    for function in functions:
-        ground_truth = function.ground_truth
-        print(function.name)
-        if isinstance(ground_truth, TransformedGroundTruth):
-            print(
-                "  "
-                f"value_multiplier={ground_truth.value_multiplier:.4g}, "
-                f"y_shift={ground_truth.y_shift}, "
-                f"x_multiplier={ground_truth.x_multiplier:.4g}"
-            )
+    for name, search in searches:
+        print(f"algorithm={name}")
+        accuracy_rows = [run_search(function, search) for function in functions]
+        print_accuracy_table(accuracy_rows)
         print()
-
-        row = run_search(function, search)
-        print(
-            f"  found_x={fmt_x(row['found_x'])} "
-            f"found_f={row['found_f']:.6f} "
-            f"actual_max={row['actual_max']:.6f} "
-            f"accuracy={row['accuracy']:.6f} "
-            f"evaluations={row['evals']}\n"
-        )
-        accuracy_rows.append(row)
-
-    print_accuracy_table(accuracy_rows)
-
-    stress_rows = [run_search(function, search) for function in sample_extra_functions(points, EXTRA_STRESS_FUNCTIONS)]
-    stress_accuracies = [row["accuracy"] for row in stress_rows]
-    print()
-    print("fresh random stress")
-    print(f"  functions={EXTRA_STRESS_FUNCTIONS}")
-    print(f"  evaluations_each={PROBE_COUNT}")
-    print(f"  min_accuracy={min(stress_accuracies):.6f}")
-    print(f"  mean_accuracy={sum(stress_accuracies) / len(stress_accuracies):.6f}")
-    print(f"  below_0.99={sum(accuracy < 0.99 for accuracy in stress_accuracies)}")
+        stress_rows = [run_search(function, search) for function in stress_functions]
+        print_stress_summary(stress_rows)
+        print()
 
 
 if __name__ == "__main__":

@@ -183,3 +183,39 @@ interval=1 muon_lr=0.026 momentum=0.6 bias_lr=22 head_lr=8.1
 interval=2 muon_lr=0.0093 momentum=0.8 bias_lr=0.38 head_lr=8.1
 interval=3 muon_lr=0.0056 momentum=0.8 bias_lr=2.9 head_lr=1.8
 interval=4 muon_lr=0.002 momentum=0.8 bias_lr=37 head_lr=1300
+
+Use this prompt:
+
+We are working in /workspace/neural_networks_optimization. Use /venv/main/bin/python.
+
+Modify autoresearch/automatic_lr4/search_toy.py.
+
+Goal: improve the search algorithm for black-box peak finding. The function is defined by autoresearch/automatic_lr4/20260626_022201_204962/summary.txt, plus random transformed variants. Current script includes:
+- log_coverage_sweep: robust but uses 122 evaluations
+- coarse_to_fine_log: 20 evals but misses
+- log_space_gp_ucb: 20 evals but misses
+
+Optimize for:
+1. Accuracy = found_f / actual_max
+2. Must exceed 0.99 on:
+   - the fixed original + 10 transformed functions
+   - fresh random stress tests
+3. Use at most 20 function evaluations per function.
+4. Do not overfit to the fixed 11 functions.
+5. Do not rely narrowly on the exact current transformation family; prefer a more general prior or search strategy that could survive future transformations.
+6. Keep the fresh random stress test and report min accuracy, mean accuracy, below_0.99 count, and evaluation count.
+
+Important context:
+- x spans many orders of magnitude, so log-space search is natural.
+- Current 20-eval methods get close but miss:
+  - coarse_to_fine_log stress min around 0.982
+  - log_space_gp_ucb stress min around 0.979
+- The robust 122-eval log sweep has stress min above 0.99.
+- We need a better adaptive or learned strategy under the 20-eval budget.
+
+Please:
+- Inspect search_toy.py first.
+- Implement one or more improved algorithms.
+- Run /venv/main/bin/python autoresearch/automatic_lr4/search_toy.py.
+- Compare against existing algorithms in the output table.
+- Be honest if no 20-eval method clears the target.

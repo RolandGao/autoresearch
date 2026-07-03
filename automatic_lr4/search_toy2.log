@@ -1,63 +1,9 @@
 summary=/workspace/neural_networks_optimization/autoresearch/automatic_lr4/20260626_022201_204962/summary.txt
 fixed transformed functions=10
-algorithm=log_coverage_sweep
-probe_count=122
 probe_range=[0.001, 1e+06]
+stress_functions=1000
 
-original
-
-  found_x=96 found_f=0.496673 actual_max=0.500600 accuracy=0.992156 evaluations=122
-
-transformed #1
-  value_multiplier=4.885, y_shift=430, x_multiplier=0.1205
-
-  found_x=4.5e+02 found_f=2.432933 actual_max=2.445314 accuracy=0.994937 evaluations=122
-
-transformed #2
-  value_multiplier=8.53, y_shift=497, x_multiplier=0.6455
-
-  found_x=7.5e+02 found_f=4.255945 actual_max=4.269929 accuracy=0.996725 evaluations=122
-
-transformed #3
-  value_multiplier=3.695, y_shift=310, x_multiplier=8.622
-
-  found_x=0.14 found_f=1.848807 actual_max=1.849643 accuracy=0.999548 evaluations=122
-
-transformed #4
-  value_multiplier=0.5201, y_shift=223, x_multiplier=1.022
-
-  found_x=9.1e+04 found_f=0.258346 actual_max=0.260369 accuracy=0.992228 evaluations=122
-
-transformed #5
-  value_multiplier=0.3662, y_shift=97, x_multiplier=1.725
-
-  found_x=1.4e+04 found_f=0.183118 actual_max=0.183302 accuracy=0.998998 evaluations=122
-
-transformed #6
-  value_multiplier=0.317, y_shift=150, x_multiplier=0.4172
-
-  found_x=2.5e+05 found_f=0.157912 actual_max=0.158673 accuracy=0.995206 evaluations=122
-
-transformed #7
-  value_multiplier=2.882, y_shift=338, x_multiplier=0.8796
-
-  found_x=4.4 found_f=1.434218 actual_max=1.442628 accuracy=0.994170 evaluations=122
-
-transformed #8
-  value_multiplier=0.159, y_shift=444, x_multiplier=0.4289
-
-  found_x=21 found_f=0.078964 actual_max=0.079596 accuracy=0.992049 evaluations=122
-
-transformed #9
-  value_multiplier=1.909, y_shift=209, x_multiplier=8.575
-
-  found_x=0.0078 found_f=0.948512 actual_max=0.955735 accuracy=0.992442 evaluations=122
-
-transformed #10
-  value_multiplier=0.8995, y_shift=266, x_multiplier=0.1332
-
-  found_x=3.1 found_f=0.447862 actual_max=0.450309 accuracy=0.994567 evaluations=122
-
+algorithm=log_coverage_sweep
 accuracy summary
          function  evals    found x   found f  actual max  accuracy
   ---------------  -----  ---------  --------  ----------  --------
@@ -75,7 +21,77 @@ accuracy summary
 
 fresh random stress
   functions=1000
-  evaluations_each=122
+  max_evaluations=122
   min_accuracy=0.991333
   mean_accuracy=0.996442
   below_0.99=0
+
+algorithm=coarse_to_fine_log
+accuracy summary
+         function  evals    found x   found f  actual max  accuracy
+  ---------------  -----  ---------  --------  ----------  --------
+         original     20      95.97  0.496703      0.5006  0.992215
+   transformed #1     20      45.78  2.419670      2.4453  0.989513
+   transformed #2     20        884  4.246858      4.2699  0.994597
+   transformed #3     20    0.01931  1.834205      1.8496  0.991653
+   transformed #4     20      1e+06  0.257405      0.2604  0.988614
+   transformed #5     20  1.179e+04  0.182483      0.1833  0.995531
+   transformed #6     20      1e+06  0.157912      0.1587  0.995206
+   transformed #7     20     0.5397  1.431236      1.4426  0.992104
+   transformed #8     20      31.62  0.078832      0.0796  0.990391
+   transformed #9     20       2683  0.943698      0.9557  0.987405
+  transformed #10     20     0.3728  0.446770      0.4503  0.992141
+
+fresh random stress
+  functions=1000
+  max_evaluations=20
+  min_accuracy=0.982221
+  mean_accuracy=0.992936
+  below_0.99=252
+
+algorithm=log_space_gp_ucb
+accuracy summary
+         function  evals  found x   found f  actual max  accuracy
+  ---------------  -----  -------  --------  ----------  --------
+         original     20    793.7  0.498072      0.5006  0.994949
+   transformed #1     20    61.09  2.410878      2.4453  0.985918
+   transformed #2     20      691  4.237173      4.2699  0.992329
+   transformed #3     20   0.1194  1.843616      1.8496  0.996741
+   transformed #4     20    1e+06  0.257405      0.2604  0.988614
+   transformed #5     20     1382  0.182101      0.1833  0.993449
+   transformed #6     20    1e+06  0.157912      0.1587  0.995206
+   transformed #7     20   0.5484  1.430486      1.4426  0.991584
+   transformed #8     20    32.74  0.078890      0.0796  0.991126
+   transformed #9     20    0.001  0.941607      0.9557  0.985218
+  transformed #10     20    3.102  0.448771      0.4503  0.996586
+
+fresh random stress
+  functions=1000
+  max_evaluations=20
+  min_accuracy=0.979401
+  mean_accuracy=0.992103
+  below_0.99=298
+
+algorithm=smooth_interval_ucb
+accuracy summary
+         function  evals    found x   found f  actual max  accuracy
+  ---------------  -----  ---------  --------  ----------  --------
+         original     20      839.1  0.500452      0.5006  0.999704
+   transformed #1     20      53.52  2.427750      2.4453  0.992818
+   transformed #2     20      83.54  4.239411      4.2699  0.992853
+   transformed #3     20    0.01506  1.839432      1.8496  0.994479
+   transformed #4     20    0.07915  0.260147      0.2604  0.999147
+   transformed #5     20       1636  0.182024      0.1833  0.993030
+   transformed #6     20  5.233e+05  0.157912      0.1587  0.995206
+   transformed #7     20      4.532  1.441255      1.4426  0.999048
+   transformed #8     20      31.62  0.078832      0.0796  0.990391
+   transformed #9     20   0.007121  0.955701      0.9557  0.999964
+  transformed #10     20     0.3539  0.447200      0.4503  0.993096
+
+fresh random stress
+  functions=1000
+  max_evaluations=20
+  min_accuracy=0.985417
+  mean_accuracy=0.994507
+  below_0.99=73
+
