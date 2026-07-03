@@ -13,17 +13,19 @@ Best main eval: interval=4 main=0.9389 muon_lr=0.0056 momentum=0.9 bias_lr=37 he
 Best eval cooldown: interval=3 best_cooldown=0.9409 main_muon_lr=0.026 main_momentum=0.8 main_bias_lr=37 main_head_lr=800
 Best cooldown candidate: interval=3 tta_val_acc=0.9409 muon_lr=0.0093 momentum=0.8 bias_lr=8.1 head_lr=3700
 
-Selected training intervals
-interval=0 phase=main     start_step=0 steps=40 muon_lr=0.2 momentum=0.6 bias_lr=37 head_lr=800 path_final_tta=0.9129 loss=2.31->1.303
-interval=1 phase=main     start_step=40 steps=40 muon_lr=0.072 momentum=0.7 bias_lr=37 head_lr=800 path_final_tta=0.9321 loss=1.284->1.087
-interval=2 phase=main     start_step=80 steps=40 muon_lr=0.026 momentum=0.7 bias_lr=37 head_lr=800 path_final_tta=0.9368 loss=1.094->0.9869
-interval=3 phase=main     start_step=120 steps=40 muon_lr=0.026 momentum=0.8 bias_lr=37 head_lr=800 path_final_tta=0.9409 loss=0.9973->0.9634
-interval=4 phase=main     start_step=160 steps=40 muon_lr=0.0056 momentum=0.9 bias_lr=37 head_lr=800 path_final_tta=0.9389 loss=0.9601->0.9228
-interval=0 phase=cooldown best_cooldown=0.9129 cooldown_muon_lr=0.043 cooldown_momentum=0.6 cooldown_bias_lr=4.9 cooldown_head_lr=1300
-interval=1 phase=cooldown best_cooldown=0.9321 cooldown_muon_lr=0.016 cooldown_momentum=0.7 cooldown_bias_lr=4.9 cooldown_head_lr=1300
-interval=2 phase=cooldown best_cooldown=0.9368 cooldown_muon_lr=0.0093 cooldown_momentum=0.7 cooldown_bias_lr=8.1 cooldown_head_lr=800
-interval=3 phase=cooldown best_cooldown=0.9409 cooldown_muon_lr=0.0093 cooldown_momentum=0.8 cooldown_bias_lr=8.1 cooldown_head_lr=3700
-interval=4 phase=cooldown best_cooldown=0.9389 cooldown_muon_lr=0.0056 cooldown_momentum=0.9 cooldown_bias_lr=37 cooldown_head_lr=800
+main:
+interval=0 muon_lr=0.2 momentum=0.6 bias_lr=37 head_lr=800 path_final_tta=0.9129
+interval=1 muon_lr=0.072 momentum=0.7 bias_lr=37 head_lr=800 path_final_tta=0.9321
+interval=2 muon_lr=0.026 momentum=0.7 bias_lr=37 head_lr=800 path_final_tta=0.9368
+interval=3 muon_lr=0.026 momentum=0.8 bias_lr=37 head_lr=800 path_final_tta=0.9409
+interval=4 muon_lr=0.0056 momentum=0.9 bias_lr=37 head_lr=800 path_final_tta=0.9389
+
+cooldown:
+interval=0 muon_lr=0.043 momentum=0.6 bias_lr=4.9 head_lr=1300
+interval=1 muon_lr=0.016 momentum=0.7 bias_lr=4.9 head_lr=1300
+interval=2 muon_lr=0.0093 momentum=0.7 bias_lr=8.1 head_lr=800
+interval=3 muon_lr=0.0093 momentum=0.8 bias_lr=8.1 head_lr=3700
+interval=4 muon_lr=0.0056 momentum=0.9 bias_lr=37 head_lr=800
 
 Main interval candidates and best cooldown hparams
 interval=0

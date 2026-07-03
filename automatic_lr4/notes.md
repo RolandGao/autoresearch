@@ -155,63 +155,31 @@ what if it's expensive to evaluate the function f and we only can only spend tim
 explain how to develop the acquisition function. and how to develop the surrogate model
 what if i know there's only one big peak and if i go near the boundary there's definitely no peak there
 
-muon_lr=0.0093 muon_momentum=0.8 bias_lr=2.9 head_lr=8.1 -> tta_val_acc=0.9398
-muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=8.1 -> tta_val_acc=0.941
-muon_lr=0.0034 muon_momentum=0.8 bias_lr=2.9 head_lr=8.1 -> tta_val_acc=0.9407
-muon_lr=0.002 muon_momentum=0.8 bias_lr=2.9 head_lr=8.1 -> tta_val_acc=0.9398
-muon_lr=0.0056 muon_momentum=0.8 bias_lr=1.7 head_lr=8.1 -> tta_val_acc=0.9409
-muon_lr=0.0056 muon_momentum=0.8 bias_lr=1 head_lr=8.1 -> tta_val_acc=0.9407
-muon_lr=0.0056 muon_momentum=0.8 bias_lr=0.63 head_lr=8.1 -> tta_val_acc=0.941
-muon_lr=0.0056 muon_momentum=0.8 bias_lr=4.9 head_lr=8.1 -> tta_val_acc=0.9404
-muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=4.9 -> tta_val_acc=0.941
-muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=2.9 -> tta_val_acc=0.941
-muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=1.8 -> tta_val_acc=0.9412
-muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=1.1 -> tta_val_acc=0.9411
-muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=0.63 -> tta_val_acc=0.9412
-muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=0.38 -> tta_val_acc=0.9412
-
-search_path step=0 muon_lr=0.026 muon_momentum=0.8 bias_lr=37 head_lr=800 tta_val_acc=0.9318
-search_path step=1 muon_lr=0.002 muon_momentum=0.8 bias_lr=37 head_lr=800 tta_val_acc=0.9402
-search_path step=2 muon_lr=0.002 muon_momentum=0.8 bias_lr=37 head_lr=1300 tta_val_acc=0.9404
-
-search_path step=0 muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=8.1 tta_val_acc=0.941
-search_path step=1 muon_lr=0.0056 muon_momentum=0.8 bias_lr=2.9 head_lr=1.8 tta_val_acc=0.9412
-
 
 idea: just train bias_lr and head_lr and see what we get. 
 
-main hparams: muon_lr=0.026 muon_momentum=0.8 bias_lr=37 head_lr=800 main=0.9278, best_cooldown=0.9409
 
+autoresearch/automatic_lr4/20260630_230733_608720/cifar_search_baseline.log
 
-
-python plot_cifar_search.py 20260630_193105_206769/cifar_simplified_cooldown.log
+python plot_cifar_search.py 20260630_230733_608720/cifar_search_baseline.log
 python plot_cifar_search.py 20260630_205726_828854/cifar_0p1_factor.log
 
 factor=0.6 is pretty good. 
-
-main hparams: muon_lr=0.2 muon_momentum=0.6 bias_lr=62 head_lr=800 main=0.8094, best_cooldown=0.9141
-muon_lr=0.043 muon_momentum=0.6 bias_lr=4.9 head_lr=800 -> tta_val_acc=0.913
-muon_lr=0.043 muon_momentum=0.6 bias_lr=2.9 head_lr=800 -> tta_val_acc=0.9141
-muon_lr=0.043 muon_momentum=0.6 bias_lr=1.7 head_lr=800 -> tta_val_acc=0.9132
-
-main hparams: muon_lr=0.2 muon_momentum=0.6 bias_lr=62 head_lr=1300 main=0.81, best_cooldown=0.9088
-muon_lr=0.043 muon_momentum=0.6 bias_lr=22 head_lr=1300 -> tta_val_acc=0.9088
-muon_lr=0.043 muon_momentum=0.6 bias_lr=13 head_lr=1300 -> tta_val_acc=0.9073
-muon_lr=0.043 muon_momentum=0.6 bias_lr=37 head_lr=1300 -> tta_val_acc=0.908
-
 
 Search main interval. Search cooldown interval. Then search main interval while fixing the cooldown interval. 
 main interval is more expensive than the cooldown. so find the best cooldown early on.
 we need to start from arbitrary values and still be able to converge. 
 
-Selected training intervals
-interval=0 phase=main     start_step=0 steps=40 muon_lr=0.2 momentum=0.6 bias_lr=62 head_lr=800 path_final_tta=0.9136 loss=2.31->1.317
-interval=1 phase=main     start_step=40 steps=40 muon_lr=0.12 momentum=0.6 bias_lr=37 head_lr=800 path_final_tta=0.931 loss=1.297->1.134
-interval=2 phase=main     start_step=80 steps=40 muon_lr=0.043 momentum=0.8 bias_lr=37 head_lr=800 path_final_tta=0.9379 loss=1.154->1.033
-interval=3 phase=main     start_step=120 steps=40 muon_lr=0.026 momentum=0.8 bias_lr=37 head_lr=800 path_final_tta=0.9412 loss=1.046->0.9712
-interval=4 phase=main     start_step=160 steps=40 muon_lr=0.002 momentum=0.8 bias_lr=37 head_lr=1300 path_final_tta=0.9404 loss=0.9622->0.929
-interval=0 phase=cooldown best_cooldown=0.9136 cooldown_muon_lr=0.043 cooldown_momentum=0.6 cooldown_bias_lr=8.1 cooldown_head_lr=480
-interval=1 phase=cooldown best_cooldown=0.931 cooldown_muon_lr=0.026 cooldown_momentum=0.6 cooldown_bias_lr=22 cooldown_head_lr=8.1
-interval=2 phase=cooldown best_cooldown=0.9379 cooldown_muon_lr=0.0093 cooldown_momentum=0.8 cooldown_bias_lr=0.38 cooldown_head_lr=8.1
-interval=3 phase=cooldown best_cooldown=0.9412 cooldown_muon_lr=0.0056 cooldown_momentum=0.8 cooldown_bias_lr=2.9 cooldown_head_lr=1.8
-interval=4 phase=cooldown best_cooldown=0.9404 cooldown_muon_lr=0.002 cooldown_momentum=0.8 cooldown_bias_lr=37 cooldown_head_lr=1300
+main:
+interval=0 muon_lr=0.2 momentum=0.6 bias_lr=62 head_lr=800 path_final_tta=0.9136
+interval=1 muon_lr=0.12 momentum=0.6 bias_lr=37 head_lr=800 path_final_tta=0.931
+interval=2 muon_lr=0.043 momentum=0.8 bias_lr=37 head_lr=800 path_final_tta=0.9379
+interval=3 muon_lr=0.026 momentum=0.8 bias_lr=37 head_lr=800 path_final_tta=0.9412
+interval=4 muon_lr=0.002 momentum=0.8 bias_lr=37 head_lr=1300 path_final_tta=0.9404
+
+cooldown:
+interval=0 muon_lr=0.043 momentum=0.6 bias_lr=8.1 head_lr=480
+interval=1 muon_lr=0.026 momentum=0.6 bias_lr=22 head_lr=8.1
+interval=2 muon_lr=0.0093 momentum=0.8 bias_lr=0.38 head_lr=8.1
+interval=3 muon_lr=0.0056 momentum=0.8 bias_lr=2.9 head_lr=1.8
+interval=4 muon_lr=0.002 momentum=0.8 bias_lr=37 head_lr=1300

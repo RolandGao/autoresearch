@@ -1,0 +1,781 @@
+summary=/workspace/neural_networks_optimization/autoresearch/automatic_lr4/20260626_022201_204962/summary.txt
+factor=0.6
+
+original
+
+precision=1
+  step 1: center=1
+      k=-2 x=    2.8 f(x)=0.4865 (table)
+      k=-1 x=    1.7 f(x)=0.4878 (table)
+    * k= 0 x=      1 f(x)=0.4898 (table)
+      k= 1 x=    0.6 f(x)=0.4861 (table)
+      k= 2 x=   0.36 f(x)=0.4881 (table)
+  stopped: middle point is highest at x=1
+
+precision=2
+  step 1: center=1
+      k=-2 x=    7.7 f(x)=0.4886 (interpolated)
+      k=-1 x=    2.8 f(x)=0.4865 (table)
+    * k= 0 x=      1 f(x)=0.4898 (table)
+      k= 1 x=   0.36 f(x)=0.4881 (table)
+      k= 2 x=   0.13 f(x)=0.4865 (table)
+  stopped: middle point is highest at x=1
+
+precision=4
+  step 1: center=1
+    * k=-2 x=     60 f(x)=0.4923 (table)
+      k=-1 x=    7.7 f(x)=0.4886 (interpolated)
+      k= 0 x=      1 f(x)=0.4898 (table)
+      k= 1 x=   0.13 f(x)=0.4865 (table)
+      k= 2 x=  0.017 f(x)=0.4873 (table)
+  step 2: center=60
+      k=-2 x=3.6e+03 f(x)=0.3387 (table)
+      k=-1 x=4.6e+02 f(x)=0.4893 (table)
+    * k= 0 x=     60 f(x)=0.4923 (table)
+      k= 1 x=    7.8 f(x)=0.4887 (table)
+      k= 2 x=      1 f(x)=0.4898 (table)
+  stopped: middle point is highest at x=60
+
+precision=8
+  step 1: center=1
+      k=-2 x=3.5e+03 f(x)=0.3407 (table)
+    * k=-1 x=     60 f(x)=0.4923 (table)
+      k= 0 x=      1 f(x)=0.4898 (table)
+      k= 1 x=  0.017 f(x)=0.4873 (table)
+      k= 2 x=0.00028 f(x)=0.4861 (clamped)
+  step 2: center=60
+      k=-2 x=2.1e+05 f(x)=0.1000 (clamped)
+      k=-1 x=3.6e+03 f(x)=0.3387 (table)
+    * k= 0 x=     60 f(x)=0.4923 (table)
+      k= 1 x=      1 f(x)=0.4898 (table)
+      k= 2 x=  0.017 f(x)=0.4873 (table)
+  stopped: middle point is highest at x=60
+
+transformed #1
+  value_multiplier=4.885, y_shift=430, x_multiplier=0.1205
+
+precision=1
+  step 1: center=1
+      k=-2 x=    2.8 f(x)=2.3866 (interpolated)
+      k=-1 x=    1.7 f(x)=2.3829 (interpolated)
+      k= 0 x=      1 f(x)=2.3737 (interpolated)
+    * k= 1 x=    0.6 f(x)=2.3876 (interpolated)
+      k= 2 x=   0.36 f(x)=2.3777 (interpolated)
+  step 2: center=0.6
+      k=-2 x=    1.7 f(x)=2.3829 (interpolated)
+      k=-1 x=      1 f(x)=2.3737 (interpolated)
+    * k= 0 x=    0.6 f(x)=2.3876 (interpolated)
+      k= 1 x=   0.36 f(x)=2.3777 (interpolated)
+      k= 2 x=   0.22 f(x)=2.3822 (interpolated)
+  stopped: middle point is highest at x=0.6
+
+precision=2
+  step 1: center=1
+    * k=-2 x=    7.7 f(x)=2.3957 (interpolated)
+      k=-1 x=    2.8 f(x)=2.3866 (interpolated)
+      k= 0 x=      1 f(x)=2.3737 (interpolated)
+      k= 1 x=   0.36 f(x)=2.3777 (interpolated)
+      k= 2 x=   0.13 f(x)=2.3806 (interpolated)
+  step 2: center=7.7
+    * k=-2 x=     59 f(x)=2.4132 (interpolated)
+      k=-1 x=     21 f(x)=2.3937 (interpolated)
+      k= 0 x=    7.7 f(x)=2.3957 (interpolated)
+      k= 1 x=    2.8 f(x)=2.3866 (interpolated)
+      k= 2 x=      1 f(x)=2.3737 (interpolated)
+  step 3: center=59
+    * k=-2 x=4.6e+02 f(x)=2.4357 (interpolated)
+      k=-1 x=1.6e+02 f(x)=2.3925 (interpolated)
+      k= 0 x=     59 f(x)=2.4132 (interpolated)
+      k= 1 x=     21 f(x)=2.3937 (interpolated)
+      k= 2 x=    7.6 f(x)=2.3963 (interpolated)
+  step 4: center=4.6e+02
+      k=-2 x=3.5e+03 f(x)=1.4326 (interpolated)
+      k=-1 x=1.3e+03 f(x)=1.6706 (interpolated)
+    * k= 0 x=4.6e+02 f(x)=2.4357 (interpolated)
+      k= 1 x=1.7e+02 f(x)=2.3983 (interpolated)
+      k= 2 x=     60 f(x)=2.4088 (interpolated)
+  stopped: middle point is highest at x=4.6e+02
+
+precision=4
+  step 1: center=1
+    * k=-2 x=     60 f(x)=2.4088 (interpolated)
+      k=-1 x=    7.7 f(x)=2.3957 (interpolated)
+      k= 0 x=      1 f(x)=2.3737 (interpolated)
+      k= 1 x=   0.13 f(x)=2.3806 (interpolated)
+      k= 2 x=  0.017 f(x)=2.3838 (clamped)
+  step 2: center=60
+      k=-2 x=3.6e+03 f(x)=1.4248 (interpolated)
+    * k=-1 x=4.6e+02 f(x)=2.4357 (interpolated)
+      k= 0 x=     60 f(x)=2.4088 (interpolated)
+      k= 1 x=    7.8 f(x)=2.3960 (interpolated)
+      k= 2 x=      1 f(x)=2.3737 (interpolated)
+  step 3: center=4.6e+02
+      k=-2 x=2.7e+04 f(x)=0.4885 (interpolated)
+      k=-1 x=3.5e+03 f(x)=1.4326 (interpolated)
+    * k= 0 x=4.6e+02 f(x)=2.4357 (interpolated)
+      k= 1 x=     60 f(x)=2.4088 (interpolated)
+      k= 2 x=    7.7 f(x)=2.3957 (interpolated)
+  stopped: middle point is highest at x=4.6e+02
+
+precision=8
+  step 1: center=1
+      k=-2 x=3.5e+03 f(x)=1.4326 (interpolated)
+    * k=-1 x=     60 f(x)=2.4088 (interpolated)
+      k= 0 x=      1 f(x)=2.3737 (interpolated)
+      k= 1 x=  0.017 f(x)=2.3838 (clamped)
+      k= 2 x=0.00028 f(x)=2.3838 (clamped)
+  step 2: center=60
+      k=-2 x=2.1e+05 f(x)=2.3779 (interpolated)
+      k=-1 x=3.6e+03 f(x)=1.4248 (interpolated)
+    * k= 0 x=     60 f(x)=2.4088 (interpolated)
+      k= 1 x=      1 f(x)=2.3737 (interpolated)
+      k= 2 x=  0.017 f(x)=2.3838 (clamped)
+  stopped: middle point is highest at x=60
+
+transformed #2
+  value_multiplier=8.53, y_shift=497, x_multiplier=0.6455
+
+precision=1
+  step 1: center=1
+      k=-2 x=    2.8 f(x)=4.1439 (interpolated)
+    * k=-1 x=    1.7 f(x)=4.1642 (interpolated)
+      k= 0 x=      1 f(x)=4.1520 (interpolated)
+      k= 1 x=    0.6 f(x)=4.1554 (interpolated)
+      k= 2 x=   0.36 f(x)=4.1539 (interpolated)
+  step 2: center=1.7
+      k=-2 x=    4.7 f(x)=4.1627 (interpolated)
+      k=-1 x=    2.8 f(x)=4.1439 (interpolated)
+    * k= 0 x=    1.7 f(x)=4.1642 (interpolated)
+      k= 1 x=      1 f(x)=4.1520 (interpolated)
+      k= 2 x=   0.61 f(x)=4.1515 (interpolated)
+  stopped: middle point is highest at x=1.7
+
+precision=2
+  step 1: center=1
+      k=-2 x=    7.7 f(x)=4.1507 (interpolated)
+      k=-1 x=    2.8 f(x)=4.1439 (interpolated)
+      k= 0 x=      1 f(x)=4.1520 (interpolated)
+      k= 1 x=   0.36 f(x)=4.1539 (interpolated)
+    * k= 2 x=   0.13 f(x)=4.1539 (interpolated)
+  step 2: center=0.13
+      k=-2 x=      1 f(x)=4.1520 (interpolated)
+      k=-1 x=   0.36 f(x)=4.1539 (interpolated)
+      k= 0 x=   0.13 f(x)=4.1539 (interpolated)
+      k= 1 x=  0.047 f(x)=4.1446 (interpolated)
+    * k= 2 x=  0.017 f(x)=4.1695 (interpolated)
+  step 3: center=0.017
+      k=-2 x=   0.13 f(x)=4.1539 (interpolated)
+      k=-1 x=  0.047 f(x)=4.1446 (interpolated)
+    * k= 0 x=  0.017 f(x)=4.1695 (interpolated)
+      k= 1 x= 0.0061 f(x)=4.1462 (clamped)
+      k= 2 x= 0.0022 f(x)=4.1462 (clamped)
+  stopped: middle point is highest at x=0.017
+
+precision=4
+  step 1: center=1
+    * k=-2 x=     60 f(x)=4.2124 (interpolated)
+      k=-1 x=    7.7 f(x)=4.1507 (interpolated)
+      k= 0 x=      1 f(x)=4.1520 (interpolated)
+      k= 1 x=   0.13 f(x)=4.1539 (interpolated)
+      k= 2 x=  0.017 f(x)=4.1695 (interpolated)
+  step 2: center=60
+      k=-2 x=3.6e+03 f(x)=2.5896 (interpolated)
+      k=-1 x=4.6e+02 f(x)=4.1919 (interpolated)
+    * k= 0 x=     60 f(x)=4.2124 (interpolated)
+      k= 1 x=    7.8 f(x)=4.1523 (interpolated)
+      k= 2 x=      1 f(x)=4.1520 (interpolated)
+  stopped: middle point is highest at x=60
+
+precision=8
+  step 1: center=1
+      k=-2 x=3.5e+03 f(x)=2.5375 (interpolated)
+    * k=-1 x=     60 f(x)=4.2124 (interpolated)
+      k= 0 x=      1 f(x)=4.1520 (interpolated)
+      k= 1 x=  0.017 f(x)=4.1695 (interpolated)
+      k= 2 x=0.00028 f(x)=4.1462 (clamped)
+  step 2: center=60
+      k=-2 x=2.1e+05 f(x)=4.1599 (clamped)
+      k=-1 x=3.6e+03 f(x)=2.5896 (interpolated)
+    * k= 0 x=     60 f(x)=4.2124 (interpolated)
+      k= 1 x=      1 f(x)=4.1520 (interpolated)
+      k= 2 x=  0.017 f(x)=4.1695 (interpolated)
+  stopped: middle point is highest at x=60
+
+transformed #3
+  value_multiplier=3.695, y_shift=310, x_multiplier=8.622
+
+precision=1
+  step 1: center=1
+      k=-2 x=    2.8 f(x)=0.5473 (interpolated)
+      k=-1 x=    1.7 f(x)=0.9676 (interpolated)
+      k= 0 x=      1 f(x)=0.9643 (interpolated)
+      k= 1 x=    0.6 f(x)=1.2431 (interpolated)
+    * k= 2 x=   0.36 f(x)=1.6473 (interpolated)
+  step 2: center=0.36
+      k=-2 x=      1 f(x)=0.9643 (interpolated)
+      k=-1 x=    0.6 f(x)=1.2431 (interpolated)
+      k= 0 x=   0.36 f(x)=1.6473 (interpolated)
+      k= 1 x=   0.22 f(x)=1.8332 (interpolated)
+    * k= 2 x=   0.13 f(x)=1.8397 (interpolated)
+  step 3: center=0.13
+      k=-2 x=   0.36 f(x)=1.6473 (interpolated)
+      k=-1 x=   0.22 f(x)=1.8332 (interpolated)
+    * k= 0 x=   0.13 f(x)=1.8397 (interpolated)
+      k= 1 x=  0.078 f(x)=1.8180 (interpolated)
+      k= 2 x=  0.047 f(x)=1.8159 (interpolated)
+  stopped: middle point is highest at x=0.13
+
+precision=2
+  step 1: center=1
+      k=-2 x=    7.7 f(x)=0.3695 (interpolated)
+      k=-1 x=    2.8 f(x)=0.5473 (interpolated)
+      k= 0 x=      1 f(x)=0.9643 (interpolated)
+      k= 1 x=   0.36 f(x)=1.6473 (interpolated)
+    * k= 2 x=   0.13 f(x)=1.8397 (interpolated)
+  step 2: center=0.13
+      k=-2 x=      1 f(x)=0.9643 (interpolated)
+      k=-1 x=   0.36 f(x)=1.6473 (interpolated)
+    * k= 0 x=   0.13 f(x)=1.8397 (interpolated)
+      k= 1 x=  0.047 f(x)=1.8159 (interpolated)
+      k= 2 x=  0.017 f(x)=1.8305 (interpolated)
+  stopped: middle point is highest at x=0.13
+
+precision=4
+  step 1: center=1
+      k=-2 x=     60 f(x)=1.7970 (interpolated)
+      k=-1 x=    7.7 f(x)=0.3695 (interpolated)
+      k= 0 x=      1 f(x)=0.9643 (interpolated)
+    * k= 1 x=   0.13 f(x)=1.8397 (interpolated)
+      k= 2 x=  0.017 f(x)=1.8305 (interpolated)
+  step 2: center=0.13
+      k=-2 x=    7.7 f(x)=0.3695 (interpolated)
+      k=-1 x=      1 f(x)=0.9643 (interpolated)
+    * k= 0 x=   0.13 f(x)=1.8397 (interpolated)
+      k= 1 x=  0.017 f(x)=1.8305 (interpolated)
+      k= 2 x= 0.0022 f(x)=1.7948 (interpolated)
+  stopped: middle point is highest at x=0.13
+
+precision=8
+  step 1: center=1
+      k=-2 x=3.5e+03 f(x)=1.8009 (interpolated)
+      k=-1 x=     60 f(x)=1.7970 (interpolated)
+      k= 0 x=      1 f(x)=0.9643 (interpolated)
+    * k= 1 x=  0.017 f(x)=1.8305 (interpolated)
+      k= 2 x=0.00028 f(x)=1.7994 (clamped)
+  step 2: center=0.017
+      k=-2 x=     60 f(x)=1.7970 (interpolated)
+      k=-1 x=      1 f(x)=0.9643 (interpolated)
+    * k= 0 x=  0.017 f(x)=1.8305 (interpolated)
+      k= 1 x=0.00029 f(x)=1.7994 (clamped)
+      k= 2 x=4.8e-06 f(x)=1.7994 (clamped)
+  stopped: middle point is highest at x=0.017
+
+transformed #4
+  value_multiplier=0.5201, y_shift=223, x_multiplier=1.022
+
+precision=1
+  step 1: center=1
+      k=-2 x=    2.8 f(x)=0.0519 (interpolated)
+      k=-1 x=    1.7 f(x)=0.0597 (interpolated)
+      k= 0 x=      1 f(x)=0.1161 (interpolated)
+      k= 1 x=    0.6 f(x)=0.1525 (interpolated)
+    * k= 2 x=   0.36 f(x)=0.1695 (interpolated)
+  step 2: center=0.36
+      k=-2 x=      1 f(x)=0.1161 (interpolated)
+      k=-1 x=    0.6 f(x)=0.1525 (interpolated)
+      k= 0 x=   0.36 f(x)=0.1695 (interpolated)
+      k= 1 x=   0.22 f(x)=0.2163 (interpolated)
+    * k= 2 x=   0.13 f(x)=0.2507 (interpolated)
+  step 3: center=0.13
+      k=-2 x=   0.36 f(x)=0.1695 (interpolated)
+      k=-1 x=   0.22 f(x)=0.2163 (interpolated)
+      k= 0 x=   0.13 f(x)=0.2507 (interpolated)
+    * k= 1 x=  0.078 f(x)=0.2588 (interpolated)
+      k= 2 x=  0.047 f(x)=0.2549 (interpolated)
+  step 4: center=0.078
+      k=-2 x=   0.22 f(x)=0.2163 (interpolated)
+      k=-1 x=   0.13 f(x)=0.2507 (interpolated)
+    * k= 0 x=  0.078 f(x)=0.2588 (interpolated)
+      k= 1 x=  0.047 f(x)=0.2549 (interpolated)
+      k= 2 x=  0.028 f(x)=0.2564 (interpolated)
+  stopped: middle point is highest at x=0.078
+
+precision=2
+  step 1: center=1
+      k=-2 x=    7.7 f(x)=0.0520 (interpolated)
+      k=-1 x=    2.8 f(x)=0.0519 (interpolated)
+      k= 0 x=      1 f(x)=0.1161 (interpolated)
+      k= 1 x=   0.36 f(x)=0.1695 (interpolated)
+    * k= 2 x=   0.13 f(x)=0.2507 (interpolated)
+  step 2: center=0.13
+      k=-2 x=      1 f(x)=0.1161 (interpolated)
+      k=-1 x=   0.36 f(x)=0.1695 (interpolated)
+      k= 0 x=   0.13 f(x)=0.2507 (interpolated)
+      k= 1 x=  0.047 f(x)=0.2549 (interpolated)
+    * k= 2 x=  0.017 f(x)=0.2571 (interpolated)
+  step 3: center=0.017
+      k=-2 x=   0.13 f(x)=0.2507 (interpolated)
+      k=-1 x=  0.047 f(x)=0.2549 (interpolated)
+    * k= 0 x=  0.017 f(x)=0.2571 (interpolated)
+      k= 1 x= 0.0061 f(x)=0.2566 (clamped)
+      k= 2 x= 0.0022 f(x)=0.2566 (clamped)
+  stopped: middle point is highest at x=0.017
+
+precision=4
+  step 1: center=1
+      k=-2 x=     60 f(x)=0.2538 (interpolated)
+      k=-1 x=    7.7 f(x)=0.0520 (interpolated)
+      k= 0 x=      1 f(x)=0.1161 (interpolated)
+      k= 1 x=   0.13 f(x)=0.2507 (interpolated)
+    * k= 2 x=  0.017 f(x)=0.2571 (interpolated)
+  step 2: center=0.017
+      k=-2 x=      1 f(x)=0.1161 (interpolated)
+      k=-1 x=   0.13 f(x)=0.2507 (interpolated)
+    * k= 0 x=  0.017 f(x)=0.2571 (interpolated)
+      k= 1 x= 0.0022 f(x)=0.2566 (clamped)
+      k= 2 x=0.00029 f(x)=0.2566 (clamped)
+  stopped: middle point is highest at x=0.017
+
+precision=8
+  step 1: center=1
+      k=-2 x=3.5e+03 f(x)=0.2539 (interpolated)
+      k=-1 x=     60 f(x)=0.2538 (interpolated)
+      k= 0 x=      1 f(x)=0.1161 (interpolated)
+    * k= 1 x=  0.017 f(x)=0.2571 (interpolated)
+      k= 2 x=0.00028 f(x)=0.2566 (clamped)
+  step 2: center=0.017
+      k=-2 x=     60 f(x)=0.2538 (interpolated)
+      k=-1 x=      1 f(x)=0.1161 (interpolated)
+    * k= 0 x=  0.017 f(x)=0.2571 (interpolated)
+      k= 1 x=0.00029 f(x)=0.2566 (clamped)
+      k= 2 x=4.8e-06 f(x)=0.2566 (clamped)
+  stopped: middle point is highest at x=0.017
+
+transformed #5
+  value_multiplier=0.3662, y_shift=97, x_multiplier=1.725
+
+precision=1
+  step 1: center=1
+      k=-2 x=    2.8 f(x)=0.1777 (interpolated)
+      k=-1 x=    1.7 f(x)=0.1785 (interpolated)
+      k= 0 x=      1 f(x)=0.1780 (interpolated)
+      k= 1 x=    0.6 f(x)=0.1784 (interpolated)
+    * k= 2 x=   0.36 f(x)=0.1786 (interpolated)
+  step 2: center=0.36
+      k=-2 x=      1 f(x)=0.1780 (interpolated)
+      k=-1 x=    0.6 f(x)=0.1784 (interpolated)
+    * k= 0 x=   0.36 f(x)=0.1786 (interpolated)
+      k= 1 x=   0.22 f(x)=0.1782 (interpolated)
+      k= 2 x=   0.13 f(x)=0.0366 (interpolated)
+  stopped: middle point is highest at x=0.36
+
+precision=2
+  step 1: center=1
+      k=-2 x=    7.7 f(x)=0.1783 (interpolated)
+      k=-1 x=    2.8 f(x)=0.1777 (interpolated)
+      k= 0 x=      1 f(x)=0.1780 (interpolated)
+    * k= 1 x=   0.36 f(x)=0.1786 (interpolated)
+      k= 2 x=   0.13 f(x)=0.0366 (interpolated)
+  step 2: center=0.36
+      k=-2 x=    2.8 f(x)=0.1777 (interpolated)
+      k=-1 x=      1 f(x)=0.1780 (interpolated)
+    * k= 0 x=   0.36 f(x)=0.1786 (interpolated)
+      k= 1 x=   0.13 f(x)=0.0366 (interpolated)
+      k= 2 x=  0.047 f(x)=0.0366 (interpolated)
+  stopped: middle point is highest at x=0.36
+
+precision=4
+  step 1: center=1
+    * k=-2 x=     60 f(x)=0.1786 (interpolated)
+      k=-1 x=    7.7 f(x)=0.1783 (interpolated)
+      k= 0 x=      1 f(x)=0.1780 (interpolated)
+      k= 1 x=   0.13 f(x)=0.0366 (interpolated)
+      k= 2 x=  0.017 f(x)=0.0872 (interpolated)
+  step 2: center=60
+      k=-2 x=3.6e+03 f(x)=0.1800 (interpolated)
+    * k=-1 x=4.6e+02 f(x)=0.1805 (interpolated)
+      k= 0 x=     60 f(x)=0.1786 (interpolated)
+      k= 1 x=    7.8 f(x)=0.1782 (interpolated)
+      k= 2 x=      1 f(x)=0.1780 (interpolated)
+  step 3: center=4.6e+02
+      k=-2 x=2.7e+04 f(x)=0.1492 (interpolated)
+      k=-1 x=3.5e+03 f(x)=0.1793 (interpolated)
+    * k= 0 x=4.6e+02 f(x)=0.1805 (interpolated)
+      k= 1 x=     60 f(x)=0.1786 (interpolated)
+      k= 2 x=    7.7 f(x)=0.1783 (interpolated)
+  stopped: middle point is highest at x=4.6e+02
+
+precision=8
+  step 1: center=1
+    * k=-2 x=3.5e+03 f(x)=0.1793 (interpolated)
+      k=-1 x=     60 f(x)=0.1786 (interpolated)
+      k= 0 x=      1 f(x)=0.1780 (interpolated)
+      k= 1 x=  0.017 f(x)=0.0872 (interpolated)
+      k= 2 x=0.00028 f(x)=0.1062 (clamped)
+  step 2: center=3.5e+03
+      k=-2 x=1.2e+07 f(x)=0.1072 (clamped)
+      k=-1 x=2.1e+05 f(x)=0.1072 (clamped)
+    * k= 0 x=3.5e+03 f(x)=0.1793 (interpolated)
+      k= 1 x=     59 f(x)=0.1787 (interpolated)
+      k= 2 x=   0.99 f(x)=0.1779 (interpolated)
+  stopped: middle point is highest at x=3.5e+03
+
+transformed #6
+  value_multiplier=0.317, y_shift=150, x_multiplier=0.4172
+
+precision=1
+  step 1: center=1
+    * k=-2 x=    2.8 f(x)=0.1543 (interpolated)
+      k=-1 x=    1.7 f(x)=0.0317 (interpolated)
+      k= 0 x=      1 f(x)=0.0317 (interpolated)
+      k= 1 x=    0.6 f(x)=0.0321 (interpolated)
+      k= 2 x=   0.36 f(x)=0.0543 (interpolated)
+  step 2: center=2.8
+    * k=-2 x=    7.8 f(x)=0.1543 (interpolated)
+      k=-1 x=    4.7 f(x)=0.1542 (interpolated)
+      k= 0 x=    2.8 f(x)=0.1543 (interpolated)
+      k= 1 x=    1.7 f(x)=0.0317 (interpolated)
+      k= 2 x=      1 f(x)=0.0317 (interpolated)
+  step 3: center=7.8
+    * k=-2 x=     22 f(x)=0.1544 (interpolated)
+      k=-1 x=     13 f(x)=0.1543 (interpolated)
+      k= 0 x=    7.8 f(x)=0.1543 (interpolated)
+      k= 1 x=    4.7 f(x)=0.1542 (interpolated)
+      k= 2 x=    2.8 f(x)=0.1543 (interpolated)
+  step 4: center=22
+      k=-2 x=     61 f(x)=0.1539 (interpolated)
+      k=-1 x=     37 f(x)=0.1541 (interpolated)
+      k= 0 x=     22 f(x)=0.1544 (interpolated)
+      k= 1 x=     13 f(x)=0.1543 (interpolated)
+    * k= 2 x=    7.9 f(x)=0.1547 (interpolated)
+  step 5: center=7.9
+      k=-2 x=     22 f(x)=0.1544 (interpolated)
+      k=-1 x=     13 f(x)=0.1543 (interpolated)
+    * k= 0 x=    7.9 f(x)=0.1547 (interpolated)
+      k= 1 x=    4.7 f(x)=0.1542 (interpolated)
+      k= 2 x=    2.8 f(x)=0.1543 (interpolated)
+  stopped: middle point is highest at x=7.9
+
+precision=2
+  step 1: center=1
+      k=-2 x=    7.7 f(x)=0.1540 (interpolated)
+    * k=-1 x=    2.8 f(x)=0.1543 (interpolated)
+      k= 0 x=      1 f(x)=0.0317 (interpolated)
+      k= 1 x=   0.36 f(x)=0.0543 (interpolated)
+      k= 2 x=   0.13 f(x)=0.0922 (interpolated)
+  step 2: center=2.8
+    * k=-2 x=     22 f(x)=0.1544 (interpolated)
+      k=-1 x=    7.8 f(x)=0.1543 (interpolated)
+      k= 0 x=    2.8 f(x)=0.1543 (interpolated)
+      k= 1 x=      1 f(x)=0.0317 (interpolated)
+      k= 2 x=   0.36 f(x)=0.0543 (interpolated)
+  step 3: center=22
+      k=-2 x=1.7e+02 f(x)=0.1541 (interpolated)
+      k=-1 x=     61 f(x)=0.1539 (interpolated)
+      k= 0 x=     22 f(x)=0.1544 (interpolated)
+    * k= 1 x=    7.9 f(x)=0.1547 (interpolated)
+      k= 2 x=    2.9 f(x)=0.1544 (interpolated)
+  step 4: center=7.9
+      k=-2 x=     61 f(x)=0.1539 (interpolated)
+      k=-1 x=     22 f(x)=0.1544 (interpolated)
+    * k= 0 x=    7.9 f(x)=0.1547 (interpolated)
+      k= 1 x=    2.8 f(x)=0.1543 (interpolated)
+      k= 2 x=      1 f(x)=0.0317 (interpolated)
+  stopped: middle point is highest at x=7.9
+
+precision=4
+  step 1: center=1
+      k=-2 x=     60 f(x)=0.1538 (interpolated)
+      k=-1 x=    7.7 f(x)=0.1540 (interpolated)
+      k= 0 x=      1 f(x)=0.0317 (interpolated)
+      k= 1 x=   0.13 f(x)=0.0922 (interpolated)
+    * k= 2 x=  0.017 f(x)=0.1562 (clamped)
+  step 2: center=0.017
+      k=-2 x=      1 f(x)=0.0317 (interpolated)
+      k=-1 x=   0.13 f(x)=0.0922 (interpolated)
+    * k= 0 x=  0.017 f(x)=0.1562 (clamped)
+      k= 1 x= 0.0022 f(x)=0.1562 (clamped)
+      k= 2 x=0.00029 f(x)=0.1562 (clamped)
+  stopped: middle point is highest at x=0.017
+
+precision=8
+  step 1: center=1
+      k=-2 x=3.5e+03 f(x)=0.1550 (interpolated)
+      k=-1 x=     60 f(x)=0.1538 (interpolated)
+      k= 0 x=      1 f(x)=0.0317 (interpolated)
+    * k= 1 x=  0.017 f(x)=0.1562 (clamped)
+      k= 2 x=0.00028 f(x)=0.1562 (clamped)
+  step 2: center=0.017
+      k=-2 x=     60 f(x)=0.1538 (interpolated)
+      k=-1 x=      1 f(x)=0.0317 (interpolated)
+    * k= 0 x=  0.017 f(x)=0.1562 (clamped)
+      k= 1 x=0.00029 f(x)=0.1562 (clamped)
+      k= 2 x=4.8e-06 f(x)=0.1562 (clamped)
+  stopped: middle point is highest at x=0.017
+
+transformed #7
+  value_multiplier=2.882, y_shift=338, x_multiplier=0.8796
+
+precision=1
+  step 1: center=1
+      k=-2 x=    2.8 f(x)=1.4218 (interpolated)
+      k=-1 x=    1.7 f(x)=1.4214 (interpolated)
+      k= 0 x=      1 f(x)=1.4171 (interpolated)
+    * k= 1 x=    0.6 f(x)=1.4261 (interpolated)
+      k= 2 x=   0.36 f(x)=1.4149 (interpolated)
+  step 2: center=0.6
+      k=-2 x=    1.7 f(x)=1.4214 (interpolated)
+      k=-1 x=      1 f(x)=1.4171 (interpolated)
+    * k= 0 x=    0.6 f(x)=1.4261 (interpolated)
+      k= 1 x=   0.36 f(x)=1.4149 (interpolated)
+      k= 2 x=   0.22 f(x)=1.4198 (interpolated)
+  stopped: middle point is highest at x=0.6
+
+precision=2
+  step 1: center=1
+      k=-2 x=    7.7 f(x)=1.1357 (interpolated)
+    * k=-1 x=    2.8 f(x)=1.4218 (interpolated)
+      k= 0 x=      1 f(x)=1.4171 (interpolated)
+      k= 1 x=   0.36 f(x)=1.4149 (interpolated)
+      k= 2 x=   0.13 f(x)=1.4175 (interpolated)
+  step 2: center=2.8
+      k=-2 x=     22 f(x)=0.8114 (interpolated)
+      k=-1 x=    7.8 f(x)=1.0895 (interpolated)
+    * k= 0 x=    2.8 f(x)=1.4218 (interpolated)
+      k= 1 x=      1 f(x)=1.4171 (interpolated)
+      k= 2 x=   0.36 f(x)=1.4149 (interpolated)
+  stopped: middle point is highest at x=2.8
+
+precision=4
+  step 1: center=1
+      k=-2 x=     60 f(x)=0.4777 (interpolated)
+      k=-1 x=    7.7 f(x)=1.1357 (interpolated)
+      k= 0 x=      1 f(x)=1.4171 (interpolated)
+    * k= 1 x=   0.13 f(x)=1.4175 (interpolated)
+      k= 2 x=  0.017 f(x)=1.4075 (interpolated)
+  step 2: center=0.13
+      k=-2 x=    7.7 f(x)=1.1357 (interpolated)
+      k=-1 x=      1 f(x)=1.4171 (interpolated)
+    * k= 0 x=   0.13 f(x)=1.4175 (interpolated)
+      k= 1 x=  0.017 f(x)=1.4075 (interpolated)
+      k= 2 x= 0.0022 f(x)=1.4040 (clamped)
+  stopped: middle point is highest at x=0.13
+
+precision=8
+  step 1: center=1
+      k=-2 x=3.5e+03 f(x)=1.4023 (interpolated)
+      k=-1 x=     60 f(x)=0.4777 (interpolated)
+    * k= 0 x=      1 f(x)=1.4171 (interpolated)
+      k= 1 x=  0.017 f(x)=1.4075 (interpolated)
+      k= 2 x=0.00028 f(x)=1.4040 (clamped)
+  stopped: middle point is highest at x=1
+
+transformed #8
+  value_multiplier=0.159, y_shift=444, x_multiplier=0.4289
+
+precision=1
+  step 1: center=1
+    * k=-2 x=    2.8 f(x)=0.0778 (interpolated)
+      k=-1 x=    1.7 f(x)=0.0772 (interpolated)
+      k= 0 x=      1 f(x)=0.0774 (interpolated)
+      k= 1 x=    0.6 f(x)=0.0773 (interpolated)
+      k= 2 x=   0.36 f(x)=0.0775 (interpolated)
+  step 2: center=2.8
+    * k=-2 x=    7.8 f(x)=0.0782 (interpolated)
+      k=-1 x=    4.7 f(x)=0.0780 (interpolated)
+      k= 0 x=    2.8 f(x)=0.0778 (interpolated)
+      k= 1 x=    1.7 f(x)=0.0772 (interpolated)
+      k= 2 x=      1 f(x)=0.0774 (interpolated)
+  step 3: center=7.8
+    * k=-2 x=     22 f(x)=0.0785 (interpolated)
+      k=-1 x=     13 f(x)=0.0784 (interpolated)
+      k= 0 x=    7.8 f(x)=0.0782 (interpolated)
+      k= 1 x=    4.7 f(x)=0.0780 (interpolated)
+      k= 2 x=    2.8 f(x)=0.0778 (interpolated)
+  step 4: center=22
+      k=-2 x=     61 f(x)=0.0784 (interpolated)
+      k=-1 x=     37 f(x)=0.0783 (interpolated)
+    * k= 0 x=     22 f(x)=0.0785 (interpolated)
+      k= 1 x=     13 f(x)=0.0784 (interpolated)
+      k= 2 x=    7.9 f(x)=0.0785 (interpolated)
+  stopped: middle point is highest at x=22
+
+precision=2
+  step 1: center=1
+    * k=-2 x=    7.7 f(x)=0.0779 (interpolated)
+      k=-1 x=    2.8 f(x)=0.0778 (interpolated)
+      k= 0 x=      1 f(x)=0.0774 (interpolated)
+      k= 1 x=   0.36 f(x)=0.0775 (interpolated)
+      k= 2 x=   0.13 f(x)=0.0773 (interpolated)
+  step 2: center=7.7
+      k=-2 x=     59 f(x)=0.0783 (interpolated)
+    * k=-1 x=     21 f(x)=0.0790 (interpolated)
+      k= 0 x=    7.7 f(x)=0.0779 (interpolated)
+      k= 1 x=    2.8 f(x)=0.0778 (interpolated)
+      k= 2 x=      1 f(x)=0.0774 (interpolated)
+  step 3: center=21
+      k=-2 x=1.6e+02 f(x)=0.0788 (interpolated)
+      k=-1 x=     58 f(x)=0.0782 (interpolated)
+    * k= 0 x=     21 f(x)=0.0790 (interpolated)
+      k= 1 x=    7.6 f(x)=0.0780 (interpolated)
+      k= 2 x=    2.7 f(x)=0.0778 (interpolated)
+  stopped: middle point is highest at x=21
+
+precision=4
+  step 1: center=1
+    * k=-2 x=     60 f(x)=0.0784 (interpolated)
+      k=-1 x=    7.7 f(x)=0.0779 (interpolated)
+      k= 0 x=      1 f(x)=0.0774 (interpolated)
+      k= 1 x=   0.13 f(x)=0.0773 (interpolated)
+      k= 2 x=  0.017 f(x)=0.0776 (clamped)
+  step 2: center=60
+      k=-2 x=3.6e+03 f(x)=0.0161 (interpolated)
+      k=-1 x=4.6e+02 f(x)=0.0645 (interpolated)
+    * k= 0 x=     60 f(x)=0.0784 (interpolated)
+      k= 1 x=    7.8 f(x)=0.0782 (interpolated)
+      k= 2 x=      1 f(x)=0.0774 (interpolated)
+  stopped: middle point is highest at x=60
+
+precision=8
+  step 1: center=1
+      k=-2 x=3.5e+03 f(x)=0.0163 (interpolated)
+    * k=-1 x=     60 f(x)=0.0784 (interpolated)
+      k= 0 x=      1 f(x)=0.0774 (interpolated)
+      k= 1 x=  0.017 f(x)=0.0776 (clamped)
+      k= 2 x=0.00028 f(x)=0.0776 (clamped)
+  step 2: center=60
+      k=-2 x=2.1e+05 f(x)=0.0772 (interpolated)
+      k=-1 x=3.6e+03 f(x)=0.0161 (interpolated)
+    * k= 0 x=     60 f(x)=0.0784 (interpolated)
+      k= 1 x=      1 f(x)=0.0774 (interpolated)
+      k= 2 x=  0.017 f(x)=0.0776 (clamped)
+  stopped: middle point is highest at x=60
+
+transformed #9
+  value_multiplier=1.909, y_shift=209, x_multiplier=8.575
+
+precision=1
+  step 1: center=1
+      k=-2 x=    2.8 f(x)=0.9294 (interpolated)
+      k=-1 x=    1.7 f(x)=0.9295 (interpolated)
+    * k= 0 x=      1 f(x)=0.9301 (interpolated)
+      k= 1 x=    0.6 f(x)=0.1909 (interpolated)
+      k= 2 x=   0.36 f(x)=0.1909 (interpolated)
+  stopped: middle point is highest at x=1
+
+precision=2
+  step 1: center=1
+    * k=-2 x=    7.7 f(x)=0.9303 (interpolated)
+      k=-1 x=    2.8 f(x)=0.9294 (interpolated)
+      k= 0 x=      1 f(x)=0.9301 (interpolated)
+      k= 1 x=   0.36 f(x)=0.1909 (interpolated)
+      k= 2 x=   0.13 f(x)=0.1906 (interpolated)
+  step 2: center=7.7
+      k=-2 x=     59 f(x)=0.9287 (interpolated)
+      k=-1 x=     21 f(x)=0.9265 (interpolated)
+    * k= 0 x=    7.7 f(x)=0.9303 (interpolated)
+      k= 1 x=    2.8 f(x)=0.9294 (interpolated)
+      k= 2 x=      1 f(x)=0.9301 (interpolated)
+  stopped: middle point is highest at x=7.7
+
+precision=4
+  step 1: center=1
+      k=-2 x=     60 f(x)=0.9279 (interpolated)
+    * k=-1 x=    7.7 f(x)=0.9303 (interpolated)
+      k= 0 x=      1 f(x)=0.9301 (interpolated)
+      k= 1 x=   0.13 f(x)=0.1906 (interpolated)
+      k= 2 x=  0.017 f(x)=0.6852 (interpolated)
+  step 2: center=7.7
+      k=-2 x=4.6e+02 f(x)=0.9290 (interpolated)
+      k=-1 x=     59 f(x)=0.9287 (interpolated)
+    * k= 0 x=    7.7 f(x)=0.9303 (interpolated)
+      k= 1 x=      1 f(x)=0.9301 (interpolated)
+      k= 2 x=   0.13 f(x)=0.1906 (interpolated)
+  stopped: middle point is highest at x=7.7
+
+precision=8
+  step 1: center=1
+      k=-2 x=3.5e+03 f(x)=0.9374 (interpolated)
+      k=-1 x=     60 f(x)=0.9279 (interpolated)
+      k= 0 x=      1 f(x)=0.9301 (interpolated)
+      k= 1 x=  0.017 f(x)=0.6852 (interpolated)
+    * k= 2 x=0.00028 f(x)=0.9416 (clamped)
+  step 2: center=0.00028
+      k=-2 x=   0.99 f(x)=0.9294 (interpolated)
+      k=-1 x=  0.017 f(x)=0.6852 (interpolated)
+    * k= 0 x=0.00028 f(x)=0.9416 (clamped)
+      k= 1 x=4.7e-06 f(x)=0.9416 (clamped)
+      k= 2 x=7.9e-08 f(x)=0.9416 (clamped)
+  stopped: middle point is highest at x=0.00028
+
+transformed #10
+  value_multiplier=0.8995, y_shift=266, x_multiplier=0.1332
+
+precision=1
+  step 1: center=1
+      k=-2 x=    2.8 f(x)=0.4436 (interpolated)
+      k=-1 x=    1.7 f(x)=0.4419 (interpolated)
+      k= 0 x=      1 f(x)=0.4412 (interpolated)
+      k= 1 x=    0.6 f(x)=0.4431 (interpolated)
+    * k= 2 x=   0.36 f(x)=0.4469 (interpolated)
+  step 2: center=0.36
+      k=-2 x=      1 f(x)=0.4412 (interpolated)
+      k=-1 x=    0.6 f(x)=0.4431 (interpolated)
+    * k= 0 x=   0.36 f(x)=0.4469 (interpolated)
+      k= 1 x=   0.22 f(x)=0.4435 (interpolated)
+      k= 2 x=   0.13 f(x)=0.4436 (interpolated)
+  stopped: middle point is highest at x=0.36
+
+precision=2
+  step 1: center=1
+      k=-2 x=    7.7 f(x)=0.2752 (interpolated)
+      k=-1 x=    2.8 f(x)=0.4436 (interpolated)
+      k= 0 x=      1 f(x)=0.4412 (interpolated)
+    * k= 1 x=   0.36 f(x)=0.4469 (interpolated)
+      k= 2 x=   0.13 f(x)=0.4436 (interpolated)
+  step 2: center=0.36
+      k=-2 x=    2.8 f(x)=0.4436 (interpolated)
+      k=-1 x=      1 f(x)=0.4412 (interpolated)
+    * k= 0 x=   0.36 f(x)=0.4469 (interpolated)
+      k= 1 x=   0.13 f(x)=0.4436 (interpolated)
+      k= 2 x=  0.047 f(x)=0.4400 (clamped)
+  stopped: middle point is highest at x=0.36
+
+precision=4
+  step 1: center=1
+      k=-2 x=     60 f(x)=0.0900 (interpolated)
+      k=-1 x=    7.7 f(x)=0.2752 (interpolated)
+      k= 0 x=      1 f(x)=0.4412 (interpolated)
+    * k= 1 x=   0.13 f(x)=0.4436 (interpolated)
+      k= 2 x=  0.017 f(x)=0.4400 (clamped)
+  step 2: center=0.13
+      k=-2 x=    7.7 f(x)=0.2752 (interpolated)
+      k=-1 x=      1 f(x)=0.4412 (interpolated)
+    * k= 0 x=   0.13 f(x)=0.4436 (interpolated)
+      k= 1 x=  0.017 f(x)=0.4400 (clamped)
+      k= 2 x= 0.0022 f(x)=0.4400 (clamped)
+  stopped: middle point is highest at x=0.13
+
+precision=8
+  step 1: center=1
+      k=-2 x=3.5e+03 f(x)=0.4380 (interpolated)
+      k=-1 x=     60 f(x)=0.0900 (interpolated)
+    * k= 0 x=      1 f(x)=0.4412 (interpolated)
+      k= 1 x=  0.017 f(x)=0.4400 (clamped)
+      k= 2 x=0.00028 f(x)=0.4400 (clamped)
+  stopped: middle point is highest at x=1
+
+accuracy summary
+         function  actual max     p=1     p=2     p=4     p=8
+  ---------------  ----------  ------  ------  ------  ------
+         original      0.5006  0.9784  0.9784  0.9834  0.9834
+   transformed #1      2.4453  0.9764  0.9961  0.9961  0.9851
+   transformed #2      4.2699  0.9752  0.9765  0.9865  0.9865
+   transformed #3      1.8496  0.9946  0.9946  0.9946  0.9896
+   transformed #4      0.2604  0.9940  0.9874  0.9874  0.9874
+   transformed #5      0.1833  0.9741  0.9741  0.9848  0.9780
+   transformed #6      0.1587  0.9752  0.9752  0.9842  0.9842
+   transformed #7      1.4426  0.9886  0.9855  0.9826  0.9823
+   transformed #8      0.0796  0.9864  0.9920  0.9850  0.9850
+   transformed #9      0.9557  0.9732  0.9734  0.9734  0.9852
+  transformed #10      0.4503  0.9924  0.9924  0.9850  0.9798
