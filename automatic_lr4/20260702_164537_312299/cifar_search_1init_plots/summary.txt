@@ -1,0 +1,287 @@
+CIFAR search summary
+Input log: 20260702_164537_312299/cifar_search_1init.log
+Output directory: 20260702_164537_312299/cifar_search_1init_plots
+Curves plot: 20260702_164537_312299/cifar_search_1init_plots/curves.png
+Landscape plot: 20260702_164537_312299/cifar_search_1init_plots/landscapes.png
+More landscape plot: 20260702_164537_312299/cifar_search_1init_plots/landscapes_more.png
+
+Run 0: batch_size=2000 train_epochs=8 n_steps=40 m_steps=40
+Final val_acc=0.9213 tta_val_acc=0.934 run_seconds=1693
+Parsed 126 main evaluations, 0 blocked main evaluations, 645 cooldown candidates, 0 blocked candidates, 200 train-loss points.
+
+Best main eval: interval=4 main=0.9340 muon_lr=0.01 momentum=0.7 bias_lr=13 head_lr=21
+Best eval cooldown: interval=3 best_cooldown=0.9340 main_muon_lr=0.028 main_momentum=0.7 main_bias_lr=4.6 main_head_lr=21
+Best cooldown candidate: interval=3 tta_val_acc=0.9340 muon_lr=0.01 momentum=0.7 bias_lr=13 head_lr=60
+
+main:
+interval=0 muon_lr=0.22 momentum=0.5 bias_lr=1.7 head_lr=2.8 path_final_tta=0.9014
+interval=1 muon_lr=0.078 momentum=0.6 bias_lr=4.6 head_lr=21 path_final_tta=0.9225
+interval=2 muon_lr=0.028 momentum=0.6 bias_lr=4.6 head_lr=21 path_final_tta=0.9287
+interval=3 muon_lr=0.028 momentum=0.7 bias_lr=4.6 head_lr=21 path_final_tta=0.934
+interval=4 muon_lr=0.01 momentum=0.7 bias_lr=13 head_lr=21 path_final_tta=0.934
+
+cooldown:
+interval=0 muon_lr=0.047 momentum=0.5 bias_lr=36 head_lr=99
+interval=1 muon_lr=0.017 momentum=0.6 bias_lr=7.7 head_lr=770
+interval=2 muon_lr=0.006 momentum=0.6 bias_lr=4.6 head_lr=99
+interval=3 muon_lr=0.01 momentum=0.7 bias_lr=13 head_lr=60
+interval=4 muon_lr=0.01 momentum=0.7 bias_lr=13 head_lr=21
+
+Main interval candidates and best cooldown hparams
+interval=0
+phase=main     score=0.424    muon_lr=1        momentum=0.6      bias_lr=1        head_lr=1       
+phase=cooldown score=0.8664   muon_lr=0.078    momentum=0.6      bias_lr=2.8      head_lr=280     
+phase=main     score=0.5791   muon_lr=0.6      momentum=0.6      bias_lr=1        head_lr=1       
+phase=cooldown score=0.8788   muon_lr=0.047    momentum=0.6      bias_lr=2.8      head_lr=280     
+phase=main     score=0.6928   muon_lr=0.36     momentum=0.6      bias_lr=1        head_lr=1       
+phase=cooldown score=0.8896   muon_lr=0.047    momentum=0.6      bias_lr=2.8      head_lr=280     
+phase=main     score=0.7832   muon_lr=0.22     momentum=0.6      bias_lr=1        head_lr=1       
+phase=cooldown score=0.8944   muon_lr=0.047    momentum=0.6      bias_lr=2.8      head_lr=280     
+phase=main     score=0.8104   muon_lr=0.13     momentum=0.6      bias_lr=1        head_lr=1       
+phase=cooldown score=0.8942   muon_lr=0.047    momentum=0.6      bias_lr=2.8      head_lr=280     
+phase=main     score=0.8008   muon_lr=0.078    momentum=0.6      bias_lr=1        head_lr=1       
+phase=cooldown score=0.8825   muon_lr=0.028    momentum=0.6      bias_lr=2.8      head_lr=280     
+phase=main     score=0.7832   muon_lr=0.22     momentum=0.6      bias_lr=1        head_lr=1       
+phase=cooldown score=0.8956   muon_lr=0.047    momentum=0.6      bias_lr=13       head_lr=170     
+phase=main     score=0.7653   muon_lr=0.22     momentum=0.5      bias_lr=1        head_lr=1       
+phase=cooldown score=0.8957   muon_lr=0.047    momentum=0.5      bias_lr=13       head_lr=170     
+phase=main     score=0.7762   muon_lr=0.22     momentum=0.4      bias_lr=1        head_lr=1       
+phase=cooldown score=0.8928   muon_lr=0.047    momentum=0.4      bias_lr=13       head_lr=170     
+phase=main     score=0.7653   muon_lr=0.22     momentum=0.5      bias_lr=1        head_lr=1       
+phase=cooldown score=0.8965   muon_lr=0.047    momentum=0.5      bias_lr=4.6      head_lr=99      
+phase=main     score=0.7971   muon_lr=0.13     momentum=0.5      bias_lr=1        head_lr=1       
+phase=cooldown score=0.8918   muon_lr=0.028    momentum=0.5      bias_lr=4.6      head_lr=99      
+phase=main     score=0.6855   muon_lr=0.36     momentum=0.5      bias_lr=1        head_lr=1       
+phase=cooldown score=0.8886   muon_lr=0.047    momentum=0.5      bias_lr=4.6      head_lr=99      
+phase=main     score=0.7805   muon_lr=0.22     momentum=0.5      bias_lr=0.6      head_lr=1       
+phase=cooldown score=0.8947   muon_lr=0.047    momentum=0.5      bias_lr=4.6      head_lr=99      
+phase=main     score=0.782    muon_lr=0.22     momentum=0.5      bias_lr=1.7      head_lr=1       
+phase=cooldown score=0.8978   muon_lr=0.047    momentum=0.5      bias_lr=36       head_lr=99      
+phase=main     score=0.7724   muon_lr=0.22     momentum=0.5      bias_lr=2.8      head_lr=1       
+phase=cooldown score=0.8953   muon_lr=0.047    momentum=0.5      bias_lr=1.7      head_lr=99      
+phase=main     score=0.782    muon_lr=0.22     momentum=0.5      bias_lr=1.7      head_lr=1       
+phase=cooldown score=0.8978   muon_lr=0.047    momentum=0.5      bias_lr=36       head_lr=99      
+phase=main     score=0.7945   muon_lr=0.13     momentum=0.5      bias_lr=1.7      head_lr=1       
+phase=cooldown score=0.8902   muon_lr=0.047    momentum=0.5      bias_lr=36       head_lr=99      
+phase=main     score=0.69     muon_lr=0.36     momentum=0.5      bias_lr=1.7      head_lr=1       
+phase=cooldown score=0.8881   muon_lr=0.047    momentum=0.5      bias_lr=36       head_lr=99      
+phase=main     score=0.7742   muon_lr=0.22     momentum=0.4      bias_lr=1.7      head_lr=1       
+phase=cooldown score=0.8975   muon_lr=0.047    momentum=0.4      bias_lr=36       head_lr=99      
+phase=main     score=0.7678   muon_lr=0.22     momentum=0.3      bias_lr=1.7      head_lr=1       
+phase=cooldown score=0.8924   muon_lr=0.047    momentum=0.3      bias_lr=36       head_lr=99      
+phase=main     score=0.765    muon_lr=0.22     momentum=0.6      bias_lr=1.7      head_lr=1       
+phase=cooldown score=0.8959   muon_lr=0.028    momentum=0.6      bias_lr=36       head_lr=99      
+phase=main     score=0.7707   muon_lr=0.22     momentum=0.5      bias_lr=1.7      head_lr=0.6     
+phase=cooldown score=0.8963   muon_lr=0.047    momentum=0.5      bias_lr=36       head_lr=170     
+phase=main     score=0.7798   muon_lr=0.22     momentum=0.5      bias_lr=1.7      head_lr=1.7     
+phase=cooldown score=0.8982   muon_lr=0.047    momentum=0.5      bias_lr=36       head_lr=280     
+phase=main     score=0.7713   muon_lr=0.22     momentum=0.5      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.9014   muon_lr=0.047    momentum=0.5      bias_lr=36       head_lr=99      
+phase=main     score=0.7713   muon_lr=0.22     momentum=0.5      bias_lr=1.7      head_lr=4.6     
+phase=cooldown score=0.8994   muon_lr=0.047    momentum=0.5      bias_lr=36       head_lr=99      
+phase=main     score=0.7713   muon_lr=0.22     momentum=0.5      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.9014   muon_lr=0.047    momentum=0.5      bias_lr=36       head_lr=99      
+phase=main     score=0.8078   muon_lr=0.13     momentum=0.5      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.8904   muon_lr=0.047    momentum=0.5      bias_lr=36       head_lr=99      
+phase=main     score=0.7044   muon_lr=0.36     momentum=0.5      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.8842   muon_lr=0.047    momentum=0.5      bias_lr=36       head_lr=99      
+phase=main     score=0.7879   muon_lr=0.22     momentum=0.4      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.8932   muon_lr=0.047    momentum=0.4      bias_lr=36       head_lr=99      
+phase=main     score=0.7616   muon_lr=0.22     momentum=0.6      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.8943   muon_lr=0.047    momentum=0.6      bias_lr=36       head_lr=99      
+phase=main     score=0.7622   muon_lr=0.22     momentum=0.5      bias_lr=1        head_lr=2.8     
+phase=cooldown score=0.8978   muon_lr=0.047    momentum=0.5      bias_lr=7.7      head_lr=99      
+phase=main     score=0.7805   muon_lr=0.22     momentum=0.5      bias_lr=2.8      head_lr=2.8     
+phase=cooldown score=0.8974   muon_lr=0.047    momentum=0.5      bias_lr=7.7      head_lr=99      
+interval=1
+phase=main     score=0.8069   muon_lr=0.22     momentum=0.5      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.9082   muon_lr=0.047    momentum=0.5      bias_lr=7.7      head_lr=99      
+phase=main     score=0.8477   muon_lr=0.13     momentum=0.5      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.9142   muon_lr=0.028    momentum=0.5      bias_lr=7.7      head_lr=99      
+phase=main     score=0.8766   muon_lr=0.078    momentum=0.5      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.9157   muon_lr=0.028    momentum=0.5      bias_lr=7.7      head_lr=99      
+phase=main     score=0.8879   muon_lr=0.047    momentum=0.5      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.9135   muon_lr=0.028    momentum=0.5      bias_lr=7.7      head_lr=99      
+phase=main     score=0.8766   muon_lr=0.078    momentum=0.5      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.9167   muon_lr=0.028    momentum=0.5      bias_lr=13       head_lr=280     
+phase=main     score=0.8757   muon_lr=0.078    momentum=0.4      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.9146   muon_lr=0.028    momentum=0.4      bias_lr=13       head_lr=280     
+phase=main     score=0.8769   muon_lr=0.078    momentum=0.6      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.9178   muon_lr=0.017    momentum=0.6      bias_lr=13       head_lr=280     
+phase=main     score=0.8776   muon_lr=0.078    momentum=0.7      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.9154   muon_lr=0.017    momentum=0.7      bias_lr=13       head_lr=280     
+phase=main     score=0.8769   muon_lr=0.078    momentum=0.6      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.9178   muon_lr=0.017    momentum=0.6      bias_lr=13       head_lr=280     
+phase=main     score=0.8889   muon_lr=0.047    momentum=0.6      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.9148   muon_lr=0.028    momentum=0.6      bias_lr=13       head_lr=280     
+phase=main     score=0.8568   muon_lr=0.13     momentum=0.6      bias_lr=1.7      head_lr=2.8     
+phase=cooldown score=0.914    muon_lr=0.017    momentum=0.6      bias_lr=13       head_lr=280     
+phase=main     score=0.8772   muon_lr=0.078    momentum=0.6      bias_lr=1        head_lr=2.8     
+phase=cooldown score=0.9166   muon_lr=0.017    momentum=0.6      bias_lr=13       head_lr=280     
+phase=main     score=0.8784   muon_lr=0.078    momentum=0.6      bias_lr=2.8      head_lr=2.8     
+phase=cooldown score=0.9175   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=280     
+phase=main     score=0.8797   muon_lr=0.078    momentum=0.6      bias_lr=4.6      head_lr=2.8     
+phase=cooldown score=0.9191   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=280     
+phase=main     score=0.8797   muon_lr=0.078    momentum=0.6      bias_lr=7.7      head_lr=2.8     
+phase=cooldown score=0.9183   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=280     
+phase=main     score=0.8797   muon_lr=0.078    momentum=0.6      bias_lr=4.6      head_lr=2.8     
+phase=cooldown score=0.9191   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=280     
+phase=main     score=0.8903   muon_lr=0.047    momentum=0.6      bias_lr=4.6      head_lr=2.8     
+phase=cooldown score=0.9153   muon_lr=0.028    momentum=0.6      bias_lr=7.7      head_lr=280     
+phase=main     score=0.8529   muon_lr=0.13     momentum=0.6      bias_lr=4.6      head_lr=2.8     
+phase=cooldown score=0.9155   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=280     
+phase=main     score=0.8783   muon_lr=0.078    momentum=0.5      bias_lr=4.6      head_lr=2.8     
+phase=cooldown score=0.9171   muon_lr=0.028    momentum=0.5      bias_lr=7.7      head_lr=280     
+phase=main     score=0.8795   muon_lr=0.078    momentum=0.7      bias_lr=4.6      head_lr=2.8     
+phase=cooldown score=0.9165   muon_lr=0.017    momentum=0.7      bias_lr=7.7      head_lr=280     
+phase=main     score=0.8787   muon_lr=0.078    momentum=0.6      bias_lr=4.6      head_lr=1.7     
+phase=cooldown score=0.9189   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=170     
+phase=main     score=0.8778   muon_lr=0.078    momentum=0.6      bias_lr=4.6      head_lr=1       
+phase=cooldown score=0.918    muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=99      
+phase=main     score=0.8819   muon_lr=0.078    momentum=0.6      bias_lr=4.6      head_lr=4.6     
+phase=cooldown score=0.9199   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=460     
+phase=main     score=0.8802   muon_lr=0.078    momentum=0.6      bias_lr=4.6      head_lr=7.7     
+phase=cooldown score=0.9199   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=770     
+phase=main     score=0.8827   muon_lr=0.078    momentum=0.6      bias_lr=4.6      head_lr=13      
+phase=cooldown score=0.9214   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=770     
+phase=main     score=0.8832   muon_lr=0.078    momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9225   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=770     
+phase=main     score=0.8847   muon_lr=0.078    momentum=0.6      bias_lr=4.6      head_lr=36      
+phase=cooldown score=0.9207   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=99      
+phase=main     score=0.8832   muon_lr=0.078    momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9225   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=770     
+phase=main     score=0.898    muon_lr=0.047    momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9153   muon_lr=0.028    momentum=0.6      bias_lr=7.7      head_lr=770     
+phase=main     score=0.8528   muon_lr=0.13     momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9165   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=770     
+phase=main     score=0.8873   muon_lr=0.078    momentum=0.5      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9185   muon_lr=0.017    momentum=0.5      bias_lr=7.7      head_lr=770     
+phase=main     score=0.883    muon_lr=0.078    momentum=0.7      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9207   muon_lr=0.017    momentum=0.7      bias_lr=7.7      head_lr=770     
+phase=main     score=0.8854   muon_lr=0.078    momentum=0.6      bias_lr=2.8      head_lr=21      
+phase=cooldown score=0.9212   muon_lr=0.017    momentum=0.6      bias_lr=1        head_lr=770     
+phase=main     score=0.8861   muon_lr=0.078    momentum=0.6      bias_lr=7.7      head_lr=21      
+phase=cooldown score=0.9221   muon_lr=0.017    momentum=0.6      bias_lr=1        head_lr=770     
+phase=main     score=0.8859   muon_lr=0.078    momentum=0.6      bias_lr=13       head_lr=21      
+phase=cooldown score=0.9205   muon_lr=0.017    momentum=0.6      bias_lr=7.7      head_lr=770     
+interval=2
+phase=main     score=0.8944   muon_lr=0.078    momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9262   muon_lr=0.01     momentum=0.6      bias_lr=4.6      head_lr=170     
+phase=main     score=0.9091   muon_lr=0.047    momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9266   muon_lr=0.006    momentum=0.6      bias_lr=4.6      head_lr=170     
+phase=main     score=0.9167   muon_lr=0.028    momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9285   muon_lr=0.006    momentum=0.6      bias_lr=4.6      head_lr=170     
+phase=main     score=0.9208   muon_lr=0.017    momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9264   muon_lr=0.01     momentum=0.6      bias_lr=4.6      head_lr=170     
+phase=main     score=0.9167   muon_lr=0.028    momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9287   muon_lr=0.006    momentum=0.6      bias_lr=4.6      head_lr=99      
+phase=main     score=0.917    muon_lr=0.028    momentum=0.5      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9272   muon_lr=0.006    momentum=0.5      bias_lr=4.6      head_lr=99      
+phase=main     score=0.9164   muon_lr=0.028    momentum=0.7      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9283   muon_lr=0.006    momentum=0.7      bias_lr=4.6      head_lr=99      
+phase=main     score=0.9154   muon_lr=0.028    momentum=0.8      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9278   muon_lr=0.006    momentum=0.8      bias_lr=4.6      head_lr=99      
+phase=main     score=0.916    muon_lr=0.028    momentum=0.6      bias_lr=2.8      head_lr=21      
+phase=cooldown score=0.9285   muon_lr=0.006    momentum=0.6      bias_lr=7.7      head_lr=99      
+phase=main     score=0.9163   muon_lr=0.028    momentum=0.6      bias_lr=1.7      head_lr=21      
+phase=cooldown score=0.9283   muon_lr=0.006    momentum=0.6      bias_lr=4.6      head_lr=99      
+phase=main     score=0.9159   muon_lr=0.028    momentum=0.6      bias_lr=1        head_lr=21      
+phase=cooldown score=0.9281   muon_lr=0.006    momentum=0.6      bias_lr=1.7      head_lr=99      
+phase=main     score=0.9162   muon_lr=0.028    momentum=0.6      bias_lr=7.7      head_lr=21      
+phase=cooldown score=0.9281   muon_lr=0.006    momentum=0.6      bias_lr=7.7      head_lr=99      
+phase=main     score=0.9161   muon_lr=0.028    momentum=0.6      bias_lr=4.6      head_lr=13      
+phase=cooldown score=0.928    muon_lr=0.006    momentum=0.6      bias_lr=4.6      head_lr=460     
+phase=main     score=0.9173   muon_lr=0.028    momentum=0.6      bias_lr=4.6      head_lr=36      
+phase=cooldown score=0.9286   muon_lr=0.006    momentum=0.6      bias_lr=4.6      head_lr=460     
+phase=main     score=0.9166   muon_lr=0.028    momentum=0.6      bias_lr=4.6      head_lr=60      
+phase=cooldown score=0.9286   muon_lr=0.006    momentum=0.6      bias_lr=4.6      head_lr=770     
+phase=main     score=0.9176   muon_lr=0.028    momentum=0.6      bias_lr=4.6      head_lr=99      
+phase=cooldown score=0.9281   muon_lr=0.006    momentum=0.6      bias_lr=4.6      head_lr=170     
+interval=3
+phase=main     score=0.9194   muon_lr=0.028    momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9325   muon_lr=0.006    momentum=0.6      bias_lr=13       head_lr=99      
+phase=main     score=0.9247   muon_lr=0.017    momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9304   muon_lr=0.006    momentum=0.6      bias_lr=13       head_lr=99      
+phase=main     score=0.9183   muon_lr=0.047    momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9314   muon_lr=0.01     momentum=0.6      bias_lr=13       head_lr=99      
+phase=main     score=0.9209   muon_lr=0.028    momentum=0.5      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9315   muon_lr=0.006    momentum=0.5      bias_lr=13       head_lr=99      
+phase=main     score=0.9186   muon_lr=0.028    momentum=0.7      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9339   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=99      
+phase=main     score=0.917    muon_lr=0.028    momentum=0.8      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9335   muon_lr=0.01     momentum=0.8      bias_lr=13       head_lr=99      
+phase=main     score=0.9157   muon_lr=0.028    momentum=0.9      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.931    muon_lr=0.01     momentum=0.9      bias_lr=13       head_lr=99      
+phase=main     score=0.9186   muon_lr=0.028    momentum=0.7      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.934    muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=60      
+phase=main     score=0.9237   muon_lr=0.017    momentum=0.7      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9317   muon_lr=0.006    momentum=0.7      bias_lr=13       head_lr=21      
+phase=main     score=0.9104   muon_lr=0.047    momentum=0.7      bias_lr=4.6      head_lr=21      
+phase=cooldown score=0.9315   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=21      
+phase=main     score=0.9187   muon_lr=0.028    momentum=0.7      bias_lr=2.8      head_lr=21      
+phase=cooldown score=0.9332   muon_lr=0.01     momentum=0.7      bias_lr=0.22     head_lr=21      
+phase=main     score=0.9192   muon_lr=0.028    momentum=0.7      bias_lr=7.7      head_lr=21      
+phase=cooldown score=0.933    muon_lr=0.01     momentum=0.7      bias_lr=4.6      head_lr=21      
+phase=main     score=0.9184   muon_lr=0.028    momentum=0.7      bias_lr=4.6      head_lr=13      
+phase=cooldown score=0.9332   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=99      
+phase=main     score=0.9189   muon_lr=0.028    momentum=0.7      bias_lr=4.6      head_lr=36      
+phase=cooldown score=0.9339   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=36      
+phase=main     score=0.9191   muon_lr=0.028    momentum=0.7      bias_lr=4.6      head_lr=60      
+phase=cooldown score=0.9328   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=21      
+interval=4
+phase=main     score=0.9252   muon_lr=0.028    momentum=0.7      bias_lr=4.6      head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.931    muon_lr=0.017    momentum=0.7      bias_lr=4.6      head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9331   muon_lr=0.01     momentum=0.7      bias_lr=4.6      head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9316   muon_lr=0.006    momentum=0.7      bias_lr=4.6      head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9311   muon_lr=0.01     momentum=0.6      bias_lr=4.6      head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9328   muon_lr=0.01     momentum=0.8      bias_lr=4.6      head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9318   muon_lr=0.01     momentum=0.9      bias_lr=4.6      head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9329   muon_lr=0.01     momentum=0.7      bias_lr=2.8      head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9324   muon_lr=0.01     momentum=0.7      bias_lr=1.7      head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9329   muon_lr=0.01     momentum=0.7      bias_lr=7.7      head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.934    muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9328   muon_lr=0.01     momentum=0.7      bias_lr=21       head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.932    muon_lr=0.006    momentum=0.7      bias_lr=13       head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.931    muon_lr=0.017    momentum=0.7      bias_lr=13       head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9323   muon_lr=0.01     momentum=0.6      bias_lr=13       head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9328   muon_lr=0.01     momentum=0.8      bias_lr=13       head_lr=21      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9338   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=13      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9335   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=7.7     
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9331   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=4.6     
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9337   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=36      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.934    muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=60      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9339   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=99      
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9339   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=170     
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9336   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=280     
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9336   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=460     
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9337   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=770     
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9338   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=1300    
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      
+phase=main     score=0.9322   muon_lr=0.01     momentum=0.7      bias_lr=13       head_lr=2100    
+phase=cooldown score=NA       muon_lr=NA       momentum=NA       bias_lr=NA       head_lr=NA      

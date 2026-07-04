@@ -160,9 +160,11 @@ idea: just train bias_lr and head_lr and see what we get.
 
 
 autoresearch/automatic_lr4/20260630_230733_608720/cifar_search_baseline.log
+autoresearch/automatic_lr4/20260702_164537_312299/cifar_search_1init.log
+autoresearch/automatic_lr4/20260702_171353_931352/cifar_search_1init.log
 
-python plot_cifar_search.py 20260630_230733_608720/cifar_search_baseline.log
-python plot_cifar_search.py 20260630_205726_828854/cifar_0p1_factor.log
+python plot_cifar_search.py 20260702_164537_312299/cifar_search_1init.log
+python plot_cifar_search.py 20260702_171353_931352/cifar_search_1init.log
 
 factor=0.6 is pretty good. 
 
@@ -184,38 +186,44 @@ interval=2 muon_lr=0.0093 momentum=0.8 bias_lr=0.38 head_lr=8.1
 interval=3 muon_lr=0.0056 momentum=0.8 bias_lr=2.9 head_lr=1.8
 interval=4 muon_lr=0.002 momentum=0.8 bias_lr=37 head_lr=1300
 
-Use this prompt:
-
 We are working in /workspace/neural_networks_optimization. Use /venv/main/bin/python.
 
 Modify autoresearch/automatic_lr4/search_toy.py.
 
-Goal: improve the search algorithm for black-box peak finding. The function is defined by autoresearch/automatic_lr4/20260626_022201_204962/summary.txt, plus random transformed variants. Current script includes:
-- log_coverage_sweep: robust but uses 122 evaluations
-- coarse_to_fine_log: 20 evals but misses
-- log_space_gp_ucb: 20 evals but misses
+Goal: improve black-box peak finding under a strict 20-evaluation budget.
 
-Optimize for:
-1. Accuracy = found_f / actual_max
-2. Must exceed 0.99 on:
-   - the fixed original + 10 transformed functions
-   - fresh random stress tests
-3. Use at most 20 function evaluations per function.
-4. Do not overfit to the fixed 11 functions.
-5. Do not rely narrowly on the exact current transformation family; prefer a more general prior or search strategy that could survive future transformations.
-6. Keep the fresh random stress test and report min accuracy, mean accuracy, below_0.99 count, and evaluation count.
+Important constraint:
+The search algorithm must NOT use or fit against the summary curve/table directly, except through normal black-box calls to evaluate(x). Future curves may look different. Assume only a broad structural prior: in log(x)-space, the denoised function usually has one or two large peaks plus noise.
 
-Important context:
-- x spans many orders of magnitude, so log-space search is natural.
-- Current 20-eval methods get close but miss:
+Current context:
+- x spans many orders of magnitude, so search in log-space.
+- Must use at most 20 evaluations per function.
+- The existing robust log_coverage_sweep uses 122 evals and clears 0.99, but is over budget.
+- Existing 20-eval methods miss:
   - coarse_to_fine_log stress min around 0.982
   - log_space_gp_ucb stress min around 0.979
-- The robust 122-eval log sweep has stress min above 0.99.
-- We need a better adaptive or learned strategy under the 20-eval budget.
+  - smooth_interval_ucb improves stress to around min 0.985, mean 0.9945, below_0.99 around 73/1000, but still misses.
+- smooth_interval_ucb currently uses 8 initial log-space points and then bisects high-scoring intervals. It does not explore below the smallest initial probe or above the largest initial probe unless changed.
+
+Optimization target:
+1. Accuracy = found_f / actual_max.
+2. Try to exceed 0.99 on:
+   - the fixed original + 10 transformed functions
+   - fresh random stress tests
+3. Keep and report fresh random stress:
+   - min_accuracy
+   - mean_accuracy
+   - below_0.99 count
+   - max_evaluations
+4. Be honest if no curve-agnostic 20-eval method clears the target.
+
+Do not overfit to the current 11 fixed functions. Do not use the parsed summary values as a template/prior. Acceptable priors include generic assumptions like smoothness in log-space, one/two broad peaks, heteroscedastic noise, boundary-safe exploration, multi-start interval refinement, or curve-agnostic Bayesian optimization.
 
 Please:
 - Inspect search_toy.py first.
-- Implement one or more improved algorithms.
-- Run /venv/main/bin/python autoresearch/automatic_lr4/search_toy.py.
-- Compare against existing algorithms in the output table.
-- Be honest if no 20-eval method clears the target.
+- Implement one or more improved curve-agnostic algorithms, or improve existing algorithms
+- Include them in the output comparison table against existing algorithms.
+- Run:
+  /venv/main/bin/python autoresearch/automatic_lr4/search_toy.py
+- Report exact results and whether the 20-eval target is actually cleared.
+- work for at least 30 minutes on this problem

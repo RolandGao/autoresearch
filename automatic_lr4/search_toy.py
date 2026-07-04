@@ -389,6 +389,232 @@ class SmoothIntervalUCBSearch:
         return SearchResult(observed_xs[best_index], observed_values[best_index], evaluator.count)
 
 
+class NearBestIntervalUCBSearch:
+    def __init__(
+        self,
+        budget: int,
+        probe_min: float,
+        probe_max: float,
+        initial_points: int = 8,
+        initial_phase: float = 0.75,
+        near_best_fraction: float = 0.1,
+        exploration_weight: float = 0.05,
+        continuity_weight: float = 0.0,
+    ) -> None:
+        self.budget = budget
+        self.log_min = math.log(probe_min)
+        self.log_max = math.log(probe_max)
+        self.initial_points = initial_points
+        self.initial_phase = initial_phase
+        self.near_best_fraction = near_best_fraction
+        self.exploration_weight = exploration_weight
+        self.continuity_weight = continuity_weight
+
+    def search(self, evaluator: EvaluationCounter) -> SearchResult:
+        observed_logs: list[float] = []
+        observed_xs: list[float] = []
+        observed_values: list[float] = []
+        seen_logs = set()
+
+        def evaluate_log(log_x: float) -> bool:
+            if evaluator.count >= self.budget:
+                return False
+            log_x = max(self.log_min, min(self.log_max, float(log_x)))
+            key = round(log_x, 12)
+            if key in seen_logs:
+                return False
+
+            seen_logs.add(key)
+            x = math.exp(log_x)
+            fx = evaluator.evaluate(x)
+            observed_logs.append(log_x)
+            observed_xs.append(x)
+            observed_values.append(fx)
+            return True
+
+        search_width = self.log_max - self.log_min
+        initial_step = search_width / self.initial_points
+        for index in range(self.initial_points):
+            evaluate_log(self.log_min + initial_step * (index + self.initial_phase))
+
+        while evaluator.count < self.budget:
+            ordered = sorted(zip(observed_logs, observed_xs, observed_values))
+            min_value = min(observed_values)
+            max_value = max(observed_values)
+            value_scale = max(max_value - min_value, abs(max_value), 1e-9)
+            candidates = []
+
+            for left, right in zip(ordered, ordered[1:]):
+                left_log, _, left_value = left
+                right_log, _, right_value = right
+                candidate_log_x = (left_log + right_log) / 2.0
+                if round(candidate_log_x, 12) in seen_logs:
+                    continue
+
+                interval_width = right_log - left_log
+                high_value = max(left_value, right_value)
+                if high_value < max_value - self.near_best_fraction * value_scale:
+                    continue
+
+                normalized_high = (high_value - min_value) / value_scale
+                normalized_low = (min(left_value, right_value) - min_value) / value_scale
+                score = (
+                    normalized_high
+                    + self.continuity_weight * normalized_low
+                    + self.exploration_weight * interval_width / search_width
+                )
+                candidates.append((score, candidate_log_x))
+
+            if not candidates:
+                for left, right in zip(ordered, ordered[1:]):
+                    left_log, _, left_value = left
+                    right_log, _, right_value = right
+                    candidate_log_x = (left_log + right_log) / 2.0
+                    if round(candidate_log_x, 12) in seen_logs:
+                        continue
+
+                    interval_width = right_log - left_log
+                    normalized_high = (max(left_value, right_value) - min_value) / value_scale
+                    normalized_low = (min(left_value, right_value) - min_value) / value_scale
+                    score = (
+                        normalized_high
+                        + self.continuity_weight * normalized_low
+                        + self.exploration_weight * interval_width / search_width
+                    )
+                    candidates.append((score, candidate_log_x))
+
+            if not candidates:
+                break
+            _, best_log_x = max(candidates)
+            evaluate_log(best_log_x)
+
+        best_index = max(range(len(observed_values)), key=lambda index: observed_values[index])
+        return SearchResult(observed_xs[best_index], observed_values[best_index], evaluator.count)
+
+
+class BalancedIntervalUCBSearch:
+    def __init__(
+        self,
+        budget: int,
+        probe_min: float,
+        probe_max: float,
+        initial_points: int = 8,
+        initial_phase: float = 0.75,
+        near_best_fraction: float = 0.1,
+        exploration_weight: float = 0.05,
+        tie_tolerance: float = 1e-12,
+    ) -> None:
+        self.budget = budget
+        self.log_min = math.log(probe_min)
+        self.log_max = math.log(probe_max)
+        self.initial_points = initial_points
+        self.initial_phase = initial_phase
+        self.near_best_fraction = near_best_fraction
+        self.exploration_weight = exploration_weight
+        self.tie_tolerance = tie_tolerance
+
+    def search(self, evaluator: EvaluationCounter) -> SearchResult:
+        observed_logs: list[float] = []
+        observed_xs: list[float] = []
+        observed_values: list[float] = []
+        seen_logs = set()
+        side_history: dict[float, int] = {}
+
+        def evaluate_log(log_x: float) -> bool:
+            if evaluator.count >= self.budget:
+                return False
+            log_x = max(self.log_min, min(self.log_max, float(log_x)))
+            key = round(log_x, 12)
+            if key in seen_logs:
+                return False
+
+            seen_logs.add(key)
+            x = math.exp(log_x)
+            fx = evaluator.evaluate(x)
+            observed_logs.append(log_x)
+            observed_xs.append(x)
+            observed_values.append(fx)
+            return True
+
+        search_width = self.log_max - self.log_min
+        search_center = (self.log_min + self.log_max) / 2.0
+        initial_step = search_width / self.initial_points
+        for index in range(self.initial_points):
+            evaluate_log(self.log_min + initial_step * (index + self.initial_phase))
+
+        while evaluator.count < self.budget:
+            ordered = sorted(zip(observed_logs, observed_xs, observed_values))
+            min_value = min(observed_values)
+            max_value = max(observed_values)
+            value_scale = max(max_value - min_value, abs(max_value), 1e-9)
+            candidates = []
+
+            for left, right in zip(ordered, ordered[1:]):
+                left_log, _, left_value = left
+                right_log, _, right_value = right
+                candidate_log_x = (left_log + right_log) / 2.0
+                if round(candidate_log_x, 12) in seen_logs:
+                    continue
+
+                interval_width = right_log - left_log
+                high_value = max(left_value, right_value)
+                if high_value < max_value - self.near_best_fraction * value_scale:
+                    continue
+
+                normalized_high = (high_value - min_value) / value_scale
+                score = normalized_high + self.exploration_weight * interval_width / search_width
+                if left_value >= right_value:
+                    anchor_key = round(left_log, 12)
+                    side = 1
+                else:
+                    anchor_key = round(right_log, 12)
+                    side = -1
+                center_bias = -abs(candidate_log_x - search_center) / search_width
+                candidates.append((score, candidate_log_x, anchor_key, side, center_bias))
+
+            if not candidates:
+                for left, right in zip(ordered, ordered[1:]):
+                    left_log, _, left_value = left
+                    right_log, _, right_value = right
+                    candidate_log_x = (left_log + right_log) / 2.0
+                    if round(candidate_log_x, 12) in seen_logs:
+                        continue
+
+                    interval_width = right_log - left_log
+                    high_value = max(left_value, right_value)
+                    normalized_high = (high_value - min_value) / value_scale
+                    score = normalized_high + self.exploration_weight * interval_width / search_width
+                    if left_value >= right_value:
+                        anchor_key = round(left_log, 12)
+                        side = 1
+                    else:
+                        anchor_key = round(right_log, 12)
+                        side = -1
+                    center_bias = -abs(candidate_log_x - search_center) / search_width
+                    candidates.append((score, candidate_log_x, anchor_key, side, center_bias))
+
+            if not candidates:
+                break
+
+            best_score = max(candidate[0] for candidate in candidates)
+            tied_candidates = [
+                candidate for candidate in candidates if abs(candidate[0] - best_score) <= self.tie_tolerance
+            ]
+
+            def tie_break(candidate: tuple[float, float, float, int, float]) -> tuple[int, float]:
+                _, _, anchor_key, side, center_bias = candidate
+                previous_side = side_history.get(anchor_key, 0)
+                side_is_fresh = previous_side == 0 or previous_side == -side
+                return int(side_is_fresh), center_bias
+
+            _, best_log_x, anchor_key, side, _ = max(tied_candidates, key=tie_break)
+            side_history[anchor_key] = side
+            evaluate_log(best_log_x)
+
+        best_index = max(range(len(observed_values)), key=lambda index: observed_values[index])
+        return SearchResult(observed_xs[best_index], observed_values[best_index], evaluator.count)
+
+
 def fmt_x(value: float) -> str:
     return f"{value:.2g}"
 
@@ -470,6 +696,19 @@ def main() -> None:
         ("coarse_to_fine_log", CoarseToFineLogSearch(SHORT_BUDGET, PROBE_MIN, PROBE_MAX)),
         ("log_space_gp_ucb", LogSpaceGPUCBSearch(SHORT_BUDGET, PROBE_MIN, PROBE_MAX)),
         ("smooth_interval_ucb", SmoothIntervalUCBSearch(SHORT_BUDGET, PROBE_MIN, PROBE_MAX)),
+        ("near_best_interval_ucb", NearBestIntervalUCBSearch(SHORT_BUDGET, PROBE_MIN, PROBE_MAX)),
+        ("balanced_interval_ucb", BalancedIntervalUCBSearch(SHORT_BUDGET, PROBE_MIN, PROBE_MAX)),
+        (
+            "focused_near_best_interval_ucb",
+            NearBestIntervalUCBSearch(
+                SHORT_BUDGET,
+                PROBE_MIN,
+                PROBE_MAX,
+                initial_points=5,
+                initial_phase=0.75,
+                exploration_weight=0.08,
+            ),
+        ),
     ]
 
     print(f"summary={SUMMARY_PATH}")

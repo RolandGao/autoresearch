@@ -95,3 +95,26 @@ fresh random stress
   mean_accuracy=0.994507
   below_0.99=73
 
+algorithm=near_best_interval_ucb
+accuracy summary
+         function  evals    found x   found f  actual max  accuracy
+  ---------------  -----  ---------  --------  ----------  --------
+         original     20      839.1  0.500452      0.5006  0.999704
+   transformed #1     20      53.52  2.427750      2.4453  0.992818
+   transformed #2     20      83.54  4.239411      4.2699  0.992853
+   transformed #3     20    0.01999  1.836735      1.8496  0.993021
+   transformed #4     20    0.07915  0.260147      0.2604  0.999147
+   transformed #5     20  1.343e+04  0.183267      0.1833  0.999813
+   transformed #6     20  5.233e+05  0.157912      0.1587  0.995206
+   transformed #7     20      4.532  1.441255      1.4426  0.999048
+   transformed #8     20      31.62  0.078832      0.0796  0.990391
+   transformed #9     20   0.007121  0.955701      0.9557  0.999964
+  transformed #10     20     0.3539  0.447200      0.4503  0.993096
+
+fresh random stress
+  functions=1000
+  max_evaluations=20
+  min_accuracy=0.985317
+  mean_accuracy=0.994944
+  below_0.99=54
+
