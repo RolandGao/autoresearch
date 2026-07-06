@@ -565,6 +565,7 @@ class SearchHparam:
     search: bool = False
     cooldown_search: bool = False
     factor: float = None
+    precision: float = 1
     values: tuple = ()
 
 
@@ -606,14 +607,16 @@ def rounded_lr(value):
     return round(value, LR_SEARCH_SIG_FIGS - 1 - floor(log10(abs(value))))
 
 
-def lr_from_k(k, initial_value, factor):
-    return rounded_lr(initial_value * factor**k)
+def lr_from_k(k, initial_value, factor, precision=1):
+    return rounded_lr(initial_value * factor ** (precision * k))
 
 
-def nearest_lr_k(lr, initial_value, factor):
+def nearest_lr_k(lr, initial_value, factor, precision=1):
     if lr <= 0:
         raise ValueError(f"LR must be positive, got {lr}")
-    return int(round(log(lr / initial_value) / log(factor)))
+    if precision <= 0:
+        raise ValueError(f"LR precision must be positive, got {precision}")
+    return int(round(log(lr / initial_value) / log(factor) / precision))
 
 
 def nearest_momentum_index(momentum, values=MOMENTUM_SEARCH_VALUES):
@@ -649,7 +652,7 @@ def hparam_from_state(name, state):
     if spec.kind == "log_lr":
         if state == LR_ZERO_STATE:
             return 0.0
-        return lr_from_k(state, spec.initial_value, spec.factor)
+        return lr_from_k(state, spec.initial_value, spec.factor, spec.precision)
     if spec.kind == "choice":
         return spec.values[state]
     raise ValueError(f"Unrecognized hparam kind: {spec.kind}")
@@ -660,7 +663,7 @@ def nearest_hparam_state(name, value):
     if spec.kind == "log_lr":
         if value == 0:
             return LR_ZERO_STATE
-        return nearest_lr_k(value, spec.initial_value, spec.factor)
+        return nearest_lr_k(value, spec.initial_value, spec.factor, spec.precision)
     if spec.kind == "choice":
         return nearest_momentum_index(value, spec.values)
     raise ValueError(f"Unrecognized hparam kind: {spec.kind}")
@@ -904,7 +907,7 @@ def interval_result_loss(result):
 
 def point_sort_key(point, search_names):
     log_states = [
-        state
+        (name, state)
         for name, state in zip(search_names, point)
         if SEARCH_HPARAMS[name].kind == "log_lr"
     ]
@@ -912,7 +915,10 @@ def point_sort_key(point, search_names):
         hparam_from_state(name, state) for name, state in zip(search_names, point)
     )
     log_distance = sum(
-        float("inf") if state == LR_ZERO_STATE else abs(state) for state in log_states
+        float("inf")
+        if state == LR_ZERO_STATE
+        else abs(SEARCH_HPARAMS[name].precision * state)
+        for name, state in log_states
     )
     comparable_point = tuple(str(state) for state in point)
     return log_distance, values, comparable_point
