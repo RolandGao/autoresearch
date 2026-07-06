@@ -243,3 +243,8 @@ main hparams: muon_lr=0.13 muon_momentum=0.7 bias_lr=60 head_lr=60 main=0.8473, 
 main hparams: muon_lr=0.13 muon_momentum=0.7 bias_lr=60 head_lr=99 main=0.8417, best_cooldown=0.9074
 main hparams: muon_lr=0.13 muon_momentum=0.7 bias_lr=60 head_lr=170 main=0.8369, best_cooldown=0.9102
 main hparams: muon_lr=0.13 muon_momentum=0.7 bias_lr=60 head_lr=280 main=0.8419, best_cooldown=0.9088
+main hparams: muon_lr=0.13 muon_momentum=0.7 bias_lr=60 head_lr=460 main=0.8358, best_cooldown=0.9097
+main hparams: muon_lr=0.13 muon_momentum=0.7 bias_lr=60 head_lr=1300 main=0.8418, best_cooldown=0.9074
+main hparams: muon_lr=0.13 muon_momentum=0.7 bias_lr=60 head_lr=2100 main=0.8307, best_cooldown=0.9055
+main hparams: muon_lr=0.13 muon_momentum=0.7 bias_lr=60 head_lr=3500 main=0.8102, best_cooldown=0.8935
+main hparams: muon_lr=0.13 muon_momentum=0.7 bias_lr=60 head_lr=5900 main=0.7085, best_cooldown=0.8584
