@@ -1121,7 +1121,8 @@ def find_best_hparam_point(
             best_point = best_line_point(best_point, point)
         return best_point
 
-    def search_better_neighbor(middle_point):
+    def search_hparam_sweep(middle_point):
+        accepted_points = []
         for index in ordered_search_indexes(search_names):
             name = search_names[index]
             if full_grid_search and name in FULL_GRID_SEARCH_HPARAMS:
@@ -1132,7 +1133,8 @@ def find_best_hparam_point(
                     results_by_point,
                     search_names,
                 ):
-                    return grid_best_point
+                    middle_point = grid_best_point
+                    accepted_points.append(middle_point)
                 continue
             group = [
                 point_with_state(middle_point, index, state)
@@ -1151,18 +1153,20 @@ def find_best_hparam_point(
                         results_by_point,
                         search_names,
                     ):
-                        return direction_best_point
-        return middle_point
+                        middle_point = direction_best_point
+                        accepted_points.append(middle_point)
+                        break
+        return middle_point, accepted_points
 
     middle_point = initial_point
     center_path = [middle_point]
     evaluate(middle_point)
     while True:
-        next_point = search_better_neighbor(middle_point)
-        if next_point == middle_point:
+        next_point, accepted_points = search_hparam_sweep(middle_point)
+        if not accepted_points:
             break
         middle_point = next_point
-        center_path.append(middle_point)
+        center_path.extend(accepted_points)
     return middle_point, center_path
 
 
