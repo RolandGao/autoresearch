@@ -420,7 +420,7 @@ def finite(value):
     return bool(torch.isfinite(torch.as_tensor(value)).item())
 
 
-RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nTrain epochs:        %.3g|train_epochs\nTrain steps:         %d|train_steps\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nSearch hparams:      %s|search_names_text\nCooldown hparams:    %s|cooldown_search_names_text\nMuon nesterov:       %s|muon_nesterov\n".strip().splitlines()
+RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nTrain epochs:        %.3g|train_epochs\nTrain steps:         %d|train_steps\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nSearch hparams:      %s|search_names_text\nCooldown hparams:    %s|cooldown_search_names_text\nMuon nesterov:       %s|muon_nesterov\nFull grid search:    %s|full_grid_search\n".strip().splitlines()
 RUN_FOOTER_SPECS = "\nVal acc:             %.4f|val_acc\nTTA val acc:         %.4f|tta_val_acc\nRun seconds:         %.3f|run_seconds\n".strip().splitlines()
 
 
@@ -539,14 +539,16 @@ LABEL_SMOOTHING = 0.2
 SEARCH_STEP_CONFIGS = [(40, 40)]
 PRINT_OUTPUT_FILENAME = "cifar_search_1init.log"
 LR_SEARCH_SIG_FIGS = 2
-TTA_VAL_ACC_DIFF_THRESHOLD = 0.0005
 SMALL_LR_THRESHOLD_STEPS = 3
 LR_ZERO_STATE = "zero"
 MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
 INITIAL_MOMENTUM = 0.6
 MUON_NESTEROV = False
+FULL_GRID_SEARCH = True
+FULL_GRID_SEARCH_HPARAMS = ("bias_lr", "head_lr")
+FULL_GRID_SEARCH_STATES = tuple(range(0, -21, -1))
 RUN_CONFIGS = [
-    dict(batch_size=2000),
+    dict(batch_size=2000, full_grid_search=FULL_GRID_SEARCH),
 ]
 SEARCH_HPARAM_ORDER = ("muon_lr", "muon_momentum", "bias_lr", "head_lr")
 SEARCH_HPARAM_GROUPS = (
@@ -969,11 +971,21 @@ def neighbor_point_groups(point, search_names):
             yield name, lower_value_first(group, search_names, index)
 
 
+def full_grid_search_points(point, search_names, index):
+    name = search_names[index]
+    if name not in FULL_GRID_SEARCH_HPARAMS:
+        return []
+    if SEARCH_HPARAMS[name].kind != "log_lr":
+        return []
+    return [point_with_state(point, index, state) for state in FULL_GRID_SEARCH_STATES]
+
+
 def find_best_hparam_point(
     initial_point,
     search_names,
     evaluate,
     results_by_point,
+    full_grid_search=False,
 ):
     def point_in_direction(point, index, delta):
         name = search_names[index]
@@ -1001,19 +1013,19 @@ def find_best_hparam_point(
         middle_acc = point_tta_val_acc(middle_point)
         return finite(point_acc) and finite(middle_acc) and point_acc > middle_acc
 
-    def is_below_middle_threshold(point, middle_point):
+    def is_below_middle_acc(point, middle_point):
         point_acc = point_tta_val_acc(point)
         middle_acc = point_tta_val_acc(middle_point)
         if not finite(point_acc) or not finite(middle_acc):
             return True
-        return point_acc < middle_acc - TTA_VAL_ACC_DIFF_THRESHOLD
+        return point_acc < middle_acc
 
-    def is_below_best_threshold(point, best_point):
+    def is_below_best_acc(point, best_point):
         point_acc = point_tta_val_acc(point)
         best_acc = point_tta_val_acc(best_point)
         if not finite(point_acc) or not finite(best_acc):
             return True
-        return point_acc < best_acc - TTA_VAL_ACC_DIFF_THRESHOLD
+        return point_acc < best_acc
 
     def best_line_point(incumbent_point, point):
         if better_point(point, incumbent_point, results_by_point, search_names):
@@ -1076,7 +1088,7 @@ def find_best_hparam_point(
                     middle_point,
                     current_point,
                     index,
-                    is_below_best_threshold(current_point, best_point),
+                    is_below_best_acc(current_point, best_point),
                     small_lr_threshold_steps,
                 )
                 if should_stop:
@@ -1086,7 +1098,7 @@ def find_best_hparam_point(
                     middle_point,
                     current_point,
                     index,
-                    is_below_middle_threshold(current_point, middle_point),
+                    is_below_middle_acc(current_point, middle_point),
                     small_lr_threshold_steps,
                 )
                 if should_stop:
@@ -1096,9 +1108,37 @@ def find_best_hparam_point(
             return best_point
         return middle_point
 
+    def search_full_grid(middle_point, index):
+        best_point = middle_point
+        for point in full_grid_search_points(middle_point, search_names, index):
+            evaluate(
+                point,
+                cooldown_seed_point=middle_point,
+                cooldown_search_names=cooldown_search_hparam_names_for_step(
+                    search_names[index]
+                ),
+            )
+            best_point = best_line_point(best_point, point)
+        return best_point
+
     def search_better_neighbor(middle_point):
-        for name, group in neighbor_point_groups(middle_point, search_names):
-            index = search_names.index(name)
+        for index in ordered_search_indexes(search_names):
+            name = search_names[index]
+            if full_grid_search and name in FULL_GRID_SEARCH_HPARAMS:
+                grid_best_point = search_full_grid(middle_point, index)
+                if better_point(
+                    grid_best_point,
+                    middle_point,
+                    results_by_point,
+                    search_names,
+                ):
+                    return grid_best_point
+                continue
+            group = [
+                point_with_state(middle_point, index, state)
+                for state in neighbor_states(name, middle_point[index])
+            ]
+            group = lower_value_first(group, search_names, index)
             for neighbor_point in group:
                 direction_best_point = search_direction(
                     middle_point, index, neighbor_point
@@ -1339,6 +1379,7 @@ def search_hparam_segment(
         search_names=search_names,
         evaluate=evaluate,
         results_by_point=results_by_point,
+        full_grid_search=getattr(ctx, "full_grid_search", False),
     )
     search_path = [results_by_point[point] for point in center_path_points]
     best_result = results_by_point[best_point]
@@ -1630,6 +1671,7 @@ def run_full_dataset_search(cfg):
         whiten_bias_train_steps=cfg.whiten_bias_train_steps,
         search_names=search_names,
         fixed_hparams=initial_hparams,
+        full_grid_search=cfg.full_grid_search,
     )
 
     last_loss = None
@@ -1691,7 +1733,7 @@ def run_full_dataset_search(cfg):
     tta_val_acc = evaluate(cfg.model, test_loader, tta_level=2)
     result = pack(
         vars(cfg),
-        "run batch_size train_epochs train_steps n_steps m_steps search_names_text cooldown_search_names_text muon_nesterov",
+        "run batch_size train_epochs train_steps n_steps m_steps search_names_text cooldown_search_names_text muon_nesterov full_grid_search",
     )
     result.update(
         val_acc=val_acc,
@@ -1704,6 +1746,7 @@ def iter_run_settings():
     for config, steps in product(RUN_CONFIGS, SEARCH_STEP_CONFIGS):
         n_steps, m_steps = steps
         batch_size = config["batch_size"]
+        full_grid_search = config.get("full_grid_search", FULL_GRID_SEARCH)
         bias_lr_mult = batch_size / 2000
         momentum_spec = SEARCH_HPARAMS["muon_momentum"]
         bias_lr_spec = SEARCH_HPARAMS["bias_lr"]
@@ -1712,6 +1755,7 @@ def iter_run_settings():
             locals(),
             "n_steps m_steps",
             batch_size=batch_size,
+            full_grid_search=full_grid_search,
             train_epochs=TRAIN_EPOCHS,
             initial_muon_momentum=momentum_spec.initial_value,
             muon_nesterov=MUON_NESTEROV,
@@ -1733,6 +1777,7 @@ def print_run_banner(cfg):
         search_hparams=cfg.search_names_text,
         cooldown_search_hparams=cfg.cooldown_search_names_text,
         muon_nesterov=cfg.muon_nesterov,
+        full_grid_search=cfg.full_grid_search,
         initial_muon_lr=initial_hparams["muon_lr"],
         initial_muon_momentum=initial_muon_momentum,
         initial_muon_momentum_index=nearest_hparam_state(
@@ -1758,9 +1803,7 @@ def main():
 
 def run_main():
     set_training_seed()
-    model = maybe_compile_model(
-        CifarNet().cuda().to(memory_format=torch.channels_last)
-    )
+    model = maybe_compile_model(CifarNet().cuda().to(memory_format=torch.channels_last))
     for run, cfg in enumerate(iter_run_settings()):
         cfg.run = run
         cfg.model = model

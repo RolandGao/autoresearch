@@ -227,3 +227,10 @@ Please:
   /venv/main/bin/python autoresearch/automatic_lr4/search_toy.py
 - Report exact results and whether the 20-eval target is actually cleared.
 - work for at least 30 minutes on this problem
+
+
+modify autoresearch/automatic_lr4/cifar_search2.py
+
+remove TTA_VAL_ACC_DIFF_THRESHOLD = 0.0005 and the component of the algorithm that uses TTA_VAL_ACC_DIFF_THRESHOLD
+
+add a param called full_grid_search. if full_grid_search is false, current behaviour is ok. if full_grid_search is true, when searching for bias_lr and head_lr, do a full grid search of 1*0.6^k for k from 0 to -20 and pick the best one.
