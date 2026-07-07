@@ -537,7 +537,7 @@ def evaluate_tta_val_acc(model, loader):
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
 SEARCH_STEP_CONFIGS = [(40, 40)]
-PRINT_OUTPUT_FILENAME = "cifar_search_1init.log"
+PRINT_OUTPUT_FILENAME = "cifar_search_improved.log"
 LR_SEARCH_SIG_FIGS = 2
 SMALL_LR_THRESHOLD_STEPS = 3
 LR_ZERO_STATE = "zero"
@@ -576,6 +576,7 @@ SEARCH_HPARAMS = {
         search=True,
         cooldown_search=True,
         factor=0.6,
+        precision=1,
     ),
     "muon_momentum": SearchHparam(
         kind="choice",
@@ -992,6 +993,7 @@ def find_best_hparam_point(
     evaluate,
     results_by_point,
     full_grid_search=False,
+    finalize_direction_best=True,
 ):
     def point_in_direction(point, index, delta):
         name = search_names[index]
@@ -1063,13 +1065,14 @@ def find_best_hparam_point(
     def search_direction(middle_point, index, first_point):
         delta = first_point[index] - middle_point[index]
         current_point = first_point
+        parent_point = middle_point
         best_point = middle_point
         went_above_middle = False
         small_lr_threshold_steps = 0
         while current_point is not None:
             evaluate(
                 current_point,
-                cooldown_seed_point=middle_point,
+                cooldown_seed_point=parent_point,
                 cooldown_search_names=cooldown_search_hparam_names_for_step(
                     search_names[index]
                 ),
@@ -1109,7 +1112,9 @@ def find_best_hparam_point(
                 )
                 if should_stop:
                     break
-            current_point = next_point_along_direction(current_point, index, delta)
+            next_point = next_point_along_direction(current_point, index, delta)
+            parent_point = current_point
+            current_point = next_point
         if went_above_middle:
             return best_point
         return middle_point
@@ -1152,7 +1157,8 @@ def find_best_hparam_point(
                     middle_point, index, neighbor_point
                 )
                 if direction_best_point != middle_point:
-                    evaluate(direction_best_point)
+                    if finalize_direction_best:
+                        evaluate(direction_best_point)
                     if better_point(
                         direction_best_point,
                         middle_point,
@@ -1229,12 +1235,25 @@ def search_hparam_segment(
         if interval_info is not None
         else False
     )
+    search_candidate_cooldown = (
+        interval_info.get("search_candidate_cooldown", False)
+        if interval_info is not None
+        else False
+    )
 
     def evaluate(point, cooldown_seed_point=None, cooldown_search_names=None):
+        candidate_cooldown_search = (
+            search_candidate_cooldown and cooldown_search_names is not None
+        )
         needs_cooldown_state = (
             interval_info is not None
             and interval_info["use_cooldown"]
-            and fixed_cooldown_hparams is None
+            and (fixed_cooldown_hparams is None or candidate_cooldown_search)
+        )
+        uses_fixed_cooldown = (
+            interval_info is not None
+            and interval_info["use_cooldown"]
+            and fixed_cooldown_hparams is not None
         )
         requested_cooldown_search_names = None
         if needs_cooldown_state:
@@ -1247,11 +1266,18 @@ def search_hparam_segment(
         cached_result = results_by_point.get(point)
         if cached_result is not None:
             cached_cooldown_search_names = cached_result.get("cooldown_search_names")
+            cached_cooldown_search_set = (
+                set(cached_cooldown_search_names)
+                if cached_cooldown_search_names
+                else set()
+            )
             if (
                 requested_cooldown_search_names is None
-                or cached_cooldown_search_names is None
-                or set(requested_cooldown_search_names).issubset(
-                    cached_cooldown_search_names
+                and cached_cooldown_search_names in (None, ())
+            ) or (
+                requested_cooldown_search_names is not None
+                and set(requested_cooldown_search_names).issubset(
+                    cached_cooldown_search_set
                 )
             ):
                 return cached_result
@@ -1268,7 +1294,12 @@ def search_hparam_segment(
         should_evaluate_tta = result["completed_steps"] == steps and finite(result_loss)
         if interval_info is not None:
             result["cooldown_result"] = None
-            result["cooldown_search_names"] = requested_cooldown_search_names
+            if requested_cooldown_search_names is not None:
+                result["cooldown_search_names"] = requested_cooldown_search_names
+            elif uses_fixed_cooldown:
+                result["cooldown_search_names"] = ()
+            else:
+                result["cooldown_search_names"] = None
             result["main_tta_val_acc"] = float("-inf")
             if should_evaluate_tta:
                 result["main_tta_val_acc"] = evaluate_tta_val_acc(
@@ -1276,7 +1307,7 @@ def search_hparam_segment(
                 )
             if (
                 interval_info["use_cooldown"]
-                and fixed_cooldown_hparams is None
+                and needs_cooldown_state
                 and should_evaluate_tta
             ):
                 cooldown_start_state = result["end_state"]
@@ -1284,12 +1315,6 @@ def search_hparam_segment(
                     interval_info["cooldown_initial_states"] or {}
                 )
                 initial_cooldown_results = []
-                if cooldown_seed_point is not None:
-                    seed_cooldown_states = results_by_point[cooldown_seed_point].get(
-                        "cooldown_best_states"
-                    )
-                    if seed_cooldown_states is not None:
-                        cooldown_initial_states.update(seed_cooldown_states)
                 if cached_result is not None:
                     cached_cooldown_states = cached_result.get("cooldown_best_states")
                     if cached_cooldown_states is not None:
@@ -1299,6 +1324,12 @@ def search_hparam_segment(
                         initial_cooldown_results = cached_cooldown_result.get(
                             "_candidate_evaluations", []
                         )
+                if cooldown_seed_point is not None:
+                    seed_result = results_by_point.get(cooldown_seed_point)
+                    if seed_result is not None:
+                        seed_cooldown_states = seed_result.get("cooldown_best_states")
+                        if seed_cooldown_states is not None:
+                            cooldown_initial_states.update(seed_cooldown_states)
                 cooldown_initial_hparams = dict(hparams)
                 for name in cooldown_search_hparam_names():
                     initial_state = cooldown_initial_states.get(name)
@@ -1333,6 +1364,7 @@ def search_hparam_segment(
             elif (
                 interval_info["use_cooldown"]
                 and fixed_cooldown_hparams is not None
+                and not needs_cooldown_state
                 and should_evaluate_tta
             ):
                 cooldown_hparams = dict(hparams)
@@ -1353,8 +1385,14 @@ def search_hparam_segment(
                     cooldown_tta_val_acc = evaluate_tta_val_acc(
                         ctx.model, ctx.test_loader
                     )
+                cooldown_best_states = {
+                    name: nearest_hparam_state(name, cooldown_hparams[name])
+                    for name in cooldown_search_hparam_names()
+                }
                 cooldown_result["tta_val_acc"] = cooldown_tta_val_acc
+                cooldown_result["best_states"] = cooldown_best_states
                 result["cooldown_result"] = cooldown_result
+                result["cooldown_best_states"] = cooldown_best_states
                 result["tta_val_acc"] = cooldown_tta_val_acc
                 should_evaluate_tta = False
             result.pop("end_state", None)
@@ -1390,6 +1428,7 @@ def search_hparam_segment(
         evaluate=evaluate,
         results_by_point=results_by_point,
         full_grid_search=getattr(ctx, "full_grid_search", False),
+        finalize_direction_best=not search_candidate_cooldown,
     )
     search_path = [results_by_point[point] for point in center_path_points]
     best_result = results_by_point[best_point]
@@ -1414,9 +1453,7 @@ def search_hparam_segment(
             tta_val_acc=best_result["tta_val_acc"],
             main_tta_val_acc=best_result["main_tta_val_acc"],
             cooldown_result=best_cooldown_result,
-            cooldown_best_states=best_cooldown_result.get("best_states")
-            if best_cooldown_result is not None
-            else None,
+            cooldown_best_states=best_result.get("cooldown_best_states"),
             candidate_evaluations=list(candidate_evaluations),
             search_path=list(search_path),
         )
@@ -1491,13 +1528,19 @@ def search_interval_hparams(
         load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
         return result
 
-    def search_main_phase(initial_main_point, fixed_cooldown_hparams=None):
+    def search_main_phase(
+        initial_main_point,
+        fixed_cooldown_hparams=None,
+        cooldown_initial_states=None,
+        search_candidate_cooldown=False,
+    ):
         interval_info = dict(
             interval_index=interval_index,
             cooldown_steps=cooldown_steps,
-            cooldown_initial_states=None,
+            cooldown_initial_states=cooldown_initial_states,
             use_cooldown=use_cooldown and fixed_cooldown_hparams is not None,
             fixed_cooldown_hparams=fixed_cooldown_hparams,
+            search_candidate_cooldown=search_candidate_cooldown,
             train_selected=False,
         )
         return search_hparam_segment(
@@ -1601,6 +1644,8 @@ def search_interval_hparams(
         main_result = search_main_phase(
             selected_main_point,
             fixed_cooldown_hparams=fixed_cooldown_hparams,
+            cooldown_initial_states=selected_cooldown_states,
+            search_candidate_cooldown=True,
         )
         log_search_path(main_result["search_path"])
         if not tta_val_acc_improved(
@@ -1613,6 +1658,8 @@ def search_interval_hparams(
         selected_main_point = main_result["best_point"]
         selected_main_hparams = copy_fields(main_result, SEARCH_HPARAMS)
         selected_tta_val_acc = main_result["tta_val_acc"]
+        if main_result["cooldown_best_states"] is not None:
+            selected_cooldown_states = main_result["cooldown_best_states"]
 
     load_training_state(ctx.model, ctx.optimizers, ctx.batch_stream, start_state)
     actual_result = train_interval(

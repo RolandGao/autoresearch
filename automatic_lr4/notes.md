@@ -162,8 +162,10 @@ idea: just train bias_lr and head_lr and see what we get.
 autoresearch/automatic_lr4/20260630_230733_608720/cifar_search_baseline.log
 autoresearch/automatic_lr4/20260702_164537_312299/cifar_search_1init.log
 autoresearch/automatic_lr4/20260702_171353_931352/cifar_search_1init.log
+autoresearch/automatic_lr4/20260706_174252_402210/cifar_search_1init.log
+autoresearch/automatic_lr4/20260706_183636_919627/cifar_search_1init_higher_muon_lr_precision.log
 
-python plot_cifar_search.py 20260702_164537_312299/cifar_search_1init.log
+python plot_cifar_search.py 20260706_183636_919627/cifar_search_1init_higher_muon_lr_precision.log
 python plot_cifar_search.py 20260702_171353_931352/cifar_search_1init.log
 
 factor=0.6 is pretty good. 
@@ -185,6 +187,17 @@ interval=1 muon_lr=0.026 momentum=0.6 bias_lr=22 head_lr=8.1
 interval=2 muon_lr=0.0093 momentum=0.8 bias_lr=0.38 head_lr=8.1
 interval=3 muon_lr=0.0056 momentum=0.8 bias_lr=2.9 head_lr=1.8
 interval=4 muon_lr=0.002 momentum=0.8 bias_lr=37 head_lr=1300
+
+interval=0 phase=main     start_step=0 steps=40 muon_lr=0.2 momentum=0.6 bias_lr=62 head_lr=800 path_final_tta=0.9136 loss=2.31->1.317
+interval=1 phase=main     start_step=40 steps=40 muon_lr=0.12 momentum=0.6 bias_lr=37 head_lr=800 path_final_tta=0.931 loss=1.297->1.134
+interval=2 phase=main     start_step=80 steps=40 muon_lr=0.043 momentum=0.8 bias_lr=37 head_lr=800 path_final_tta=0.9386 loss=1.154->1.033
+interval=3 phase=main     start_step=120 steps=40 muon_lr=0.016 momentum=0.9 bias_lr=37 head_lr=800 path_final_tta=0.9425 loss=1.046->0.9611
+interval=4 phase=main     start_step=160 steps=40 muon_lr=0.0056 momentum=0.9 bias_lr=4.9 head_lr=2200 path_final_tta=0.9425 loss=0.954->0.928
+interval=0 phase=cooldown best_cooldown=0.9136 cooldown_muon_lr=0.043 cooldown_momentum=0.6 cooldown_bias_lr=8.1 cooldown_head_lr=480
+interval=1 phase=cooldown best_cooldown=0.931 cooldown_muon_lr=0.026 cooldown_momentum=0.6 cooldown_bias_lr=22 cooldown_head_lr=8.1
+interval=2 phase=cooldown best_cooldown=0.9386 cooldown_muon_lr=0.0093 cooldown_momentum=0.8 cooldown_bias_lr=4.9 cooldown_head_lr=3700
+interval=3 phase=cooldown best_cooldown=0.9425 cooldown_muon_lr=0.0056 cooldown_momentum=0.9 cooldown_bias_lr=4.9 cooldown_head_lr=2200
+interval=4 phase=cooldown best_cooldown=0.9425 cooldown_muon_lr=0.0056 cooldown_momentum=0.9 cooldown_bias_lr=4.9 cooldown_head_lr=2200
 
 We are working in /workspace/neural_networks_optimization. Use /venv/main/bin/python.
 

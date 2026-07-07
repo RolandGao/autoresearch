@@ -1,0 +1,1496 @@
+cifar_search_simple run=0 batch_size=2000 train_epochs=8 n_steps=40 m_steps=40 search_hparams=muon_lr,muon_momentum,bias_lr,head_lr cooldown_search_hparams=muon_lr,bias_lr,head_lr muon_nesterov=False full_grid_search=True initial_muon_lr=1 initial_muon_momentum=0.6 initial_muon_momentum_index=6 initial_bias_lr=1 initial_head_lr=1
+main hparams: muon_lr=1 muon_momentum=0.6 bias_lr=1 head_lr=1 main=0.5097
+main hparams: muon_lr=0.77 muon_momentum=0.6 bias_lr=1 head_lr=1 main=0.5098
+main hparams: muon_lr=0.6 muon_momentum=0.6 bias_lr=1 head_lr=1 main=0.629
+main hparams: muon_lr=0.46 muon_momentum=0.6 bias_lr=1 head_lr=1 main=0.6481
+main hparams: muon_lr=0.36 muon_momentum=0.6 bias_lr=1 head_lr=1 main=0.6875
+main hparams: muon_lr=0.28 muon_momentum=0.6 bias_lr=1 head_lr=1 main=0.7512
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=1 head_lr=1 main=0.7931
+main hparams: muon_lr=0.17 muon_momentum=0.6 bias_lr=1 head_lr=1 main=0.7921
+main hparams: muon_lr=0.22 muon_momentum=0.5 bias_lr=1 head_lr=1 main=0.7883
+main hparams: muon_lr=0.22 muon_momentum=0.7 bias_lr=1 head_lr=1 main=0.7734
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=1.7 head_lr=1 main=0.7652
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=2.8 head_lr=1 main=0.7864
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=4.6 head_lr=1 main=0.7845
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=7.7 head_lr=1 main=0.78
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=13 head_lr=1 main=0.7781
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=21 head_lr=1 main=0.7615
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=36 head_lr=1 main=0.7912
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=60 head_lr=1 main=0.7794
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=1 main=0.797
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=170 head_lr=1 main=0.7822
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=280 head_lr=1 main=0.7588
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=460 head_lr=1 main=0.7541
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=770 head_lr=1 main=0.6615
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=1300 head_lr=1 main=0.5721
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=2100 head_lr=1 main=0.4498
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=3500 head_lr=1 main=0.2008
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=5900 head_lr=1 main=0.1177
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=9800 head_lr=1 main=0.1296
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=16000 head_lr=1 main=0.2162
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=27000 head_lr=1 main=0.1
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=1.7 main=0.789
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=2.8 main=0.7863
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=4.6 main=0.7956
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=7.7 main=0.7988
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=13 main=0.7812
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=21 main=0.7998
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=36 main=0.7795
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=60 main=0.802
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=99 main=0.7812
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=170 main=0.7893
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=280 main=0.7996
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=460 main=0.7925
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=770 main=0.7859
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=1300 main=0.7934
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=2100 main=0.7882
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=3500 main=0.7393
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=5900 main=0.4248
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=9800 main=0.1025
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=16000 main=0.1297
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=27000 main=0.1
+main hparams: muon_lr=0.17 muon_momentum=0.6 bias_lr=99 head_lr=60 main=0.834
+main hparams: muon_lr=0.13 muon_momentum=0.6 bias_lr=99 head_lr=60 main=0.8343
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=99 head_lr=60 main=0.8355
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=99 head_lr=60 main=0.8432
+main hparams: muon_lr=0.06 muon_momentum=0.6 bias_lr=99 head_lr=60 main=0.8352
+main hparams: muon_lr=0.078 muon_momentum=0.5 bias_lr=99 head_lr=60 main=0.8363
+main hparams: muon_lr=0.078 muon_momentum=0.7 bias_lr=99 head_lr=60 main=0.8429
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=1 head_lr=60 main=0.8283
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=1.7 head_lr=60 main=0.8301
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=2.8 head_lr=60 main=0.834
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=4.6 head_lr=60 main=0.8355
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=7.7 head_lr=60 main=0.836
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=13 head_lr=60 main=0.8374
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=21 head_lr=60 main=0.8432
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=36 head_lr=60 main=0.8397
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=60 main=0.8462
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=170 head_lr=60 main=0.8349
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=280 head_lr=60 main=0.8256
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=460 head_lr=60 main=0.7711
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=770 head_lr=60 main=0.7497
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=1300 head_lr=60 main=0.5009
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=2100 head_lr=60 main=0.4313
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=3500 head_lr=60 main=0.2377
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=5900 head_lr=60 main=0.2773
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=9800 head_lr=60 main=0.1163
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=16000 head_lr=60 main=0.1286
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=27000 head_lr=60 main=0.1
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=1 main=0.8125
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=1.7 main=0.8173
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=2.8 main=0.82
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=4.6 main=0.8216
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=7.7 main=0.829
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=13 main=0.8242
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=21 main=0.8366
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=36 main=0.8386
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=99 main=0.8432
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=170 main=0.8479
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=280 main=0.8496
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=460 main=0.8501
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=770 main=0.847
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=1300 main=0.8427
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=2100 main=0.832
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=3500 main=0.8046
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=5900 main=0.6779
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=9800 main=0.1599
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=16000 main=0.1
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=27000 main=0.1
+main hparams: muon_lr=0.06 muon_momentum=0.6 bias_lr=60 head_lr=460 main=0.8402
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=60 head_lr=460 main=0.8514
+main hparams: muon_lr=0.13 muon_momentum=0.6 bias_lr=60 head_lr=460 main=0.8462
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=60 head_lr=460 main=0.8385
+main hparams: muon_lr=0.1 muon_momentum=0.7 bias_lr=60 head_lr=460 main=0.8486
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=1 head_lr=460 main=0.8427
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=1.7 head_lr=460 main=0.8466
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=2.8 head_lr=460 main=0.8491
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=4.6 head_lr=460 main=0.8539
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=7.7 head_lr=460 main=0.8396
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=13 head_lr=460 main=0.8522
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=460 main=0.8577
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=36 head_lr=460 main=0.8459
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=99 head_lr=460 main=0.843
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=170 head_lr=460 main=0.8328
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=280 head_lr=460 main=0.8225
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=460 head_lr=460 main=0.7794
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=770 head_lr=460 main=0.3164
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=1300 head_lr=460 main=0.3469
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=2100 head_lr=460 main=0.3689
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=3500 head_lr=460 main=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=5900 head_lr=460 main=0.1476
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=9800 head_lr=460 main=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=16000 head_lr=460 main=0.1124
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=27000 head_lr=460 main=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=1 main=0.8182
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=1.7 main=0.82
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=2.8 main=0.8238
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=4.6 main=0.8325
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=7.7 main=0.8283
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=13 main=0.829
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=21 main=0.8348
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=36 main=0.8405
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=60 main=0.8432
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=99 main=0.8498
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=170 main=0.8473
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=280 main=0.8515
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=770 main=0.8483
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=1300 main=0.8444
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=2100 main=0.8382
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=3500 main=0.8305
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=5900 main=0.7962
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=9800 main=0.7165
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=16000 main=0.2895
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=27000 main=0.1293
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=21 head_lr=460 main=0.8533
+main hparams: muon_lr=0.13 muon_momentum=0.6 bias_lr=21 head_lr=460 main=0.8343
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.8499
+main hparams: muon_lr=0.1 muon_momentum=0.7 bias_lr=21 head_lr=460 main=0.8523
+search_path step=0 muon_lr=1 muon_momentum=0.6 bias_lr=1 head_lr=1 tta_val_acc=0.5097
+search_path step=1 muon_lr=0.22 muon_momentum=0.6 bias_lr=1 head_lr=1 tta_val_acc=0.7931
+search_path step=2 muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=1 tta_val_acc=0.797
+search_path step=3 muon_lr=0.22 muon_momentum=0.6 bias_lr=99 head_lr=60 tta_val_acc=0.802
+search_path step=4 muon_lr=0.078 muon_momentum=0.6 bias_lr=99 head_lr=60 tta_val_acc=0.8432
+search_path step=5 muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=60 tta_val_acc=0.8462
+search_path step=6 muon_lr=0.078 muon_momentum=0.6 bias_lr=60 head_lr=460 tta_val_acc=0.8501
+search_path step=7 muon_lr=0.1 muon_momentum=0.6 bias_lr=60 head_lr=460 tta_val_acc=0.8514
+search_path step=8 muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=460 tta_val_acc=0.8577
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=460 main=0.8577, best_cooldown=0.9078
+muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=460 -> tta_val_acc=0.8849
+muon_lr=0.078 muon_momentum=0.6 bias_lr=21 head_lr=460 -> tta_val_acc=0.8882
+muon_lr=0.06 muon_momentum=0.6 bias_lr=21 head_lr=460 -> tta_val_acc=0.9014
+muon_lr=0.047 muon_momentum=0.6 bias_lr=21 head_lr=460 -> tta_val_acc=0.9047
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=460 -> tta_val_acc=0.9062
+muon_lr=0.028 muon_momentum=0.6 bias_lr=21 head_lr=460 -> tta_val_acc=0.9052
+muon_lr=0.036 muon_momentum=0.6 bias_lr=1 head_lr=460 -> tta_val_acc=0.9048
+muon_lr=0.036 muon_momentum=0.6 bias_lr=1.7 head_lr=460 -> tta_val_acc=0.9055
+muon_lr=0.036 muon_momentum=0.6 bias_lr=2.8 head_lr=460 -> tta_val_acc=0.9054
+muon_lr=0.036 muon_momentum=0.6 bias_lr=4.6 head_lr=460 -> tta_val_acc=0.9062
+muon_lr=0.036 muon_momentum=0.6 bias_lr=7.7 head_lr=460 -> tta_val_acc=0.9063
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=460 -> tta_val_acc=0.9069
+muon_lr=0.036 muon_momentum=0.6 bias_lr=36 head_lr=460 -> tta_val_acc=0.9058
+muon_lr=0.036 muon_momentum=0.6 bias_lr=60 head_lr=460 -> tta_val_acc=0.905
+muon_lr=0.036 muon_momentum=0.6 bias_lr=99 head_lr=460 -> tta_val_acc=0.9006
+muon_lr=0.036 muon_momentum=0.6 bias_lr=170 head_lr=460 -> tta_val_acc=0.8652
+muon_lr=0.036 muon_momentum=0.6 bias_lr=280 head_lr=460 -> tta_val_acc=0.8651
+muon_lr=0.036 muon_momentum=0.6 bias_lr=460 head_lr=460 -> tta_val_acc=0.5026
+muon_lr=0.036 muon_momentum=0.6 bias_lr=770 head_lr=460 -> tta_val_acc=0.1692
+muon_lr=0.036 muon_momentum=0.6 bias_lr=1300 head_lr=460 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=2100 head_lr=460 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=3500 head_lr=460 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=5900 head_lr=460 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=9800 head_lr=460 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=16000 head_lr=460 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=27000 head_lr=460 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=1 -> tta_val_acc=0.9064
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=1.7 -> tta_val_acc=0.9066
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=2.8 -> tta_val_acc=0.905
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=4.6 -> tta_val_acc=0.9069
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=7.7 -> tta_val_acc=0.9049
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=13 -> tta_val_acc=0.9059
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=21 -> tta_val_acc=0.9051
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=36 -> tta_val_acc=0.9056
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=60 -> tta_val_acc=0.905
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=99 -> tta_val_acc=0.9059
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=170 -> tta_val_acc=0.9073
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=280 -> tta_val_acc=0.907
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=770 -> tta_val_acc=0.9049
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=1300 -> tta_val_acc=0.9039
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=2100 -> tta_val_acc=0.9044
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=3500 -> tta_val_acc=0.9043
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=5900 -> tta_val_acc=0.8831
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=9800 -> tta_val_acc=0.8214
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=16000 -> tta_val_acc=0.7174
+muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=27000 -> tta_val_acc=0.2611
+muon_lr=0.028 muon_momentum=0.6 bias_lr=13 head_lr=170 -> tta_val_acc=0.9065
+muon_lr=0.047 muon_momentum=0.6 bias_lr=13 head_lr=170 -> tta_val_acc=0.9046
+muon_lr=0.036 muon_momentum=0.6 bias_lr=1 head_lr=170 -> tta_val_acc=0.9059
+muon_lr=0.036 muon_momentum=0.6 bias_lr=1.7 head_lr=170 -> tta_val_acc=0.9059
+muon_lr=0.036 muon_momentum=0.6 bias_lr=2.8 head_lr=170 -> tta_val_acc=0.9061
+muon_lr=0.036 muon_momentum=0.6 bias_lr=4.6 head_lr=170 -> tta_val_acc=0.9059
+muon_lr=0.036 muon_momentum=0.6 bias_lr=7.7 head_lr=170 -> tta_val_acc=0.9066
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=170 -> tta_val_acc=0.9078
+muon_lr=0.036 muon_momentum=0.6 bias_lr=36 head_lr=170 -> tta_val_acc=0.9046
+muon_lr=0.036 muon_momentum=0.6 bias_lr=60 head_lr=170 -> tta_val_acc=0.9044
+muon_lr=0.036 muon_momentum=0.6 bias_lr=99 head_lr=170 -> tta_val_acc=0.9018
+muon_lr=0.036 muon_momentum=0.6 bias_lr=170 head_lr=170 -> tta_val_acc=0.8828
+muon_lr=0.036 muon_momentum=0.6 bias_lr=280 head_lr=170 -> tta_val_acc=0.8542
+muon_lr=0.036 muon_momentum=0.6 bias_lr=460 head_lr=170 -> tta_val_acc=0.6582
+muon_lr=0.036 muon_momentum=0.6 bias_lr=770 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=1300 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=2100 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=3500 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=5900 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=9800 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=16000 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=27000 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=1 -> tta_val_acc=0.9052
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=1.7 -> tta_val_acc=0.9042
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=2.8 -> tta_val_acc=0.9051
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=4.6 -> tta_val_acc=0.9062
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=7.7 -> tta_val_acc=0.9049
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=13 -> tta_val_acc=0.9046
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=21 -> tta_val_acc=0.9059
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=36 -> tta_val_acc=0.9062
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=60 -> tta_val_acc=0.9047
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=99 -> tta_val_acc=0.9051
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=280 -> tta_val_acc=0.9065
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=770 -> tta_val_acc=0.9053
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=1300 -> tta_val_acc=0.9033
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=2100 -> tta_val_acc=0.9031
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=3500 -> tta_val_acc=0.9061
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=5900 -> tta_val_acc=0.8761
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=9800 -> tta_val_acc=0.7023
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=16000 -> tta_val_acc=0.6219
+muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=27000 -> tta_val_acc=0.1
+muon_lr=0.028 muon_momentum=0.6 bias_lr=21 head_lr=170 -> tta_val_acc=0.9055
+muon_lr=0.047 muon_momentum=0.6 bias_lr=21 head_lr=170 -> tta_val_acc=0.9056
+search_path step=0 muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=460 tta_val_acc=0.8849
+search_path step=1 muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=460 tta_val_acc=0.9062
+search_path step=2 muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=460 tta_val_acc=0.9069
+search_path step=3 muon_lr=0.036 muon_momentum=0.6 bias_lr=13 head_lr=170 tta_val_acc=0.9073
+search_path step=4 muon_lr=0.036 muon_momentum=0.6 bias_lr=21 head_lr=170 tta_val_acc=0.9078
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=460 main=0.8577, best_cooldown=0.9078
+main hparams: muon_lr=0.078 muon_momentum=0.6 bias_lr=21 head_lr=460 main=0.8533, best_cooldown=0.9022
+main hparams: muon_lr=0.13 muon_momentum=0.6 bias_lr=21 head_lr=460 main=0.8343, best_cooldown=0.9089
+main hparams: muon_lr=0.17 muon_momentum=0.6 bias_lr=21 head_lr=460 main=0.8299, best_cooldown=0.9113
+main hparams: muon_lr=0.22 muon_momentum=0.6 bias_lr=21 head_lr=460 main=0.793, best_cooldown=0.907
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.8317, best_cooldown=0.9122
+main hparams: muon_lr=0.17 muon_momentum=0.4 bias_lr=21 head_lr=460 main=0.826, best_cooldown=0.9058
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=1 head_lr=460 main=0.8177, best_cooldown=0.9073
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=1.7 head_lr=460 main=0.8139, best_cooldown=0.9052
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=2.8 head_lr=460 main=0.8188, best_cooldown=0.9073
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=4.6 head_lr=460 main=0.8255, best_cooldown=0.9056
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=7.7 head_lr=460 main=0.8232, best_cooldown=0.9087
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=13 head_lr=460 main=0.8262, best_cooldown=0.9128
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.8134, best_cooldown=0.9129
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=60 head_lr=460 main=0.826, best_cooldown=0.9122
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=99 head_lr=460 main=0.8284, best_cooldown=0.9093
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=170 head_lr=460 main=0.7935, best_cooldown=0.908
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=280 head_lr=460 main=0.7931, best_cooldown=0.9034
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=460 head_lr=460 main=0.7618, best_cooldown=0.8932
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=770 head_lr=460 main=0.623, best_cooldown=0.8563
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=1300 head_lr=460 main=0.192, best_cooldown=0.4874
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=2100 head_lr=460 main=0.1337, best_cooldown=0.4678
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=3500 head_lr=460 main=0.1423, best_cooldown=0.6498
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=5900 head_lr=460 main=0.1285, best_cooldown=0.3066
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=9800 head_lr=460 main=0.1157, best_cooldown=0.2572
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=16000 head_lr=460 main=0.1019, best_cooldown=0.1175
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=27000 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=1 main=0.811, best_cooldown=0.8999
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=1.7 main=0.81, best_cooldown=0.8993
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=2.8 main=0.8066, best_cooldown=0.9012
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=4.6 main=0.8065, best_cooldown=0.9027
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=7.7 main=0.8165, best_cooldown=0.8982
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=13 main=0.8198, best_cooldown=0.9027
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=21 main=0.8101, best_cooldown=0.905
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=36 main=0.8162, best_cooldown=0.9036
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=60 main=0.817, best_cooldown=0.9075
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=99 main=0.8078, best_cooldown=0.9102
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=170 main=0.8241, best_cooldown=0.9093
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=280 main=0.8109, best_cooldown=0.9099
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=770 main=0.8234, best_cooldown=0.907
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=1300 main=0.8252, best_cooldown=0.9093
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=2100 main=0.8227, best_cooldown=0.9063
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=3500 main=0.8057, best_cooldown=0.8984
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=5900 main=0.7562, best_cooldown=0.8767
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=9800 main=0.6042, best_cooldown=0.8279
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=16000 main=0.1376, best_cooldown=0.1866
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=27000 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.13 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.8405, best_cooldown=0.911
+main hparams: muon_lr=0.22 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.7861, best_cooldown=0.9085
+main hparams: muon_lr=0.17 muon_momentum=0.4 bias_lr=36 head_lr=460 main=0.8308, best_cooldown=0.9073
+main hparams: muon_lr=0.17 muon_momentum=0.6 bias_lr=36 head_lr=460 main=0.8186, best_cooldown=0.9101
+search_path step=0 muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=460 tta_val_acc=0.9078
+search_path step=1 muon_lr=0.17 muon_momentum=0.6 bias_lr=21 head_lr=460 tta_val_acc=0.9113
+search_path step=2 muon_lr=0.17 muon_momentum=0.5 bias_lr=21 head_lr=460 tta_val_acc=0.9122
+search_path step=3 muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=460 tta_val_acc=0.9129
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.8134, best_cooldown=0.9132
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=170 -> tta_val_acc=0.9129
+muon_lr=0.028 muon_momentum=0.5 bias_lr=21 head_lr=170 -> tta_val_acc=0.9118
+muon_lr=0.047 muon_momentum=0.5 bias_lr=21 head_lr=170 -> tta_val_acc=0.9128
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1 head_lr=170 -> tta_val_acc=0.9117
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1.7 head_lr=170 -> tta_val_acc=0.9116
+muon_lr=0.036 muon_momentum=0.5 bias_lr=2.8 head_lr=170 -> tta_val_acc=0.9116
+muon_lr=0.036 muon_momentum=0.5 bias_lr=4.6 head_lr=170 -> tta_val_acc=0.9122
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=170 -> tta_val_acc=0.9125
+muon_lr=0.036 muon_momentum=0.5 bias_lr=13 head_lr=170 -> tta_val_acc=0.9127
+muon_lr=0.036 muon_momentum=0.5 bias_lr=36 head_lr=170 -> tta_val_acc=0.9119
+muon_lr=0.036 muon_momentum=0.5 bias_lr=60 head_lr=170 -> tta_val_acc=0.9111
+muon_lr=0.036 muon_momentum=0.5 bias_lr=99 head_lr=170 -> tta_val_acc=0.9084
+muon_lr=0.036 muon_momentum=0.5 bias_lr=170 head_lr=170 -> tta_val_acc=0.8958
+muon_lr=0.036 muon_momentum=0.5 bias_lr=280 head_lr=170 -> tta_val_acc=0.8517
+muon_lr=0.036 muon_momentum=0.5 bias_lr=460 head_lr=170 -> tta_val_acc=0.8362
+muon_lr=0.036 muon_momentum=0.5 bias_lr=770 head_lr=170 -> tta_val_acc=0.1137
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1300 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=2100 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=3500 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=5900 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=9800 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=16000 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=27000 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=1 -> tta_val_acc=0.9124
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=1.7 -> tta_val_acc=0.9127
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=2.8 -> tta_val_acc=0.9126
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=4.6 -> tta_val_acc=0.9128
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=7.7 -> tta_val_acc=0.9121
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=13 -> tta_val_acc=0.913
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=21 -> tta_val_acc=0.9127
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=36 -> tta_val_acc=0.9125
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=60 -> tta_val_acc=0.9132
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=99 -> tta_val_acc=0.9128
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=280 -> tta_val_acc=0.9124
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=460 -> tta_val_acc=0.9125
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=770 -> tta_val_acc=0.913
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=1300 -> tta_val_acc=0.9114
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=2100 -> tta_val_acc=0.9095
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=3500 -> tta_val_acc=0.9105
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=5900 -> tta_val_acc=0.8979
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=9800 -> tta_val_acc=0.8218
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=16000 -> tta_val_acc=0.6277
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=27000 -> tta_val_acc=0.2581
+muon_lr=0.028 muon_momentum=0.5 bias_lr=21 head_lr=60 -> tta_val_acc=0.9119
+muon_lr=0.047 muon_momentum=0.5 bias_lr=21 head_lr=60 -> tta_val_acc=0.9124
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1 head_lr=60 -> tta_val_acc=0.9106
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1.7 head_lr=60 -> tta_val_acc=0.9106
+muon_lr=0.036 muon_momentum=0.5 bias_lr=2.8 head_lr=60 -> tta_val_acc=0.9117
+muon_lr=0.036 muon_momentum=0.5 bias_lr=4.6 head_lr=60 -> tta_val_acc=0.9119
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=60 -> tta_val_acc=0.9124
+muon_lr=0.036 muon_momentum=0.5 bias_lr=13 head_lr=60 -> tta_val_acc=0.9113
+muon_lr=0.036 muon_momentum=0.5 bias_lr=36 head_lr=60 -> tta_val_acc=0.912
+muon_lr=0.036 muon_momentum=0.5 bias_lr=60 head_lr=60 -> tta_val_acc=0.9104
+muon_lr=0.036 muon_momentum=0.5 bias_lr=99 head_lr=60 -> tta_val_acc=0.908
+muon_lr=0.036 muon_momentum=0.5 bias_lr=170 head_lr=60 -> tta_val_acc=0.8977
+muon_lr=0.036 muon_momentum=0.5 bias_lr=280 head_lr=60 -> tta_val_acc=0.8699
+muon_lr=0.036 muon_momentum=0.5 bias_lr=460 head_lr=60 -> tta_val_acc=0.8233
+muon_lr=0.036 muon_momentum=0.5 bias_lr=770 head_lr=60 -> tta_val_acc=0.4932
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1300 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=2100 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=3500 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=5900 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=9800 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=16000 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=27000 head_lr=60 -> tta_val_acc=0.1
+search_path step=0 muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=170 tta_val_acc=0.9129
+search_path step=1 muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=60 tta_val_acc=0.9132
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.8134, best_cooldown=0.9132
+main hparams: muon_lr=0.13 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.8405, best_cooldown=0.9116
+main hparams: muon_lr=0.22 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.7861, best_cooldown=0.9094
+main hparams: muon_lr=0.17 muon_momentum=0.4 bias_lr=36 head_lr=460 main=0.8308, best_cooldown=0.9071
+main hparams: muon_lr=0.17 muon_momentum=0.6 bias_lr=36 head_lr=460 main=0.8186, best_cooldown=0.9093
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=1 head_lr=460 main=0.8177, best_cooldown=0.9079
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=1.7 head_lr=460 main=0.8139, best_cooldown=0.9049
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=2.8 head_lr=460 main=0.8188, best_cooldown=0.9082
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=4.6 head_lr=460 main=0.8255, best_cooldown=0.9055
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=7.7 head_lr=460 main=0.8232, best_cooldown=0.9085
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=13 head_lr=460 main=0.8262, best_cooldown=0.9116
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.8317, best_cooldown=0.9131
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=60 head_lr=460 main=0.826, best_cooldown=0.9124
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=99 head_lr=460 main=0.8284, best_cooldown=0.9092
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=170 head_lr=460 main=0.7935, best_cooldown=0.9074
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=280 head_lr=460 main=0.7931, best_cooldown=0.9031
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=460 head_lr=460 main=0.7618, best_cooldown=0.8925
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=770 head_lr=460 main=0.623, best_cooldown=0.8547
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=1300 head_lr=460 main=0.192, best_cooldown=0.3582
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=2100 head_lr=460 main=0.1337, best_cooldown=0.3946
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=3500 head_lr=460 main=0.1423, best_cooldown=0.5889
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=5900 head_lr=460 main=0.1285, best_cooldown=0.3027
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=9800 head_lr=460 main=0.1157, best_cooldown=0.25
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=16000 head_lr=460 main=0.1019, best_cooldown=0.1163
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=27000 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=1 main=0.811, best_cooldown=0.8998
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=1.7 main=0.81, best_cooldown=0.8995
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=2.8 main=0.8066, best_cooldown=0.898
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=4.6 main=0.8065, best_cooldown=0.902
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=7.7 main=0.8165, best_cooldown=0.8973
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=13 main=0.8198, best_cooldown=0.903
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=21 main=0.8101, best_cooldown=0.9035
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=36 main=0.8162, best_cooldown=0.9036
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=60 main=0.817, best_cooldown=0.9069
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=99 main=0.8078, best_cooldown=0.9099
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=170 main=0.8241, best_cooldown=0.9078
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=280 main=0.8109, best_cooldown=0.9096
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=770 main=0.8234, best_cooldown=0.9081
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=1300 main=0.8252, best_cooldown=0.9094
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=2100 main=0.8227, best_cooldown=0.9066
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=3500 main=0.8057, best_cooldown=0.8986
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=5900 main=0.7562, best_cooldown=0.8765
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=9800 main=0.6042, best_cooldown=0.8258
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=16000 main=0.1376, best_cooldown=0.1884
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=27000 main=0.1, best_cooldown=0.1001
+search_path step=0 muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=460 tta_val_acc=0.9132
+train_hparams run=0 interval=0 start_step=0 completed_steps=40 total_steps=200 muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=460 muon_nesterov=False
+train_loss run=0 interval=0 step=1 loss=2.31009
+train_loss run=0 interval=0 step=2 loss=2.22292
+train_loss run=0 interval=0 step=3 loss=2.15224
+train_loss run=0 interval=0 step=4 loss=2.08547
+train_loss run=0 interval=0 step=5 loss=2.00066
+train_loss run=0 interval=0 step=6 loss=1.91379
+train_loss run=0 interval=0 step=7 loss=1.84436
+train_loss run=0 interval=0 step=8 loss=1.81934
+train_loss run=0 interval=0 step=9 loss=1.72151
+train_loss run=0 interval=0 step=10 loss=1.6836
+train_loss run=0 interval=0 step=11 loss=1.65505
+train_loss run=0 interval=0 step=12 loss=1.60174
+train_loss run=0 interval=0 step=13 loss=1.57719
+train_loss run=0 interval=0 step=14 loss=1.56053
+train_loss run=0 interval=0 step=15 loss=1.53027
+train_loss run=0 interval=0 step=16 loss=1.51856
+train_loss run=0 interval=0 step=17 loss=1.46974
+train_loss run=0 interval=0 step=18 loss=1.44332
+train_loss run=0 interval=0 step=19 loss=1.43263
+train_loss run=0 interval=0 step=20 loss=1.38966
+train_loss run=0 interval=0 step=21 loss=1.38774
+train_loss run=0 interval=0 step=22 loss=1.38125
+train_loss run=0 interval=0 step=23 loss=1.36135
+train_loss run=0 interval=0 step=24 loss=1.34733
+train_loss run=0 interval=0 step=25 loss=1.3567
+train_loss run=0 interval=0 step=26 loss=1.34979
+train_loss run=0 interval=0 step=27 loss=1.32275
+train_loss run=0 interval=0 step=28 loss=1.33393
+train_loss run=0 interval=0 step=29 loss=1.34095
+train_loss run=0 interval=0 step=30 loss=1.29243
+train_loss run=0 interval=0 step=31 loss=1.3103
+train_loss run=0 interval=0 step=32 loss=1.28952
+train_loss run=0 interval=0 step=33 loss=1.3261
+train_loss run=0 interval=0 step=34 loss=1.27751
+train_loss run=0 interval=0 step=35 loss=1.28321
+train_loss run=0 interval=0 step=36 loss=1.289
+train_loss run=0 interval=0 step=37 loss=1.26763
+train_loss run=0 interval=0 step=38 loss=1.27665
+train_loss run=0 interval=0 step=39 loss=1.25513
+train_loss run=0 interval=0 step=40 loss=1.26191
+interval_boundary_eval run=0 interval=0 step=40 total_steps=200 tta_val_acc=0.8134
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.8567, best_cooldown=0.9251
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=60 -> tta_val_acc=0.9248
+muon_lr=0.028 muon_momentum=0.5 bias_lr=21 head_lr=60 -> tta_val_acc=0.922
+muon_lr=0.047 muon_momentum=0.5 bias_lr=21 head_lr=60 -> tta_val_acc=0.923
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1 head_lr=60 -> tta_val_acc=0.923
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1.7 head_lr=60 -> tta_val_acc=0.9234
+muon_lr=0.036 muon_momentum=0.5 bias_lr=2.8 head_lr=60 -> tta_val_acc=0.9239
+muon_lr=0.036 muon_momentum=0.5 bias_lr=4.6 head_lr=60 -> tta_val_acc=0.9243
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=60 -> tta_val_acc=0.9248
+muon_lr=0.036 muon_momentum=0.5 bias_lr=13 head_lr=60 -> tta_val_acc=0.9239
+muon_lr=0.036 muon_momentum=0.5 bias_lr=36 head_lr=60 -> tta_val_acc=0.9232
+muon_lr=0.036 muon_momentum=0.5 bias_lr=60 head_lr=60 -> tta_val_acc=0.9239
+muon_lr=0.036 muon_momentum=0.5 bias_lr=99 head_lr=60 -> tta_val_acc=0.9231
+muon_lr=0.036 muon_momentum=0.5 bias_lr=170 head_lr=60 -> tta_val_acc=0.9179
+muon_lr=0.036 muon_momentum=0.5 bias_lr=280 head_lr=60 -> tta_val_acc=0.9142
+muon_lr=0.036 muon_momentum=0.5 bias_lr=460 head_lr=60 -> tta_val_acc=0.8667
+muon_lr=0.036 muon_momentum=0.5 bias_lr=770 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1300 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=2100 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=3500 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=5900 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=9800 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=16000 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=27000 head_lr=60 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=1 -> tta_val_acc=0.9244
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=1.7 -> tta_val_acc=0.9232
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=2.8 -> tta_val_acc=0.9242
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=4.6 -> tta_val_acc=0.9243
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=7.7 -> tta_val_acc=0.9237
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=13 -> tta_val_acc=0.9248
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=21 -> tta_val_acc=0.925
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=36 -> tta_val_acc=0.9246
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.9238
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=170 -> tta_val_acc=0.9251
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=280 -> tta_val_acc=0.924
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=460 -> tta_val_acc=0.9237
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=770 -> tta_val_acc=0.9246
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=1300 -> tta_val_acc=0.9249
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=2100 -> tta_val_acc=0.9237
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=3500 -> tta_val_acc=0.9237
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=5900 -> tta_val_acc=0.9132
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=9800 -> tta_val_acc=0.903
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=16000 -> tta_val_acc=0.893
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=27000 -> tta_val_acc=0.8475
+muon_lr=0.028 muon_momentum=0.5 bias_lr=7.7 head_lr=170 -> tta_val_acc=0.9227
+muon_lr=0.047 muon_momentum=0.5 bias_lr=7.7 head_lr=170 -> tta_val_acc=0.9233
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1 head_lr=170 -> tta_val_acc=0.9228
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1.7 head_lr=170 -> tta_val_acc=0.9243
+muon_lr=0.036 muon_momentum=0.5 bias_lr=2.8 head_lr=170 -> tta_val_acc=0.924
+muon_lr=0.036 muon_momentum=0.5 bias_lr=4.6 head_lr=170 -> tta_val_acc=0.9241
+muon_lr=0.036 muon_momentum=0.5 bias_lr=13 head_lr=170 -> tta_val_acc=0.9243
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=170 -> tta_val_acc=0.9239
+muon_lr=0.036 muon_momentum=0.5 bias_lr=36 head_lr=170 -> tta_val_acc=0.9237
+muon_lr=0.036 muon_momentum=0.5 bias_lr=60 head_lr=170 -> tta_val_acc=0.9236
+muon_lr=0.036 muon_momentum=0.5 bias_lr=99 head_lr=170 -> tta_val_acc=0.9235
+muon_lr=0.036 muon_momentum=0.5 bias_lr=170 head_lr=170 -> tta_val_acc=0.9167
+muon_lr=0.036 muon_momentum=0.5 bias_lr=280 head_lr=170 -> tta_val_acc=0.9135
+muon_lr=0.036 muon_momentum=0.5 bias_lr=460 head_lr=170 -> tta_val_acc=0.6182
+muon_lr=0.036 muon_momentum=0.5 bias_lr=770 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1300 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=2100 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=3500 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=5900 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=9800 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=16000 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=27000 head_lr=170 -> tta_val_acc=0.1
+search_path step=0 muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=60 tta_val_acc=0.9248
+search_path step=1 muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=60 tta_val_acc=0.9248
+search_path step=2 muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=170 tta_val_acc=0.9251
+main hparams: muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.8567, best_cooldown=0.9251
+main hparams: muon_lr=0.13 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.8798, best_cooldown=0.9261
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.8933, best_cooldown=0.9279
+main hparams: muon_lr=0.078 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.9008, best_cooldown=0.9254
+main hparams: muon_lr=0.1 muon_momentum=0.4 bias_lr=36 head_lr=460 main=0.8902, best_cooldown=0.9275
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=36 head_lr=460 main=0.8837, best_cooldown=0.9261
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=1 head_lr=460 main=0.8907, best_cooldown=0.9258
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=1.7 head_lr=460 main=0.8901, best_cooldown=0.9258
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=2.8 head_lr=460 main=0.8913, best_cooldown=0.9271
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=4.6 head_lr=460 main=0.8905, best_cooldown=0.9279
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=7.7 head_lr=460 main=0.8911, best_cooldown=0.9277
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=13 head_lr=460 main=0.8911, best_cooldown=0.9271
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.8919, best_cooldown=0.9294
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=60 head_lr=460 main=0.8878, best_cooldown=0.9271
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=99 head_lr=460 main=0.8808, best_cooldown=0.9278
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=170 head_lr=460 main=0.8751, best_cooldown=0.9269
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=280 head_lr=460 main=0.8566, best_cooldown=0.9242
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=460 head_lr=460 main=0.77, best_cooldown=0.898
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=770 head_lr=460 main=0.2788, best_cooldown=0.3614
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=1300 head_lr=460 main=0.1003, best_cooldown=0.1564
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=2100 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=3500 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=5900 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=9800 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=16000 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=27000 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=1 main=0.8926, best_cooldown=0.9276
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=1.7 main=0.8933, best_cooldown=0.9278
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=2.8 main=0.8907, best_cooldown=0.9257
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=4.6 main=0.8939, best_cooldown=0.9271
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=7.7 main=0.8926, best_cooldown=0.9288
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=13 main=0.8917, best_cooldown=0.9276
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=21 main=0.8952, best_cooldown=0.9267
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=36 main=0.8922, best_cooldown=0.9269
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=60 main=0.8907, best_cooldown=0.9278
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=99 main=0.8955, best_cooldown=0.9272
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=170 main=0.8929, best_cooldown=0.9277
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=280 main=0.8908, best_cooldown=0.9285
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=770 main=0.89, best_cooldown=0.926
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=1300 main=0.887, best_cooldown=0.9268
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=2100 main=0.8886, best_cooldown=0.9261
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=3500 main=0.8918, best_cooldown=0.9243
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=5900 main=0.8792, best_cooldown=0.9187
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=9800 main=0.7907, best_cooldown=0.8872
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=16000 main=0.5108, best_cooldown=0.6317
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=27000 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.078 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.9042, best_cooldown=0.9272
+main hparams: muon_lr=0.13 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.8756, best_cooldown=0.9254
+main hparams: muon_lr=0.1 muon_momentum=0.4 bias_lr=21 head_lr=460 main=0.8947, best_cooldown=0.9277
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=460 main=0.8872, best_cooldown=0.9259
+search_path step=0 muon_lr=0.17 muon_momentum=0.5 bias_lr=36 head_lr=460 tta_val_acc=0.9251
+search_path step=1 muon_lr=0.1 muon_momentum=0.5 bias_lr=36 head_lr=460 tta_val_acc=0.9279
+search_path step=2 muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=460 tta_val_acc=0.9294
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.8919, best_cooldown=0.93
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=170 -> tta_val_acc=0.9294
+muon_lr=0.028 muon_momentum=0.5 bias_lr=7.7 head_lr=170 -> tta_val_acc=0.9289
+muon_lr=0.047 muon_momentum=0.5 bias_lr=7.7 head_lr=170 -> tta_val_acc=0.9274
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1 head_lr=170 -> tta_val_acc=0.9284
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1.7 head_lr=170 -> tta_val_acc=0.9283
+muon_lr=0.036 muon_momentum=0.5 bias_lr=2.8 head_lr=170 -> tta_val_acc=0.9289
+muon_lr=0.036 muon_momentum=0.5 bias_lr=4.6 head_lr=170 -> tta_val_acc=0.9291
+muon_lr=0.036 muon_momentum=0.5 bias_lr=13 head_lr=170 -> tta_val_acc=0.9287
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=170 -> tta_val_acc=0.9281
+muon_lr=0.036 muon_momentum=0.5 bias_lr=36 head_lr=170 -> tta_val_acc=0.9269
+muon_lr=0.036 muon_momentum=0.5 bias_lr=60 head_lr=170 -> tta_val_acc=0.9274
+muon_lr=0.036 muon_momentum=0.5 bias_lr=99 head_lr=170 -> tta_val_acc=0.9265
+muon_lr=0.036 muon_momentum=0.5 bias_lr=170 head_lr=170 -> tta_val_acc=0.9238
+muon_lr=0.036 muon_momentum=0.5 bias_lr=280 head_lr=170 -> tta_val_acc=0.915
+muon_lr=0.036 muon_momentum=0.5 bias_lr=460 head_lr=170 -> tta_val_acc=0.4447
+muon_lr=0.036 muon_momentum=0.5 bias_lr=770 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1300 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=2100 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=3500 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=5900 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=9800 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=16000 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=27000 head_lr=170 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=1 -> tta_val_acc=0.9276
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=1.7 -> tta_val_acc=0.9289
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=2.8 -> tta_val_acc=0.9288
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=4.6 -> tta_val_acc=0.9287
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=7.7 -> tta_val_acc=0.9293
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=13 -> tta_val_acc=0.9284
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=21 -> tta_val_acc=0.9289
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=36 -> tta_val_acc=0.9285
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=60 -> tta_val_acc=0.9293
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.93
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=280 -> tta_val_acc=0.9285
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=460 -> tta_val_acc=0.9288
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=770 -> tta_val_acc=0.9284
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=1300 -> tta_val_acc=0.9279
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=2100 -> tta_val_acc=0.9272
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=3500 -> tta_val_acc=0.9268
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=5900 -> tta_val_acc=0.9209
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=9800 -> tta_val_acc=0.9091
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=16000 -> tta_val_acc=0.8945
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=27000 -> tta_val_acc=0.845
+muon_lr=0.028 muon_momentum=0.5 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.9285
+muon_lr=0.047 muon_momentum=0.5 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.928
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1 head_lr=99 -> tta_val_acc=0.929
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1.7 head_lr=99 -> tta_val_acc=0.9281
+muon_lr=0.036 muon_momentum=0.5 bias_lr=2.8 head_lr=99 -> tta_val_acc=0.929
+muon_lr=0.036 muon_momentum=0.5 bias_lr=4.6 head_lr=99 -> tta_val_acc=0.9284
+muon_lr=0.036 muon_momentum=0.5 bias_lr=13 head_lr=99 -> tta_val_acc=0.9287
+muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=99 -> tta_val_acc=0.9279
+muon_lr=0.036 muon_momentum=0.5 bias_lr=36 head_lr=99 -> tta_val_acc=0.927
+muon_lr=0.036 muon_momentum=0.5 bias_lr=60 head_lr=99 -> tta_val_acc=0.928
+muon_lr=0.036 muon_momentum=0.5 bias_lr=99 head_lr=99 -> tta_val_acc=0.9274
+muon_lr=0.036 muon_momentum=0.5 bias_lr=170 head_lr=99 -> tta_val_acc=0.9233
+muon_lr=0.036 muon_momentum=0.5 bias_lr=280 head_lr=99 -> tta_val_acc=0.9166
+muon_lr=0.036 muon_momentum=0.5 bias_lr=460 head_lr=99 -> tta_val_acc=0.5371
+muon_lr=0.036 muon_momentum=0.5 bias_lr=770 head_lr=99 -> tta_val_acc=0.1012
+muon_lr=0.036 muon_momentum=0.5 bias_lr=1300 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=2100 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=3500 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=5900 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=9800 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=16000 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.036 muon_momentum=0.5 bias_lr=27000 head_lr=99 -> tta_val_acc=0.1
+search_path step=0 muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=170 tta_val_acc=0.9294
+search_path step=1 muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=99 tta_val_acc=0.93
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.8919, best_cooldown=0.93
+main hparams: muon_lr=0.078 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.9042, best_cooldown=0.9271
+main hparams: muon_lr=0.13 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.8756, best_cooldown=0.9259
+main hparams: muon_lr=0.1 muon_momentum=0.4 bias_lr=21 head_lr=460 main=0.8947, best_cooldown=0.9275
+main hparams: muon_lr=0.1 muon_momentum=0.6 bias_lr=21 head_lr=460 main=0.8872, best_cooldown=0.9263
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=1 head_lr=460 main=0.8907, best_cooldown=0.9255
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=1.7 head_lr=460 main=0.8901, best_cooldown=0.9256
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=2.8 head_lr=460 main=0.8913, best_cooldown=0.9283
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=4.6 head_lr=460 main=0.8905, best_cooldown=0.9277
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=7.7 head_lr=460 main=0.8911, best_cooldown=0.9279
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=13 head_lr=460 main=0.8911, best_cooldown=0.9268
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.8933, best_cooldown=0.9277
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=60 head_lr=460 main=0.8878, best_cooldown=0.9266
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=99 head_lr=460 main=0.8808, best_cooldown=0.9274
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=170 head_lr=460 main=0.8751, best_cooldown=0.9269
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=280 head_lr=460 main=0.8566, best_cooldown=0.9232
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=460 head_lr=460 main=0.77, best_cooldown=0.8974
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=770 head_lr=460 main=0.2788, best_cooldown=0.3414
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=1300 head_lr=460 main=0.1003, best_cooldown=0.1418
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=2100 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=3500 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=5900 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=9800 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=16000 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=27000 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=1 main=0.8926, best_cooldown=0.9279
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=1.7 main=0.8933, best_cooldown=0.9279
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=2.8 main=0.8907, best_cooldown=0.9258
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=4.6 main=0.8939, best_cooldown=0.927
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=7.7 main=0.8926, best_cooldown=0.9285
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=13 main=0.8917, best_cooldown=0.9273
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=21 main=0.8952, best_cooldown=0.9264
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=36 main=0.8922, best_cooldown=0.9277
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=60 main=0.8907, best_cooldown=0.9272
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=99 main=0.8955, best_cooldown=0.9273
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=170 main=0.8929, best_cooldown=0.927
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=280 main=0.8908, best_cooldown=0.927
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=770 main=0.89, best_cooldown=0.9268
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=1300 main=0.887, best_cooldown=0.9272
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=2100 main=0.8886, best_cooldown=0.9263
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=3500 main=0.8918, best_cooldown=0.9238
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=5900 main=0.8792, best_cooldown=0.9187
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=9800 main=0.7907, best_cooldown=0.8814
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=16000 main=0.5108, best_cooldown=0.634
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=27000 main=0.1, best_cooldown=0.1
+search_path step=0 muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=460 tta_val_acc=0.93
+train_hparams run=0 interval=1 start_step=40 completed_steps=40 total_steps=200 muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=460 muon_nesterov=False
+train_loss run=0 interval=1 step=41 loss=1.28725
+train_loss run=0 interval=1 step=42 loss=1.21357
+train_loss run=0 interval=1 step=43 loss=1.19141
+train_loss run=0 interval=1 step=44 loss=1.20563
+train_loss run=0 interval=1 step=45 loss=1.17769
+train_loss run=0 interval=1 step=46 loss=1.18893
+train_loss run=0 interval=1 step=47 loss=1.1778
+train_loss run=0 interval=1 step=48 loss=1.18891
+train_loss run=0 interval=1 step=49 loss=1.17662
+train_loss run=0 interval=1 step=50 loss=1.17811
+train_loss run=0 interval=1 step=51 loss=1.13965
+train_loss run=0 interval=1 step=52 loss=1.16225
+train_loss run=0 interval=1 step=53 loss=1.15411
+train_loss run=0 interval=1 step=54 loss=1.14681
+train_loss run=0 interval=1 step=55 loss=1.15473
+train_loss run=0 interval=1 step=56 loss=1.17724
+train_loss run=0 interval=1 step=57 loss=1.14008
+train_loss run=0 interval=1 step=58 loss=1.14308
+train_loss run=0 interval=1 step=59 loss=1.13924
+train_loss run=0 interval=1 step=60 loss=1.12852
+train_loss run=0 interval=1 step=61 loss=1.13717
+train_loss run=0 interval=1 step=62 loss=1.14456
+train_loss run=0 interval=1 step=63 loss=1.12627
+train_loss run=0 interval=1 step=64 loss=1.12884
+train_loss run=0 interval=1 step=65 loss=1.13619
+train_loss run=0 interval=1 step=66 loss=1.15095
+train_loss run=0 interval=1 step=67 loss=1.14491
+train_loss run=0 interval=1 step=68 loss=1.1331
+train_loss run=0 interval=1 step=69 loss=1.14356
+train_loss run=0 interval=1 step=70 loss=1.12794
+train_loss run=0 interval=1 step=71 loss=1.14499
+train_loss run=0 interval=1 step=72 loss=1.12667
+train_loss run=0 interval=1 step=73 loss=1.13918
+train_loss run=0 interval=1 step=74 loss=1.12451
+train_loss run=0 interval=1 step=75 loss=1.14954
+train_loss run=0 interval=1 step=76 loss=1.09917
+train_loss run=0 interval=1 step=77 loss=1.1105
+train_loss run=0 interval=1 step=78 loss=1.10359
+train_loss run=0 interval=1 step=79 loss=1.11123
+train_loss run=0 interval=1 step=80 loss=1.10661
+interval_boundary_eval run=0 interval=1 step=80 total_steps=200 tta_val_acc=0.8919
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.9008, best_cooldown=0.9327
+muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.9294
+muon_lr=0.028 muon_momentum=0.5 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.9305
+muon_lr=0.022 muon_momentum=0.5 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.9315
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.9327
+muon_lr=0.013 muon_momentum=0.5 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.9319
+muon_lr=0.017 muon_momentum=0.5 bias_lr=1 head_lr=99 -> tta_val_acc=0.9319
+muon_lr=0.017 muon_momentum=0.5 bias_lr=1.7 head_lr=99 -> tta_val_acc=0.9325
+muon_lr=0.017 muon_momentum=0.5 bias_lr=2.8 head_lr=99 -> tta_val_acc=0.9323
+muon_lr=0.017 muon_momentum=0.5 bias_lr=4.6 head_lr=99 -> tta_val_acc=0.9325
+muon_lr=0.017 muon_momentum=0.5 bias_lr=13 head_lr=99 -> tta_val_acc=0.932
+muon_lr=0.017 muon_momentum=0.5 bias_lr=21 head_lr=99 -> tta_val_acc=0.9317
+muon_lr=0.017 muon_momentum=0.5 bias_lr=36 head_lr=99 -> tta_val_acc=0.9313
+muon_lr=0.017 muon_momentum=0.5 bias_lr=60 head_lr=99 -> tta_val_acc=0.9304
+muon_lr=0.017 muon_momentum=0.5 bias_lr=99 head_lr=99 -> tta_val_acc=0.9293
+muon_lr=0.017 muon_momentum=0.5 bias_lr=170 head_lr=99 -> tta_val_acc=0.9254
+muon_lr=0.017 muon_momentum=0.5 bias_lr=280 head_lr=99 -> tta_val_acc=0.8194
+muon_lr=0.017 muon_momentum=0.5 bias_lr=460 head_lr=99 -> tta_val_acc=0.2665
+muon_lr=0.017 muon_momentum=0.5 bias_lr=770 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.017 muon_momentum=0.5 bias_lr=1300 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.017 muon_momentum=0.5 bias_lr=2100 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.017 muon_momentum=0.5 bias_lr=3500 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.017 muon_momentum=0.5 bias_lr=5900 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.017 muon_momentum=0.5 bias_lr=9800 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.017 muon_momentum=0.5 bias_lr=16000 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.017 muon_momentum=0.5 bias_lr=27000 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=1 -> tta_val_acc=0.9323
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=1.7 -> tta_val_acc=0.9322
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=2.8 -> tta_val_acc=0.9324
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=4.6 -> tta_val_acc=0.9322
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=7.7 -> tta_val_acc=0.9325
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=13 -> tta_val_acc=0.9326
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=21 -> tta_val_acc=0.9325
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=36 -> tta_val_acc=0.9322
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=60 -> tta_val_acc=0.9323
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=170 -> tta_val_acc=0.9323
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=280 -> tta_val_acc=0.9325
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=460 -> tta_val_acc=0.9324
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=770 -> tta_val_acc=0.9324
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=1300 -> tta_val_acc=0.932
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=2100 -> tta_val_acc=0.9318
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=3500 -> tta_val_acc=0.9312
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=5900 -> tta_val_acc=0.9115
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=9800 -> tta_val_acc=0.9026
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=16000 -> tta_val_acc=0.8835
+muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=27000 -> tta_val_acc=0.6775
+search_path step=0 muon_lr=0.036 muon_momentum=0.5 bias_lr=7.7 head_lr=99 tta_val_acc=0.9294
+search_path step=1 muon_lr=0.017 muon_momentum=0.5 bias_lr=7.7 head_lr=99 tta_val_acc=0.9327
+main hparams: muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.9008, best_cooldown=0.9327
+main hparams: muon_lr=0.078 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.9134, best_cooldown=0.9333
+main hparams: muon_lr=0.06 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.9208, best_cooldown=0.9335
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.9266, best_cooldown=0.9346
+main hparams: muon_lr=0.036 muon_momentum=0.5 bias_lr=21 head_lr=460 main=0.9278, best_cooldown=0.9343
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=21 head_lr=460 main=0.9271, best_cooldown=0.934
+main hparams: muon_lr=0.047 muon_momentum=0.6 bias_lr=21 head_lr=460 main=0.9255, best_cooldown=0.934
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=1 head_lr=460 main=0.9279, best_cooldown=0.9348
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=1.7 head_lr=460 main=0.9265, best_cooldown=0.9344
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=460 main=0.928, best_cooldown=0.935
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=4.6 head_lr=460 main=0.9263, best_cooldown=0.9341
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=7.7 head_lr=460 main=0.9265, best_cooldown=0.9344
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=13 head_lr=460 main=0.9267, best_cooldown=0.9344
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=36 head_lr=460 main=0.9262, best_cooldown=0.9334
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=60 head_lr=460 main=0.9255, best_cooldown=0.9338
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=99 head_lr=460 main=0.9239, best_cooldown=0.9339
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=170 head_lr=460 main=0.9192, best_cooldown=0.935
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=280 head_lr=460 main=0.9018, best_cooldown=0.9308
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=460 head_lr=460 main=0.2098, best_cooldown=0.3565
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=770 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=1300 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2100 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=3500 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=5900 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=9800 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=16000 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=27000 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=1 main=0.9274, best_cooldown=0.9336
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=1.7 main=0.9267, best_cooldown=0.9343
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=2.8 main=0.9271, best_cooldown=0.9337
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=4.6 main=0.9272, best_cooldown=0.934
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=7.7 main=0.9281, best_cooldown=0.934
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=13 main=0.9273, best_cooldown=0.9323
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=21 main=0.9266, best_cooldown=0.9333
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=36 main=0.927, best_cooldown=0.9335
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=60 main=0.9273, best_cooldown=0.9341
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=99 main=0.9277, best_cooldown=0.9343
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=170 main=0.9277, best_cooldown=0.9342
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=280 main=0.928, best_cooldown=0.9343
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=770 main=0.9268, best_cooldown=0.9338
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=1300 main=0.9262, best_cooldown=0.9333
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=2100 main=0.9253, best_cooldown=0.9345
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=3500 main=0.9242, best_cooldown=0.9345
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=5900 main=0.9182, best_cooldown=0.9303
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=9800 main=0.9045, best_cooldown=0.9246
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=16000 main=0.9006, best_cooldown=0.9208
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=27000 main=0.8859, best_cooldown=0.9028
+main hparams: muon_lr=0.036 muon_momentum=0.5 bias_lr=2.8 head_lr=460 main=0.9283, best_cooldown=0.9343
+main hparams: muon_lr=0.06 muon_momentum=0.5 bias_lr=2.8 head_lr=460 main=0.9221, best_cooldown=0.9348
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=460 main=0.9277, best_cooldown=0.9355
+main hparams: muon_lr=0.047 muon_momentum=0.3 bias_lr=2.8 head_lr=460 main=0.928, best_cooldown=0.9343
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1 head_lr=460 main=0.9276, best_cooldown=0.9344
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1.7 head_lr=460 main=0.9277, best_cooldown=0.9347
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=4.6 head_lr=460 main=0.928, best_cooldown=0.9353
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=7.7 head_lr=460 main=0.9275, best_cooldown=0.9349
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=13 head_lr=460 main=0.928, best_cooldown=0.9345
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=36 head_lr=460 main=0.9272, best_cooldown=0.9338
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=60 head_lr=460 main=0.926, best_cooldown=0.9349
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=99 head_lr=460 main=0.9236, best_cooldown=0.9344
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=170 head_lr=460 main=0.9202, best_cooldown=0.934
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=280 head_lr=460 main=0.8927, best_cooldown=0.9311
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=460 head_lr=460 main=0.1002, best_cooldown=0.4089
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=770 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1300 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2100 head_lr=460 main=0.1, best_cooldown=0.0964
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=3500 head_lr=460 main=0.1, best_cooldown=0.1005
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=5900 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=9800 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=16000 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=27000 head_lr=460 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1 main=0.9275, best_cooldown=0.9345
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9276, best_cooldown=0.9351
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=2.8 main=0.9271, best_cooldown=0.9351
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=4.6 main=0.9258, best_cooldown=0.9357
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=7.7 main=0.9275, best_cooldown=0.9346
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=13 main=0.9277, best_cooldown=0.9362
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=21 main=0.9272, best_cooldown=0.9348
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=36 main=0.9283, best_cooldown=0.9345
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=60 main=0.9283, best_cooldown=0.9341
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=99 main=0.9269, best_cooldown=0.9355
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=170 main=0.9275, best_cooldown=0.9352
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=280 main=0.9271, best_cooldown=0.9359
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=770 main=0.9268, best_cooldown=0.935
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1300 main=0.9261, best_cooldown=0.9342
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=2100 main=0.9254, best_cooldown=0.9331
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=3500 main=0.9225, best_cooldown=0.9349
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=5900 main=0.922, best_cooldown=0.9314
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=9800 main=0.9095, best_cooldown=0.9244
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=16000 main=0.9036, best_cooldown=0.9196
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=27000 main=0.8867, best_cooldown=0.9079
+main hparams: muon_lr=0.036 muon_momentum=0.4 bias_lr=2.8 head_lr=13 main=0.9293, best_cooldown=0.9347
+main hparams: muon_lr=0.06 muon_momentum=0.4 bias_lr=2.8 head_lr=13 main=0.9211, best_cooldown=0.9344
+main hparams: muon_lr=0.047 muon_momentum=0.3 bias_lr=2.8 head_lr=13 main=0.927, best_cooldown=0.9355
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1 head_lr=13 main=0.9266, best_cooldown=0.9344
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1.7 head_lr=13 main=0.9271, best_cooldown=0.9353
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=4.6 head_lr=13 main=0.9274, best_cooldown=0.934
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=7.7 head_lr=13 main=0.9278, best_cooldown=0.9341
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=13 head_lr=13 main=0.9276, best_cooldown=0.935
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=21 head_lr=13 main=0.9271, best_cooldown=0.9351
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=36 head_lr=13 main=0.9263, best_cooldown=0.9338
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=60 head_lr=13 main=0.9266, best_cooldown=0.935
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=99 head_lr=13 main=0.9243, best_cooldown=0.9347
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=170 head_lr=13 main=0.9202, best_cooldown=0.9346
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=280 head_lr=13 main=0.9066, best_cooldown=0.9316
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=460 head_lr=13 main=0.7618, best_cooldown=0.8808
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=770 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1300 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2100 head_lr=13 main=0.1, best_cooldown=0.1033
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=3500 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=5900 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=9800 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=16000 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=27000 head_lr=13 main=0.1, best_cooldown=0.1
+search_path step=0 muon_lr=0.1 muon_momentum=0.5 bias_lr=21 head_lr=460 tta_val_acc=0.9327
+search_path step=1 muon_lr=0.047 muon_momentum=0.5 bias_lr=21 head_lr=460 tta_val_acc=0.9346
+search_path step=2 muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=460 tta_val_acc=0.935
+search_path step=3 muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=460 tta_val_acc=0.9355
+search_path step=4 muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=13 tta_val_acc=0.9362
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=13 main=0.9277, best_cooldown=0.9365
+muon_lr=0.017 muon_momentum=0.4 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.9362
+muon_lr=0.013 muon_momentum=0.4 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.9363
+muon_lr=0.01 muon_momentum=0.4 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.9358
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1 head_lr=99 -> tta_val_acc=0.9361
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=99 -> tta_val_acc=0.9361
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=99 -> tta_val_acc=0.9361
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=99 -> tta_val_acc=0.9365
+muon_lr=0.013 muon_momentum=0.4 bias_lr=13 head_lr=99 -> tta_val_acc=0.9359
+muon_lr=0.013 muon_momentum=0.4 bias_lr=21 head_lr=99 -> tta_val_acc=0.9357
+muon_lr=0.013 muon_momentum=0.4 bias_lr=36 head_lr=99 -> tta_val_acc=0.9363
+muon_lr=0.013 muon_momentum=0.4 bias_lr=60 head_lr=99 -> tta_val_acc=0.934
+muon_lr=0.013 muon_momentum=0.4 bias_lr=99 head_lr=99 -> tta_val_acc=0.9327
+muon_lr=0.013 muon_momentum=0.4 bias_lr=170 head_lr=99 -> tta_val_acc=0.9276
+muon_lr=0.013 muon_momentum=0.4 bias_lr=280 head_lr=99 -> tta_val_acc=0.8212
+muon_lr=0.013 muon_momentum=0.4 bias_lr=460 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=770 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1300 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2100 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=3500 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=5900 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=9800 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=16000 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=27000 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=1 -> tta_val_acc=0.9361
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=1.7 -> tta_val_acc=0.9362
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=2.8 -> tta_val_acc=0.9361
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=4.6 -> tta_val_acc=0.9361
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=7.7 -> tta_val_acc=0.9361
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=13 -> tta_val_acc=0.9361
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=21 -> tta_val_acc=0.9359
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=36 -> tta_val_acc=0.936
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=60 -> tta_val_acc=0.9362
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=170 -> tta_val_acc=0.9361
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=280 -> tta_val_acc=0.9362
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=460 -> tta_val_acc=0.9363
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=770 -> tta_val_acc=0.9362
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=1300 -> tta_val_acc=0.9356
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=2100 -> tta_val_acc=0.9352
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=3500 -> tta_val_acc=0.9349
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=5900 -> tta_val_acc=0.9263
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=9800 -> tta_val_acc=0.9132
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=16000 -> tta_val_acc=0.8847
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=27000 -> tta_val_acc=0.8619
+muon_lr=0.01 muon_momentum=0.4 bias_lr=4.6 head_lr=99 -> tta_val_acc=0.9362
+muon_lr=0.017 muon_momentum=0.4 bias_lr=4.6 head_lr=99 -> tta_val_acc=0.9363
+search_path step=0 muon_lr=0.017 muon_momentum=0.4 bias_lr=7.7 head_lr=99 tta_val_acc=0.9362
+search_path step=1 muon_lr=0.013 muon_momentum=0.4 bias_lr=7.7 head_lr=99 tta_val_acc=0.9363
+search_path step=2 muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=99 tta_val_acc=0.9365
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=13 main=0.9277, best_cooldown=0.9365
+main hparams: muon_lr=0.036 muon_momentum=0.4 bias_lr=2.8 head_lr=13 main=0.9293, best_cooldown=0.9341
+main hparams: muon_lr=0.06 muon_momentum=0.4 bias_lr=2.8 head_lr=13 main=0.9211, best_cooldown=0.9343
+main hparams: muon_lr=0.047 muon_momentum=0.3 bias_lr=2.8 head_lr=13 main=0.927, best_cooldown=0.935
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=13 main=0.9273, best_cooldown=0.9332
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1 head_lr=13 main=0.9266, best_cooldown=0.9348
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1.7 head_lr=13 main=0.9271, best_cooldown=0.9347
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=4.6 head_lr=13 main=0.9274, best_cooldown=0.935
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=7.7 head_lr=13 main=0.9278, best_cooldown=0.9346
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=13 head_lr=13 main=0.9276, best_cooldown=0.9346
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=21 head_lr=13 main=0.9271, best_cooldown=0.9356
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=36 head_lr=13 main=0.9263, best_cooldown=0.9349
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=60 head_lr=13 main=0.9266, best_cooldown=0.9347
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=99 head_lr=13 main=0.9243, best_cooldown=0.9345
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=170 head_lr=13 main=0.9202, best_cooldown=0.9351
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=280 head_lr=13 main=0.9066, best_cooldown=0.9304
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=460 head_lr=13 main=0.7618, best_cooldown=0.879
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=770 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1300 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2100 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=3500 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=5900 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=9800 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=16000 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=27000 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1 main=0.9275, best_cooldown=0.9345
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9276, best_cooldown=0.9352
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=2.8 main=0.9271, best_cooldown=0.9353
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=4.6 main=0.9258, best_cooldown=0.935
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=7.7 main=0.9275, best_cooldown=0.9357
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=21 main=0.9272, best_cooldown=0.9359
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=36 main=0.9283, best_cooldown=0.9348
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=60 main=0.9283, best_cooldown=0.9355
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=99 main=0.9269, best_cooldown=0.9364
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=170 main=0.9275, best_cooldown=0.9351
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=280 main=0.9271, best_cooldown=0.9353
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=460 main=0.9277, best_cooldown=0.935
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=770 main=0.9268, best_cooldown=0.9358
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1300 main=0.9261, best_cooldown=0.9347
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=2100 main=0.9254, best_cooldown=0.9329
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=3500 main=0.9225, best_cooldown=0.9348
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=5900 main=0.922, best_cooldown=0.9314
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=9800 main=0.9095, best_cooldown=0.923
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=16000 main=0.9036, best_cooldown=0.9213
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=27000 main=0.8867, best_cooldown=0.9108
+search_path step=0 muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=13 tta_val_acc=0.9365
+train_hparams run=0 interval=2 start_step=80 completed_steps=40 total_steps=200 muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=13 muon_nesterov=False
+train_loss run=0 interval=2 step=81 loss=1.11385
+train_loss run=0 interval=2 step=82 loss=1.08667
+train_loss run=0 interval=2 step=83 loss=1.07624
+train_loss run=0 interval=2 step=84 loss=1.07032
+train_loss run=0 interval=2 step=85 loss=1.07248
+train_loss run=0 interval=2 step=86 loss=1.05859
+train_loss run=0 interval=2 step=87 loss=1.05598
+train_loss run=0 interval=2 step=88 loss=1.06525
+train_loss run=0 interval=2 step=89 loss=1.05098
+train_loss run=0 interval=2 step=90 loss=1.05672
+train_loss run=0 interval=2 step=91 loss=1.04848
+train_loss run=0 interval=2 step=92 loss=1.049
+train_loss run=0 interval=2 step=93 loss=1.05544
+train_loss run=0 interval=2 step=94 loss=1.06193
+train_loss run=0 interval=2 step=95 loss=1.06353
+train_loss run=0 interval=2 step=96 loss=1.04827
+train_loss run=0 interval=2 step=97 loss=1.04489
+train_loss run=0 interval=2 step=98 loss=1.05074
+train_loss run=0 interval=2 step=99 loss=1.04948
+train_loss run=0 interval=2 step=100 loss=1.05531
+train_loss run=0 interval=2 step=101 loss=1.01441
+train_loss run=0 interval=2 step=102 loss=1.02199
+train_loss run=0 interval=2 step=103 loss=1.01515
+train_loss run=0 interval=2 step=104 loss=1.01839
+train_loss run=0 interval=2 step=105 loss=1.00508
+train_loss run=0 interval=2 step=106 loss=1.02396
+train_loss run=0 interval=2 step=107 loss=1.01726
+train_loss run=0 interval=2 step=108 loss=1.01113
+train_loss run=0 interval=2 step=109 loss=1.01487
+train_loss run=0 interval=2 step=110 loss=1.01672
+train_loss run=0 interval=2 step=111 loss=1.01275
+train_loss run=0 interval=2 step=112 loss=1.00676
+train_loss run=0 interval=2 step=113 loss=1.01998
+train_loss run=0 interval=2 step=114 loss=1.01159
+train_loss run=0 interval=2 step=115 loss=1.00745
+train_loss run=0 interval=2 step=116 loss=1.01726
+train_loss run=0 interval=2 step=117 loss=1.01452
+train_loss run=0 interval=2 step=118 loss=1.00593
+train_loss run=0 interval=2 step=119 loss=1.01605
+train_loss run=0 interval=2 step=120 loss=0.999245
+interval_boundary_eval run=0 interval=2 step=120 total_steps=200 tta_val_acc=0.9277
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=13 main=0.9288, best_cooldown=0.9383
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=99 -> tta_val_acc=0.9382
+muon_lr=0.01 muon_momentum=0.4 bias_lr=4.6 head_lr=99 -> tta_val_acc=0.9381
+muon_lr=0.017 muon_momentum=0.4 bias_lr=4.6 head_lr=99 -> tta_val_acc=0.9369
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1 head_lr=99 -> tta_val_acc=0.938
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=99 -> tta_val_acc=0.9383
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=99 -> tta_val_acc=0.9383
+muon_lr=0.013 muon_momentum=0.4 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.9371
+muon_lr=0.013 muon_momentum=0.4 bias_lr=13 head_lr=99 -> tta_val_acc=0.9369
+muon_lr=0.013 muon_momentum=0.4 bias_lr=21 head_lr=99 -> tta_val_acc=0.9369
+muon_lr=0.013 muon_momentum=0.4 bias_lr=36 head_lr=99 -> tta_val_acc=0.9366
+muon_lr=0.013 muon_momentum=0.4 bias_lr=60 head_lr=99 -> tta_val_acc=0.9354
+muon_lr=0.013 muon_momentum=0.4 bias_lr=99 head_lr=99 -> tta_val_acc=0.9348
+muon_lr=0.013 muon_momentum=0.4 bias_lr=170 head_lr=99 -> tta_val_acc=0.9329
+muon_lr=0.013 muon_momentum=0.4 bias_lr=280 head_lr=99 -> tta_val_acc=0.7883
+muon_lr=0.013 muon_momentum=0.4 bias_lr=460 head_lr=99 -> tta_val_acc=0.5034
+muon_lr=0.013 muon_momentum=0.4 bias_lr=770 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1300 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2100 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=3500 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=5900 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=9800 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=16000 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=27000 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=1 -> tta_val_acc=0.9377
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=1.7 -> tta_val_acc=0.9375
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=2.8 -> tta_val_acc=0.9379
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=4.6 -> tta_val_acc=0.9377
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=7.7 -> tta_val_acc=0.9378
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=13 -> tta_val_acc=0.9379
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=21 -> tta_val_acc=0.9378
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=36 -> tta_val_acc=0.9381
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=60 -> tta_val_acc=0.9378
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=170 -> tta_val_acc=0.9383
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=280 -> tta_val_acc=0.9378
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=460 -> tta_val_acc=0.9376
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=770 -> tta_val_acc=0.9379
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=1300 -> tta_val_acc=0.9376
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=2100 -> tta_val_acc=0.9377
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=3500 -> tta_val_acc=0.9362
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=5900 -> tta_val_acc=0.9246
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=9800 -> tta_val_acc=0.9152
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=16000 -> tta_val_acc=0.9057
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=27000 -> tta_val_acc=0.8316
+muon_lr=0.01 muon_momentum=0.4 bias_lr=1.7 head_lr=99 -> tta_val_acc=0.938
+muon_lr=0.017 muon_momentum=0.4 bias_lr=1.7 head_lr=99 -> tta_val_acc=0.9368
+search_path step=0 muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=99 tta_val_acc=0.9382
+search_path step=1 muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=99 tta_val_acc=0.9383
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=13 main=0.9288, best_cooldown=0.9383
+main hparams: muon_lr=0.036 muon_momentum=0.4 bias_lr=2.8 head_lr=13 main=0.9309, best_cooldown=0.9369
+main hparams: muon_lr=0.06 muon_momentum=0.4 bias_lr=2.8 head_lr=13 main=0.9233, best_cooldown=0.9359
+main hparams: muon_lr=0.047 muon_momentum=0.3 bias_lr=2.8 head_lr=13 main=0.9295, best_cooldown=0.9376
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=13 main=0.927, best_cooldown=0.9371
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1 head_lr=13 main=0.9282, best_cooldown=0.9377
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1.7 head_lr=13 main=0.9274, best_cooldown=0.9369
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=4.6 head_lr=13 main=0.9269, best_cooldown=0.9367
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=7.7 head_lr=13 main=0.9291, best_cooldown=0.9371
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=13 head_lr=13 main=0.9279, best_cooldown=0.9369
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=21 head_lr=13 main=0.927, best_cooldown=0.9365
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=36 head_lr=13 main=0.9281, best_cooldown=0.9372
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=60 head_lr=13 main=0.926, best_cooldown=0.9379
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=99 head_lr=13 main=0.928, best_cooldown=0.9364
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=170 head_lr=13 main=0.9092, best_cooldown=0.9366
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=280 head_lr=13 main=0.8925, best_cooldown=0.928
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=460 head_lr=13 main=0.3539, best_cooldown=0.5167
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=770 head_lr=13 main=0.1001, best_cooldown=0.1412
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1300 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2100 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=3500 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=5900 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=9800 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=16000 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=27000 head_lr=13 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1 main=0.9286, best_cooldown=0.938
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.929, best_cooldown=0.939
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=2.8 main=0.9276, best_cooldown=0.9377
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=4.6 main=0.9273, best_cooldown=0.937
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=7.7 main=0.9273, best_cooldown=0.9382
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=21 main=0.9284, best_cooldown=0.9378
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=36 main=0.9279, best_cooldown=0.9381
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=60 main=0.9287, best_cooldown=0.9375
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=99 main=0.9273, best_cooldown=0.9386
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=170 main=0.9264, best_cooldown=0.9369
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=280 main=0.9274, best_cooldown=0.9386
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=460 main=0.9268, best_cooldown=0.9388
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=770 main=0.9267, best_cooldown=0.9383
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1300 main=0.9262, best_cooldown=0.937
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=2100 main=0.9262, best_cooldown=0.9378
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=3500 main=0.9242, best_cooldown=0.9365
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=5900 main=0.9219, best_cooldown=0.9328
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=9800 main=0.9157, best_cooldown=0.9283
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=16000 main=0.9064, best_cooldown=0.9223
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=27000 main=0.8881, best_cooldown=0.9123
+main hparams: muon_lr=0.036 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9313, best_cooldown=0.9373
+main hparams: muon_lr=0.06 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9243, best_cooldown=0.9368
+main hparams: muon_lr=0.047 muon_momentum=0.3 bias_lr=2.8 head_lr=1.7 main=0.9292, best_cooldown=0.9388
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=1.7 main=0.9272, best_cooldown=0.9368
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1 head_lr=1.7 main=0.928, best_cooldown=0.9379
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1.7 head_lr=1.7 main=0.9277, best_cooldown=0.9376
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=4.6 head_lr=1.7 main=0.9288, best_cooldown=0.9376
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=7.7 head_lr=1.7 main=0.9286, best_cooldown=0.937
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=13 head_lr=1.7 main=0.9279, best_cooldown=0.9378
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=21 head_lr=1.7 main=0.9272, best_cooldown=0.9379
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=36 head_lr=1.7 main=0.9269, best_cooldown=0.9378
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=60 head_lr=1.7 main=0.9262, best_cooldown=0.9374
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=99 head_lr=1.7 main=0.9279, best_cooldown=0.9366
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=170 head_lr=1.7 main=0.9067, best_cooldown=0.937
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=280 head_lr=1.7 main=0.872, best_cooldown=0.9285
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=460 head_lr=1.7 main=0.4507, best_cooldown=0.7541
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=770 head_lr=1.7 main=0.1, best_cooldown=0.1006
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1300 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2100 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=3500 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=5900 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=9800 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=16000 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=27000 head_lr=1.7 main=0.1, best_cooldown=0.1
+search_path step=0 muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=13 tta_val_acc=0.9383
+search_path step=1 muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 tta_val_acc=0.939
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.929, best_cooldown=0.9393
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=99 -> tta_val_acc=0.939
+muon_lr=0.01 muon_momentum=0.4 bias_lr=1.7 head_lr=99 -> tta_val_acc=0.9384
+muon_lr=0.017 muon_momentum=0.4 bias_lr=1.7 head_lr=99 -> tta_val_acc=0.937
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1 head_lr=99 -> tta_val_acc=0.9387
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=99 -> tta_val_acc=0.9389
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=99 -> tta_val_acc=0.9383
+muon_lr=0.013 muon_momentum=0.4 bias_lr=7.7 head_lr=99 -> tta_val_acc=0.9388
+muon_lr=0.013 muon_momentum=0.4 bias_lr=13 head_lr=99 -> tta_val_acc=0.9385
+muon_lr=0.013 muon_momentum=0.4 bias_lr=21 head_lr=99 -> tta_val_acc=0.9379
+muon_lr=0.013 muon_momentum=0.4 bias_lr=36 head_lr=99 -> tta_val_acc=0.937
+muon_lr=0.013 muon_momentum=0.4 bias_lr=60 head_lr=99 -> tta_val_acc=0.9355
+muon_lr=0.013 muon_momentum=0.4 bias_lr=99 head_lr=99 -> tta_val_acc=0.935
+muon_lr=0.013 muon_momentum=0.4 bias_lr=170 head_lr=99 -> tta_val_acc=0.933
+muon_lr=0.013 muon_momentum=0.4 bias_lr=280 head_lr=99 -> tta_val_acc=0.897
+muon_lr=0.013 muon_momentum=0.4 bias_lr=460 head_lr=99 -> tta_val_acc=0.3138
+muon_lr=0.013 muon_momentum=0.4 bias_lr=770 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1300 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2100 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=3500 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=5900 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=9800 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=16000 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=27000 head_lr=99 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=1 -> tta_val_acc=0.9388
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=1.7 -> tta_val_acc=0.9384
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=2.8 -> tta_val_acc=0.9385
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=4.6 -> tta_val_acc=0.9385
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=7.7 -> tta_val_acc=0.9384
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=13 -> tta_val_acc=0.9387
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=21 -> tta_val_acc=0.9385
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=36 -> tta_val_acc=0.9383
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=60 -> tta_val_acc=0.939
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=170 -> tta_val_acc=0.939
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=280 -> tta_val_acc=0.9392
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=460 -> tta_val_acc=0.9387
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=770 -> tta_val_acc=0.9388
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=1300 -> tta_val_acc=0.9386
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=2100 -> tta_val_acc=0.9373
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=3500 -> tta_val_acc=0.9366
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=5900 -> tta_val_acc=0.9233
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=9800 -> tta_val_acc=0.9148
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=16000 -> tta_val_acc=0.9041
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=27000 -> tta_val_acc=0.8315
+muon_lr=0.01 muon_momentum=0.4 bias_lr=1.7 head_lr=280 -> tta_val_acc=0.9387
+muon_lr=0.017 muon_momentum=0.4 bias_lr=1.7 head_lr=280 -> tta_val_acc=0.9377
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1 head_lr=280 -> tta_val_acc=0.9388
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=280 -> tta_val_acc=0.9393
+muon_lr=0.013 muon_momentum=0.4 bias_lr=4.6 head_lr=280 -> tta_val_acc=0.939
+muon_lr=0.013 muon_momentum=0.4 bias_lr=7.7 head_lr=280 -> tta_val_acc=0.9386
+muon_lr=0.013 muon_momentum=0.4 bias_lr=13 head_lr=280 -> tta_val_acc=0.9389
+muon_lr=0.013 muon_momentum=0.4 bias_lr=21 head_lr=280 -> tta_val_acc=0.9383
+muon_lr=0.013 muon_momentum=0.4 bias_lr=36 head_lr=280 -> tta_val_acc=0.9375
+muon_lr=0.013 muon_momentum=0.4 bias_lr=60 head_lr=280 -> tta_val_acc=0.9355
+muon_lr=0.013 muon_momentum=0.4 bias_lr=99 head_lr=280 -> tta_val_acc=0.9342
+muon_lr=0.013 muon_momentum=0.4 bias_lr=170 head_lr=280 -> tta_val_acc=0.9332
+muon_lr=0.013 muon_momentum=0.4 bias_lr=280 head_lr=280 -> tta_val_acc=0.8391
+muon_lr=0.013 muon_momentum=0.4 bias_lr=460 head_lr=280 -> tta_val_acc=0.2223
+muon_lr=0.013 muon_momentum=0.4 bias_lr=770 head_lr=280 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=1300 head_lr=280 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2100 head_lr=280 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=3500 head_lr=280 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=5900 head_lr=280 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=9800 head_lr=280 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=16000 head_lr=280 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=27000 head_lr=280 -> tta_val_acc=0.1
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=1 -> tta_val_acc=0.9387
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 -> tta_val_acc=0.9384
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=2.8 -> tta_val_acc=0.9387
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=4.6 -> tta_val_acc=0.9386
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=7.7 -> tta_val_acc=0.9388
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=13 -> tta_val_acc=0.9389
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=21 -> tta_val_acc=0.9388
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=36 -> tta_val_acc=0.9388
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=60 -> tta_val_acc=0.939
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=170 -> tta_val_acc=0.939
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=460 -> tta_val_acc=0.9392
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=770 -> tta_val_acc=0.9389
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=1300 -> tta_val_acc=0.9381
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=2100 -> tta_val_acc=0.9378
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=3500 -> tta_val_acc=0.9374
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=5900 -> tta_val_acc=0.9234
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=9800 -> tta_val_acc=0.9152
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=16000 -> tta_val_acc=0.8923
+muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=27000 -> tta_val_acc=0.8318
+muon_lr=0.01 muon_momentum=0.4 bias_lr=2.8 head_lr=280 -> tta_val_acc=0.9385
+muon_lr=0.017 muon_momentum=0.4 bias_lr=2.8 head_lr=280 -> tta_val_acc=0.9372
+search_path step=0 muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=99 tta_val_acc=0.939
+search_path step=1 muon_lr=0.013 muon_momentum=0.4 bias_lr=1.7 head_lr=280 tta_val_acc=0.9392
+search_path step=2 muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=280 tta_val_acc=0.9393
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.929, best_cooldown=0.9393
+main hparams: muon_lr=0.036 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9313, best_cooldown=0.9377
+main hparams: muon_lr=0.06 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9243, best_cooldown=0.9367
+main hparams: muon_lr=0.047 muon_momentum=0.3 bias_lr=2.8 head_lr=1.7 main=0.9292, best_cooldown=0.9385
+main hparams: muon_lr=0.047 muon_momentum=0.5 bias_lr=2.8 head_lr=1.7 main=0.9272, best_cooldown=0.9371
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1 head_lr=1.7 main=0.928, best_cooldown=0.9374
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1.7 head_lr=1.7 main=0.9277, best_cooldown=0.9376
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=4.6 head_lr=1.7 main=0.9288, best_cooldown=0.938
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=7.7 head_lr=1.7 main=0.9286, best_cooldown=0.9365
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=13 head_lr=1.7 main=0.9279, best_cooldown=0.938
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=21 head_lr=1.7 main=0.9272, best_cooldown=0.9376
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=36 head_lr=1.7 main=0.9269, best_cooldown=0.9372
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=60 head_lr=1.7 main=0.9262, best_cooldown=0.9377
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=99 head_lr=1.7 main=0.9279, best_cooldown=0.9366
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=170 head_lr=1.7 main=0.9067, best_cooldown=0.9367
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=280 head_lr=1.7 main=0.872, best_cooldown=0.9287
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=460 head_lr=1.7 main=0.4507, best_cooldown=0.8377
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=770 head_lr=1.7 main=0.1, best_cooldown=0.1512
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=1300 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2100 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=3500 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=5900 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=9800 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=16000 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=27000 head_lr=1.7 main=0.1, best_cooldown=0.1
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1 main=0.9286, best_cooldown=0.9378
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=2.8 main=0.9276, best_cooldown=0.9381
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=4.6 main=0.9273, best_cooldown=0.9376
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=7.7 main=0.9273, best_cooldown=0.9382
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=13 main=0.9288, best_cooldown=0.9378
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=21 main=0.9284, best_cooldown=0.9378
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=36 main=0.9279, best_cooldown=0.9382
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=60 main=0.9287, best_cooldown=0.9383
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=99 main=0.9273, best_cooldown=0.9381
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=170 main=0.9264, best_cooldown=0.9373
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=280 main=0.9274, best_cooldown=0.9383
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=460 main=0.9268, best_cooldown=0.939
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=770 main=0.9267, best_cooldown=0.9384
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1300 main=0.9262, best_cooldown=0.9371
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=2100 main=0.9262, best_cooldown=0.9379
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=3500 main=0.9242, best_cooldown=0.9363
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=5900 main=0.9219, best_cooldown=0.9331
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=9800 main=0.9157, best_cooldown=0.9278
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=16000 main=0.9064, best_cooldown=0.9226
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=27000 main=0.8881, best_cooldown=0.9129
+search_path step=0 muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 tta_val_acc=0.9393
+train_hparams run=0 interval=3 start_step=120 completed_steps=40 total_steps=200 muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 muon_nesterov=False
+train_loss run=0 interval=3 step=121 loss=1.00735
+train_loss run=0 interval=3 step=122 loss=1.00898
+train_loss run=0 interval=3 step=123 loss=1.00007
+train_loss run=0 interval=3 step=124 loss=1.03288
+train_loss run=0 interval=3 step=125 loss=1.00265
+train_loss run=0 interval=3 step=126 loss=0.997261
+train_loss run=0 interval=3 step=127 loss=0.984805
+train_loss run=0 interval=3 step=128 loss=0.996361
+train_loss run=0 interval=3 step=129 loss=0.995725
+train_loss run=0 interval=3 step=130 loss=0.99194
+train_loss run=0 interval=3 step=131 loss=1.00754
+train_loss run=0 interval=3 step=132 loss=0.993761
+train_loss run=0 interval=3 step=133 loss=0.997366
+train_loss run=0 interval=3 step=134 loss=0.990063
+train_loss run=0 interval=3 step=135 loss=0.989821
+train_loss run=0 interval=3 step=136 loss=1.00209
+train_loss run=0 interval=3 step=137 loss=0.997486
+train_loss run=0 interval=3 step=138 loss=0.980782
+train_loss run=0 interval=3 step=139 loss=0.996926
+train_loss run=0 interval=3 step=140 loss=0.99087
+train_loss run=0 interval=3 step=141 loss=0.99825
+train_loss run=0 interval=3 step=142 loss=0.995166
+train_loss run=0 interval=3 step=143 loss=0.999063
+train_loss run=0 interval=3 step=144 loss=0.994077
+train_loss run=0 interval=3 step=145 loss=1.01088
+train_loss run=0 interval=3 step=146 loss=0.998265
+train_loss run=0 interval=3 step=147 loss=0.992126
+train_loss run=0 interval=3 step=148 loss=0.992721
+train_loss run=0 interval=3 step=149 loss=0.991925
+train_loss run=0 interval=3 step=150 loss=0.999363
+train_loss run=0 interval=3 step=151 loss=0.973668
+train_loss run=0 interval=3 step=152 loss=0.976936
+train_loss run=0 interval=3 step=153 loss=0.970114
+train_loss run=0 interval=3 step=154 loss=0.968334
+train_loss run=0 interval=3 step=155 loss=0.984636
+train_loss run=0 interval=3 step=156 loss=0.974652
+train_loss run=0 interval=3 step=157 loss=0.971497
+train_loss run=0 interval=3 step=158 loss=0.969769
+train_loss run=0 interval=3 step=159 loss=0.984994
+train_loss run=0 interval=3 step=160 loss=0.969442
+interval_boundary_eval run=0 interval=3 step=160 total_steps=200 tta_val_acc=0.929
+main hparams: muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9312
+main hparams: muon_lr=0.036 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9342
+main hparams: muon_lr=0.028 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9344
+main hparams: muon_lr=0.022 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9361
+main hparams: muon_lr=0.017 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9376
+main hparams: muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9384
+main hparams: muon_lr=0.01 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 main=0.9381
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=1.7 main=0.9387
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=2.8 head_lr=1.7 main=0.9385
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=1 head_lr=1.7 main=0.9384
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=1.7 head_lr=1.7 main=0.9382
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=4.6 head_lr=1.7 main=0.9383
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=7.7 head_lr=1.7 main=0.9383
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=13 head_lr=1.7 main=0.9384
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=21 head_lr=1.7 main=0.9375
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=36 head_lr=1.7 main=0.9371
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=60 head_lr=1.7 main=0.9358
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=99 head_lr=1.7 main=0.9344
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=170 head_lr=1.7 main=0.9336
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=280 head_lr=1.7 main=0.9108
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=460 head_lr=1.7 main=0.5615
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=770 head_lr=1.7 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=1300 head_lr=1.7 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2100 head_lr=1.7 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=3500 head_lr=1.7 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=5900 head_lr=1.7 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=9800 head_lr=1.7 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=16000 head_lr=1.7 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=27000 head_lr=1.7 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=1 main=0.9388
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=2.8 main=0.9385
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=4.6 main=0.9388
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=7.7 main=0.9386
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=13 main=0.9385
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=21 main=0.9386
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=36 main=0.9386
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=60 main=0.9387
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=99 main=0.9388
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=170 main=0.9388
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=280 main=0.9388
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=460 main=0.9389
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=770 main=0.9386
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=1300 main=0.9384
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=2100 main=0.9378
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=3500 main=0.9372
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=5900 main=0.9234
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=9800 main=0.9145
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=16000 main=0.8955
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=27000 main=0.8213
+main hparams: muon_lr=0.01 muon_momentum=0.3 bias_lr=2.8 head_lr=460 main=0.9388
+main hparams: muon_lr=0.017 muon_momentum=0.3 bias_lr=2.8 head_lr=460 main=0.9381
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=2.8 head_lr=460 main=0.939
+main hparams: muon_lr=0.013 muon_momentum=0.1 bias_lr=2.8 head_lr=460 main=0.9387
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=460 main=0.9393
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1.7 head_lr=460 main=0.9391
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=4.6 head_lr=460 main=0.9389
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=7.7 head_lr=460 main=0.9383
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=13 head_lr=460 main=0.9386
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=21 head_lr=460 main=0.9379
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=36 head_lr=460 main=0.9371
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=60 head_lr=460 main=0.9364
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=99 head_lr=460 main=0.9349
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=170 head_lr=460 main=0.9272
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=280 head_lr=460 main=0.604
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=460 head_lr=460 main=0.1802
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=770 head_lr=460 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1300 head_lr=460 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=2100 head_lr=460 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=3500 head_lr=460 main=-inf
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=5900 head_lr=460 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=9800 head_lr=460 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=16000 head_lr=460 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=27000 head_lr=460 main=0.1
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=1 main=0.9383
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=1.7 main=0.938
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=2.8 main=0.9383
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=4.6 main=0.9385
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=7.7 main=0.9381
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=13 main=0.9382
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=21 main=0.9383
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=36 main=0.9383
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=60 main=0.9383
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=99 main=0.9385
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=170 main=0.9386
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=280 main=0.9387
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=770 main=0.939
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=1300 main=0.9393
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=2100 main=0.9384
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=3500 main=0.935
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=5900 main=0.9251
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=9800 main=0.9104
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=16000 main=0.9105
+main hparams: muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=27000 main=0.8704
+main hparams: muon_lr=0.01 muon_momentum=0.2 bias_lr=1 head_lr=460 main=0.9388
+main hparams: muon_lr=0.017 muon_momentum=0.2 bias_lr=1 head_lr=460 main=0.9387
+main hparams: muon_lr=0.013 muon_momentum=0.1 bias_lr=1 head_lr=460 main=0.9386
+main hparams: muon_lr=0.013 muon_momentum=0.3 bias_lr=1 head_lr=460 main=0.9388
+search_path step=0 muon_lr=0.047 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 tta_val_acc=0.9312
+search_path step=1 muon_lr=0.013 muon_momentum=0.4 bias_lr=2.8 head_lr=1.7 tta_val_acc=0.9384
+search_path step=2 muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=1.7 tta_val_acc=0.9387
+search_path step=3 muon_lr=0.013 muon_momentum=0.3 bias_lr=2.8 head_lr=460 tta_val_acc=0.9389
+search_path step=4 muon_lr=0.013 muon_momentum=0.2 bias_lr=2.8 head_lr=460 tta_val_acc=0.939
+search_path step=5 muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=460 tta_val_acc=0.9393
+train_hparams run=0 interval=4 start_step=160 completed_steps=40 total_steps=200 muon_lr=0.013 muon_momentum=0.2 bias_lr=1 head_lr=460 muon_nesterov=False
+train_loss run=0 interval=4 step=161 loss=0.970769
+train_loss run=0 interval=4 step=162 loss=0.964258
+train_loss run=0 interval=4 step=163 loss=0.956275
+train_loss run=0 interval=4 step=164 loss=0.961261
+train_loss run=0 interval=4 step=165 loss=0.966839
+train_loss run=0 interval=4 step=166 loss=0.957793
+train_loss run=0 interval=4 step=167 loss=0.960693
+train_loss run=0 interval=4 step=168 loss=0.961561
+train_loss run=0 interval=4 step=169 loss=0.964486
+train_loss run=0 interval=4 step=170 loss=0.953017
+train_loss run=0 interval=4 step=171 loss=0.961336
+train_loss run=0 interval=4 step=172 loss=0.962297
+train_loss run=0 interval=4 step=173 loss=0.962381
+train_loss run=0 interval=4 step=174 loss=0.960554
+train_loss run=0 interval=4 step=175 loss=0.944811
+train_loss run=0 interval=4 step=176 loss=0.932208
+train_loss run=0 interval=4 step=177 loss=0.936305
+train_loss run=0 interval=4 step=178 loss=0.938802
+train_loss run=0 interval=4 step=179 loss=0.935719
+train_loss run=0 interval=4 step=180 loss=0.931215
+train_loss run=0 interval=4 step=181 loss=0.931686
+train_loss run=0 interval=4 step=182 loss=0.932733
+train_loss run=0 interval=4 step=183 loss=0.933216
+train_loss run=0 interval=4 step=184 loss=0.932797
+train_loss run=0 interval=4 step=185 loss=0.932347
+train_loss run=0 interval=4 step=186 loss=0.935939
+train_loss run=0 interval=4 step=187 loss=0.937603
+train_loss run=0 interval=4 step=188 loss=0.934449
+train_loss run=0 interval=4 step=189 loss=0.93496
+train_loss run=0 interval=4 step=190 loss=0.9306
+train_loss run=0 interval=4 step=191 loss=0.934385
+train_loss run=0 interval=4 step=192 loss=0.924181
+train_loss run=0 interval=4 step=193 loss=0.931135
+train_loss run=0 interval=4 step=194 loss=0.929212
+train_loss run=0 interval=4 step=195 loss=0.934244
+train_loss run=0 interval=4 step=196 loss=0.933382
+train_loss run=0 interval=4 step=197 loss=0.933634
+train_loss run=0 interval=4 step=198 loss=0.93414
+train_loss run=0 interval=4 step=199 loss=0.922109
+train_loss run=0 interval=4 step=200 loss=0.927417
+Batch size:          2000
+Train epochs:        8
+Train steps:         200
+N steps:             40
+M cooldown steps:    40
+Search hparams:      muon_lr,muon_momentum,bias_lr,head_lr
+Cooldown hparams:    muon_lr,bias_lr,head_lr
+Muon nesterov:       False
+Full grid search:    True
+Val acc:             0.9293
+TTA val acc:         0.9393
+Run seconds:         3640.013
