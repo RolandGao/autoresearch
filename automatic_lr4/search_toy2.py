@@ -18,7 +18,7 @@ DEFAULT_SUMMARY_PATHS = (
     / "summary.txt",
 )
 
-DEFAULT_BUDGET = 10
+DEFAULT_BUDGET = 46
 MAIN_ONLY_COST = 1
 NEW_MAIN_COST = 2
 SAME_MAIN_COOLDOWN_COST = 1
@@ -34,6 +34,9 @@ INITIAL_MAIN_COORDS = (-6, 0, 6, 12)
 INITIAL_COOLDOWN_COORD = 0
 FOLLOWUP_MAIN_COORD_OFFSETS = (0, -1, 1)
 COOLDOWN_REFINEMENT_COORD_OFFSETS = (0, 6, -6, 12, -12, 2, -2, 1, -1)
+PORTFOLIO_MAIN_COORD_START = -2
+PORTFOLIO_MAIN_COORD_COUNT = 23
+PORTFOLIO_COOLDOWN_RELATIVE_OFFSET = -4
 
 
 @dataclass(frozen=True)
@@ -286,6 +289,22 @@ def cooldown_refinement_coords(screen_coord: int) -> list[int]:
     )
 
 
+def portfolio_matrix_coords() -> list[tuple[int, int]]:
+    return [
+        (main_coord, main_coord + PORTFOLIO_COOLDOWN_RELATIVE_OFFSET)
+        for main_coord in range(
+            PORTFOLIO_MAIN_COORD_START,
+            PORTFOLIO_MAIN_COORD_START + PORTFOLIO_MAIN_COORD_COUNT,
+        )
+    ]
+
+
+def portfolio_search_cost() -> int:
+    # Portfolio coordinates deliberately use one cooldown per main coordinate,
+    # so each probe starts a new main run in this toy cost model.
+    return len(portfolio_matrix_coords()) * NEW_MAIN_COST
+
+
 def evaluate_cell(
     summary: MatrixSummary,
     shift: int,
@@ -327,7 +346,7 @@ def add_evaluation(
     evaluated_mains: set[int],
     phase: str,
 ) -> bool:
-    if (main_coord, cooldown_coord) in evaluated_cells:
+    if phase != "main_screen" and (main_coord, cooldown_coord) in evaluated_cells:
         return True
 
     total_cost = evaluations[-1].total_cost if evaluations else 0
@@ -344,9 +363,48 @@ def add_evaluation(
         return False
 
     evaluated_mains.add(main_coord)
-    evaluated_cells.add((main_coord, cooldown_coord))
+    if phase != "main_screen":
+        evaluated_cells.add((main_coord, cooldown_coord))
     evaluations.append(evaluation)
     return True
+
+
+def portfolio_matrix_search(
+    summary: MatrixSummary,
+    shift: int,
+    prior_cell: tuple[int, int] | None,
+    budget: int,
+) -> SearchResult:
+    evaluations: list[CellEval] = []
+    evaluated_cells: set[tuple[int, int]] = set()
+    evaluated_mains: set[int] = set()
+
+    for main_coord, cooldown_coord in portfolio_matrix_coords():
+        if not add_evaluation(
+            summary,
+            shift,
+            main_coord,
+            cooldown_coord,
+            budget,
+            evaluations,
+            evaluated_cells,
+            evaluated_mains,
+            phase="scale_portfolio",
+        ):
+            break
+
+    if not evaluations:
+        raise ValueError(f"budget {budget} did not allow any portfolio evaluations")
+
+    return SearchResult(
+        summary=summary,
+        shift=shift,
+        prior_cell=prior_cell,
+        screen_cooldown_coord=INITIAL_COOLDOWN_COORD,
+        main_probe_coords=[main_coord for main_coord, _ in portfolio_matrix_coords()],
+        best_eval=max(evaluations, key=objective_score),
+        evaluations=evaluations,
+    )
 
 
 def budgeted_matrix_search(
@@ -357,6 +415,13 @@ def budgeted_matrix_search(
 ) -> SearchResult:
     if budget < NEW_MAIN_COST:
         raise ValueError(f"budget must be at least {NEW_MAIN_COST}")
+    if budget >= portfolio_search_cost():
+        return portfolio_matrix_search(
+            summary=summary,
+            shift=shift,
+            prior_cell=prior_cell,
+            budget=budget,
+        )
 
     main_coords = main_probe_coords(prior_cell)
     initial_cooldown_coord = screen_cooldown_coord(prior_cell)

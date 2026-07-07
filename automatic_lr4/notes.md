@@ -249,3 +249,12 @@ remove TTA_VAL_ACC_DIFF_THRESHOLD = 0.0005 and the component of the algorithm th
 add a param called full_grid_search. if full_grid_search is false, current behaviour is ok. if full_grid_search is true, when searching for bias_lr and head_lr, do a full grid search of 1*0.6^k for k from 0 to -20 and pick the best one.
 
 muon_lr can be denser. 
+
+modify autoresearch/automatic_lr4/search_toy2.py
+
+currently, the performance is not so good.
+
+performance cases=357 probes=3570 exact=35/357 within_0.0001=35/357 within_0.0005=54/357 within_0.001=69/357 mean_gap=0.00295154 median_gap=0.0023 p90_gap=0.0057 worst_gap=0.0247 mean_found_acc=0.9242 mean_global_acc=0.9271 mean_cost=10 max_cost=10
+
+our goal is for mean_gap to be less than 0.001.
+the algorithm should remain attr agnostic, and scale agnostic (it does not know the min and max of the search space beforehand)
