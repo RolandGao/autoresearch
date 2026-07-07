@@ -665,6 +665,10 @@ def heatmap_output_path(output_dir: Path, interval: int, attr: str) -> Path:
     return output_dir / f"interval{interval}_{attr}_heatmap.png"
 
 
+def summary_output_path(output_dir: Path) -> Path:
+    return output_dir / "summary.txt"
+
+
 def plot_attrs(selected_hparams: HParams) -> list[str]:
     if is_finite_number(selected_hparams.bias_lr):
         attrs = ["bias_lr"]
@@ -686,6 +690,126 @@ def format_selected_hparams(hparams: HParams) -> str:
     )
 
 
+def format_hparams(hparams: HParams, excluded_attr: str | None = None) -> str:
+    return " ".join(
+        f"{name}={format_number(value, 4)}"
+        for name, value in hparams.params.items()
+        if name != excluded_attr and is_finite_number(value)
+    )
+
+
+def format_score(value: float | None) -> str:
+    if not is_finite_number(value):
+        return ""
+    return f"{float(value):.4f}"
+
+
+def heatmap_summary_block(
+    main_evals: list[MainEval],
+    selected_hparams: HParams,
+    interval: int,
+    attr: str,
+    output_path: Path,
+    color_percentiles: tuple[float, float],
+) -> str:
+    x_values, y_values, matrix = build_heatmap(main_evals, attr)
+    norm, colorbar_extend = color_scale_bounds(
+        matrix,
+        lower_percentile=color_percentiles[0],
+        upper_percentile=color_percentiles[1],
+        floor=COLOR_SCALE_FLOOR,
+    )
+    fixed_hparams = main_evals[0].hparams
+    peak_items = peak_cells(matrix)
+    global_y, global_x = np.unravel_index(np.nanargmax(matrix), matrix.shape)
+
+    lines = [
+        f"interval={interval} attr={attr}",
+        f"plot={output_path.name}",
+        f"selected_train_hparams={format_hparams(selected_hparams)}",
+        f"fixed_main_hparams={format_hparams(fixed_hparams, excluded_attr=attr)}",
+        f"shape={len(y_values)}x{len(x_values)}",
+        (
+            "color_scale="
+            f"vmin={norm.vmin:.6f} vmax={norm.vmax:.6f} extend={colorbar_extend}"
+        ),
+        (
+            "global_peak="
+            f"main_{attr}={format_number(x_values[global_x], 4)} "
+            f"cooldown_{attr}={format_number(y_values[global_y], 4)} "
+            f"tta_val_acc={format_score(float(matrix[global_y, global_x]))}"
+        ),
+    ]
+
+    if peak_items:
+        lines.append("peaks=")
+        for peak_y, peak_x in peak_items:
+            lines.append(
+                "  "
+                f"main_{attr}={format_number(x_values[peak_x], 4)} "
+                f"cooldown_{attr}={format_number(y_values[peak_y], 4)} "
+                f"tta_val_acc={format_score(float(matrix[peak_y, peak_x]))}"
+            )
+    else:
+        lines.append("peaks=none")
+
+    lines.append("matrix:")
+    lines.append(
+        "\t".join(
+            [f"cooldown_{attr}\\main_{attr}"]
+            + [format_number(value, 4) for value in x_values]
+        )
+    )
+    for y_index, y_value in enumerate(y_values):
+        lines.append(
+            "\t".join(
+                [format_number(y_value, 4)]
+                + [format_score(float(value)) for value in matrix[y_index]]
+            )
+        )
+    lines.append("main_tta_val_acc_before_cooldown:")
+    lines.append(
+        "\t".join(
+            [
+                f"main_{attr}",
+                "tta_val_acc_before_cooldown",
+            ]
+        )
+    )
+    for main_eval in main_evals:
+        lines.append(
+            "\t".join(
+                [
+                    format_number(getattr(main_eval.hparams, attr), 4),
+                    format_score(main_eval.main_acc),
+                ]
+            )
+        )
+    return "\n".join(lines)
+
+
+def write_run_summary(
+    summary_path: Path,
+    log_path: Path,
+    intervals: list[int],
+    blocks: list[str],
+    color_percentiles: tuple[float, float],
+) -> None:
+    lines = [
+        f"log={log_path}",
+        f"intervals={' '.join(str(interval) for interval in intervals)}",
+        (
+            "color_percentiles="
+            f"{format_number(color_percentiles[0], 4)} "
+            f"{format_number(color_percentiles[1], 4)}"
+        ),
+        f"color_floor={format_number(COLOR_SCALE_FLOOR, 4)}",
+        "",
+    ]
+    lines.extend("\n\n".join(blocks).splitlines())
+    summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     args = parse_args()
     color_percentiles = tuple(args.color_percentiles)
@@ -697,6 +821,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     run = parse_log(log_path)
+    summary_blocks: list[str] = []
     for interval in args.interval:
         train_interval = selected_interval(run.train_intervals, interval)
         selected_hparams = train_interval.hparams
@@ -718,11 +843,31 @@ def main() -> None:
                 color_percentiles=color_percentiles,
             )
             print(f"Wrote {output_path}")
+            summary_blocks.append(
+                heatmap_summary_block(
+                    evals,
+                    selected_hparams,
+                    interval,
+                    attr,
+                    output_path,
+                    color_percentiles,
+                )
+            )
 
         print(
             f"Selected interval {interval}: "
             f"{format_selected_hparams(selected_hparams)}"
         )
+
+    summary_path = summary_output_path(output_dir)
+    write_run_summary(
+        summary_path,
+        log_path,
+        list(args.interval),
+        summary_blocks,
+        color_percentiles,
+    )
+    print(f"Wrote {summary_path}")
 
 
 if __name__ == "__main__":

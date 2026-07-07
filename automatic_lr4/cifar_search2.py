@@ -853,7 +853,7 @@ def load_training_state(model, optimizers, batch_stream, state):
     model.zero_grad(set_to_none=True)
 
 
-def train_one_step(ctx, hparams, global_step):
+def train_one_step(ctx, hparams, _global_step):
     set_muon_hparams(
         ctx.muon_optimizer,
         hparams["muon_lr"],
@@ -864,9 +864,7 @@ def train_one_step(ctx, hparams, global_step):
     inputs, labels = ctx.batch_stream.next_batch()
     ctx.model.train()
     ctx.model.zero_grad(set_to_none=True)
-    outputs = ctx.model(
-        inputs, whiten_bias_grad=(global_step < ctx.whiten_bias_train_steps)
-    )
+    outputs = ctx.model(inputs)
     loss = F.cross_entropy(
         outputs, labels, label_smoothing=LABEL_SMOOTHING, reduction="mean"
     )
@@ -1716,7 +1714,6 @@ def run_full_dataset_search(cfg):
     test_loader = CifarLoader("cifar10", train=False, batch_size=2000)
     batch_stream = FullDatasetBatchStream(train_loader)
     cfg.train_steps = ceil(cfg.train_epochs * len(train_loader))
-    cfg.whiten_bias_train_steps = ceil(3 * len(train_loader))
 
     cfg.model.reset()
     cfg.model.init_whiten(train_loader.normalized_images()[:5000])
@@ -1739,7 +1736,6 @@ def run_full_dataset_search(cfg):
         test_loader=test_loader,
         cooldown_steps=cfg.m_steps,
         total_steps=cfg.train_steps,
-        whiten_bias_train_steps=cfg.whiten_bias_train_steps,
         search_names=search_names,
         fixed_hparams=initial_hparams,
         full_grid_search=cfg.full_grid_search,
