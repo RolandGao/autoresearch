@@ -537,7 +537,7 @@ def evaluate_tta_val_acc(model, loader):
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
 SEARCH_STEP_CONFIGS = [(40, 40)]
-PRINT_OUTPUT_FILENAME = "cifar_search_improved.log"
+PRINT_OUTPUT_FILENAME = "cifar_search_bias_split.log"
 LR_SEARCH_SIG_FIGS = 2
 SMALL_LR_THRESHOLD_STEPS = 3
 LR_ZERO_STATE = "zero"
@@ -545,16 +545,23 @@ MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
 INITIAL_MOMENTUM = 0.6
 MUON_NESTEROV = False
 FULL_GRID_SEARCH = True
-FULL_GRID_SEARCH_HPARAMS = ("bias_lr", "head_lr")
+FULL_GRID_SEARCH_HPARAMS = ("whiten_bias_lr", "bn_bias_lr", "head_lr")
 FULL_GRID_SEARCH_STATES = tuple(range(0, -21, -1))
 RUN_CONFIGS = [
     dict(batch_size=2000, full_grid_search=FULL_GRID_SEARCH),
 ]
-SEARCH_HPARAM_ORDER = ("muon_lr", "muon_momentum", "bias_lr", "head_lr")
+SEARCH_HPARAM_ORDER = (
+    "muon_lr",
+    "muon_momentum",
+    "whiten_bias_lr",
+    "bn_bias_lr",
+    "head_lr",
+)
 SEARCH_HPARAM_GROUPS = (
     ("muon_lr", "muon_momentum"),
     ("head_lr",),
-    ("bias_lr",),
+    ("whiten_bias_lr",),
+    ("bn_bias_lr",),
 )
 
 
@@ -585,7 +592,14 @@ SEARCH_HPARAMS = {
         cooldown_search=False,
         values=tuple(MOMENTUM_SEARCH_VALUES),
     ),
-    "bias_lr": SearchHparam(
+    "whiten_bias_lr": SearchHparam(
+        kind="log_lr",
+        initial_value=1,
+        search=True,
+        cooldown_search=True,
+        factor=0.6,
+    ),
+    "bn_bias_lr": SearchHparam(
         kind="log_lr",
         initial_value=1,
         search=True,
@@ -770,21 +784,21 @@ def make_optimizers(model, cfg):
     filter_params = [
         p for p in model.parameters() if len(p.shape) == 4 and p.requires_grad
     ]
-    norm_biases = [
+    bn_biases = [
         p for (n, p) in model.named_parameters() if "norm" in n and p.requires_grad
     ]
     param_configs = [
         dict(
             params=[model.whiten.bias],
-            lr=cfg.bias_lr,
+            lr=cfg.whiten_bias_lr,
             weight_decay=0,
-            lr_name="bias_lr",
+            lr_name="whiten_bias_lr",
         ),
         dict(
-            params=norm_biases,
-            lr=cfg.bias_lr,
+            params=bn_biases,
+            lr=cfg.bn_bias_lr,
             weight_decay=0,
-            lr_name="bias_lr",
+            lr_name="bn_bias_lr",
         ),
         dict(
             params=[model.head.weight],
@@ -1804,9 +1818,10 @@ def iter_run_settings():
         n_steps, m_steps = steps
         batch_size = config["batch_size"]
         full_grid_search = config.get("full_grid_search", FULL_GRID_SEARCH)
-        bias_lr_mult = batch_size / 2000
+        sgd_lr_mult = batch_size / 2000
         momentum_spec = SEARCH_HPARAMS["muon_momentum"]
-        bias_lr_spec = SEARCH_HPARAMS["bias_lr"]
+        whiten_bias_lr_spec = SEARCH_HPARAMS["whiten_bias_lr"]
+        bn_bias_lr_spec = SEARCH_HPARAMS["bn_bias_lr"]
         head_lr_spec = SEARCH_HPARAMS["head_lr"]
         yield namespace(
             locals(),
@@ -1816,8 +1831,9 @@ def iter_run_settings():
             train_epochs=TRAIN_EPOCHS,
             initial_muon_momentum=momentum_spec.initial_value,
             muon_nesterov=MUON_NESTEROV,
-            initial_bias_lr=bias_lr_spec.initial_value * bias_lr_mult,
-            initial_head_lr=head_lr_spec.initial_value * bias_lr_mult,
+            initial_whiten_bias_lr=whiten_bias_lr_spec.initial_value * sgd_lr_mult,
+            initial_bn_bias_lr=bn_bias_lr_spec.initial_value * sgd_lr_mult,
+            initial_head_lr=head_lr_spec.initial_value * sgd_lr_mult,
         )
 
 
@@ -1840,7 +1856,8 @@ def print_run_banner(cfg):
         initial_muon_momentum_index=nearest_hparam_state(
             "muon_momentum", initial_muon_momentum
         ),
-        initial_bias_lr=initial_hparams["bias_lr"],
+        initial_whiten_bias_lr=initial_hparams["whiten_bias_lr"],
+        initial_bn_bias_lr=initial_hparams["bn_bias_lr"],
         initial_head_lr=initial_hparams["head_lr"],
     )
 
