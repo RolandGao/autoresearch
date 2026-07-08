@@ -18,7 +18,8 @@ DEFAULT_SUMMARY_PATHS = (
     / "summary.txt",
 )
 
-DEFAULT_BUDGET = 46
+DEFAULT_FIRST_INTERVAL_BUDGET = 20
+DEFAULT_LATER_INTERVAL_BUDGET = 10
 MAIN_ONLY_COST = 1
 NEW_MAIN_COST = 2
 SAME_MAIN_COOLDOWN_COST = 1
@@ -34,9 +35,28 @@ INITIAL_MAIN_COORDS = (-6, 0, 6, 12)
 INITIAL_COOLDOWN_COORD = 0
 FOLLOWUP_MAIN_COORD_OFFSETS = (0, -1, 1)
 COOLDOWN_REFINEMENT_COORD_OFFSETS = (0, 6, -6, 12, -12, 2, -2, 1, -1)
-PORTFOLIO_MAIN_COORD_START = -2
-PORTFOLIO_MAIN_COORD_COUNT = 23
-PORTFOLIO_COOLDOWN_RELATIVE_OFFSET = -4
+FIRST_INTERVAL_MAIN_SCREEN_COORDS = (-4, -1, 2, 5, 8, 11, 14, 17, 20)
+FIRST_INTERVAL_EDGE_TOLERANCE = 0.015
+FIRST_INTERVAL_MATRIX_OFFSETS = (
+    (0, -2),
+    (1, -2),
+    (-3, 2),
+    (-1, -2),
+    (2, -2),
+    (-1, 2),
+    (-5, 2),
+    (-3, 1),
+    (-5, -11),
+    (-3, -11),
+    (-1, -11),
+)
+FOLLOWUP_MATRIX_OFFSETS = (
+    (0, -1),
+    (-7, -4),
+    (7, 4),
+    (1, -2),
+    (-1, 7),
+)
 
 
 @dataclass(frozen=True)
@@ -67,6 +87,7 @@ class SearchResult:
     summary: MatrixSummary
     shift: int
     prior_cell: tuple[int, int] | None
+    budget: int
     screen_cooldown_coord: int
     main_probe_coords: list[int]
     best_eval: CellEval
@@ -289,22 +310,6 @@ def cooldown_refinement_coords(screen_coord: int) -> list[int]:
     )
 
 
-def portfolio_matrix_coords() -> list[tuple[int, int]]:
-    return [
-        (main_coord, main_coord + PORTFOLIO_COOLDOWN_RELATIVE_OFFSET)
-        for main_coord in range(
-            PORTFOLIO_MAIN_COORD_START,
-            PORTFOLIO_MAIN_COORD_START + PORTFOLIO_MAIN_COORD_COUNT,
-        )
-    ]
-
-
-def portfolio_search_cost() -> int:
-    # Portfolio coordinates deliberately use one cooldown per main coordinate,
-    # so each probe starts a new main run in this toy cost model.
-    return len(portfolio_matrix_coords()) * NEW_MAIN_COST
-
-
 def evaluate_cell(
     summary: MatrixSummary,
     shift: int,
@@ -369,7 +374,20 @@ def add_evaluation(
     return True
 
 
-def portfolio_matrix_search(
+def first_interval_anchor(evaluations: list[CellEval]) -> int:
+    screen_evaluations = [
+        evaluation for evaluation in evaluations if evaluation.phase == "main_screen"
+    ]
+    best_screen_value = max(evaluation.value for evaluation in screen_evaluations)
+    edge_candidates = [
+        evaluation.main_coord
+        for evaluation in screen_evaluations
+        if evaluation.value >= best_screen_value - FIRST_INTERVAL_EDGE_TOLERANCE
+    ]
+    return max(edge_candidates)
+
+
+def first_interval_search(
     summary: MatrixSummary,
     shift: int,
     prior_cell: tuple[int, int] | None,
@@ -379,7 +397,27 @@ def portfolio_matrix_search(
     evaluated_cells: set[tuple[int, int]] = set()
     evaluated_mains: set[int] = set()
 
-    for main_coord, cooldown_coord in portfolio_matrix_coords():
+    for main_coord in FIRST_INTERVAL_MAIN_SCREEN_COORDS:
+        if not add_evaluation(
+            summary,
+            shift,
+            main_coord,
+            INITIAL_COOLDOWN_COORD,
+            budget,
+            evaluations,
+            evaluated_cells,
+            evaluated_mains,
+            phase="main_screen",
+        ):
+            break
+
+    if not evaluations:
+        raise ValueError(f"budget {budget} did not allow any first-interval screens")
+
+    anchor_coord = first_interval_anchor(evaluations)
+    for main_offset, cooldown_from_main in FIRST_INTERVAL_MATRIX_OFFSETS:
+        main_coord = anchor_coord + main_offset
+        cooldown_coord = main_coord + cooldown_from_main
         if not add_evaluation(
             summary,
             shift,
@@ -389,19 +427,64 @@ def portfolio_matrix_search(
             evaluations,
             evaluated_cells,
             evaluated_mains,
-            phase="scale_portfolio",
+            phase="first_interval_probe",
         ):
             break
 
-    if not evaluations:
-        raise ValueError(f"budget {budget} did not allow any portfolio evaluations")
+    objective_evaluations = [
+        evaluation for evaluation in evaluations if evaluation.objective_value is not None
+    ]
+    if not objective_evaluations:
+        raise ValueError(f"budget {budget} did not allow any first-interval probes")
 
     return SearchResult(
         summary=summary,
         shift=shift,
         prior_cell=prior_cell,
+        budget=budget,
         screen_cooldown_coord=INITIAL_COOLDOWN_COORD,
-        main_probe_coords=[main_coord for main_coord, _ in portfolio_matrix_coords()],
+        main_probe_coords=list(FIRST_INTERVAL_MAIN_SCREEN_COORDS),
+        best_eval=max(objective_evaluations, key=objective_score),
+        evaluations=evaluations,
+    )
+
+
+def followup_transition_search(
+    summary: MatrixSummary,
+    shift: int,
+    prior_cell: tuple[int, int],
+    budget: int,
+) -> SearchResult:
+    evaluations: list[CellEval] = []
+    evaluated_cells: set[tuple[int, int]] = set()
+    evaluated_mains: set[int] = set()
+
+    for main_offset, cooldown_offset in FOLLOWUP_MATRIX_OFFSETS:
+        if not add_evaluation(
+            summary,
+            shift,
+            prior_cell[0] + main_offset,
+            prior_cell[1] + cooldown_offset,
+            budget,
+            evaluations,
+            evaluated_cells,
+            evaluated_mains,
+            phase="followup_transition",
+        ):
+            break
+
+    if not evaluations:
+        raise ValueError(f"budget {budget} did not allow any follow-up probes")
+
+    return SearchResult(
+        summary=summary,
+        shift=shift,
+        prior_cell=prior_cell,
+        budget=budget,
+        screen_cooldown_coord=prior_cell[1],
+        main_probe_coords=[
+            prior_cell[0] + offset for offset, _ in FOLLOWUP_MATRIX_OFFSETS
+        ],
         best_eval=max(evaluations, key=objective_score),
         evaluations=evaluations,
     )
@@ -411,12 +494,19 @@ def budgeted_matrix_search(
     summary: MatrixSummary,
     shift: int,
     prior_cell: tuple[int, int] | None,
-    budget: int = DEFAULT_BUDGET,
+    budget: int,
 ) -> SearchResult:
     if budget < NEW_MAIN_COST:
         raise ValueError(f"budget must be at least {NEW_MAIN_COST}")
-    if budget >= portfolio_search_cost():
-        return portfolio_matrix_search(
+    if summary.interval == 0:
+        return first_interval_search(
+            summary=summary,
+            shift=shift,
+            prior_cell=prior_cell,
+            budget=budget,
+        )
+    if prior_cell is not None:
+        return followup_transition_search(
             summary=summary,
             shift=shift,
             prior_cell=prior_cell,
@@ -474,6 +564,7 @@ def budgeted_matrix_search(
         summary=summary,
         shift=shift,
         prior_cell=prior_cell,
+        budget=budget,
         screen_cooldown_coord=initial_cooldown_coord,
         main_probe_coords=main_coords,
         best_eval=best_eval,
@@ -487,7 +578,8 @@ def source_key(summary: MatrixSummary) -> Path:
 
 def run_interval_searches(
     summaries: list[MatrixSummary],
-    budget: int = DEFAULT_BUDGET,
+    first_interval_budget: int = DEFAULT_FIRST_INTERVAL_BUDGET,
+    later_interval_budget: int = DEFAULT_LATER_INTERVAL_BUDGET,
     shifts: range = range(DEFAULT_SHIFT_MIN, DEFAULT_SHIFT_MAX + 1),
 ) -> list[SearchResult]:
     results: list[SearchResult] = []
@@ -510,6 +602,11 @@ def run_interval_searches(
                 ]
                 interval_updates: dict[str, tuple[int, int]] = {}
                 for summary in interval_summaries:
+                    budget = (
+                        first_interval_budget
+                        if summary.interval == 0
+                        else later_interval_budget
+                    )
                     result = budgeted_matrix_search(
                         summary,
                         shift=shift,
@@ -595,7 +692,7 @@ def context_row(result: SearchResult) -> dict[str, str]:
     }
 
 
-def probe_rows(result: SearchResult, budget: int) -> list[dict[str, str]]:
+def probe_rows(result: SearchResult) -> list[dict[str, str]]:
     summary = result.summary
     prior_main = result.prior_cell[0] if result.prior_cell is not None else None
     prior_cooldown = result.prior_cell[1] if result.prior_cell is not None else None
@@ -621,16 +718,21 @@ def probe_rows(result: SearchResult, budget: int) -> list[dict[str, str]]:
                     f"{format_coord(evaluation.main_coord)}, "
                     f"{cooldown_text})"
                 ),
-                "cost": f"cost={evaluation.total_cost}/{budget}",
+                "cost": f"cost={evaluation.total_cost}/{result.budget}",
                 "acc": f"acc={format_score(evaluation.value)}",
             }
         )
     return rows
 
 
-def aligned_probe_lines(results: list[SearchResult], budget: int) -> list[str]:
+def report_order_key(result: SearchResult) -> tuple[Path, str, int, int]:
+    summary = result.summary
+    return (source_key(summary), summary.attr, result.shift, summary.interval)
+
+
+def aligned_probe_lines(results: list[SearchResult]) -> list[str]:
     context_rows = [context_row(result) for result in results]
-    probe_rows_by_result = [probe_rows(result, budget) for result in results]
+    probe_rows_by_result = [probe_rows(result) for result in results]
     probe_rows_flat = [row for rows in probe_rows_by_result for row in rows]
     context_widths = {
         field: max(len(row[field]) for row in context_rows)
@@ -700,8 +802,9 @@ def performance_line(results: list[SearchResult]) -> str:
     )
 
 
-def print_report(results: list[SearchResult], budget: int) -> None:
-    for line in aligned_probe_lines(results, budget):
+def print_report(results: list[SearchResult]) -> None:
+    ordered_results = sorted(results, key=report_order_key)
+    for line in aligned_probe_lines(ordered_results):
         print(line)
     print(performance_line(results))
 
@@ -722,8 +825,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--budget",
         type=int,
-        default=DEFAULT_BUDGET,
-        help="maximum search cost per matrix",
+        default=None,
+        help="legacy override: use this maximum search cost for every interval",
+    )
+    parser.add_argument(
+        "--first-interval-budget",
+        type=int,
+        default=DEFAULT_FIRST_INTERVAL_BUDGET,
+        help="maximum search cost for interval 0 matrices",
+    )
+    parser.add_argument(
+        "--later-interval-budget",
+        type=int,
+        default=DEFAULT_LATER_INTERVAL_BUDGET,
+        help="maximum search cost for matrices after interval 0",
     )
     parser.add_argument(
         "--shift-min",
@@ -744,10 +859,20 @@ def main() -> None:
     args = parse_args()
     if args.shift_min > args.shift_max:
         raise SystemExit("--shift-min must be <= --shift-max")
+    first_interval_budget = args.first_interval_budget
+    later_interval_budget = args.later_interval_budget
+    if args.budget is not None:
+        first_interval_budget = args.budget
+        later_interval_budget = args.budget
     summaries = parse_summary_files(args.summary_paths)
     shifts = range(args.shift_min, args.shift_max + 1)
-    results = run_interval_searches(summaries, budget=args.budget, shifts=shifts)
-    print_report(results, budget=args.budget)
+    results = run_interval_searches(
+        summaries,
+        first_interval_budget=first_interval_budget,
+        later_interval_budget=later_interval_budget,
+        shifts=shifts,
+    )
+    print_report(results)
 
 
 if __name__ == "__main__":

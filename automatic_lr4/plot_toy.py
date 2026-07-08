@@ -35,6 +35,7 @@ LOG_FILE_PATH = (
     HERE / "20260706_235846_088906" / "cifar_search_improved.log"
 )
 COLOR_SCALE_FLOOR = 0.88
+MAIN_ROW_COLOR_FLOOR = 0.8
 MIN_COLOR_SCALE_SPAN = 1e-4
 DEFAULT_COLOR_PERCENTILES = (5.0, 95.0)
 DEFAULT_INTERVALS = [0, 1, 2, 3]
@@ -399,22 +400,71 @@ def color_scale_bounds(
     matrix: np.ndarray,
     lower_percentile: float,
     upper_percentile: float,
-    floor: float,
+    floor: float | None,
 ) -> tuple[Normalize, str]:
     values = matrix[np.isfinite(matrix)]
     if values.size == 0:
-        return Normalize(vmin=floor, vmax=floor + 1e-6, clip=True), "neither"
+        vmin = floor if floor is not None else 0.0
+        return Normalize(vmin=vmin, vmax=vmin + 1e-6, clip=True), "neither"
 
-    percentile_values = values[values >= floor]
-    if percentile_values.size == 0:
+    if floor is None:
         percentile_values = values
+    else:
+        percentile_values = values[values >= floor]
+        if percentile_values.size == 0:
+            percentile_values = values
 
     vmin = float(np.percentile(percentile_values, lower_percentile))
     vmax = float(np.percentile(percentile_values, upper_percentile))
-    vmin = max(floor, vmin)
+    if floor is not None:
+        vmin = max(floor, vmin)
     if vmax - vmin < MIN_COLOR_SCALE_SPAN:
-        center = max(floor, float(np.median(percentile_values)))
-        vmin = max(floor, center - MIN_COLOR_SCALE_SPAN / 2)
+        center = float(np.median(percentile_values))
+        if floor is not None:
+            center = max(floor, center)
+        vmin = center - MIN_COLOR_SCALE_SPAN / 2
+        if floor is not None:
+            vmin = max(floor, vmin)
+        vmax = max(center + MIN_COLOR_SCALE_SPAN / 2, vmin + MIN_COLOR_SCALE_SPAN)
+
+    actual_min = float(np.min(values))
+    actual_max = float(np.max(values))
+    clipped_low = actual_min < vmin
+    clipped_high = actual_max > vmax
+    if clipped_low and clipped_high:
+        extend = "both"
+    elif clipped_low:
+        extend = "min"
+    elif clipped_high:
+        extend = "max"
+    else:
+        extend = "neither"
+    return Normalize(vmin=vmin, vmax=vmax, clip=True), extend
+
+
+def main_row_color_scale_bounds(
+    matrix: np.ndarray,
+    lower_percentile: float,
+    upper_percentile: float,
+) -> tuple[Normalize, str]:
+    values = matrix[np.isfinite(matrix)]
+    if values.size == 0:
+        return Normalize(vmin=0.0, vmax=1e-6, clip=True), "neither"
+
+    high_values = values[values >= MAIN_ROW_COLOR_FLOOR]
+    if high_values.size == 0:
+        return color_scale_bounds(
+            matrix,
+            lower_percentile=lower_percentile,
+            upper_percentile=upper_percentile,
+            floor=None,
+        )
+
+    vmin = MAIN_ROW_COLOR_FLOOR
+    vmax = float(np.percentile(high_values, upper_percentile))
+    if vmax - vmin < MIN_COLOR_SCALE_SPAN:
+        center = float(np.median(high_values))
+        vmin = max(MAIN_ROW_COLOR_FLOOR, center - MIN_COLOR_SCALE_SPAN / 2)
         vmax = max(center + MIN_COLOR_SCALE_SPAN / 2, vmin + MIN_COLOR_SCALE_SPAN)
 
     actual_min = float(np.min(values))
@@ -454,6 +504,19 @@ def annotate_heatmap_cells(ax, image, matrix: np.ndarray) -> None:
                 path_effects.withStroke(linewidth=0.9, foreground=stroke_color)
             ],
         )
+
+
+def main_acc_row(main_evals: list[MainEval]) -> np.ndarray:
+    return np.array(
+        [
+            [
+                float(main_eval.main_acc)
+                if is_finite_number(main_eval.main_acc)
+                else np.nan
+                for main_eval in main_evals
+            ]
+        ]
+    )
 
 
 def peak_cells(matrix: np.ndarray) -> list[tuple[int, int]]:
@@ -570,9 +633,29 @@ def plot_lr_heatmap(
         upper_percentile=color_percentiles[1],
         floor=COLOR_SCALE_FLOOR,
     )
+    main_row = main_acc_row(main_evals)
+    main_norm, main_colorbar_extend = main_row_color_scale_bounds(
+        main_row,
+        lower_percentile=color_percentiles[0],
+        upper_percentile=color_percentiles[1],
+    )
+
     fig_width = max(10.5, 0.52 * len(x_values) + 5.0)
-    fig_height = max(7.2, 0.34 * len(y_values) + 3.2)
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    fig_height = max(8.2, 0.34 * len(y_values) + 4.25)
+    fig = plt.figure(figsize=(fig_width, fig_height))
+    grid = fig.add_gridspec(
+        2,
+        2,
+        width_ratios=[1.0, 0.04],
+        height_ratios=[max(len(y_values), 1), 1.35],
+        hspace=0.08,
+        wspace=0.08,
+    )
+    ax = fig.add_subplot(grid[0, 0])
+    main_row_ax = fig.add_subplot(grid[1, 0], sharex=ax)
+    colorbar_ax = fig.add_subplot(grid[0, 1])
+    main_colorbar_ax = fig.add_subplot(grid[1, 1])
+
     image = ax.imshow(
         masked,
         origin="lower",
@@ -580,13 +663,29 @@ def plot_lr_heatmap(
         cmap="viridis",
         norm=norm,
     )
+    main_image = main_row_ax.imshow(
+        np.ma.masked_invalid(main_row),
+        origin="lower",
+        aspect="auto",
+        cmap="magma",
+        norm=main_norm,
+    )
 
     ax.set_xticks(range(len(x_values)))
-    ax.set_xticklabels([format_number(value, 3) for value in x_values], rotation=60)
+    ax.tick_params(axis="x", labelbottom=False)
     ax.set_yticks(range(len(y_values)))
     ax.set_yticklabels([format_number(value, 3) for value in y_values])
-    ax.set_xlabel(f"main interval {interval} {attr}")
     ax.set_ylabel(f"cooldown {attr}")
+
+    main_row_ax.set_xticks(range(len(x_values)))
+    main_row_ax.set_xticklabels(
+        [format_number(value, 3) for value in x_values],
+        rotation=60,
+    )
+    main_row_ax.set_yticks([0])
+    main_row_ax.set_yticklabels(["main"])
+    main_row_ax.set_xlabel(f"main interval {interval} {attr}")
+    main_row_ax.set_ylabel("before cooldown")
 
     fixed_hparams = main_evals[0].hparams
     fixed = ", ".join(
@@ -604,7 +703,10 @@ def plot_lr_heatmap(
     draw_chosen_column(ax, x_values, len(y_values), getattr(selected_hparams, attr))
     annotate_best_cell(ax, matrix)
 
-    colorbar = fig.colorbar(image, ax=ax, extend=colorbar_extend)
+    annotate_heatmap_cells(main_row_ax, main_image, main_row)
+    draw_chosen_column(main_row_ax, x_values, 1, getattr(selected_hparams, attr))
+
+    colorbar = fig.colorbar(image, cax=colorbar_ax, extend=colorbar_extend)
     colorbar.ax.yaxis.set_major_formatter(FormatStrFormatter("%.4f"))
     colorbar.ax.yaxis.get_offset_text().set_visible(False)
     colorbar.set_label(
@@ -612,9 +714,26 @@ def plot_lr_heatmap(
         f"({format_number(color_percentiles[0], 3)}-"
         f"{format_number(color_percentiles[1], 3)} pct)"
     )
+    main_colorbar = fig.colorbar(
+        main_image,
+        cax=main_colorbar_ax,
+        extend=main_colorbar_extend,
+    )
+    main_colorbar.ax.yaxis.set_major_formatter(FormatStrFormatter("%.4f"))
+    main_colorbar.ax.yaxis.get_offset_text().set_visible(False)
+    main_colorbar.set_label("main tta_val_acc")
     ax.set_facecolor("#eeeeee")
+    main_row_ax.set_facecolor("#eeeeee")
     ax.grid(False)
-    fig.tight_layout()
+    main_row_ax.grid(False)
+    fig.subplots_adjust(
+        left=0.08,
+        right=0.88,
+        top=0.91,
+        bottom=0.15,
+        hspace=0.08,
+        wspace=0.08,
+    )
     fig.savefig(output_path, dpi=180)
     plt.close(fig)
 

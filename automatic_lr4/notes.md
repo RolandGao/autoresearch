@@ -258,3 +258,10 @@ performance cases=357 probes=3570 exact=35/357 within_0.0001=35/357 within_0.000
 
 our goal is for mean_gap to be less than 0.001.
 the algorithm should remain attr agnostic, and scale agnostic (it does not know the min and max of the search space beforehand)
+
+
+step 1: large probe of main lr
+step 2: large/local probe of cooldown lr given a good main lr.
+step 3: large probe of main lr given that cooldown lr. 
+step 4: local probe of cooldown lr.
+step 5: local probe of main lr. 
