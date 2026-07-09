@@ -420,7 +420,22 @@ def finite(value):
     return bool(torch.isfinite(torch.as_tensor(value)).item())
 
 
-RUN_SUMMARY_SPECS = "\nBatch size:          %d|batch_size\nTrain epochs:        %.3g|train_epochs\nTrain steps:         %d|train_steps\nN steps:             %d|n_steps\nM cooldown steps:    %d|m_steps\nSearch hparams:      %s|search_names_text\nCooldown hparams:    %s|cooldown_search_names_text\nMuon nesterov:       %s|muon_nesterov\nFull grid search:    %s|full_grid_search\n".strip().splitlines()
+RUN_SUMMARY_SPECS = (
+    (
+        "\nBatch size:              %d|batch_size"
+        "\nTrain epochs:            %.3g|train_epochs"
+        "\nTrain steps:             %d|train_steps"
+        "\nN steps:                 %d|n_steps"
+        "\nM cooldown steps:        %d|m_steps"
+        "\nSearch hparams:          %s|search_names_text"
+        "\nCooldown hparams:        %s|cooldown_search_names_text"
+        "\nMuon nesterov:           %s|muon_nesterov"
+        "\nFull grid search:        %s|full_grid_search"
+        "\nSearch cooldown of main: %s|search_cooldown_of_main"
+    )
+    .strip()
+    .splitlines()
+)
 RUN_FOOTER_SPECS = "\nVal acc:             %.4f|val_acc\nTTA val acc:         %.4f|tta_val_acc\nRun seconds:         %.3f|run_seconds\n".strip().splitlines()
 
 
@@ -537,18 +552,24 @@ def evaluate_tta_val_acc(model, loader):
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
 SEARCH_STEP_CONFIGS = [(40, 40)]
-PRINT_OUTPUT_FILENAME = "cifar_search_bias_split.log"
+PRINT_OUTPUT_FILENAME = "cifar_search_coarse_to_fine.log"
 LR_SEARCH_SIG_FIGS = 2
 SMALL_LR_THRESHOLD_STEPS = 3
 LR_ZERO_STATE = "zero"
 MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
 INITIAL_MOMENTUM = 0.6
 MUON_NESTEROV = False
-FULL_GRID_SEARCH = True
+FULL_GRID_SEARCH = False
+search_cooldown_of_main = True
+INITIAL_MAIN_SEARCH_STRIDES = (4, 2, 1)
 FULL_GRID_SEARCH_HPARAMS = ("whiten_bias_lr", "bn_bias_lr", "head_lr")
 FULL_GRID_SEARCH_STATES = tuple(range(0, -21, -1))
 RUN_CONFIGS = [
-    dict(batch_size=2000, full_grid_search=FULL_GRID_SEARCH),
+    dict(
+        batch_size=2000,
+        full_grid_search=FULL_GRID_SEARCH,
+        search_cooldown_of_main=search_cooldown_of_main,
+    ),
 ]
 SEARCH_HPARAM_ORDER = (
     "muon_lr",
@@ -960,10 +981,10 @@ def neighbor_states(name, state, step=1):
         return [state - step, state + step]
     if spec.kind == "choice":
         states = []
-        if state > 0:
-            states.append(state - 1)
-        if state + 1 < len(spec.values):
-            states.append(state + 1)
+        if state - step >= 0:
+            states.append(state - step)
+        if state + step < len(spec.values):
+            states.append(state + step)
         return states
     raise ValueError(f"Unrecognized hparam kind: {spec.kind}")
 
@@ -1006,6 +1027,7 @@ def find_best_hparam_point(
     results_by_point,
     full_grid_search=False,
     finalize_direction_best=True,
+    search_strides=(1,),
 ):
     def point_in_direction(point, index, delta):
         name = search_names[index]
@@ -1144,7 +1166,7 @@ def find_best_hparam_point(
             best_point = best_line_point(best_point, point)
         return best_point
 
-    def search_hparam_sweep(middle_point):
+    def search_hparam_sweep(middle_point, search_stride):
         accepted_points = []
         for index in ordered_search_indexes(search_names):
             name = search_names[index]
@@ -1161,7 +1183,7 @@ def find_best_hparam_point(
                 continue
             group = [
                 point_with_state(middle_point, index, state)
-                for state in neighbor_states(name, middle_point[index])
+                for state in neighbor_states(name, middle_point[index], search_stride)
             ]
             group = lower_value_first(group, search_names, index)
             for neighbor_point in group:
@@ -1185,12 +1207,15 @@ def find_best_hparam_point(
     middle_point = initial_point
     center_path = [middle_point]
     evaluate(middle_point)
-    while True:
-        next_point, accepted_points = search_hparam_sweep(middle_point)
-        if not accepted_points:
-            break
-        middle_point = next_point
-        center_path.extend(accepted_points)
+    for search_stride in search_strides:
+        while True:
+            next_point, accepted_points = search_hparam_sweep(
+                middle_point, search_stride
+            )
+            if not accepted_points:
+                break
+            middle_point = next_point
+            center_path.extend(accepted_points)
     return middle_point, center_path
 
 
@@ -1229,6 +1254,7 @@ def search_hparam_segment(
     start_state,
     interval_info=None,
     initial_results=None,
+    search_strides=(1,),
 ):
     results_by_point = {}
     candidate_evaluations = list(initial_results or [])
@@ -1441,6 +1467,7 @@ def search_hparam_segment(
         results_by_point=results_by_point,
         full_grid_search=getattr(ctx, "full_grid_search", False),
         finalize_direction_best=not search_candidate_cooldown,
+        search_strides=search_strides,
     )
     search_path = [results_by_point[point] for point in center_path_points]
     best_result = results_by_point[best_point]
@@ -1546,6 +1573,11 @@ def search_interval_hparams(
         cooldown_initial_states=None,
         search_candidate_cooldown=False,
     ):
+        search_strides = (
+            INITIAL_MAIN_SEARCH_STRIDES
+            if fixed_cooldown_hparams is None and not search_candidate_cooldown
+            else (1,)
+        )
         interval_info = dict(
             interval_index=interval_index,
             cooldown_steps=cooldown_steps,
@@ -1564,6 +1596,7 @@ def search_interval_hparams(
             interval_start_step,
             start_state,
             interval_info,
+            search_strides=search_strides,
         )
 
     def cooldown_hparams_from_states(main_hparams, states):
@@ -1657,7 +1690,7 @@ def search_interval_hparams(
             selected_main_point,
             fixed_cooldown_hparams=fixed_cooldown_hparams,
             cooldown_initial_states=selected_cooldown_states,
-            search_candidate_cooldown=True,
+            search_candidate_cooldown=ctx.search_cooldown_of_main,
         )
         log_search_path(main_result["search_path"])
         if not tta_val_acc_improved(
@@ -1739,6 +1772,7 @@ def run_full_dataset_search(cfg):
         search_names=search_names,
         fixed_hparams=initial_hparams,
         full_grid_search=cfg.full_grid_search,
+        search_cooldown_of_main=cfg.search_cooldown_of_main,
     )
 
     last_loss = None
@@ -1800,7 +1834,7 @@ def run_full_dataset_search(cfg):
     tta_val_acc = evaluate(cfg.model, test_loader, tta_level=2)
     result = pack(
         vars(cfg),
-        "run batch_size train_epochs train_steps n_steps m_steps search_names_text cooldown_search_names_text muon_nesterov full_grid_search",
+        "run batch_size train_epochs train_steps n_steps m_steps search_names_text cooldown_search_names_text muon_nesterov full_grid_search search_cooldown_of_main",
     )
     result.update(
         val_acc=val_acc,
@@ -1814,6 +1848,9 @@ def iter_run_settings():
         n_steps, m_steps = steps
         batch_size = config["batch_size"]
         full_grid_search = config.get("full_grid_search", FULL_GRID_SEARCH)
+        configured_search_cooldown_of_main = config.get(
+            "search_cooldown_of_main", search_cooldown_of_main
+        )
         sgd_lr_mult = batch_size / 2000
         momentum_spec = SEARCH_HPARAMS["muon_momentum"]
         whiten_bias_lr_spec = SEARCH_HPARAMS["whiten_bias_lr"]
@@ -1824,6 +1861,7 @@ def iter_run_settings():
             "n_steps m_steps",
             batch_size=batch_size,
             full_grid_search=full_grid_search,
+            search_cooldown_of_main=configured_search_cooldown_of_main,
             train_epochs=TRAIN_EPOCHS,
             initial_muon_momentum=momentum_spec.initial_value,
             muon_nesterov=MUON_NESTEROV,
@@ -1847,6 +1885,7 @@ def print_run_banner(cfg):
         cooldown_search_hparams=cfg.cooldown_search_names_text,
         muon_nesterov=cfg.muon_nesterov,
         full_grid_search=cfg.full_grid_search,
+        search_cooldown_of_main=cfg.search_cooldown_of_main,
         initial_muon_lr=initial_hparams["muon_lr"],
         initial_muon_momentum=initial_muon_momentum,
         initial_muon_momentum_index=nearest_hparam_state(

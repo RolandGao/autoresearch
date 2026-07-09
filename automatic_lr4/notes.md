@@ -265,3 +265,5 @@ step 2: large/local probe of cooldown lr given a good main lr.
 step 3: large probe of main lr given that cooldown lr. 
 step 4: local probe of cooldown lr.
 step 5: local probe of main lr. 
+
+layernorm before final layer makes sense i think. 
