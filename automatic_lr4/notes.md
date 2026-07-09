@@ -166,11 +166,11 @@ autoresearch/automatic_lr4/20260706_174252_402210/cifar_search_1init.log
 autoresearch/automatic_lr4/20260706_183636_919627/cifar_search_1init_higher_muon_lr_precision.log
 
 python plot_cifar_search.py 20260706_183636_919627/cifar_search_1init_higher_muon_lr_precision.log
-python plot_cifar_search.py 20260709_173538_010040/cifar_search_coarse_to_fine_no_cooldown_search.log
+python plot_cifar_search.py 20260709_181036_124885/cifar_search_coarse_to_fine_no_cooldown_search.log
 
 autoresearch/automatic_lr4/20260709_173538_010040/cifar_search_coarse_to_fine_no_cooldown_search.log
 autoresearch/automatic_lr4/20260707_065827_213717/cifar_search_bias_split.log
-
+autoresearch/automatic_lr4/20260709_181036_124885/cifar_search_coarse_to_fine_no_cooldown_search.log
 factor=0.6 is pretty good. 
 
 Search main interval. Search cooldown interval. Then search main interval while fixing the cooldown interval. 
