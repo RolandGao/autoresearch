@@ -552,7 +552,7 @@ def evaluate_tta_val_acc(model, loader):
 TRAIN_EPOCHS = 8
 LABEL_SMOOTHING = 0.2
 SEARCH_STEP_CONFIGS = [(40, 40)]
-PRINT_OUTPUT_FILENAME = "cifar_search_coarse_to_fine.log"
+PRINT_OUTPUT_FILENAME = "cifar_search_coarse_to_fine_no_cooldown_search.log"
 LR_SEARCH_SIG_FIGS = 2
 SMALL_LR_THRESHOLD_STEPS = 3
 LR_ZERO_STATE = "zero"
@@ -560,7 +560,7 @@ MOMENTUM_SEARCH_VALUES = [round(i / 10, 1) for i in range(10)] + [0.95, 0.99]
 INITIAL_MOMENTUM = 0.6
 MUON_NESTEROV = False
 FULL_GRID_SEARCH = False
-search_cooldown_of_main = True
+search_cooldown_of_main = False
 INITIAL_MAIN_SEARCH_STRIDES = (4, 2, 1)
 FULL_GRID_SEARCH_HPARAMS = ("whiten_bias_lr", "bn_bias_lr", "head_lr")
 FULL_GRID_SEARCH_STATES = tuple(range(0, -21, -1))
