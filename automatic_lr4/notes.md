@@ -166,13 +166,30 @@ autoresearch/automatic_lr4/20260706_174252_402210/cifar_search_1init.log
 autoresearch/automatic_lr4/20260706_183636_919627/cifar_search_1init_higher_muon_lr_precision.log
 
 python plot_cifar_search.py 20260706_183636_919627/cifar_search_1init_higher_muon_lr_precision.log
-python plot_cifar_search.py 20260702_171353_931352/cifar_search_1init.log
+python plot_cifar_search.py 20260709_173538_010040/cifar_search_coarse_to_fine_no_cooldown_search.log
+
+autoresearch/automatic_lr4/20260709_173538_010040/cifar_search_coarse_to_fine_no_cooldown_search.log
+autoresearch/automatic_lr4/20260707_065827_213717/cifar_search_bias_split.log
 
 factor=0.6 is pretty good. 
 
 Search main interval. Search cooldown interval. Then search main interval while fixing the cooldown interval. 
 main interval is more expensive than the cooldown. so find the best cooldown early on.
 we need to start from arbitrary values and still be able to converge. 
+
+main:
+interval=0 muon_lr=0.22 momentum=0.7 whiten_bias_lr=4.6 bn_bias_lr=60 head_lr=280 path_final_tta=0.9109
+interval=1 muon_lr=0.078 momentum=0.7 whiten_bias_lr=2.8 bn_bias_lr=60 head_lr=280 path_final_tta=0.9291
+interval=2 muon_lr=0.078 momentum=0.7 whiten_bias_lr=2.8 bn_bias_lr=60 head_lr=280 path_final_tta=0.9335
+interval=3 muon_lr=0.028 momentum=0.8 whiten_bias_lr=1 bn_bias_lr=7.7 head_lr=4.6 path_final_tta=0.9409
+interval=4 muon_lr=0.01 momentum=0.8 whiten_bias_lr=1 bn_bias_lr=4.6 head_lr=170 path_final_tta=0.9408
+
+cooldown:
+interval=0 muon_lr=0.028 momentum=0.7 whiten_bias_lr=7.7 bn_bias_lr=21 head_lr=770
+interval=1 muon_lr=0.017 momentum=0.7 whiten_bias_lr=1 bn_bias_lr=7.7 head_lr=770
+interval=2 muon_lr=0.017 momentum=0.7 whiten_bias_lr=1 bn_bias_lr=1 head_lr=1300
+interval=3 muon_lr=0.01 momentum=0.8 whiten_bias_lr=1 bn_bias_lr=7.7 head_lr=60
+interval=4 muon_lr=0.01 momentum=0.8 whiten_bias_lr=1 bn_bias_lr=4.6 head_lr=170
 
 main:
 interval=0 muon_lr=0.2 momentum=0.6 bias_lr=62 head_lr=800 path_final_tta=0.9136

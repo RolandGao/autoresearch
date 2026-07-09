@@ -23,6 +23,34 @@ OUTPUT_SUMMARY = "summary.txt"
 OUTPUT_CURVES = "curves.png"
 OUTPUT_LANDSCAPES = "landscapes.png"
 OUTPUT_LANDSCAPES_MORE = "landscapes_more.png"
+MAX_COOLDOWN_LANDSCAPE_ROWS = 24
+
+DEFAULT_SEARCH_HPARAMS = ["muon_lr", "muon_momentum", "bias_lr", "head_lr"]
+DEFAULT_COOLDOWN_HPARAMS = ["muon_lr", "bias_lr", "head_lr"]
+HPARAM_ATTRS = (
+    "muon_lr",
+    "muon_momentum",
+    "bias_lr",
+    "whiten_bias_lr",
+    "bn_bias_lr",
+    "head_lr",
+)
+HPARAM_DISPLAY_NAMES = {
+    "muon_lr": "muon_lr",
+    "muon_momentum": "momentum",
+    "bias_lr": "bias_lr",
+    "whiten_bias_lr": "whiten_bias_lr",
+    "bn_bias_lr": "bn_bias_lr",
+    "head_lr": "head_lr",
+}
+HPARAM_TITLES = {
+    "muon_lr": "Muon LR",
+    "muon_momentum": "Muon Momentum",
+    "bias_lr": "Bias LR",
+    "whiten_bias_lr": "Whiten Bias LR",
+    "bn_bias_lr": "BN Bias LR",
+    "head_lr": "Head LR",
+}
 
 KV_RE = re.compile(r"(?P<key>[A-Za-z0-9_]+)=(?P<value>\S+)")
 SUMMARY_RE = re.compile(r"^(?P<key>[A-Za-z][A-Za-z0-9 ]+):\s+(?P<value>.+)$")
@@ -32,11 +60,20 @@ def default_output_dir(log_path: Path) -> Path:
     return log_path.parent / f"{log_path.stem}_plots"
 
 
+def cooldown_landscape_output_path(output_dir: Path, page_index: int) -> Path:
+    if page_index == 0:
+        return output_dir / OUTPUT_LANDSCAPES_MORE
+    output_name = Path(OUTPUT_LANDSCAPES_MORE)
+    return output_dir / f"{output_name.stem}_{page_index + 1:03d}{output_name.suffix}"
+
+
 @dataclass(frozen=True)
 class HParams:
     muon_lr: float | None = None
     muon_momentum: float | None = None
     bias_lr: float | None = None
+    whiten_bias_lr: float | None = None
+    bn_bias_lr: float | None = None
     head_lr: float | None = None
 
     @classmethod
@@ -45,6 +82,8 @@ class HParams:
             muon_lr=parse_optional_float(fields.get("muon_lr")),
             muon_momentum=parse_optional_float(fields.get("muon_momentum")),
             bias_lr=parse_optional_float(fields.get("bias_lr")),
+            whiten_bias_lr=parse_optional_float(fields.get("whiten_bias_lr")),
+            bn_bias_lr=parse_optional_float(fields.get("bn_bias_lr")),
             head_lr=parse_optional_float(fields.get("head_lr")),
         )
 
@@ -204,6 +243,34 @@ def parse_hparam_names(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def search_hparam_names(run: Run) -> list[str]:
+    return parse_hparam_names(run.header.get("search_hparams")) or list(
+        DEFAULT_SEARCH_HPARAMS
+    )
+
+
+def cooldown_hparam_names(run: Run) -> list[str]:
+    return parse_hparam_names(run.header.get("cooldown_search_hparams")) or list(
+        DEFAULT_COOLDOWN_HPARAMS
+    )
+
+
+def hparam_value(hparams: HParams, attr: str) -> float | None:
+    return getattr(hparams, attr, None)
+
+
+def hparam_display_name(attr: str) -> str:
+    return HPARAM_DISPLAY_NAMES.get(attr, attr)
+
+
+def hparam_title(attr: str) -> str:
+    return HPARAM_TITLES.get(attr, attr.replace("_", " ").title())
+
+
+def present_hparam_attrs(hparams: HParams) -> list[str]:
+    return [attr for attr in HPARAM_ATTRS if hparam_value(hparams, attr) is not None]
 
 
 def selected_path_by_interval(run: Run) -> dict[int, SearchPath]:
@@ -382,21 +449,26 @@ def interval_loss_ranges(run: Run) -> dict[int, tuple[float | None, float | None
     return ranges
 
 
-def format_hparams(hparams: HParams, prefix: str = "") -> str:
-    return (
-        f"{prefix}muon_lr={format_number(hparams.muon_lr)} "
-        f"{prefix}momentum={format_number(hparams.muon_momentum)} "
-        f"{prefix}bias_lr={format_number(hparams.bias_lr)} "
-        f"{prefix}head_lr={format_number(hparams.head_lr)}"
+def format_hparams(
+    hparams: HParams,
+    prefix: str = "",
+    attrs: list[str] | None = None,
+) -> str:
+    attrs = attrs or present_hparam_attrs(hparams) or list(DEFAULT_SEARCH_HPARAMS)
+    return " ".join(
+        f"{prefix}{hparam_display_name(attr)}={format_number(hparam_value(hparams, attr))}"
+        for attr in attrs
     )
 
 
-def format_hparam_columns(hparams: HParams) -> str:
-    return (
-        f"muon_lr={format_number(hparams.muon_lr):<8} "
-        f"momentum={format_number(hparams.muon_momentum):<8} "
-        f"bias_lr={format_number(hparams.bias_lr):<8} "
-        f"head_lr={format_number(hparams.head_lr):<8}"
+def format_hparam_columns(
+    hparams: HParams,
+    attrs: list[str] | None = None,
+) -> str:
+    attrs = attrs or present_hparam_attrs(hparams) or list(DEFAULT_SEARCH_HPARAMS)
+    return " ".join(
+        f"{hparam_display_name(attr)}={format_number(hparam_value(hparams, attr)):<8}"
+        for attr in attrs
     )
 
 
@@ -404,9 +476,11 @@ def format_candidate_row(
     phase: str,
     score: str,
     hparams: HParams,
+    attrs: list[str] | None = None,
 ) -> str:
     return (
-        f"phase={phase:<8} score={score:<8} {format_hparam_columns(hparams)}"
+        f"phase={phase:<8} score={score:<8} "
+        f"{format_hparam_columns(hparams, attrs=attrs)}"
     )
 
 
@@ -418,13 +492,11 @@ def best_cooldown_candidate(main_eval: MainEval) -> CooldownCandidate | None:
     )
 
 
-def hparams_key(hparams: HParams) -> tuple[float | None, float | None, float | None, float | None]:
-    return (
-        hparams.muon_lr,
-        hparams.muon_momentum,
-        hparams.bias_lr,
-        hparams.head_lr,
-    )
+def hparams_key(
+    hparams: HParams,
+    attrs: list[str] | tuple[str, ...] = HPARAM_ATTRS,
+) -> tuple[float | None, ...]:
+    return tuple(hparam_value(hparams, attr) for attr in attrs)
 
 
 def same_hparam_value(left: float | None, right: float | None) -> bool:
@@ -434,22 +506,26 @@ def same_hparam_value(left: float | None, right: float | None) -> bool:
 
 
 def hparams_match_except(candidate: HParams, center: HParams, varied_attr: str) -> bool:
-    for attr in ("muon_lr", "muon_momentum", "bias_lr", "head_lr"):
+    for attr in HPARAM_ATTRS:
         if attr == varied_attr:
             continue
-        if not same_hparam_value(getattr(candidate, attr), getattr(center, attr)):
+        if not same_hparam_value(
+            hparam_value(candidate, attr),
+            hparam_value(center, attr),
+        ):
             return False
     return True
 
 
 def selected_main_eval(run: Run, train_interval: TrainInterval) -> MainEval | None:
-    selected_key = hparams_key(train_interval.hparams)
+    selected_attrs = search_hparam_names(run)
+    selected_key = hparams_key(train_interval.hparams, selected_attrs)
     matches = [
         main_eval
         for main_eval in run.main_evals
         if (
             main_eval.interval == train_interval.interval
-            and hparams_key(main_eval.hparams) == selected_key
+            and hparams_key(main_eval.hparams, selected_attrs) == selected_key
         )
     ]
     if not matches:
@@ -468,6 +544,7 @@ def selected_main_eval(run: Run, train_interval: TrainInterval) -> MainEval | No
 
 
 def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
+    search_names = search_hparam_names(run)
     selected_paths = selected_path_by_interval(run)
     best_main = max(
         (item for item in run.main_evals if is_finite_number(item.main_acc)),
@@ -518,21 +595,21 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
         lines.append(
             "Best main eval: "
             f"interval={best_main.interval} main={best_main.main_acc:.4f} "
-            f"{format_hparams(best_main.hparams)}"
+            f"{format_hparams(best_main.hparams, attrs=search_names)}"
         )
     if best_cooldown is not None:
         lines.append(
             "Best eval cooldown: "
             f"interval={best_cooldown.interval} best_cooldown="
             f"{best_cooldown.best_cooldown_acc:.4f} "
-            f"{format_hparams(best_cooldown.hparams, prefix='main_')}"
+            f"{format_hparams(best_cooldown.hparams, prefix='main_', attrs=search_names)}"
         )
     if best_candidate is not None:
         lines.append(
             "Best cooldown candidate: "
             f"interval={best_candidate.interval} tta_val_acc="
             f"{best_candidate.tta_val_acc:.4f} "
-            f"{format_hparams(best_candidate.hparams)}"
+            f"{format_hparams(best_candidate.hparams, attrs=search_names)}"
         )
     lines.append("")
 
@@ -552,11 +629,12 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
             cooldown_hparams = cooldown.hparams
         selected_main_lines.append(
             f"interval={train_interval.interval} "
-            f"{format_hparams(train_interval.hparams)} "
+            f"{format_hparams(train_interval.hparams, attrs=search_names)} "
             f"path_final_tta={format_number(path.final_acc if path else None)}"
         )
         selected_cooldown_lines.append(
-            f"interval={train_interval.interval} {format_hparams(cooldown_hparams)}"
+            f"interval={train_interval.interval} "
+            f"{format_hparams(cooldown_hparams, attrs=search_names)}"
         )
     lines.extend(selected_main_lines)
     lines.append("")
@@ -586,6 +664,7 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
                     "main",
                     main_status,
                     main_eval.hparams,
+                    attrs=search_names,
                 )
             )
             lines.append(
@@ -593,6 +672,7 @@ def write_summary(run: Run, log_path: Path, output_dir: Path) -> None:
                     "cooldown",
                     best_tta,
                     cooldown_hparams,
+                    attrs=search_names,
                 )
             )
 
@@ -612,9 +692,27 @@ def plot_curves(run: Run, output_dir: Path) -> None:
         end_step_by_interval.get(interval, interval) for interval in intervals
     ]
 
-    fig, axes = plt.subplots(2, 3, figsize=(17, 8.2))
-    acc_ax, muon_lr_ax, bias_lr_ax, head_lr_ax, momentum_ax, empty_ax = axes.flat
-    empty_ax.set_visible(False)
+    curve_hparams = [
+        attr
+        for attr in search_hparam_names(run)
+        if any(
+            is_finite_number(hparam_value(item.hparams, attr))
+            for item in train_intervals
+        )
+    ]
+    panel_count = 1 + len(curve_hparams)
+    col_count = min(3, max(1, panel_count))
+    row_count = math.ceil(panel_count / col_count)
+    fig, axes = plt.subplots(
+        row_count,
+        col_count,
+        figsize=(5.7 * col_count, 3.55 * row_count),
+        squeeze=False,
+    )
+    flat_axes = list(axes.flat)
+    acc_ax = flat_axes[0]
+    for ax in flat_axes[panel_count:]:
+        ax.set_visible(False)
 
     best_main_by_interval = []
     best_cooldown_by_interval = []
@@ -664,17 +762,11 @@ def plot_curves(run: Run, output_dir: Path) -> None:
     acc_ax.legend(fontsize=9)
     style_axes(acc_ax)
 
-    lr_panels = [
-        (muon_lr_ax, "Muon LR", "muon_lr"),
-        (bias_lr_ax, "Bias LR", "bias_lr"),
-        (head_lr_ax, "Head LR", "head_lr"),
-    ]
-
     def plot_piecewise_hparam(ax, attr: str) -> None:
         plot_steps: list[int] = []
         plot_values: list[float] = []
         for train_interval in train_intervals:
-            value = getattr(train_interval.hparams, attr)
+            value = hparam_value(train_interval.hparams, attr)
             if value is None:
                 continue
             plot_steps.append(train_interval.start_step)
@@ -692,19 +784,14 @@ def plot_curves(run: Run, output_dir: Path) -> None:
         ax.step(plot_steps, plot_values, where="post", linewidth=2.0)
         ax.set_xlim(plot_steps[0], last_step)
 
-    for ax, title, attr in lr_panels:
+    for ax, attr in zip(flat_axes[1:], curve_hparams):
         plot_piecewise_hparam(ax, attr)
-        ax.set_title(title)
+        ax.set_title(f"Selected {hparam_title(attr)}")
         ax.set_xlabel("Training step")
-        ax.set_ylabel("Learning rate")
+        ax.set_ylabel("Momentum" if attr == "muon_momentum" else "Learning rate")
+        if attr == "muon_momentum":
+            ax.set_ylim(-0.03, 1.03)
         style_axes(ax)
-
-    plot_piecewise_hparam(momentum_ax, "muon_momentum")
-    momentum_ax.set_ylim(-0.03, 1.03)
-    momentum_ax.set_title("Selected Muon Momentum")
-    momentum_ax.set_xlabel("Training step")
-    momentum_ax.set_ylabel("Momentum")
-    style_axes(momentum_ax)
 
     fig.suptitle("CIFAR search selected schedule")
     fig.tight_layout(rect=(0, 0, 1, 0.965))
@@ -715,7 +802,7 @@ def plot_curves(run: Run, output_dir: Path) -> None:
 def hparam_axis_scale(attr: str) -> tuple[str, dict[str, float]]:
     if attr == "head_lr":
         return "symlog", {"linthresh": 1e-3}
-    if attr in {"muon_lr", "bias_lr"}:
+    if attr.endswith("_lr"):
         return "log", {}
     return "linear", {}
 
@@ -739,7 +826,7 @@ def candidate_accuracy_landscape(
 ) -> list[tuple[float, float]]:
     points: list[tuple[float, float]] = []
     for candidate in candidates:
-        x_value = getattr(candidate.hparams, varied_attr)
+        x_value = hparam_value(candidate.hparams, varied_attr)
         score = getattr(candidate, score_attr)
         if (
             x_value is None
@@ -802,15 +889,8 @@ def plot_accuracy_landscapes(run: Run, output_dir: Path) -> None:
     if not train_intervals:
         return
 
-    search_names = parse_hparam_names(run.header.get("search_hparams")) or [
-        "muon_lr",
-        "muon_momentum",
-        "bias_lr",
-        "head_lr",
-    ]
-    cooldown_names = parse_hparam_names(
-        run.header.get("cooldown_search_hparams")
-    ) or search_names
+    search_names = search_hparam_names(run)
+    cooldown_names = cooldown_hparam_names(run) or search_names
     columns = search_names
     row_count = len(train_intervals) * 2
     col_count = len(columns)
@@ -870,7 +950,7 @@ def plot_accuracy_landscapes(run: Run, output_dir: Path) -> None:
                     continue
 
                 points = candidate_accuracy_landscape(candidates, center, attr, score_attr)
-                center_value = getattr(center, attr)
+                center_value = hparam_value(center, attr)
                 color = color_for_interval(train_interval.interval)
                 if points:
                     xs, ys = zip(*points)
@@ -939,9 +1019,7 @@ def plot_accuracy_landscapes(run: Run, output_dir: Path) -> None:
 
 
 def plot_all_cooldown_landscapes(run: Run, output_dir: Path) -> None:
-    cooldown_names = parse_hparam_names(
-        run.header.get("cooldown_search_hparams")
-    ) or ["muon_lr", "bias_lr", "head_lr"]
+    cooldown_names = cooldown_hparam_names(run)
     main_evals = [
         item
         for item in sorted(
@@ -953,108 +1031,127 @@ def plot_all_cooldown_landscapes(run: Run, output_dir: Path) -> None:
     if not main_evals:
         return
 
-    row_count = len(main_evals)
     col_count = len(cooldown_names)
-    fig, axes = plt.subplots(
-        row_count,
-        col_count,
-        figsize=(4.4 * col_count, 1.75 * row_count),
-        squeeze=False,
-    )
-    row_scores: dict[int, list[float]] = {row: [] for row in range(row_count)}
-
-    for row, main_eval in enumerate(main_evals):
-        best = best_cooldown_candidate(main_eval)
-        center = best.hparams if best is not None else HParams()
-        baseline = best_main_interval_score(
-            run, main_eval.interval, "best_cooldown_acc"
-        )
-        candidates = [
-            item
-            for item in main_eval.candidates
-            if is_finite_number(item.tta_val_acc)
+    for page_index, page_start in enumerate(
+        range(0, len(main_evals), MAX_COOLDOWN_LANDSCAPE_ROWS)
+    ):
+        page_evals = main_evals[
+            page_start : page_start + MAX_COOLDOWN_LANDSCAPE_ROWS
         ]
-        color = color_for_interval(main_eval.interval)
-        if baseline is not None:
-            row_scores[row].append(baseline)
+        row_count = len(page_evals)
+        fig, axes = plt.subplots(
+            row_count,
+            col_count,
+            figsize=(4.4 * col_count, 1.75 * row_count),
+            squeeze=False,
+        )
+        row_scores: dict[int, list[float]] = {
+            row: [] for row in range(row_count)
+        }
 
-        for col, attr in enumerate(cooldown_names):
-            ax = axes[row][col]
-            points = candidate_accuracy_landscape(
-                candidates,
-                center,
-                attr,
-                "tta_val_acc",
+        for row, main_eval in enumerate(page_evals):
+            best = best_cooldown_candidate(main_eval)
+            center = best.hparams if best is not None else HParams()
+            baseline = best_main_interval_score(
+                run, main_eval.interval, "best_cooldown_acc"
             )
-            center_value = getattr(center, attr)
-            if points:
-                xs, ys = zip(*points)
-                row_scores[row].extend(ys)
-                ax.plot(xs, ys, marker="o", markersize=3.5, linewidth=1.2, color=color)
-                if center_value is not None:
-                    ax.axvline(
-                        center_value,
-                        color="#333333",
-                        linestyle="--",
-                        linewidth=0.9,
+            candidates = [
+                item
+                for item in main_eval.candidates
+                if is_finite_number(item.tta_val_acc)
+            ]
+            color = color_for_interval(main_eval.interval)
+            if baseline is not None:
+                row_scores[row].append(baseline)
+
+            for col, attr in enumerate(cooldown_names):
+                ax = axes[row][col]
+                points = candidate_accuracy_landscape(
+                    candidates,
+                    center,
+                    attr,
+                    "tta_val_acc",
+                )
+                center_value = hparam_value(center, attr)
+                if points:
+                    xs, ys = zip(*points)
+                    row_scores[row].extend(ys)
+                    ax.plot(
+                        xs,
+                        ys,
+                        marker="o",
+                        markersize=3.5,
+                        linewidth=1.2,
+                        color=color,
                     )
-            else:
-                ax.text(
-                    0.5,
-                    0.5,
-                    "no 1D slice",
-                    transform=ax.transAxes,
-                    ha="center",
-                    va="center",
-                    fontsize=8,
-                    color="#777777",
+                    if center_value is not None:
+                        ax.axvline(
+                            center_value,
+                            color="#333333",
+                            linestyle="--",
+                            linewidth=0.9,
+                        )
+                else:
+                    ax.text(
+                        0.5,
+                        0.5,
+                        "no 1D slice",
+                        transform=ax.transAxes,
+                        ha="center",
+                        va="center",
+                        fontsize=8,
+                        color="#777777",
+                    )
+                plot_baseline(ax, baseline, "interval_best")
+
+                scale, scale_kwargs = hparam_axis_scale(attr)
+                ax.set_xscale(scale, **scale_kwargs)
+                if col == 0:
+                    ax.set_ylabel("tta_val_acc")
+                else:
+                    ax.set_ylabel("")
+                ax.set_xlabel(attr)
+                ax.set_title(
+                    f"Interval {main_eval.interval} eval {main_eval.index}: {attr}",
+                    fontsize=9,
                 )
-            plot_baseline(ax, baseline, "interval_best")
+                style_axes(ax)
+                if center_value is not None:
+                    ax.text(
+                        0.03,
+                        0.95,
+                        f"best={format_number(center_value, 3)}",
+                        transform=ax.transAxes,
+                        va="top",
+                        fontsize=7,
+                        bbox={
+                            "facecolor": "white",
+                            "edgecolor": "#dddddd",
+                            "alpha": 0.85,
+                        },
+                    )
 
-            scale, scale_kwargs = hparam_axis_scale(attr)
-            ax.set_xscale(scale, **scale_kwargs)
-            if col == 0:
-                ax.set_ylabel("tta_val_acc")
-            else:
-                ax.set_ylabel("")
-            ax.set_xlabel(attr)
-            ax.set_title(
-                f"Interval {main_eval.interval} eval {main_eval.index}: {attr}",
-                fontsize=9,
-            )
-            style_axes(ax)
-            if center_value is not None:
-                ax.text(
-                    0.03,
-                    0.95,
-                    f"best={format_number(center_value, 3)}",
-                    transform=ax.transAxes,
-                    va="top",
-                    fontsize=7,
-                    bbox={
-                        "facecolor": "white",
-                        "edgecolor": "#dddddd",
-                        "alpha": 0.85,
-                    },
-                )
+        for row, scores in row_scores.items():
+            if not scores:
+                continue
+            ymin = min(scores)
+            ymax = max(scores)
+            padding = (ymax - ymin) * 0.08 if ymax > ymin else 0.001
+            for ax in axes[row]:
+                if ax.get_visible():
+                    ax.set_ylim(ymin - padding, ymax + padding)
 
-    for row, scores in row_scores.items():
-        if not scores:
-            continue
-        ymin = min(scores)
-        ymax = max(scores)
-        padding = (ymax - ymin) * 0.08 if ymax > ymin else 0.001
-        for ax in axes[row]:
-            if ax.get_visible():
-                ax.set_ylim(ymin - padding, ymax + padding)
-
-    fig.suptitle(
-        "Cooldown accuracy landscapes for every evaluated main hparam tuple",
-        fontsize=14,
-    )
-    fig.tight_layout(rect=(0, 0, 1, 0.997))
-    fig.savefig(output_dir / OUTPUT_LANDSCAPES_MORE, dpi=140)
-    plt.close(fig)
+        page_end = page_start + len(page_evals)
+        fig.suptitle(
+            (
+                "Cooldown accuracy landscapes for every evaluated main hparam tuple "
+                f"({page_start + 1}-{page_end} of {len(main_evals)})"
+            ),
+            fontsize=14,
+        )
+        fig.tight_layout(rect=(0, 0, 1, 0.992))
+        fig.savefig(cooldown_landscape_output_path(output_dir, page_index), dpi=140)
+        plt.close(fig)
 
 
 def plot_search_paths(run: Run, output_dir: Path) -> None:
@@ -1078,11 +1175,8 @@ def plot_search_paths(run: Run, output_dir: Path) -> None:
         ax.plot(xs, ys, marker="o", linewidth=1.8, color=color_for_interval(interval))
         if path.final_hparams is not None:
             final = path.final_hparams
-            label = (
-                f"final mu={format_number(final.muon_lr, 2)}\n"
-                f"mom={format_number(final.muon_momentum, 2)} "
-                f"b={format_number(final.bias_lr, 2)} "
-                f"h={format_number(final.head_lr, 2)}"
+            label = "\n".join(
+                format_hparams(final, attrs=search_hparam_names(run)).split()
             )
             ax.text(
                 0.03,
@@ -1107,9 +1201,9 @@ def scatter_hparam(ax, points, attr: str, ylabel: str, title: str, symlog=False)
     for interval in sorted({point.interval for point in points}):
         interval_points = [point for point in points if point.interval == interval]
         pairs = [
-            (getattr(point.hparams, attr), getattr(point, ylabel))
+            (hparam_value(point.hparams, attr), getattr(point, ylabel))
             for point in interval_points
-            if is_finite_number(getattr(point.hparams, attr))
+            if is_finite_number(hparam_value(point.hparams, attr))
             and is_finite_number(getattr(point, ylabel))
         ]
         if pairs:
@@ -1209,9 +1303,9 @@ def plot_cooldown_candidates(run: Run, output_dir: Path) -> None:
         for interval in sorted({item.interval for item in candidates}):
             interval_points = [item for item in candidates if item.interval == interval]
             pairs = [
-                (getattr(item.hparams, attr), item.tta_val_acc)
+                (hparam_value(item.hparams, attr), item.tta_val_acc)
                 for item in interval_points
-                if is_finite_number(getattr(item.hparams, attr))
+                if is_finite_number(hparam_value(item.hparams, attr))
                 and is_finite_number(item.tta_val_acc)
             ]
             if pairs:
