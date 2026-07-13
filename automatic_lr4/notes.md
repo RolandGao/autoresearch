@@ -284,3 +284,8 @@ step 4: local probe of cooldown lr.
 step 5: local probe of main lr. 
 
 layernorm before final layer makes sense i think. 
+
+
+tmus tutorial
+control-b, n
+control-b, w

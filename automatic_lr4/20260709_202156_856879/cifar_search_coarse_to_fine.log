@@ -597,4 +597,4 @@ Full grid search:        False
 Search cooldown of main: False
 Val acc:             0.9276
 TTA val acc:         0.9389
-Run seconds:         969.591
+Run seconds:         955.585
