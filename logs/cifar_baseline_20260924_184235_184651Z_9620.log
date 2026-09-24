@@ -1,0 +1,1249 @@
+"""
+airbench94_muon.py
+Runs in 2.59 seconds on a 400W NVIDIA A100 using torch==2.4.1
+Attains 94.01 mean accuracy (n=200 trials)
+Descends from https://github.com/tysam-code/hlb-CIFAR10/blob/main/main.py
+"""
+
+#############################################
+#                  Setup                    #
+#############################################
+
+import copy
+import json
+import os
+import sys
+import time
+from datetime import datetime, timezone
+from itertools import product
+from math import ceil, isfinite
+
+if __name__ == "__main__":
+    os.makedirs("logs", exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%fZ")
+    log_path = os.path.join("logs", f"cifar_baseline_{timestamp}_{os.getpid()}.log")
+    log_file = open(log_path, "x", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stderr = log_file
+    with open(__file__, encoding="utf-8") as source_file:
+        print(source_file.read(), end="")
+    print("\n\n# Run output\n", flush=True)
+
+import torch
+from torch import nn
+import torch.nn.functional as F
+import torchvision
+import torchvision.transforms as T
+
+
+def _cuda_capability():
+    if not torch.cuda.is_available():
+        return (0, 0)
+    return torch.cuda.get_device_capability(0)
+
+
+CUDA_CAPABILITY = _cuda_capability()
+IS_AMPERE_OR_NEWER = CUDA_CAPABILITY[0] >= 8
+USE_CUDNN_BENCHMARK = False
+USE_TF32 = IS_AMPERE_OR_NEWER
+
+torch.backends.cudnn.benchmark = USE_CUDNN_BENCHMARK
+torch.backends.cudnn.allow_tf32 = USE_TF32
+torch.backends.cuda.matmul.allow_tf32 = USE_TF32
+
+USE_COMPILED_MUON = False
+MUON_DTYPE = torch.bfloat16
+TRAINING_SEED = 0
+
+
+def set_training_seed():
+    torch.manual_seed(TRAINING_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(TRAINING_SEED)
+
+
+def round_hparam(value):
+    """Round numeric hyperparameters to two significant figures, preserving types."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    rounded = float(f"{value:.2g}")
+    return int(rounded) if isinstance(value, int) else rounded
+
+
+#############################################
+#                Optimizer                  #
+#############################################
+
+
+def zeropower_via_newtonschulz5(G, steps=3, eps=0):
+    r"""
+    Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
+    quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
+    of minimizing steps, it turns out to be empirically effective to keep increasing the slope at
+    zero even beyond the point where the iteration no longer converges all the way to one everywhere
+    on the interval. This iteration therefore does not produce UV^T but rather something like US'V^T
+    where S' is diagonal with S_{ii}' \sim Uniform(0.5, 1.5), which turns out not to hurt model
+    performance at all relative to UV^T, where USV^T = G is the SVD.
+    """
+    assert len(G.shape) == 2
+    a, b, c = (3.4445, -4.7750, 2.0315)
+    X = G.to(MUON_DTYPE)
+    X /= X.norm() + eps  # ensure top singular value <= 1
+    if G.size(0) > G.size(1):
+        X = X.T
+    for _ in range(steps):
+        A = X @ X.T
+        B = b * A + c * A @ A
+        X = a * X + B @ X
+    if G.size(0) > G.size(1):
+        X = X.T
+    return X
+
+
+if USE_COMPILED_MUON:
+    zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
+
+
+class GroupOptimizer(torch.optim.Optimizer):
+    """Apply each parameter group's configured SGD or Muon update."""
+
+    def __init__(self, param_groups):
+        super().__init__(param_groups, defaults={})
+        for group in self.param_groups:
+            group["lr"] = round_hparam(group["lr"])
+            group["momentum"] = round_hparam(group["momentum"])
+            name = group.get("name", "parameter group")
+            if group["algorithm"] not in ("sgd", "muon"):
+                raise ValueError(f"{name}: unknown algorithm {group['algorithm']!r}")
+            if group["lr"] < 0:
+                raise ValueError(f"{name}: learning rate must be nonnegative")
+            if group["momentum"] < 0:
+                raise ValueError(f"{name}: momentum must be nonnegative")
+            if group["nesterov"] and group["momentum"] <= 0:
+                raise ValueError(f"{name}: Nesterov requires positive momentum")
+            if group["algorithm"] == "muon" and any(
+                p.ndim < 2 for p in group["params"]
+            ):
+                raise ValueError(f"{name}: Muon requires parameters with at least 2 dimensions")
+
+    @torch.no_grad()
+    def step(self):
+        for group in self.param_groups:
+            lr = group["lr"] = round_hparam(group["lr"])
+            momentum = group["momentum"]
+            for p in group["params"]:
+                g = p.grad
+                if g is None:
+                    continue
+                if momentum:
+                    state = self.state[p]
+                    if "momentum_buffer" not in state:
+                        state["momentum_buffer"] = g.clone()
+                    else:
+                        state["momentum_buffer"].mul_(momentum).add_(g)
+                    buf = state["momentum_buffer"]
+                    g = g.add(buf, alpha=momentum) if group["nesterov"] else buf
+
+                # A zero learning rate must leave weights unchanged for either algorithm.
+                if lr == 0:
+                    continue
+                if group["algorithm"] == "muon":
+                    p.mul_(len(p) ** 0.5 / p.norm())  # normalize the weight
+                    g = zeropower_via_newtonschulz5(g.reshape(len(g), -1)).view(
+                        g.shape
+                    )  # whiten the update
+                p.add_(g, alpha=-lr)
+
+
+#############################################
+#                DataLoader                 #
+#############################################
+
+CIFAR_MEAN = torch.tensor((0.4914, 0.4822, 0.4465))
+CIFAR_STD = torch.tensor((0.2470, 0.2435, 0.2616))
+
+
+def batch_flip_lr(inputs):
+    flip_mask = (torch.rand(len(inputs), device=inputs.device) < 0.5).view(-1, 1, 1, 1)
+    return torch.where(flip_mask, inputs.flip(-1), inputs)
+
+
+def batch_crop(images, crop_size):
+    r = (images.size(-1) - crop_size) // 2
+    shifts = torch.randint(-r, r + 1, size=(len(images), 2), device=images.device)
+    y = torch.arange(crop_size, device=images.device).view(1, crop_size, 1)
+    x = torch.arange(crop_size, device=images.device).view(1, 1, crop_size)
+    y_idx = y + (r + shifts[:, 0]).view(-1, 1, 1)
+    x_idx = x + (r + shifts[:, 1]).view(-1, 1, 1)
+    gathered_rows = images.gather(
+        2, y_idx[:, None, :, :].expand(-1, images.size(1), -1, images.size(-1))
+    )
+    return gathered_rows.gather(
+        3, x_idx[:, None, :, :].expand(-1, images.size(1), crop_size, crop_size)
+    )
+
+
+class CifarLoader:
+    def __init__(self, path, train=True, batch_size=500, aug=None):
+        data_path = os.path.join(path, "train.pt" if train else "test.pt")
+        if not os.path.exists(data_path):
+            dset = torchvision.datasets.CIFAR10(path, download=True, train=train)
+            images = torch.tensor(dset.data)
+            labels = torch.tensor(dset.targets)
+            torch.save(
+                {"images": images, "labels": labels, "classes": dset.classes}, data_path
+            )
+
+        data = torch.load(data_path, map_location=torch.device("cuda"))
+        self.images, self.labels, self.classes = (
+            data["images"],
+            data["labels"],
+            data["classes"],
+        )
+        # It's faster to load+process uint8 data than to load preprocessed data
+        self.images = (
+            (self.images.float() / 255)
+            .permute(0, 3, 1, 2)
+            .to(memory_format=torch.channels_last)
+        )
+
+        self.normalize = T.Normalize(CIFAR_MEAN, CIFAR_STD)
+        self.proc_images = {}  # Saved results of image processing to be done on the first epoch
+        self.epoch = 0
+
+        self.aug = aug or {}
+        for k in self.aug.keys():
+            assert k in ["flip", "translate"], "Unrecognized key: %s" % k
+
+        self.batch_size = batch_size
+        self.drop_last = train
+        self.shuffle = train
+
+    def _ensure_proc_images(self):
+        if "norm" in self.proc_images:
+            return
+        images = self.proc_images["norm"] = self.normalize(self.images)
+        if self.aug.get("flip", False):
+            images = self.proc_images["flip"] = batch_flip_lr(images)
+        pad = self.aug.get("translate", 0)
+        if pad > 0:
+            self.proc_images["pad"] = F.pad(images, (pad,) * 4, "reflect")
+
+    def normalized_images(self):
+        self._ensure_proc_images()
+        return self.proc_images["norm"]
+
+    def __len__(self):
+        return (
+            len(self.images) // self.batch_size
+            if self.drop_last
+            else ceil(len(self.images) / self.batch_size)
+        )
+
+    def __iter__(self):
+
+        if self.epoch == 0:
+            self._ensure_proc_images()
+
+        if self.aug.get("translate", 0) > 0:
+            images = batch_crop(self.proc_images["pad"], self.images.shape[-2])
+        elif self.aug.get("flip", False):
+            images = self.proc_images["flip"]
+        else:
+            images = self.proc_images["norm"]
+        # Flip all images together every other epoch. This increases diversity relative to random flipping
+        if self.aug.get("flip", False):
+            if self.epoch % 2 == 1:
+                images = images.flip(-1)
+
+        self.epoch += 1
+
+        indices = (torch.randperm if self.shuffle else torch.arange)(
+            len(images), device=images.device
+        )
+        for i in range(len(self)):
+            idxs = indices[i * self.batch_size : (i + 1) * self.batch_size]
+            yield (images[idxs], self.labels[idxs])
+
+
+#############################################
+#            Network Definition             #
+#############################################
+
+
+# note the use of low BatchNorm stats momentum
+class BatchNorm(nn.BatchNorm2d):
+    def __init__(self, num_features, momentum=0.6, eps=1e-12):
+        super().__init__(num_features, eps=eps, momentum=1 - momentum)
+        # Note that PyTorch already initializes the weights to one and bias to zero
+
+
+class Conv(nn.Conv2d):
+    def __init__(self, in_channels, out_channels):
+        super().__init__(
+            in_channels, out_channels, kernel_size=3, padding="same", bias=False
+        )
+
+    def reset_parameters(self):
+        super().reset_parameters()
+        w = self.weight.data
+        torch.nn.init.dirac_(w[: w.size(1)])
+
+
+class ConvGroup(nn.Module):
+    def __init__(self, channels_in, channels_out):
+        super().__init__()
+        self.conv1 = Conv(channels_in, channels_out)
+        self.pool = nn.MaxPool2d(2)
+        self.norm1 = BatchNorm(channels_out)
+        self.conv2 = Conv(channels_out, channels_out)
+        self.norm2 = BatchNorm(channels_out)
+        self.activ = nn.GELU()
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.pool(x)
+        x = self.norm1(x)
+        x = self.activ(x)
+        x = self.conv2(x)
+        x = self.norm2(x)
+        x = self.activ(x)
+        return x
+
+
+class CifarNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        widths = dict(block1=64, block2=256, block3=256)
+        whiten_kernel_size = 2
+        whiten_width = 2 * 3 * whiten_kernel_size**2
+        self.whiten = nn.Conv2d(
+            3, whiten_width, whiten_kernel_size, padding=0, bias=True
+        )
+        self.layers = nn.Sequential(
+            nn.GELU(),
+            ConvGroup(whiten_width, widths["block1"]),
+            ConvGroup(widths["block1"], widths["block2"]),
+            ConvGroup(widths["block2"], widths["block3"]),
+            nn.MaxPool2d(3),
+        )
+        self.head = nn.Linear(widths["block3"], 10, bias=False)
+        for mod in self.modules():
+            mod.float()
+
+    def reset(self):
+        for m in self.modules():
+            if type(m) in (nn.Conv2d, Conv, BatchNorm, nn.Linear):
+                m.reset_parameters()
+        w = self.head.weight.data
+        w *= 1 / w.std()
+
+    def init_whiten(self, train_images, eps=5e-4):
+        c, (h, w) = train_images.shape[1], self.whiten.weight.shape[2:]
+        patches = (
+            train_images.unfold(2, h, 1)
+            .unfold(3, w, 1)
+            .transpose(1, 3)
+            .reshape(-1, c, h, w)
+            .float()
+        )
+        patches_flat = patches.view(len(patches), -1)
+        est_patch_covariance = (patches_flat.T @ patches_flat) / len(patches_flat)
+        eigenvalues, eigenvectors = torch.linalg.eigh(est_patch_covariance, UPLO="U")
+        eigenvectors_scaled = eigenvectors.T.reshape(-1, c, h, w) / torch.sqrt(
+            eigenvalues.view(-1, 1, 1, 1) + eps
+        )
+        self.whiten.weight.data[:] = torch.cat(
+            (eigenvectors_scaled, -eigenvectors_scaled)
+        )
+
+    def forward(self, x):
+        x = self.whiten(x)
+        x = self.layers(x)
+        x = x.view(len(x), -1)
+        return self.head(x) / x.size(-1)
+
+
+############################################
+#                 Logging                  #
+############################################
+
+
+def log_config(run, config):
+    print(
+        "config=" + json.dumps(
+            dict(run=run, **config), default=lambda schedule: schedule.config
+        ),
+        flush=True,
+    )
+
+
+def log_step(step, total_steps):
+    print(f"{100 * step / total_steps:.2f}%", flush=True)
+
+
+def log_final_eval(val_acc, tta_val_acc, seconds):
+    print(
+        f"val_acc={val_acc:.4f} tta_val_acc={tta_val_acc:.4f} seconds={seconds:.4f}",
+        flush=True,
+    )
+
+
+############################################
+#               Evaluation                 #
+############################################
+
+
+def infer(model, loader, tta_level=0):
+
+    # Test-time augmentation strategy (for tta_level=2):
+    # 1. Flip/mirror the image left-to-right (50% of the time).
+    # 2. Translate the image by one pixel either up-and-left or down-and-right (50% of the time,
+    #    i.e. both happen 25% of the time).
+    #
+    # This creates 6 views per image (left/right times the two translations and no-translation),
+    # which we evaluate and then weight according to the given probabilities.
+
+    def infer_basic(inputs, net):
+        return net(inputs).clone()
+
+    def infer_mirror(inputs, net):
+        return 0.5 * net(inputs) + 0.5 * net(inputs.flip(-1))
+
+    def infer_mirror_translate(inputs, net):
+        logits = infer_mirror(inputs, net)
+        pad = 1
+        padded_inputs = F.pad(inputs, (pad,) * 4, "reflect")
+        inputs_translate_list = [
+            padded_inputs[:, :, 0:32, 0:32],
+            padded_inputs[:, :, 2:34, 2:34],
+        ]
+        logits_translate_list = [
+            infer_mirror(inputs_translate, net)
+            for inputs_translate in inputs_translate_list
+        ]
+        logits_translate = torch.stack(logits_translate_list).mean(0)
+        return 0.5 * logits + 0.5 * logits_translate
+
+    model.eval()
+    test_images = loader.normalized_images()
+    infer_fn = [infer_basic, infer_mirror, infer_mirror_translate][tta_level]
+    with torch.inference_mode():
+        return torch.cat(
+            [infer_fn(inputs, model) for inputs in test_images.split(2000)]
+        )
+
+
+def evaluate(model, loader, tta_level=0):
+    logits = infer(model, loader, tta_level)
+    return (logits.argmax(1) == loader.labels).float().mean().item()
+
+
+############################################
+#                Training                  #
+############################################
+
+def constant_lr_scheduler(initial_lr):
+    initial_lr = round_hparam(initial_lr)
+
+    def schedule(step, steps_per_epoch):
+        return initial_lr
+
+    schedule.config = dict(type="constant", initial_lr=initial_lr)
+    return schedule
+
+
+def linear_lr_scheduler(initial_lr, decay_epochs):
+    """Return a scheduler(step, steps_per_epoch) that decays to zero."""
+    initial_lr = round_hparam(initial_lr)
+    decay_epochs = round_hparam(decay_epochs)
+    if decay_epochs <= 0:
+        raise ValueError("decay_epochs must be positive")
+
+    def schedule(step, steps_per_epoch):
+        return round_hparam(
+            initial_lr * max(0.0, 1 - step / (decay_epochs * steps_per_epoch))
+        )
+
+    schedule.config = dict(type="linear", initial_lr=initial_lr, decay_epochs=decay_epochs)
+    return schedule
+
+
+# Set hparam_tuning to, for example:
+# dict(algorithm="grid", metric="tta_val_acc", parameters={
+#     "conv.initial_lr": [0.04, 0.06, 0.08],
+#     "conv.momentum": [0.6, 0.7, 0.8],
+# })
+# Use algorithm="coordinate" to tune parameters in order, revisiting them
+# whenever another parameter changes. Selection defaults to tta_val_acc.
+# None runs the config once without tuning. Batch sizes are kept exact.
+RUN_CONFIGS = [
+    dict(
+        batch_size=125,
+        num_epochs=8,
+        overfit=False,
+        hparam_tuning=dict(
+            algorithm="grid",  # or "coordinate"
+            parameters={
+                "conv.initial_lr": [0.04, 0.06, 0.08],
+                "conv.momentum": [0.6, 0.7, 0.8],
+            },
+        ),
+        param_groups=dict(
+            whiten_weight=dict(
+                algorithm="sgd",
+                lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            norm_weight=dict(
+                algorithm="sgd",
+                lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            whiten_bias=dict(
+                algorithm="sgd",
+                lr_scheduler=linear_lr_scheduler(initial_lr=6.5, decay_epochs=3),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            norm_bias=dict(
+                algorithm="sgd",
+                lr_scheduler=linear_lr_scheduler(initial_lr=6.5, decay_epochs=8),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            head=dict(
+                algorithm="sgd",
+                lr_scheduler=linear_lr_scheduler(initial_lr=84, decay_epochs=8),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            conv=dict(
+                algorithm="muon",
+                lr_scheduler=linear_lr_scheduler(initial_lr=0.04, decay_epochs=8),
+                momentum=0.6,
+                nesterov=True,
+            ),
+        ),
+    ),
+    dict(
+        batch_size=500,
+        num_epochs=8,
+        overfit=False,
+        hparam_tuning=None,
+        param_groups=dict(
+            whiten_weight=dict(
+                algorithm="sgd",
+                lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            norm_weight=dict(
+                algorithm="sgd",
+                lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            whiten_bias=dict(
+                algorithm="sgd",
+                lr_scheduler=linear_lr_scheduler(initial_lr=26, decay_epochs=3),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            norm_bias=dict(
+                algorithm="sgd",
+                lr_scheduler=linear_lr_scheduler(initial_lr=26, decay_epochs=8),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            head=dict(
+                algorithm="sgd",
+                lr_scheduler=linear_lr_scheduler(initial_lr=340, decay_epochs=8),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            conv=dict(
+                algorithm="muon",
+                lr_scheduler=linear_lr_scheduler(initial_lr=0.079, decay_epochs=8),
+                momentum=0.6,
+                nesterov=True,
+            ),
+        ),
+    ),
+    dict(
+        batch_size=2000,
+        num_epochs=8,
+        overfit=False,
+        hparam_tuning=None,
+        param_groups=dict(
+            whiten_weight=dict(
+                algorithm="sgd",
+                lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            norm_weight=dict(
+                algorithm="sgd",
+                lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            whiten_bias=dict(
+                algorithm="sgd",
+                lr_scheduler=linear_lr_scheduler(initial_lr=100, decay_epochs=3),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            norm_bias=dict(
+                algorithm="sgd",
+                lr_scheduler=linear_lr_scheduler(initial_lr=100, decay_epochs=8),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            head=dict(
+                algorithm="sgd",
+                lr_scheduler=linear_lr_scheduler(initial_lr=1300, decay_epochs=8),
+                momentum=0.85,
+                nesterov=True,
+            ),
+            conv=dict(
+                algorithm="muon",
+                lr_scheduler=linear_lr_scheduler(initial_lr=0.19, decay_epochs=8),
+                momentum=0.6,
+                nesterov=True,
+            ),
+        ),
+    ),
+]
+
+
+def scheduler_from_config(config):
+    options = dict(config)
+    kind = options.pop("type")
+    if kind == "constant":
+        return constant_lr_scheduler(**options)
+    if kind == "linear":
+        return linear_lr_scheduler(**options)
+    raise ValueError(f"Unknown scheduler type: {kind!r}")
+
+
+def normalize_config(value, key=None):
+    """Round config values and choices, keeping batch sizes exact."""
+    if key == "batch_size":
+        return copy.deepcopy(value)
+    if isinstance(value, dict):
+        return {name: normalize_config(item, name) for name, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [normalize_config(item) for item in value]
+    if callable(value):
+        return scheduler_from_config(normalize_config(value.config))
+    return round_hparam(value)
+
+
+def get_hparam(config, path):
+    """Read a run setting or a group option such as conv.initial_lr."""
+    if path in ("batch_size", "num_epochs", "overfit"):
+        return config[path]
+    parts = path.split(".")
+    if len(parts) == 2 and parts[0] in config["param_groups"]:
+        group = config["param_groups"][parts[0]]
+        field = parts[1]
+        if field in group and field != "lr_scheduler":
+            return group[field]
+        if field in group["lr_scheduler"].config:
+            return group["lr_scheduler"].config[field]
+    raise ValueError(f"Unknown hyperparameter: {path!r}")
+
+
+def with_hparam(config, path, value):
+    get_hparam(config, path)  # Validate the path before modifying anything.
+    updated = copy.deepcopy(config)
+    value = value if path == "batch_size" else round_hparam(value)
+    if "." not in path:
+        updated[path] = value
+    else:
+        name, field = path.split(".")
+        group = updated["param_groups"][name]
+        if field in group:
+            group[field] = value
+        else:
+            options = dict(group["lr_scheduler"].config)
+            options[field] = value
+            group["lr_scheduler"] = scheduler_from_config(options)
+    return updated
+
+
+def run_experiment(run, model, config):
+    """Run one config or a search; return its best config, result, and trials."""
+    config = normalize_config(config)
+    tuning = config.get("hparam_tuning")
+    trials = []
+    cache = {}
+    metric = "tta_val_acc" if tuning is None else tuning.get("metric", "tta_val_acc")
+    if metric not in ("val_acc", "tta_val_acc"):
+        raise ValueError(f"Unknown tuning metric: {metric!r}")
+
+    def evaluate_config(candidate):
+        key = json.dumps(candidate, sort_keys=True, default=lambda schedule: schedule.config)
+        if key not in cache:
+            trial_run = run if tuning is None else f"{run}.{len(trials)}"
+            result = main(trial_run, model, **candidate)
+            if not isfinite(result[metric]):
+                raise ValueError(f"Run {trial_run}: {metric} must be finite")
+            trial = dict(run=trial_run, config=candidate, result=result)
+            trials.append(trial)
+            cache[key] = trial
+        return cache[key]
+
+    if tuning is None:
+        best = evaluate_config(config)
+    else:
+        algorithm = tuning["algorithm"]
+        if algorithm not in ("grid", "coordinate"):
+            raise ValueError(f"Unknown tuning algorithm: {algorithm!r}")
+        parameters = tuning["parameters"]
+        if not parameters:
+            raise ValueError("hparam_tuning.parameters must not be empty")
+        choices = {}
+        for path, values in parameters.items():
+            get_hparam(config, path)
+            if not isinstance(values, (list, tuple)) or not values:
+                raise ValueError(f"{path}: choices must be a nonempty list")
+            # Values that coincide after rounding represent the same candidate.
+            choices[path] = list(dict.fromkeys(values))
+
+        if algorithm == "grid":
+            best = None
+            for values in product(*choices.values()):
+                candidate = config
+                for path, value in zip(choices, values):
+                    candidate = with_hparam(candidate, path, value)
+                trial = evaluate_config(candidate)
+                if best is None or trial["result"][metric] > best["result"][metric]:
+                    best = trial
+        else:
+            # Start inside the search space, preferring the configured values.
+            current = config
+            for path, values in choices.items():
+                if get_hparam(current, path) not in values:
+                    current = with_hparam(current, path, values[0])
+            best = evaluate_config(current)
+            locked = set()
+            while len(locked) < len(choices):
+                for path, values in choices.items():
+                    if path in locked:
+                        continue
+                    previous_value = get_hparam(best["config"], path)
+                    candidate_best = best
+                    for value in values:
+                        candidate = with_hparam(best["config"], path, value)
+                        trial = evaluate_config(candidate)
+                        # Keeping the incumbent on ties prevents cycling.
+                        if trial["result"][metric] > candidate_best["result"][metric]:
+                            candidate_best = trial
+                    best = candidate_best
+                    if get_hparam(best["config"], path) != previous_value:
+                        locked.clear()
+                    locked.add(path)
+
+    return dict(best_config=best["config"], best_result=best["result"], trials=trials)
+
+
+def main(run, model, batch_size, param_groups, num_epochs=8, overfit=False,
+         hparam_tuning=None):
+    config = normalize_config(dict(
+        batch_size=batch_size,
+        num_epochs=num_epochs,
+        overfit=overfit,
+        param_groups=param_groups,
+        hparam_tuning=hparam_tuning,
+    ))
+    batch_size = config["batch_size"]
+    num_epochs = config["num_epochs"]
+    param_groups = config["param_groups"]
+    if not isinstance(num_epochs, int) or num_epochs <= 0:
+        raise ValueError("num_epochs must be a positive integer")
+    log_config(run, config)
+    set_training_seed()
+
+    test_loader = CifarLoader("cifar10", train=False, batch_size=2000)
+    train_loader = CifarLoader(
+        "cifar10", train=True, batch_size=batch_size, aug=dict(flip=True, translate=2)
+    )
+    if run == "warmup":
+        # The only purpose of the first run is to warmup the compiled model, so we can use dummy data
+        train_loader.labels = torch.randint(
+            0, 10, size=(len(train_loader.labels),), device=train_loader.labels.device
+        )
+    steps_per_epoch = 1 if overfit else len(train_loader)
+    total_train_steps = num_epochs * steps_per_epoch
+    initial_lrs = {
+        name: round_hparam(config["lr_scheduler"](0, steps_per_epoch))
+        for name, config in param_groups.items()
+    }
+
+    def param_group(name, params):
+        config = param_groups[name]
+        return dict(
+            name=name,
+            params=params,
+            lr=initial_lrs[name],
+            algorithm=config["algorithm"],
+            lr_scheduler=config["lr_scheduler"],
+            momentum=config["momentum"],
+            nesterov=config["nesterov"],
+        )
+
+    # Parameter groups identify tensors; the config selects each group's algorithm.
+    filter_params = [
+        p for p in model.parameters()
+        if len(p.shape) == 4 and p.requires_grad and p is not model.whiten.weight
+    ]
+    norm_biases = [
+        m.bias for m in model.modules() if isinstance(m, BatchNorm)
+    ]
+    norm_weights = [
+        m.weight for m in model.modules() if isinstance(m, BatchNorm)
+    ]
+    param_configs = [
+        param_group("whiten_bias", [model.whiten.bias]),
+        param_group("norm_bias", norm_biases),
+        param_group("head", [model.head.weight]),
+        param_group("whiten_weight", [model.whiten.weight]),
+        param_group("norm_weight", norm_weights),
+        param_group("conv", filter_params),
+    ]
+    optimizer = GroupOptimizer(param_configs)
+
+    model.reset()
+    step = 0
+
+    # Initialize the whitening layer using training images
+    if overfit:
+        # Cache the first augmented batch once and reuse exactly these tensors.
+        train_batches = (next(iter(train_loader)),)
+        train_images = train_batches[0][0]
+    else:
+        train_batches = train_loader
+        train_images = train_loader.normalized_images()[:5000]
+    model.init_whiten(train_images)
+
+    training_seconds = 0.0
+    device = next(model.parameters()).device
+    last_log_time = time.monotonic()
+    for epoch in range(num_epochs):
+        ####################
+        #     Training     #
+        ####################
+
+        # Synchronize CUDA so elapsed time includes completed training work only.
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        training_start = time.perf_counter()
+        model.train()
+        for inputs, labels in train_batches:
+            outputs = model(inputs)
+            loss = F.cross_entropy(
+                outputs, labels, label_smoothing=0.2, reduction="mean"
+            )
+            loss.backward()
+            for group in optimizer.param_groups:
+                group["lr"] = round_hparam(group["lr_scheduler"](step, steps_per_epoch))
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            step += 1
+            now = time.monotonic()
+            if now - last_log_time >= 1.0:
+                log_step(step, total_train_steps)
+                last_log_time = now
+            if step >= total_train_steps:
+                break
+
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        training_seconds += time.perf_counter() - training_start
+
+        ####################
+        #    Evaluation    #
+        ####################
+
+        val_acc = evaluate(model, test_loader, tta_level=0)
+
+    ####################
+    #  TTA Evaluation  #
+    ####################
+
+    tta_val_acc = evaluate(model, test_loader, tta_level=2)
+    log_final_eval(val_acc, tta_val_acc, training_seconds)
+
+    return dict(
+        val_acc=val_acc,
+        tta_val_acc=tta_val_acc,
+        seconds=training_seconds,
+        batch_size=batch_size,
+        num_epochs=num_epochs,
+        overfit=overfit,
+        **{f"{name}_lr": lr for name, lr in initial_lrs.items()},
+    )
+
+
+if __name__ == "__main__":
+    # We re-use the compiled model between runs to save the non-data-dependent compilation time
+    set_training_seed()
+    model = CifarNet().cuda().to(memory_format=torch.channels_last)
+    # model.compile(mode="max-autotune")
+
+    # main("warmup", model, **RUN_CONFIGS[0])
+    for run, config in enumerate(RUN_CONFIGS):
+        run_experiment(run, model, config)
+
+
+# Run output
+
+config={"run": "0.0", "batch_size": 125, "num_epochs": 8, "overfit": false, "param_groups": {"whiten_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "norm_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "whiten_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 3}, "momentum": 0.85, "nesterov": true}, "norm_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "head": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 84, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "conv": {"algorithm": "muon", "lr_scheduler": {"type": "linear", "initial_lr": 0.04, "decay_epochs": 8}, "momentum": 0.6, "nesterov": true}}, "hparam_tuning": {"algorithm": "grid", "parameters": {"conv.initial_lr": [0.04, 0.06, 0.08], "conv.momentum": [0.6, 0.7, 0.8]}}}
+2.06%
+4.94%
+7.81%
+10.69%
+13.47%
+16.34%
+19.19%
+22.06%
+24.97%
+27.81%
+30.69%
+33.53%
+36.41%
+39.25%
+42.09%
+44.97%
+47.84%
+50.66%
+53.56%
+56.47%
+59.38%
+62.31%
+65.19%
+68.12%
+71.06%
+73.97%
+76.84%
+79.69%
+82.59%
+85.44%
+88.19%
+91.06%
+93.94%
+96.88%
+99.78%
+val_acc=0.9313 tta_val_acc=0.9392 seconds=34.8747
+config={"run": "0.1", "batch_size": 125, "num_epochs": 8, "overfit": false, "param_groups": {"whiten_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "norm_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "whiten_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 3}, "momentum": 0.85, "nesterov": true}, "norm_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "head": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 84, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "conv": {"algorithm": "muon", "lr_scheduler": {"type": "linear", "initial_lr": 0.04, "decay_epochs": 8}, "momentum": 0.7, "nesterov": true}}, "hparam_tuning": {"algorithm": "grid", "parameters": {"conv.initial_lr": [0.04, 0.06, 0.08], "conv.momentum": [0.6, 0.7, 0.8]}}}
+3.09%
+6.00%
+8.94%
+11.88%
+14.75%
+17.69%
+20.62%
+23.50%
+26.31%
+29.19%
+32.06%
+34.94%
+37.72%
+40.62%
+43.50%
+46.38%
+49.28%
+52.12%
+55.00%
+57.91%
+60.97%
+63.97%
+66.91%
+69.88%
+72.78%
+75.66%
+78.56%
+81.47%
+84.41%
+87.34%
+90.16%
+93.03%
+95.91%
+98.78%
+val_acc=0.9256 tta_val_acc=0.9376 seconds=34.2881
+config={"run": "0.2", "batch_size": 125, "num_epochs": 8, "overfit": false, "param_groups": {"whiten_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "norm_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "whiten_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 3}, "momentum": 0.85, "nesterov": true}, "norm_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "head": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 84, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "conv": {"algorithm": "muon", "lr_scheduler": {"type": "linear", "initial_lr": 0.04, "decay_epochs": 8}, "momentum": 0.8, "nesterov": true}}, "hparam_tuning": {"algorithm": "grid", "parameters": {"conv.initial_lr": [0.04, 0.06, 0.08], "conv.momentum": [0.6, 0.7, 0.8]}}}
+3.00%
+6.31%
+9.25%
+12.19%
+15.09%
+18.00%
+20.94%
+23.84%
+26.75%
+29.69%
+32.62%
+35.56%
+38.44%
+41.38%
+44.31%
+47.25%
+50.31%
+53.34%
+56.38%
+59.38%
+62.34%
+65.28%
+68.38%
+71.38%
+74.34%
+77.28%
+80.31%
+83.25%
+86.16%
+89.00%
+91.94%
+94.97%
+97.91%
+val_acc=0.9302 tta_val_acc=0.9400 seconds=33.5867
+config={"run": "0.3", "batch_size": 125, "num_epochs": 8, "overfit": false, "param_groups": {"whiten_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "norm_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "whiten_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 3}, "momentum": 0.85, "nesterov": true}, "norm_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "head": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 84, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "conv": {"algorithm": "muon", "lr_scheduler": {"type": "linear", "initial_lr": 0.06, "decay_epochs": 8}, "momentum": 0.6, "nesterov": true}}, "hparam_tuning": {"algorithm": "grid", "parameters": {"conv.initial_lr": [0.04, 0.06, 0.08], "conv.momentum": [0.6, 0.7, 0.8]}}}
+2.97%
+5.84%
+8.72%
+11.59%
+14.44%
+17.34%
+20.34%
+23.28%
+26.16%
+29.06%
+32.00%
+34.94%
+37.81%
+40.75%
+43.69%
+46.62%
+49.56%
+52.44%
+55.38%
+58.31%
+61.16%
+63.97%
+66.84%
+69.72%
+72.59%
+75.38%
+78.25%
+81.16%
+84.03%
+86.91%
+89.72%
+92.59%
+95.47%
+98.34%
+val_acc=0.9294 tta_val_acc=0.9377 seconds=34.4028
+config={"run": "0.4", "batch_size": 125, "num_epochs": 8, "overfit": false, "param_groups": {"whiten_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "norm_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "whiten_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 3}, "momentum": 0.85, "nesterov": true}, "norm_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "head": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 84, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "conv": {"algorithm": "muon", "lr_scheduler": {"type": "linear", "initial_lr": 0.06, "decay_epochs": 8}, "momentum": 0.7, "nesterov": true}}, "hparam_tuning": {"algorithm": "grid", "parameters": {"conv.initial_lr": [0.04, 0.06, 0.08], "conv.momentum": [0.6, 0.7, 0.8]}}}
+3.03%
+5.97%
+9.03%
+12.00%
+14.88%
+17.81%
+20.78%
+23.66%
+26.81%
+29.84%
+32.75%
+35.69%
+38.59%
+41.50%
+44.44%
+47.41%
+50.41%
+53.38%
+56.25%
+59.22%
+62.09%
+64.94%
+67.81%
+70.69%
+73.56%
+76.41%
+79.44%
+82.34%
+85.25%
+88.09%
+91.00%
+93.91%
+96.84%
+99.84%
+val_acc=0.9301 tta_val_acc=0.9370 seconds=33.8907
+config={"run": "0.5", "batch_size": 125, "num_epochs": 8, "overfit": false, "param_groups": {"whiten_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "norm_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "whiten_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 3}, "momentum": 0.85, "nesterov": true}, "norm_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "head": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 84, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "conv": {"algorithm": "muon", "lr_scheduler": {"type": "linear", "initial_lr": 0.06, "decay_epochs": 8}, "momentum": 0.8, "nesterov": true}}, "hparam_tuning": {"algorithm": "grid", "parameters": {"conv.initial_lr": [0.04, 0.06, 0.08], "conv.momentum": [0.6, 0.7, 0.8]}}}
+3.09%
+6.06%
+9.03%
+12.00%
+15.00%
+17.97%
+20.94%
+23.91%
+26.81%
+29.84%
+32.81%
+35.78%
+38.69%
+41.66%
+44.62%
+47.59%
+50.53%
+53.50%
+56.47%
+59.44%
+62.41%
+65.31%
+68.31%
+71.28%
+74.25%
+77.16%
+80.12%
+83.12%
+86.22%
+89.16%
+92.12%
+95.09%
+98.06%
+val_acc=0.9269 tta_val_acc=0.9370 seconds=33.4660
+config={"run": "0.6", "batch_size": 125, "num_epochs": 8, "overfit": false, "param_groups": {"whiten_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "norm_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "whiten_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 3}, "momentum": 0.85, "nesterov": true}, "norm_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "head": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 84, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "conv": {"algorithm": "muon", "lr_scheduler": {"type": "linear", "initial_lr": 0.08, "decay_epochs": 8}, "momentum": 0.6, "nesterov": true}}, "hparam_tuning": {"algorithm": "grid", "parameters": {"conv.initial_lr": [0.04, 0.06, 0.08], "conv.momentum": [0.6, 0.7, 0.8]}}}
+3.09%
+6.09%
+9.06%
+12.03%
+15.00%
+17.97%
+20.94%
+23.91%
+26.84%
+29.81%
+32.78%
+35.75%
+38.66%
+41.56%
+44.53%
+47.44%
+50.19%
+53.59%
+56.53%
+59.47%
+62.41%
+65.28%
+68.22%
+71.12%
+74.00%
+76.81%
+79.72%
+82.62%
+85.50%
+88.34%
+91.25%
+94.16%
+97.06%
+99.97%
+val_acc=0.9276 tta_val_acc=0.9360 seconds=33.8493
+config={"run": "0.7", "batch_size": 125, "num_epochs": 8, "overfit": false, "param_groups": {"whiten_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "norm_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "whiten_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 3}, "momentum": 0.85, "nesterov": true}, "norm_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "head": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 84, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "conv": {"algorithm": "muon", "lr_scheduler": {"type": "linear", "initial_lr": 0.08, "decay_epochs": 8}, "momentum": 0.7, "nesterov": true}}, "hparam_tuning": {"algorithm": "grid", "parameters": {"conv.initial_lr": [0.04, 0.06, 0.08], "conv.momentum": [0.6, 0.7, 0.8]}}}
+3.00%
+5.88%
+8.75%
+11.69%
+14.53%
+17.41%
+20.28%
+23.19%
+25.97%
+28.84%
+31.72%
+34.59%
+37.50%
+40.31%
+43.19%
+46.09%
+48.97%
+51.78%
+54.66%
+57.56%
+60.41%
+63.22%
+66.16%
+69.06%
+71.94%
+74.81%
+77.59%
+80.50%
+83.47%
+86.47%
+89.38%
+92.34%
+95.31%
+98.28%
+val_acc=0.9277 tta_val_acc=0.9376 seconds=34.4060
+config={"run": "0.8", "batch_size": 125, "num_epochs": 8, "overfit": false, "param_groups": {"whiten_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "norm_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "whiten_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 3}, "momentum": 0.85, "nesterov": true}, "norm_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 6.5, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "head": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 84, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "conv": {"algorithm": "muon", "lr_scheduler": {"type": "linear", "initial_lr": 0.08, "decay_epochs": 8}, "momentum": 0.8, "nesterov": true}}, "hparam_tuning": {"algorithm": "grid", "parameters": {"conv.initial_lr": [0.04, 0.06, 0.08], "conv.momentum": [0.6, 0.7, 0.8]}}}
+3.09%
+6.06%
+9.03%
+12.00%
+14.94%
+17.94%
+20.94%
+23.94%
+26.88%
+29.84%
+32.81%
+35.78%
+38.72%
+41.72%
+44.72%
+47.69%
+50.62%
+53.62%
+56.62%
+59.62%
+62.53%
+65.59%
+68.59%
+71.59%
+74.88%
+77.81%
+80.78%
+83.78%
+86.78%
+89.72%
+92.72%
+95.72%
+98.69%
+val_acc=0.9226 tta_val_acc=0.9320 seconds=33.3238
+config={"run": 1, "batch_size": 500, "num_epochs": 8, "overfit": false, "param_groups": {"whiten_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "norm_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "whiten_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 26, "decay_epochs": 3}, "momentum": 0.85, "nesterov": true}, "norm_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 26, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "head": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 340, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "conv": {"algorithm": "muon", "lr_scheduler": {"type": "linear", "initial_lr": 0.079, "decay_epochs": 8}, "momentum": 0.6, "nesterov": true}}, "hparam_tuning": null}
+9.00%
+17.75%
+26.50%
+35.75%
+44.50%
+53.25%
+62.50%
+71.25%
+80.00%
+88.75%
+98.00%
+val_acc=0.9278 tta_val_acc=0.9374 seconds=11.0255
+config={"run": 2, "batch_size": 2000, "num_epochs": 8, "overfit": false, "param_groups": {"whiten_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "norm_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true}, "whiten_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 100, "decay_epochs": 3}, "momentum": 0.85, "nesterov": true}, "norm_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 100, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "head": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 1300, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true}, "conv": {"algorithm": "muon", "lr_scheduler": {"type": "linear", "initial_lr": 0.19, "decay_epochs": 8}, "momentum": 0.6, "nesterov": true}}, "hparam_tuning": null}
+12.00%
+22.50%
+33.00%
+43.50%
+54.00%
+64.50%
+75.50%
+87.00%
+97.50%
+val_acc=0.9300 tta_val_acc=0.9388 seconds=9.3293

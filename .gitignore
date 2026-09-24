@@ -31,5 +31,7 @@ softmax_hparam_plots/
 sgdh_ablation2_variant_plots/
 cifar10/
 automatic_lr*/cifar10
-logs/
+# Keep run logs visible to Git despite the general *.log rule.
+!/logs/
+!/logs/**
 cifar96/cifar10
