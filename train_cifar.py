@@ -134,7 +134,7 @@ class GroupOptimizer(torch.optim.Optimizer):
                 g = p.grad
                 if g is None:
                     continue
-                if momentum:
+                if momentum or group["algorithm"] == "muon":
                     state = self.state[p]
                     if "momentum_buffer" not in state:
                         state["momentum_buffer"] = g.clone()
@@ -239,8 +239,7 @@ class CifarLoader:
             else ceil(len(self.images) / self.batch_size)
         )
 
-    def __iter__(self):
-
+    def prepare_epoch(self):
         if self.epoch == 0:
             self._ensure_proc_images()
 
@@ -257,12 +256,47 @@ class CifarLoader:
 
         self.epoch += 1
 
-        indices = (torch.randperm if self.shuffle else torch.arange)(
+        return images
+
+    def epoch_indices(self, images):
+        return (torch.randperm if self.shuffle else torch.arange)(
             len(images), device=images.device
         )
+
+    def __iter__(self):
+        images = self.prepare_epoch()
+        indices = self.epoch_indices(images)
         for i in range(len(self)):
             idxs = indices[i * self.batch_size : (i + 1) * self.batch_size]
             yield (images[idxs], self.labels[idxs])
+
+
+class TrainingBatchStream:
+    """A replayable batch cursor; epoch tensors are immutable and shared by snapshots."""
+
+    def __init__(self, loader, fixed_batch=None):
+        self.loader = loader
+        self.fixed_batch = fixed_batch
+        self.images = self.indices = None
+        self.batch_index = 0
+
+    def next_batch(self):
+        if self.fixed_batch is not None:
+            return self.fixed_batch
+        if self.images is None or self.batch_index == len(self.loader):
+            self.images = self.loader.prepare_epoch()
+            self.indices = self.loader.epoch_indices(self.images)
+            self.batch_index = 0
+        start = self.batch_index * self.loader.batch_size
+        indices = self.indices[start:start + self.loader.batch_size]
+        self.batch_index += 1
+        return self.images[indices], self.loader.labels[indices]
+
+    def state_dict(self):
+        return self.images, self.indices, self.batch_index, self.loader.epoch
+
+    def load_state_dict(self, state):
+        self.images, self.indices, self.batch_index, self.loader.epoch = state
 
 
 #############################################
@@ -476,16 +510,28 @@ def linear_lr_scheduler(initial_lr, decay_epochs):
 # Use algorithm="coordinate" to tune parameters in order, revisiting them
 # whenever another parameter changes. Selection defaults to tta_val_acc.
 # None runs the config once without tuning. Batch sizes are kept exact.
+# For online search, use:
+# dict(algorithm="interval", interval_steps=40, cooldown_steps=40, parameters={
+#     "conv.initial_lr": None,  # multiplicative probes, factor=0.6
+#     "conv.momentum": [0.1, 0.3, 0.6, 0.9, 0.95, 0.99],
+#     "whiten_bias.initial_lr": None,
+#     "norm_bias.initial_lr": None,
+#     "head.initial_lr": None,
+# })
+# Interval search holds searched LRs constant within each segment; unsearched
+# groups keep their configured schedules. Lists also work for interval LR choices.
 RUN_CONFIGS = [
     dict(
         batch_size=125,
         num_epochs=8,
         overfit=False,
         hparam_tuning=dict(
-            algorithm="grid",  # or "coordinate"
+            algorithm="interval",
+            interval_steps=40,
+            cooldown_steps=40,
             parameters={
-                "conv.initial_lr": [0.04, 0.06, 0.08],
-                "conv.momentum": [0.6, 0.7, 0.8],
+                "conv.initial_lr": None,
+                "conv.momentum": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99],
             },
         ),
         param_groups=dict(
@@ -523,7 +569,7 @@ RUN_CONFIGS = [
                 algorithm="muon",
                 lr_scheduler=linear_lr_scheduler(initial_lr=0.04, decay_epochs=8),
                 momentum=0.6,
-                nesterov=True,
+                nesterov=False,
             ),
         ),
     ),
@@ -531,7 +577,15 @@ RUN_CONFIGS = [
         batch_size=500,
         num_epochs=8,
         overfit=False,
-        hparam_tuning=None,
+        hparam_tuning=dict(
+            algorithm="interval",
+            interval_steps=40,
+            cooldown_steps=40,
+            parameters={
+                "conv.initial_lr": None,
+                "conv.momentum": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99],
+            },
+        ),
         param_groups=dict(
             whiten_weight=dict(
                 algorithm="sgd",
@@ -567,7 +621,7 @@ RUN_CONFIGS = [
                 algorithm="muon",
                 lr_scheduler=linear_lr_scheduler(initial_lr=0.079, decay_epochs=8),
                 momentum=0.6,
-                nesterov=True,
+                nesterov=False,
             ),
         ),
     ),
@@ -575,7 +629,15 @@ RUN_CONFIGS = [
         batch_size=2000,
         num_epochs=8,
         overfit=False,
-        hparam_tuning=None,
+        hparam_tuning=dict(
+            algorithm="interval",
+            interval_steps=40,
+            cooldown_steps=40,
+            parameters={
+                "conv.initial_lr": None,
+                "conv.momentum": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99],
+            },
+        ),
         param_groups=dict(
             whiten_weight=dict(
                 algorithm="sgd",
@@ -611,7 +673,7 @@ RUN_CONFIGS = [
                 algorithm="muon",
                 lr_scheduler=linear_lr_scheduler(initial_lr=0.19, decay_epochs=8),
                 momentum=0.6,
-                nesterov=True,
+                nesterov=False,
             ),
         ),
     ),
@@ -639,6 +701,24 @@ def normalize_config(value, key=None):
     if callable(value):
         return scheduler_from_config(normalize_config(value.config))
     return round_hparam(value)
+
+
+def make_optimizer(model, param_groups, steps_per_epoch):
+    parameters = dict(
+        whiten_bias=[model.whiten.bias],
+        norm_bias=[m.bias for m in model.modules() if isinstance(m, BatchNorm)],
+        head=[model.head.weight],
+        whiten_weight=[model.whiten.weight],
+        norm_weight=[m.weight for m in model.modules() if isinstance(m, BatchNorm)],
+        conv=[p for p in model.parameters()
+              if p.ndim == 4 and p.requires_grad and p is not model.whiten.weight],
+    )
+    return GroupOptimizer([
+        dict(name=name, params=params,
+             lr=round_hparam(param_groups[name]["lr_scheduler"](0, steps_per_epoch)),
+             **param_groups[name])
+        for name, params in parameters.items()
+    ])
 
 
 def get_hparam(config, path):
@@ -674,10 +754,291 @@ def with_hparam(config, path, value):
     return updated
 
 
+def interval_search_space(config):
+    """Validate the online search space and choose an in-range starting point."""
+    parameters = config["hparam_tuning"].get("parameters", {})
+    if not parameters:
+        raise ValueError("Interval search needs a nonempty parameters mapping")
+    choices, initial = {}, {}
+    for path, values in parameters.items():
+        value = get_hparam(config, path)
+        parts = path.split(".")
+        if len(parts) != 2 or parts[1] not in ("initial_lr", "momentum"):
+            raise ValueError(f"Interval search supports group.initial_lr or group.momentum: {path}")
+        if values is None:
+            if parts[1] != "initial_lr" or value <= 0:
+                raise ValueError(f"{path}: multiplicative search needs a positive initial LR")
+        else:
+            if not isinstance(values, list) or not values or any(
+                isinstance(v, bool) or not isinstance(v, (int, float))
+                or not isfinite(v) or v < 0 for v in values
+            ):
+                raise ValueError(f"{path}: choices must be nonnegative finite numbers")
+            values = sorted(set(values))
+            if parts[1] == "momentum" and config["param_groups"][parts[0]]["nesterov"]:
+                values = [v for v in values if v > 0]
+            if not values:
+                raise ValueError(f"{path}: no valid choices (Nesterov needs positive momentum)")
+            value = min(values, key=lambda candidate: abs(candidate - value))
+        choices[path], initial[path] = values, value
+    return choices, initial
+
+
+def directional_search(initial, choices, score, *, initial_lr_search=False,
+                       factor=0.6, max_side_steps=20, dropoff_margin=0.02):
+    """Cached coordinate sweeps with directional probes and stable ties."""
+    cache = {}
+
+    def evaluate_point(point):
+        key = tuple(point[path] for path in choices)
+        if key not in cache:
+            value = score(dict(point))
+            cache[key] = value if isfinite(value) else float("-inf")
+        return cache[key]
+
+    def neighbors(path, center, direction):
+        values = choices[path]
+        seen = {center}
+        for distance in range(1, max_side_steps + 1):
+            if values is None:
+                value = round_hparam(center * factor ** (-direction * distance))
+                if not isfinite(value) or value <= 0:
+                    break
+            else:
+                index = values.index(center) + direction * distance
+                if not 0 <= index < len(values):
+                    break
+                value = values[index]
+            if value not in seen:
+                seen.add(value)
+                yield value
+
+    current = dict(initial)
+    current_score = evaluate_point(current)
+    while True:
+        changed = False
+        for path in choices:
+            is_lr = path.endswith(".initial_lr")
+            if initial_lr_search and is_lr:
+                probes = [(dict(current), current_score)]
+                best_score = current_score
+                for direction in (1, -1):
+                    for value in neighbors(path, current[path], direction):
+                        candidate = dict(current, **{path: value})
+                        candidate_score = evaluate_point(candidate)
+                        probes.append((candidate, candidate_score))
+                        if not isfinite(candidate_score) or candidate_score < best_score - dropoff_margin:
+                            break
+                        best_score = max(best_score, candidate_score)
+                acceptable = [(point, value) for point, value in probes
+                              if isfinite(value) and value >= best_score - dropoff_margin]
+                if acceptable:
+                    current, current_score = max(acceptable, key=lambda item: item[0][path])
+                continue
+
+            # Smaller values first; stop a direction once it gets worse.
+            for direction in (-1, 1):
+                best, best_score = current, current_score
+                flat_steps = 0
+                for value in neighbors(path, current[path], direction):
+                    candidate = dict(current, **{path: value})
+                    candidate_score = evaluate_point(candidate)
+                    if not isfinite(candidate_score) or candidate_score < best_score:
+                        break
+                    if candidate_score > best_score:
+                        best, best_score, flat_steps = candidate, candidate_score, 0
+                    else:
+                        flat_steps += 1
+                        if is_lr and direction < 0 and flat_steps >= 3:
+                            break
+                if best_score > current_score:
+                    current, current_score = best, best_score
+                    changed = True
+                    break
+        if initial_lr_search or not changed:
+            return current, current_score
+
+
+def run_interval_search(run, model, config):
+    """Choose each committed interval using replayed main/cooldown training probes.
+
+    seconds includes probe and committed training, but excludes evaluation and
+    checkpoint copies. Only committed steps contribute to progress percentages.
+    """
+    config = normalize_config(config)
+    tuning = config["hparam_tuning"]
+    choices, current = interval_search_space(config)
+    interval_steps = tuning.get("interval_steps", 40)
+    cooldown_steps = tuning.get("cooldown_steps", 40)
+    max_side_steps = tuning.get("max_side_steps", 20)
+    factor = tuning.get("lr_factor", 0.6)
+    margin = tuning.get("initial_dropoff_margin", 0.02)
+    metric = tuning.get("metric", "tta_val_acc")
+    for name, value, minimum in (("interval_steps", interval_steps, 1),
+                                 ("cooldown_steps", cooldown_steps, 0),
+                                 ("max_side_steps", max_side_steps, 1),
+                                 ("num_epochs", config["num_epochs"], 1)):
+        if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+            raise ValueError(f"{name} must be an integer >= {minimum}")
+    if not 0 < factor < 1 or not isfinite(margin) or margin < 0:
+        raise ValueError("lr_factor must be between 0 and 1; initial_dropoff_margin must be nonnegative")
+    if metric not in ("val_acc", "tta_val_acc"):
+        raise ValueError(f"Unknown tuning metric: {metric!r}")
+    # Include effective defaults in the run log.
+    tuning.update(interval_steps=interval_steps, cooldown_steps=cooldown_steps,
+                  max_side_steps=max_side_steps, lr_factor=factor,
+                  initial_dropoff_margin=margin, metric=metric)
+    log_config(run, config)
+    set_training_seed()
+    test_loader = CifarLoader("cifar10", train=False, batch_size=2000)
+    train_loader = CifarLoader("cifar10", train=True, batch_size=config["batch_size"],
+                               aug=dict(flip=True, translate=2))
+    if len(train_loader) == 0:
+        raise ValueError("batch_size must not exceed the training dataset size")
+    steps_per_epoch = 1 if config["overfit"] else len(train_loader)
+    total_steps = config["num_epochs"] * steps_per_epoch
+    optimizer = make_optimizer(model, config["param_groups"], steps_per_epoch)
+    model.reset()
+    fixed_batch = next(iter(train_loader)) if config["overfit"] else None
+    model.init_whiten(fixed_batch[0] if fixed_batch is not None
+                      else train_loader.normalized_images()[:5000])
+    stream = TrainingBatchStream(train_loader, fixed_batch)
+    device = next(model.parameters()).device
+    completed, training_seconds = 0, 0.0
+    last_log_time = time.monotonic()
+    history = []
+    cooldown_values = {}
+
+    def synchronize():
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+
+    def snapshot():
+        return dict(model=copy.deepcopy(model.state_dict()),
+                    optimizer=copy.deepcopy(optimizer.state_dict()),
+                    stream=stream.state_dict(), rng=torch.random.get_rng_state(),
+                    cuda_rng=torch.cuda.get_rng_state_all() if device.type == "cuda" else None)
+
+    def restore(state):
+        model.load_state_dict(state["model"])
+        optimizer.load_state_dict(copy.deepcopy(state["optimizer"]))
+        optimizer.zero_grad(set_to_none=True)
+        stream.load_state_dict(state["stream"])
+        torch.random.set_rng_state(state["rng"])
+        if state["cuda_rng"] is not None:
+            torch.cuda.set_rng_state_all(state["cuda_rng"])
+
+    def train_segment(values, steps, start_step, commit=False):
+        nonlocal training_seconds, completed, last_log_time
+        synchronize()
+        start = time.perf_counter()
+        valid = True
+        model.train()
+        for local_step in range(steps):
+            for group in optimizer.param_groups:
+                name = group["name"]
+                group["lr"] = round_hparam(values.get(
+                    f"{name}.initial_lr", group["lr_scheduler"](start_step + local_step, steps_per_epoch)))
+                group["momentum"] = round_hparam(values.get(
+                    f"{name}.momentum", config["param_groups"][name]["momentum"]))
+            inputs, labels = stream.next_batch()
+            loss = F.cross_entropy(model(inputs), labels, label_smoothing=0.2)
+            if not isfinite(loss.item()):
+                valid = False
+                break
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            if commit:
+                completed += 1
+            now = time.monotonic()
+            if now - last_log_time >= 1.0:
+                log_step(completed, total_steps)
+                last_log_time = now
+        synchronize()
+        training_seconds += time.perf_counter() - start
+        return valid
+
+    def score():
+        return evaluate(model, test_loader, tta_level=2 if metric == "tta_val_acc" else 0)
+
+    def search(values, space, evaluate_point, initial=False):
+        return directional_search(values, space, evaluate_point, initial_lr_search=initial,
+                                  factor=factor, max_side_steps=max_side_steps,
+                                  dropoff_margin=margin)
+
+    while completed < total_steps:
+        start_step = completed
+        main_steps = min(interval_steps, total_steps - completed)
+        lookahead_steps = min(cooldown_steps, total_steps - completed - main_steps)
+        start_state = snapshot()
+
+        def main_score(values, cooldown=None):
+            restore(start_state)
+            if not train_segment(values, main_steps, start_step):
+                return float("-inf")
+            if cooldown is not None and lookahead_steps:
+                if not train_segment(dict(values, **cooldown), lookahead_steps, start_step + main_steps):
+                    return float("-inf")
+            return score()
+
+        if start_step == 0 or not lookahead_steps:
+            current, selected_score = search(current, choices, main_score, initial=start_step == 0)
+        else:
+            selected_score = main_score(current)
+        selected_cooldown = None
+        while lookahead_steps:
+            restore(start_state)
+            if not train_segment(current, main_steps, start_step):
+                break
+            cooldown_start = snapshot()
+            cooldown_choices = {path: values for path, values in choices.items()
+                                if path.endswith(".initial_lr")}
+            seed = {path: cooldown_values.get(path, current[path]) for path in cooldown_choices}
+
+            def cooldown_score(values):
+                restore(cooldown_start)
+                if not train_segment(dict(current, **values), lookahead_steps, start_step + main_steps):
+                    return float("-inf")
+                return score()
+
+            candidate_cooldown, candidate_score = search(seed, cooldown_choices, cooldown_score)
+            if candidate_score <= selected_score:
+                break
+            cooldown_values = selected_cooldown = candidate_cooldown
+            selected_score = candidate_score
+            candidate, candidate_score = search(
+                current, choices, lambda values: main_score(values, selected_cooldown))
+            if candidate_score <= selected_score:
+                break
+            current, selected_score = candidate, candidate_score
+
+        if not isfinite(selected_score):
+            raise RuntimeError(f"No finite candidate found at training step {start_step}")
+        restore(start_state)
+        if not train_segment(current, main_steps, start_step, commit=True):
+            raise RuntimeError(f"Selected training interval diverged at step {start_step}")
+        history.append(dict(start_step=start_step, steps=main_steps,
+                            main_hparams=dict(current), cooldown_hparams=selected_cooldown,
+                            cooldown_steps=lookahead_steps, score=selected_score))
+
+    val_acc = evaluate(model, test_loader, tta_level=0)
+    tta_val_acc = evaluate(model, test_loader, tta_level=2)
+    log_final_eval(val_acc, tta_val_acc, training_seconds)
+    return dict(val_acc=val_acc, tta_val_acc=tta_val_acc, seconds=training_seconds,
+                batch_size=config["batch_size"], num_epochs=config["num_epochs"],
+                overfit=config["overfit"], intervals=history,
+                **{f"{group['name']}_lr": group["lr"] for group in optimizer.param_groups})
+
+
 def run_experiment(run, model, config):
     """Run one config or a search; return its best config, result, and trials."""
     config = normalize_config(config)
     tuning = config.get("hparam_tuning")
+    if tuning is not None and tuning.get("algorithm") == "interval":
+        result = run_interval_search(run, model, config)
+        return dict(best_config=config, best_result=result,
+                    trials=[dict(run=run, config=config, result=result)])
     trials = []
     cache = {}
     metric = "tta_val_acc" if tuning is None else tuning.get("metric", "tta_val_acc")
@@ -783,38 +1144,7 @@ def main(run, model, batch_size, param_groups, num_epochs=8, overfit=False,
         for name, config in param_groups.items()
     }
 
-    def param_group(name, params):
-        config = param_groups[name]
-        return dict(
-            name=name,
-            params=params,
-            lr=initial_lrs[name],
-            algorithm=config["algorithm"],
-            lr_scheduler=config["lr_scheduler"],
-            momentum=config["momentum"],
-            nesterov=config["nesterov"],
-        )
-
-    # Parameter groups identify tensors; the config selects each group's algorithm.
-    filter_params = [
-        p for p in model.parameters()
-        if len(p.shape) == 4 and p.requires_grad and p is not model.whiten.weight
-    ]
-    norm_biases = [
-        m.bias for m in model.modules() if isinstance(m, BatchNorm)
-    ]
-    norm_weights = [
-        m.weight for m in model.modules() if isinstance(m, BatchNorm)
-    ]
-    param_configs = [
-        param_group("whiten_bias", [model.whiten.bias]),
-        param_group("norm_bias", norm_biases),
-        param_group("head", [model.head.weight]),
-        param_group("whiten_weight", [model.whiten.weight]),
-        param_group("norm_weight", norm_weights),
-        param_group("conv", filter_params),
-    ]
-    optimizer = GroupOptimizer(param_configs)
+    optimizer = make_optimizer(model, param_groups, steps_per_epoch)
 
     model.reset()
     step = 0
