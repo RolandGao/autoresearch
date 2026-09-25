@@ -1509,3 +1509,7 @@ if __name__ == "__main__":
     # main("warmup", model, **RUN_CONFIGS[0])
     for run, config in enumerate(RUN_CONFIGS):
         run_experiment(run, model, config)
+
+
+# Run output
+

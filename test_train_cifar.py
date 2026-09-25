@@ -85,7 +85,7 @@ class SearchTests(unittest.TestCase):
                 log = output.getvalue()
                 self.assertEqual(log.count("base_config run=0\n"), 1)
                 self.assertEqual(log.count("config_diff run="), 9)
-                self.assertIn("conv.initial_lr: 0.04 -> 0.06", log)
+                self.assertIn("conv.lr_scheduler: [[3200, 0.04, 0.0]] -> [[3200, 0.06, 0.0]]", log)
                 self.assertIn("search_best run=0", log)
                 self.assertNotIn("%", log)
 
@@ -137,8 +137,7 @@ class SearchTests(unittest.TestCase):
                         for field, expected in group.items():
                             if name == "conv" and field in ("lr_scheduler", "momentum"):
                                 continue
-                            self.assertEqual(actual[field].config if callable(actual[field]) else actual[field],
-                                             expected.config if callable(expected) else expected)
+                            self.assertEqual(actual[field], expected)
                     point = (train.get_hparam(candidate, "conv.initial_lr"),
                              train.get_hparam(candidate, "conv.momentum"))
                     calls.append(point)
@@ -187,14 +186,13 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(header, "base_config run=0")
         logged, end = json.JSONDecoder().raw_decode(body)
         self.assertEqual(logged["batch_size"], 125)
-        self.assertEqual(logged["param_groups"]["conv"]["lr_scheduler"]["initial_lr"], 0.04)
+        self.assertEqual(logged["param_groups"]["conv"]["lr_scheduler"][0][1], 0.04)
         self.assertIn('\n  "batch_size": 125,\n', body)
         diff = body[end:]
-        self.assertIn("conv.initial_lr: 0.04 -> 0.062", diff)
+        self.assertIn("conv.lr_scheduler: [[3200, 0.04, 0.0]] -> [[3200, 0.062, 0.0]]", diff)
         self.assertIn("conv.momentum: 0.6 -> 0.72", diff)
-        self.assertNotIn("head.initial_lr", diff)
+        self.assertNotIn("head.lr_scheduler", diff)
         self.assertNotIn("param_groups", diff)
-        self.assertNotIn("lr_scheduler", diff)
 
     def test_directional_sweeps_revisit_parameters_and_cache(self):
         scores = {(1, 1): 0, (2, 1): 1, (3, 1): 0.5,
@@ -299,11 +297,76 @@ class SearchTests(unittest.TestCase):
         self.assertTrue(all(p.grad is None for p in model.parameters()))
 
     def test_line_schedules_allow_jumps_and_include_both_endpoints(self):
-        lines = [train.hparam_line(0, 2, 0.04, 0.04),
-                 train.hparam_line(3, 5, 0.02, 0.0)]
+        lines = [(3, 0.04), (3, 0.02, 0.0)]
         self.assertEqual([train.hparam_at_step(lines, step) for step in range(6)],
                          [0.04, 0.04, 0.04, 0.02, 0.01, 0.0])
-        self.assertEqual(train.hparam_at_step([train.hparam_line(0, 0, 0.04, 0.0)], 0), 0)
+        self.assertEqual(train.hparam_at_step([(1, 0.04, 0.0)], 0), 0)
+        self.assertEqual(train.hparam_at_step([(1, 0.04)], 0), 0.04)
+        for step in (-1, 6):
+            with self.assertRaises(ValueError):
+                train.hparam_at_step(lines, step)
+
+    def test_segment_validation_and_exact_step_counts(self):
+        config = train.normalize_config(dict(batch_size=125, num_epochs=125,
+            param_groups={"conv": dict(lr_scheduler=[(125, 0.1234, 0.0), (75, 0.0)])}))
+        self.assertEqual(config["num_epochs"], 125)
+        self.assertEqual(config["param_groups"]["conv"]["lr_scheduler"],
+                         [(125, 0.12, 0.0), (75, 0.0)])
+        for bad in ([], [3], [(3,)], [(3, 1, 0, 0)], [(0, 1)],
+                    [(-1, 1)], [(1.5, 1)], [(True, 1)], [(3, -1)],
+                    [(3, float("nan"))], [(3, 1, float("inf"))], [(3, True)]):
+            with self.subTest(schedule=bad), self.assertRaises(ValueError):
+                train.normalize_schedule(bad)
+        for total in (199, 201):
+            with self.assertRaisesRegex(ValueError, "sum to 200"):
+                train.normalize_schedule([(125, 0.1), (75, 0)], total)
+        for config in train.BASELINE_RUN_CONFIGS + train.INTERVAL_RUN_CONFIGS + train.INTERVAL_LINEAR_RUN_CONFIGS:
+            total = config["num_epochs"] * (50000 // config["batch_size"])
+            schedules = train.configured_hparam_schedules(config["param_groups"], total)
+            for lines in schedules.values():
+                self.assertEqual(sum(line[0] for line in lines), total)
+
+    def test_all_algorithms_reject_wrong_schedule_duration_before_training(self):
+        for algorithm in (None, "grid", "coordinate", "interval", "interval_linear"):
+            for duration in (4, 6):
+                with self.subTest(algorithm=algorithm, duration=duration):
+                    config = copy.deepcopy(train.RUN_CONFIGS[0])
+                    config.update(batch_size=2, num_epochs=5, overfit=True,
+                                  hparam_tuning=None if algorithm is None else dict(
+                                      algorithm=algorithm, params={
+                                          "conv.initial_lr": dict(initial=0.001, choices=[0.001])}))
+                    for group in config["param_groups"].values():
+                        group["lr_scheduler"] = [(5, 0.001)]
+                    config["param_groups"]["whiten_bias"]["lr_scheduler"] = [(duration, 0.001)]
+                    model = TinyModel(dict(time=0, training=0))
+                    with patch.object(train, "CifarLoader", TinyLoader), \
+                         patch.object(train.GroupOptimizer, "step") as update, \
+                         contextlib.redirect_stdout(io.StringIO()), \
+                         self.assertRaisesRegex(ValueError, "whiten_bias.lr_scheduler.*expected total_steps=5"):
+                        train.run_experiment(0, model, config)
+                    update.assert_not_called()
+
+    def test_initial_lr_tuning_preserves_piecewise_shape_and_unsearched_groups(self):
+        config = copy.deepcopy(train.RUN_CONFIGS[0])
+        config["param_groups"]["conv"]["lr_scheduler"] = [(2, 0.1), (3, 0.1, 0.02), (2, 0)]
+        changed = train.with_hparam(config, "conv.initial_lr", 0.2)
+        self.assertEqual(changed["param_groups"]["conv"]["lr_scheduler"],
+                         [(2, 0.2), (3, 0.2, 0.04), (2, 0)])
+        for name in config["param_groups"]:
+            if name != "conv":
+                self.assertEqual(changed["param_groups"][name], config["param_groups"][name])
+
+    def test_search_splices_cover_full_run_and_keep_committed_prefix(self):
+        base = {"conv.initial_lr": [(3, 0.1), (4, 0.08, 0)],
+                "head.initial_lr": [(2, 0.2), (5, 0.1, 0.0)]}
+        selected = train.segment_hparam_schedules(base, {"conv.initial_lr": 0.04}, 3, 2)
+        selected = train.segment_hparam_schedules(selected, {"conv.initial_lr": 0.02}, 5, 2)
+        self.assertEqual(selected["conv.initial_lr"], [(3, 0.1), (2, 0.04), (2, 0.02)])
+        self.assertEqual(selected["head.initial_lr"], base["head.initial_lr"])
+        for lines in selected.values():
+            self.assertEqual(sum(line[0] for line in lines), 7)
+        self.assertEqual([train.hparam_at_step(selected["conv.initial_lr"], step) for step in range(7)],
+                         [0.1, 0.1, 0.1, 0.04, 0.04, 0.02, 0.02])
 
     def test_linear_interval_searches_starts_and_replays_one_full_decay(self):
         config = copy.deepcopy(train.RUN_CONFIGS[0])
@@ -311,8 +374,7 @@ class SearchTests(unittest.TestCase):
             algorithm="interval_linear", interval_steps=1, cooldown_steps=4,
             parameters={"conv.initial_lr": [0.001, 0.002], "conv.momentum": [0.0, 0.6]}))
         for name, group in config["param_groups"].items():
-            group["lr_scheduler"] = train.constant_lr_scheduler(
-                0 if name.endswith("_weight") else 0.0012)
+            group["lr_scheduler"] = [(config["num_epochs"], 0 if name.endswith("_weight") else 0.0012)]
         config = train.with_hparam(config, "conv.initial_lr", 0.001)
         config = train.with_hparam(config, "conv.momentum", 0.6)
         clock = dict(time=0, training=0)
@@ -365,11 +427,11 @@ class SearchTests(unittest.TestCase):
             self.assertEqual([u["head"][0] for u in trial], [0.0012] * 5)
         for path, lines in result["hparam_schedules"].items():
             self.assertEqual(len(lines), 1)
-            self.assertEqual((lines[0]["start_step"], lines[0]["end_step"]), (0, 4))
+            self.assertEqual(lines[0][0], 5)
             if path == "conv.initial_lr":
-                self.assertEqual(lines[0]["end"], 0)
+                self.assertEqual(lines[0][2], 0)
             else:
-                self.assertEqual(lines[0]["start"], lines[0]["end"])
+                self.assertEqual(len(lines[0]), 2)
         self.assertEqual(result["conv_lr"], 0)
         logged, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])
         self.assertEqual(logged["hparam_tuning"]["interval_steps"], 5)
@@ -412,10 +474,9 @@ class SearchTests(unittest.TestCase):
                     algorithm=algorithm, interval_steps=2, cooldown_steps=2, max_side_steps=1,
                     params={"conv.initial_lr": dict(initial=0.001, mult=0.8)}))
                 for name, group in config["param_groups"].items():
-                    group["lr_scheduler"] = train.constant_lr_scheduler(
-                        0 if name.endswith("_weight") else 0.001)
-                config["param_groups"]["whiten_bias"]["lr_scheduler"] = train.linear_lr_scheduler(0.001, 3)
-                config["param_groups"]["head"]["lr_scheduler"] = train.linear_lr_scheduler(0.001, 5)
+                    group["lr_scheduler"] = [(5, 0 if name.endswith("_weight") else 0.001)]
+                config["param_groups"]["whiten_bias"]["lr_scheduler"] = [(3, 0.001, 0), (2, 0)]
+                config["param_groups"]["head"]["lr_scheduler"] = [(5, 0.001, 0)]
                 clock = dict(time=0, training=0)
                 model = TinyModel(clock)
                 original_step = train.GroupOptimizer.step
@@ -427,7 +488,7 @@ class SearchTests(unittest.TestCase):
                     for group in optimizer.param_groups:
                         baseline = config["param_groups"][group["name"]]
                         if group["name"] != "conv":
-                            self.assertEqual(group["lr"], baseline["lr_scheduler"](current_step, 1))
+                            self.assertEqual(group["lr"], train.hparam_at_step(baseline["lr_scheduler"], current_step))
                         for field in ("momentum", "nesterov", "algorithm"):
                             self.assertEqual(group[field], baseline[field])
                     original_step(optimizer)
@@ -446,7 +507,10 @@ class SearchTests(unittest.TestCase):
                     self.assertTrue(any(i["cooldown_steps"] > 0 for i in result["intervals"]))
                 for call in search.call_args_list:
                     self.assertEqual(call.kwargs["factors"], {"conv.initial_lr": 0.8})
-                baseline = train.configured_hparam_schedules(config["param_groups"], 1, 5)
+                for interval in result["intervals"]:
+                    for lines in interval["hparam_schedules"].values():
+                        self.assertEqual(sum(line[0] for line in lines), 5)
+                baseline = train.configured_hparam_schedules(config["param_groups"], 5)
                 for path, lines in baseline.items():
                     if path != "conv.initial_lr":
                         self.assertEqual(result["hparam_schedules"][path], lines)
@@ -521,9 +585,8 @@ class SearchTests(unittest.TestCase):
                                          parameters={"conv.initial_lr": None,
                                                      "conv.momentum": [0.3, 0.6]}))
         for name, group in config["param_groups"].items():
-            group["lr_scheduler"] = train.constant_lr_scheduler(
-                0 if name.endswith("_weight") else 0.0012)
-        original = json.dumps(config, default=lambda scheduler: scheduler.config)
+            group["lr_scheduler"] = [(config["num_epochs"], 0 if name.endswith("_weight") else 0.0012)]
+        original = json.dumps(config)
         clock = dict(time=0, training=0)
         model = TinyModel(clock).cuda()
         with patch.object(train, "CifarLoader", CudaLoader), \
@@ -535,7 +598,7 @@ class SearchTests(unittest.TestCase):
         self.assertGreater(clock["training"], 3)
         self.assertGreater(result["seconds"], 0)
         self.assertTrue(all(torch.isfinite(p).all() for p in model.parameters()))
-        self.assertEqual(json.dumps(config, default=lambda scheduler: scheduler.config), original)
+        self.assertEqual(json.dumps(config), original)
         for interval in result["intervals"]:
             for value in interval["main_hparams"].values():
                 self.assertEqual(value, float(f"{value:.2g}"))
@@ -570,8 +633,7 @@ class SearchTests(unittest.TestCase):
                                           "head.momentum": [0.3, 0.85],
                                           "norm_bias.momentum": [0.3, 0.85]}))
                     for name, group in config["param_groups"].items():
-                        group["lr_scheduler"] = train.constant_lr_scheduler(
-                            0 if name.endswith("_weight") else 0.0012)
+                        group["lr_scheduler"] = [(9, 0 if name.endswith("_weight") else 0.0012)]
                     model = TinyModel(dict(time=0, training=0)).to(device)
                     checkpoints, restores = [], []
                     original_step = train.GroupOptimizer.step
@@ -628,8 +690,7 @@ class SearchTests(unittest.TestCase):
                 config.update(batch_size=2, num_epochs=9 if overfit else 3,
                               overfit=overfit, hparam_tuning=None)
                 for name, group in config["param_groups"].items():
-                    group["lr_scheduler"] = train.constant_lr_scheduler(
-                        0 if name.endswith("_weight") else 0.0012)
+                    group["lr_scheduler"] = [(9, 0 if name.endswith("_weight") else 0.0012)]
                 models, optimizers = [], []
                 make_optimizer = train.make_optimizer
 
@@ -694,9 +755,8 @@ class SearchTests(unittest.TestCase):
                                          {"conv.initial_lr": 0.0012})
                         for path in ("conv.initial_lr", "conv.momentum"):
                             schedule = result["hparam_schedules"][path]
-                            self.assertEqual([line["start_step"] for line in schedule], [0, 4, 8])
-                            self.assertEqual([line["end_step"] for line in schedule], [3, 7, 8])
-                            self.assertTrue(all(line["start"] == line["end"] for line in schedule))
+                            self.assertEqual([line[0] for line in schedule], [4, 4, 1])
+                            self.assertTrue(all(len(line) == 2 for line in schedule))
                     else:
                         self.assertEqual(header, "config run=0")
                         self.assertEqual(len(lines), 1)
