@@ -1530,3 +1530,159 @@ base_config run=0
   }
 }
 search run=0 interval=0 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.6 head.initial_lr=99 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 main=0.9385
+main hparams: conv.initial_lr=0.028 conv.momentum=0.6 head.initial_lr=99 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 main=0.9355
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=99 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 main=0.9383
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=99 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 main=0.9392
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4 head.initial_lr=99 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 main=0.9392
+main hparams: conv.initial_lr=0.047 conv.momentum=0.3 head.initial_lr=99 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 main=0.9354
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=60 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 main=0.9391
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 main=0.9407
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 main=0.9385
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 main=0.938
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.9 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 main=0.9377
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9418
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=2.8 norm_bias.momentum=0.85 main=0.9393
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.8 main=0.9403
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.9 main=0.9378
+main hparams: conv.initial_lr=0.028 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9345
+main hparams: conv.initial_lr=0.078 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9372
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9395
+main hparams: conv.initial_lr=0.047 conv.momentum=0.6 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9395
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=99 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9414
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9399
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.8 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9389
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.9 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9394
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.6 head.initial_lr=99 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 tta_val_acc=0.9385
+search_path step=1 conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=99 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 tta_val_acc=0.9392
+search_path step=2 conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 tta_val_acc=0.9407
+search_path step=3 conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 tta_val_acc=0.9418
+train_hparams run=0 interval=0 start_step=0 completed_steps=3200 total_steps=3200 conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85
+train_schedules run=0 interval=0
+  whiten_weight.initial_lr: [[3200, 0.0]]
+  whiten_weight.momentum: [[3200, 0.85]]
+  norm_weight.initial_lr: [[3200, 0.0]]
+  norm_weight.momentum: [[3200, 0.85]]
+  whiten_bias.initial_lr: [[1200, 6.5, 0.0], [2000, 0.0]]
+  whiten_bias.momentum: [[3200, 0.85]]
+  norm_bias.initial_lr: [[3200, 4.6, 0.0]]
+  norm_bias.momentum: [[3200, 0.85]]
+  head.initial_lr: [[3200, 170.0, 0.0]]
+  head.momentum: [[3200, 0.85]]
+  conv.initial_lr: [[3200, 0.047, 0.0]]
+  conv.momentum: [[3200, 0.5]]
+interval_boundary_eval run=0 interval=0 step=3200 total_steps=3200 tta_val_acc=0.9418
+val_acc=0.9286 tta_val_acc=0.9418 seconds=811.4019
+base_config run=1
+{
+  "batch_size": 500,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "interval_linear",
+    "metric": "tta_val_acc",
+    "params": {"conv.initial_lr": {"initial": 0.12, "choices": null, "mult": 0.6}, "conv.momentum": {"initial": 0.6, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "head.initial_lr": {"initial": 340, "choices": null, "mult": 0.6}, "head.momentum": {"initial": 0.85, "choices": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "norm_bias.initial_lr": {"initial": 26, "choices": null, "mult": 0.6}, "norm_bias.momentum": {"initial": 0.85, "choices": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}},
+    "interval_steps": 800,
+    "cooldown_steps": 0,
+    "max_side_steps": 20,
+    "lr_factor": 0.6
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[800, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[800, 0.0]], "momentum": 0.85, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[300, 26, 0.0], [500, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[800, 26, 0.0]], "momentum": 0.85, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": [[800, 340, 0.0]], "momentum": 0.85, "nesterov": true},
+    "conv": {"algorithm": "muon", "lr_scheduler": [[800, 0.079, 0.0]], "momentum": 0.6, "nesterov": true}
+  }
+}
+search run=1 interval=0 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9399
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9407
+main hparams: conv.initial_lr=0.047 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9335
+main hparams: conv.initial_lr=0.078 conv.momentum=0.5 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9355
+main hparams: conv.initial_lr=0.078 conv.momentum=0.7 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9383
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9359
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=460 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.94
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.8 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9395
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.9 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.94
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=13 norm_bias.momentum=0.85 main=0.9387
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=36 norm_bias.momentum=0.85 main=0.9368
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.8 main=0.9382
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.9 main=0.939
+search_path step=0 conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 tta_val_acc=0.9399
+search_path step=1 conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 tta_val_acc=0.9407
+train_hparams run=1 interval=0 start_step=0 completed_steps=800 total_steps=800 conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85
+train_schedules run=1 interval=0
+  whiten_weight.initial_lr: [[800, 0.0]]
+  whiten_weight.momentum: [[800, 0.85]]
+  norm_weight.initial_lr: [[800, 0.0]]
+  norm_weight.momentum: [[800, 0.85]]
+  whiten_bias.initial_lr: [[300, 26, 0.0], [500, 0.0]]
+  whiten_bias.momentum: [[800, 0.85]]
+  norm_bias.initial_lr: [[800, 21.0, 0.0]]
+  norm_bias.momentum: [[800, 0.85]]
+  head.initial_lr: [[800, 280.0, 0.0]]
+  head.momentum: [[800, 0.85]]
+  conv.initial_lr: [[800, 0.078, 0.0]]
+  conv.momentum: [[800, 0.6]]
+interval_boundary_eval run=1 interval=0 step=800 total_steps=800 tta_val_acc=0.9407
+val_acc=0.9305 tta_val_acc=0.9407 seconds=161.0625
+base_config run=2
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "interval_linear",
+    "metric": "tta_val_acc",
+    "params": {"conv.initial_lr": {"initial": 0.24, "choices": null, "mult": 0.6}, "conv.momentum": {"initial": 0.6, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "head.initial_lr": {"initial": 1300, "choices": null, "mult": 0.6}, "head.momentum": {"initial": 0.85, "choices": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "norm_bias.initial_lr": {"initial": 100, "choices": null, "mult": 0.6}, "norm_bias.momentum": {"initial": 0.85, "choices": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}},
+    "interval_steps": 200,
+    "cooldown_steps": 0,
+    "max_side_steps": 20,
+    "lr_factor": 0.6
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[75, 100, 0.0], [125, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[200, 100, 0.0]], "momentum": 0.85, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": [[200, 1300, 0.0]], "momentum": 0.85, "nesterov": true},
+    "conv": {"algorithm": "muon", "lr_scheduler": [[200, 0.19, 0.0]], "momentum": 0.6, "nesterov": true}
+  }
+}
+search run=2 interval=0 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 main=0.94
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 main=0.9348
+main hparams: conv.initial_lr=0.36 conv.momentum=0.6 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 main=0.9382
+main hparams: conv.initial_lr=0.22 conv.momentum=0.5 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 main=0.9396
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 main=0.9404
+main hparams: conv.initial_lr=0.22 conv.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 main=0.9393
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=770 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 main=0.9397
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=2100 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 main=0.9378
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.85 main=0.9391
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.9 norm_bias.initial_lr=99 norm_bias.momentum=0.85 main=0.9388
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.85 main=0.9399
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=170 norm_bias.momentum=0.85 main=0.9397
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.9397
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.9 main=0.9383
+main hparams: conv.initial_lr=0.13 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 main=0.9347
+main hparams: conv.initial_lr=0.36 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 main=0.9352
+search_path step=0 conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 tta_val_acc=0.94
+search_path step=1 conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 tta_val_acc=0.9404
+train_hparams run=2 interval=0 start_step=0 completed_steps=200 total_steps=200 conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85
+train_schedules run=2 interval=0
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  whiten_bias.initial_lr: [[75, 100, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.85]]
+  norm_bias.initial_lr: [[200, 99.0, 0.0]]
+  norm_bias.momentum: [[200, 0.85]]
+  head.initial_lr: [[200, 1300.0, 0.0]]
+  head.momentum: [[200, 0.85]]
+  conv.initial_lr: [[200, 0.22, 0.0]]
+  conv.momentum: [[200, 0.7]]
+interval_boundary_eval run=2 interval=0 step=200 total_steps=200 tta_val_acc=0.9404
+val_acc=0.9303 tta_val_acc=0.9404 seconds=164.5224
