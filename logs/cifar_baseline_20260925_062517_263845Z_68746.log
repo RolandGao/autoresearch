@@ -1502,3 +1502,31 @@ if __name__ == "__main__":
     # main("warmup", model, **RUN_CONFIGS[0])
     for run, config in enumerate(RUN_CONFIGS):
         run_experiment(run, model, config)
+
+
+# Run output
+
+base_config run=0
+{
+  "batch_size": 125,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "interval_linear",
+    "metric": "tta_val_acc",
+    "params": {"conv.initial_lr": {"initial": 0.04, "choices": null, "mult": 0.6}, "conv.momentum": {"initial": 0.6, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "head.initial_lr": {"initial": 84, "choices": null, "mult": 0.6}, "head.momentum": {"initial": 0.85, "choices": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "norm_bias.initial_lr": {"initial": 6.5, "choices": null, "mult": 0.6}, "norm_bias.momentum": {"initial": 0.85, "choices": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}},
+    "interval_steps": 3200,
+    "cooldown_steps": 0,
+    "max_side_steps": 20,
+    "lr_factor": 0.6
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[3200, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[3200, 0.0]], "momentum": 0.85, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[1200, 6.5, 0.0], [2000, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[3200, 6.5, 0.0]], "momentum": 0.85, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": [[3200, 84, 0.0]], "momentum": 0.85, "nesterov": true},
+    "conv": {"algorithm": "muon", "lr_scheduler": [[3200, 0.04, 0.0]], "momentum": 0.6, "nesterov": true}
+  }
+}
+search run=0 interval=0 phase=main metric=tta_val_acc

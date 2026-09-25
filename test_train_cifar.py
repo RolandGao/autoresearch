@@ -735,7 +735,7 @@ class SearchTests(unittest.TestCase):
                         self.assertEqual(header, "base_config run=0")
                         self.assertEqual(log.count("train_hparams "), 3)
                         self.assertEqual(log.count("interval_boundary_eval "), 3)
-                        self.assertEqual(log.count("train_loss "), 9)
+                        self.assertNotIn("train_loss ", log)
                         self.assertIn("main hparams: conv.initial_lr=0.0012 conv.momentum=0.6 main=0.04", log)
                         self.assertIn("conv.initial_lr=0.0012 -> tta_val_acc=0.07", log)
                         self.assertIn("search_path step=0 conv.initial_lr=0.0012", log)
