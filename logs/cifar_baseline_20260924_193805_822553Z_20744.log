@@ -1548,3 +1548,173 @@ config={"run": 0, "batch_size": 125, "num_epochs": 8, "overfit": false, "hparam_
 31.25%
 31.25%
 31.25%
+31.28%
+32.50%
+32.50%
+32.50%
+32.50%
+32.50%
+32.50%
+32.50%
+32.50%
+32.50%
+32.50%
+32.50%
+32.50%
+32.50%
+33.75%
+33.75%
+33.75%
+33.75%
+33.75%
+33.75%
+33.75%
+33.75%
+33.78%
+35.00%
+35.00%
+35.00%
+35.00%
+35.00%
+35.00%
+35.00%
+35.00%
+35.00%
+35.03%
+36.25%
+36.25%
+36.25%
+37.50%
+37.50%
+37.50%
+37.50%
+37.50%
+37.50%
+37.50%
+37.50%
+37.53%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.75%
+38.78%
+40.00%
+40.00%
+40.00%
+40.00%
+40.00%
+41.16%
+41.25%
+41.25%
+41.25%
+41.25%
+41.25%
+41.25%
+41.25%
+41.25%
+41.25%
+41.25%
+41.25%
+41.25%
+41.28%
+42.50%
+42.50%
+42.50%
+42.50%
+42.50%
+42.50%
+42.50%
+42.50%
+42.50%
+42.50%
+42.50%
+43.75%
+43.75%
+43.75%
+43.75%
+43.75%
+43.75%
+43.75%
+43.75%
+43.75%
+43.75%
+43.75%
+43.75%
+43.75%
+43.75%
+43.75%
+45.00%
+45.00%
+45.00%
+45.00%
+45.00%
+45.00%
+45.00%
+45.00%
+45.03%
+46.25%
+46.25%
+46.25%
+46.25%
+46.25%
+47.50%
+47.50%
+47.50%
+47.50%
+47.50%
+47.50%
+47.50%
+47.50%
+47.50%
+47.50%
+47.50%
+Traceback (most recent call last):
+  File "/workspace/autoresearch/train_cifar.py", line 1229, in <module>
+    hparam_tuning=hparam_tuning,
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 1039, in run_experiment
+    log_hparams(point if phase != "cooldown" else main_values,
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 1010, in run_interval_search
+    
+    
+  File "/workspace/autoresearch/train_cifar.py", line 966, in search
+    return dict(model=copy.deepcopy(model.state_dict()),
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 845, in directional_search
+    value = round_hparam(center * factor ** (-direction * distance))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 795, in evaluate_point
+    if not parameters:
+                    ^^^
+  File "/workspace/autoresearch/train_cifar.py", line 1011, in <lambda>
+    def log_hparams(main_values, cooldown=None):
+                                                 
+  File "/workspace/autoresearch/train_cifar.py", line 981, in main_score
+    nonlocal training_seconds, completed, last_train_loss
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 949, in train_segment
+    model.reset()
+            ^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/_tensor.py", line 623, in backward
+    torch.autograd.backward(
+  File "/venv/main/lib/python3.12/site-packages/torch/autograd/__init__.py", line 395, in backward
+    _engine_run_backward(
+  File "/venv/main/lib/python3.12/site-packages/torch/autograd/graph.py", line 979, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt

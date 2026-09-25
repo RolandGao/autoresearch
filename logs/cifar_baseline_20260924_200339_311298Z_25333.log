@@ -14,10 +14,9 @@ import json
 import os
 import sys
 import time
-from bisect import bisect_left, bisect_right
 from datetime import datetime, timezone
 from itertools import product
-from math import ceil, isfinite, log
+from math import ceil, isfinite
 
 if __name__ == "__main__":
     os.makedirs("logs", exist_ok=True)
@@ -119,7 +118,7 @@ class GroupOptimizer(torch.optim.Optimizer):
                 raise ValueError(f"{name}: learning rate must be nonnegative")
             if group["momentum"] < 0:
                 raise ValueError(f"{name}: momentum must be nonnegative")
-            if group["algorithm"] == "sgd" and group["nesterov"] and group["momentum"] <= 0:
+            if group["nesterov"] and group["momentum"] <= 0:
                 raise ValueError(f"{name}: Nesterov requires positive momentum")
             if group["algorithm"] == "muon" and any(
                 p.ndim < 2 for p in group["params"]
@@ -139,13 +138,10 @@ class GroupOptimizer(torch.optim.Optimizer):
                     state = self.state[p]
                     if "momentum_buffer" not in state:
                         state["momentum_buffer"] = g.clone()
-                    elif momentum == 0:
-                        # Zero momentum uses the raw gradient and clears old history.
-                        state["momentum_buffer"].copy_(g)
                     else:
                         state["momentum_buffer"].mul_(momentum).add_(g)
                     buf = state["momentum_buffer"]
-                    g = g.add(buf, alpha=momentum) if group["nesterov"] and momentum else buf
+                    g = g.add(buf, alpha=momentum) if group["nesterov"] else buf
 
                 # A zero learning rate must leave weights unchanged for either algorithm.
                 if lr == 0:
@@ -513,7 +509,7 @@ def infer(model, loader, tta_level=0):
         logits_translate = torch.stack(logits_translate_list).mean(0)
         return 0.5 * logits + 0.5 * logits_translate
 
-    model.train()
+    model.eval()
     test_images = loader.normalized_images()
     infer_fn = [infer_basic, infer_mirror, infer_mirror_translate][tta_level]
     with torch.inference_mode():
@@ -557,204 +553,129 @@ def linear_lr_scheduler(initial_lr, decay_epochs):
     return schedule
 
 
-def hparam_line(start_step, end_step, start, end):
-    """A line includes both endpoint steps; adjacent lines may jump in value."""
-    if end_step < start_step:
-        raise ValueError("A hyperparameter line must end at or after its start")
-    return dict(start_step=start_step, end_step=end_step,
-                start=round_hparam(start), end=round_hparam(end))
-
-
-def hparam_at_step(lines, step):
-    """Interpolate a piecewise linear schedule, rounding each applied value."""
-    if not lines:
-        raise ValueError("A hyperparameter schedule needs at least one line")
-    for line in lines:
-        if line["start_step"] <= step <= line["end_step"]:
-            width = line["end_step"] - line["start_step"]
-            # A one-step segment uses its end value (zero for a one-step decay).
-            if width == 0 or step == line["end_step"]:
-                return round_hparam(line["end"])
-            if line["start"] == line["end"]:
-                return round_hparam(line["start"])
-            fraction = (step - line["start_step"]) / width
-            return round_hparam(line["start"] * (1 - fraction) + line["end"] * fraction)
-    if step < lines[0]["start_step"]:
-        return round_hparam(lines[0]["start"])
-    if step > lines[-1]["end_step"]:
-        return round_hparam(lines[-1]["end"])
-    raise ValueError(f"No hyperparameter line covers step {step}")
-
-
-def configured_hparam_schedules(param_groups, steps_per_epoch, total_steps):
-    """Convert existing config schedulers and momenta to lists of lines."""
-    schedules = {}
-    for name, group in param_groups.items():
-        scheduler = group["lr_scheduler"].config
-        initial_lr = scheduler["initial_lr"]
-        if scheduler["type"] == "linear":
-            # Preserve the existing scheduler's zero point and hold zero afterward.
-            decay_steps = scheduler["decay_epochs"] * steps_per_epoch
-            lines = [hparam_line(0, decay_steps, initial_lr, 0.0)]
-            if decay_steps < total_steps - 1:
-                lines.append(hparam_line(decay_steps, total_steps - 1, 0.0, 0.0))
-        elif scheduler["type"] == "constant":
-            lines = [hparam_line(0, total_steps - 1, initial_lr, initial_lr)]
-        else:
-            raise ValueError(f"Unknown scheduler type: {scheduler['type']!r}")
-        schedules[f"{name}.initial_lr"] = lines
-        schedules[f"{name}.momentum"] = [
-            hparam_line(0, total_steps - 1, group["momentum"], group["momentum"])]
-    return schedules
-
-
-def segment_hparam_schedules(base_schedules, values, start_step, steps, linear_decay=False):
-    """Bind searched values to linked endpoints, or to starts with LR ends fixed at zero."""
-    schedules = copy.deepcopy(base_schedules)
-    for path, lines in schedules.items():
-        if linear_decay or path in values:
-            start = values.get(path, hparam_at_step(lines, start_step))
-            end = 0.0 if linear_decay and path.endswith(".initial_lr") else start
-            schedules[path] = [hparam_line(start_step, start_step + steps - 1, start, end)]
-    return schedules
-
-
-def apply_hparam_schedules(optimizer, schedules, step):
-    for group in optimizer.param_groups:
-        name = group["name"]
-        group["lr"] = hparam_at_step(schedules[f"{name}.initial_lr"], step)
-        group["momentum"] = hparam_at_step(schedules[f"{name}.momentum"], step)
-
-
 # Set hparam_tuning to, for example:
-# dict(algorithm="grid", metric="tta_val_acc", params={
-#     "conv.initial_lr": dict(initial=0.04, choices=[0.04, 0.06, 0.08]),
-#     "conv.momentum": dict(initial=0.6, choices=[0.6, 0.7, 0.8]),
+# dict(algorithm="grid", metric="tta_val_acc", parameters={
+#     "conv.initial_lr": [0.04, 0.06, 0.08],
+#     "conv.momentum": [0.6, 0.7, 0.8],
 # })
 # Use algorithm="coordinate" to tune parameters in order, revisiting them
 # whenever another parameter changes. Selection defaults to tta_val_acc.
 # None runs the config once without tuning. Batch sizes are kept exact.
 # For online search, use:
-# dict(algorithm="interval", interval_steps=40, cooldown_steps=40, params={
-#     "conv.initial_lr": dict(initial=1.0, choices=None),  # fixed LR grid, factor=0.6
-#     "conv.momentum": dict(initial=0.6, choices=[0.0, 0.1, 0.3, 0.6, 0.9, 0.95, 0.99]),
+# dict(algorithm="interval", interval_steps=40, cooldown_steps=40, parameters={
+#     "conv.initial_lr": None,  # multiplicative probes, factor=0.6
+#     "conv.momentum": [0.1, 0.3, 0.6, 0.9, 0.95, 0.99],
+#     "whiten_bias.initial_lr": None,
+#     "norm_bias.initial_lr": None,
+#     "head.initial_lr": None,
 # })
-# Each params entry contains a tuning-only initial value and its choices.
-# Omitting initial uses the baseline value. Grid evaluates choices exhaustively;
-# coordinate/interval searches start at initial, even when it is not a listed choice.
 # Interval search holds searched LRs constant within each segment; unsearched
 # groups keep their configured schedules. Lists also work for interval LR choices.
-# Use algorithm="interval_linear" with the same params mapping for one
-# full-run interval: all LRs decay from their starts to zero, momenta stay constant.
-# It ignores interval_steps/cooldown_steps and skips the initial LR margin search.
-# Both variants train from schedules of [{start_step, end_step, start, end}, ...].
-run_type = "interval_linear"  # "baseline", "interval", or "interval_linear"
-
-BASE_RUN_CONFIGS = [
-    dict(
-        batch_size=125,
-        num_epochs=8,
-        overfit=False,
-        hparam_tuning=dict(
-            algorithm="interval",
-            interval_steps=640,
-            cooldown_steps=640,
-            params={
-                "conv.initial_lr": dict(initial=1.0, choices=None),
-                "conv.momentum": dict(initial=0.6, choices=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]),
-            },
-        ),
-        param_groups=dict(
-            whiten_weight=dict(
-                algorithm="sgd",
-                lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
-                momentum=0.85,
-                nesterov=True,
-            ),
-            norm_weight=dict(
-                algorithm="sgd",
-                lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
-                momentum=0.85,
-                nesterov=True,
-            ),
-            whiten_bias=dict(
-                algorithm="sgd",
-                lr_scheduler=linear_lr_scheduler(initial_lr=6.5, decay_epochs=3),
-                momentum=0.85,
-                nesterov=True,
-            ),
-            norm_bias=dict(
-                algorithm="sgd",
-                lr_scheduler=linear_lr_scheduler(initial_lr=6.5, decay_epochs=8),
-                momentum=0.85,
-                nesterov=True,
-            ),
-            head=dict(
-                algorithm="sgd",
-                lr_scheduler=linear_lr_scheduler(initial_lr=84, decay_epochs=8),
-                momentum=0.85,
-                nesterov=True,
-            ),
-            conv=dict(
-                algorithm="muon",
-                lr_scheduler=linear_lr_scheduler(initial_lr=0.04, decay_epochs=8),
-                momentum=0.6,
-                nesterov=True,
-            ),
-        ),
-    ),
-    dict(
-        batch_size=500,
-        num_epochs=8,
-        overfit=False,
-        hparam_tuning=dict(
-            algorithm="interval",
-            interval_steps=160,
-            cooldown_steps=160,
-            params={
-                "conv.initial_lr": dict(initial=1.0, choices=None),
-                "conv.momentum": dict(initial=0.6, choices=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]),
-            },
-        ),
-        param_groups=dict(
-            whiten_weight=dict(
-                algorithm="sgd",
-                lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
-                momentum=0.85,
-                nesterov=True,
-            ),
-            norm_weight=dict(
-                algorithm="sgd",
-                lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
-                momentum=0.85,
-                nesterov=True,
-            ),
-            whiten_bias=dict(
-                algorithm="sgd",
-                lr_scheduler=linear_lr_scheduler(initial_lr=26, decay_epochs=3),
-                momentum=0.85,
-                nesterov=True,
-            ),
-            norm_bias=dict(
-                algorithm="sgd",
-                lr_scheduler=linear_lr_scheduler(initial_lr=26, decay_epochs=8),
-                momentum=0.85,
-                nesterov=True,
-            ),
-            head=dict(
-                algorithm="sgd",
-                lr_scheduler=linear_lr_scheduler(initial_lr=340, decay_epochs=8),
-                momentum=0.85,
-                nesterov=True,
-            ),
-            conv=dict(
-                algorithm="muon",
-                lr_scheduler=linear_lr_scheduler(initial_lr=0.079, decay_epochs=8),
-                momentum=0.6,
-                nesterov=True,
-            ),
-        ),
-    ),
+RUN_CONFIGS = [
+    # dict(
+    #     batch_size=125,
+    #     num_epochs=8,
+    #     overfit=False,
+    #     hparam_tuning=dict(
+    #         algorithm="interval",
+    #         interval_steps=40,
+    #         cooldown_steps=40,
+    #         parameters={
+    #             "conv.initial_lr": None,
+    #             "conv.momentum": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99],
+    #         },
+    #     ),
+    #     param_groups=dict(
+    #         whiten_weight=dict(
+    #             algorithm="sgd",
+    #             lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
+    #             momentum=0.85,
+    #             nesterov=True,
+    #         ),
+    #         norm_weight=dict(
+    #             algorithm="sgd",
+    #             lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
+    #             momentum=0.85,
+    #             nesterov=True,
+    #         ),
+    #         whiten_bias=dict(
+    #             algorithm="sgd",
+    #             lr_scheduler=linear_lr_scheduler(initial_lr=6.5, decay_epochs=3),
+    #             momentum=0.85,
+    #             nesterov=True,
+    #         ),
+    #         norm_bias=dict(
+    #             algorithm="sgd",
+    #             lr_scheduler=linear_lr_scheduler(initial_lr=6.5, decay_epochs=8),
+    #             momentum=0.85,
+    #             nesterov=True,
+    #         ),
+    #         head=dict(
+    #             algorithm="sgd",
+    #             lr_scheduler=linear_lr_scheduler(initial_lr=84, decay_epochs=8),
+    #             momentum=0.85,
+    #             nesterov=True,
+    #         ),
+    #         conv=dict(
+    #             algorithm="muon",
+    #             lr_scheduler=linear_lr_scheduler(initial_lr=0.04, decay_epochs=8),
+    #             momentum=0.6,
+    #             nesterov=False,
+    #         ),
+    #     ),
+    # ),
+    # dict(
+    #     batch_size=500,
+    #     num_epochs=8,
+    #     overfit=False,
+    #     hparam_tuning=dict(
+    #         algorithm="interval",
+    #         interval_steps=40,
+    #         cooldown_steps=40,
+    #         parameters={
+    #             "conv.initial_lr": None,
+    #             "conv.momentum": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99],
+    #         },
+    #     ),
+    #     param_groups=dict(
+    #         whiten_weight=dict(
+    #             algorithm="sgd",
+    #             lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
+    #             momentum=0.85,
+    #             nesterov=True,
+    #         ),
+    #         norm_weight=dict(
+    #             algorithm="sgd",
+    #             lr_scheduler=constant_lr_scheduler(initial_lr=0.0),
+    #             momentum=0.85,
+    #             nesterov=True,
+    #         ),
+    #         whiten_bias=dict(
+    #             algorithm="sgd",
+    #             lr_scheduler=linear_lr_scheduler(initial_lr=26, decay_epochs=3),
+    #             momentum=0.85,
+    #             nesterov=True,
+    #         ),
+    #         norm_bias=dict(
+    #             algorithm="sgd",
+    #             lr_scheduler=linear_lr_scheduler(initial_lr=26, decay_epochs=8),
+    #             momentum=0.85,
+    #             nesterov=True,
+    #         ),
+    #         head=dict(
+    #             algorithm="sgd",
+    #             lr_scheduler=linear_lr_scheduler(initial_lr=340, decay_epochs=8),
+    #             momentum=0.85,
+    #             nesterov=True,
+    #         ),
+    #         conv=dict(
+    #             algorithm="muon",
+    #             lr_scheduler=linear_lr_scheduler(initial_lr=0.079, decay_epochs=8),
+    #             momentum=0.6,
+    #             nesterov=False,
+    #         ),
+    #     ),
+    # ),
     dict(
         batch_size=2000,
         num_epochs=8,
@@ -763,9 +684,9 @@ BASE_RUN_CONFIGS = [
             algorithm="interval",
             interval_steps=40,
             cooldown_steps=40,
-            params={
-                "conv.initial_lr": dict(initial=1.0, choices=None),
-                "conv.momentum": dict(initial=0.6, choices=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]),
+            parameters={
+                "conv.initial_lr": None,
+                "conv.momentum": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99],
             },
         ),
         param_groups=dict(
@@ -803,50 +724,11 @@ BASE_RUN_CONFIGS = [
                 algorithm="muon",
                 lr_scheduler=linear_lr_scheduler(initial_lr=0.19, decay_epochs=8),
                 momentum=0.6,
-                nesterov=True,
+                nesterov=False,
             ),
         ),
     ),
 ]
-
-BASELINE_RUN_CONFIGS = copy.deepcopy(BASE_RUN_CONFIGS)
-for config in BASELINE_RUN_CONFIGS:
-    config["hparam_tuning"] = None
-
-# Compare the current interval search with shorter cooldowns and shorter intervals.
-INTERVAL_RUN_CONFIGS = []
-for base_config in BASE_RUN_CONFIGS:
-    if base_config["batch_size"] not in (500, 125):
-        continue
-    for interval_divisor, cooldown_divisor in ((1, 1), (1, 4), (4, 4)):
-        config = copy.deepcopy(base_config)
-        config["hparam_tuning"]["interval_steps"] //= interval_divisor
-        config["hparam_tuning"]["cooldown_steps"] //= cooldown_divisor
-        INTERVAL_RUN_CONFIGS.append(config)
-
-MOMENTUM_CHOICES = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
-INTERVAL_LINEAR_RUN_CONFIGS = []
-for base_config in BASE_RUN_CONFIGS:
-    config = copy.deepcopy(base_config)
-    config["hparam_tuning"] = dict(
-        algorithm="interval_linear",
-        metric="tta_val_acc",
-        params={
-            "conv.initial_lr": dict(initial=1.0, choices=None),
-            "conv.momentum": dict(initial=0.6, choices=list(MOMENTUM_CHOICES)),
-            "head.initial_lr": dict(initial=base_config["param_groups"]["head"]["lr_scheduler"].config["initial_lr"], choices=None),
-            "head.momentum": dict(initial=0.85, choices=list(MOMENTUM_CHOICES[1:])),
-            "norm_bias.initial_lr": dict(initial=base_config["param_groups"]["norm_bias"]["lr_scheduler"].config["initial_lr"], choices=None),
-            "norm_bias.momentum": dict(initial=0.85, choices=list(MOMENTUM_CHOICES[1:])),
-        },
-    )
-    INTERVAL_LINEAR_RUN_CONFIGS.append(config)
-
-RUN_CONFIGS = {
-    "baseline": BASELINE_RUN_CONFIGS,
-    "interval": INTERVAL_RUN_CONFIGS,
-    "interval_linear": INTERVAL_LINEAR_RUN_CONFIGS,
-}[run_type]
 
 
 def scheduler_from_config(config):
@@ -923,39 +805,17 @@ def with_hparam(config, path, value):
     return updated
 
 
-def tuning_params(config):
-    """Read ordered search specs without changing the baseline parameter groups."""
-    tuning = config["hparam_tuning"]
-    if "params" in tuning and "parameters" in tuning:
-        raise ValueError("Specify hparam_tuning.params only, not both params and parameters")
-    # Keep the previous list/None format working for existing grid/coordinate configs.
-    parameters = tuning.get("params", tuning.get("parameters", {}))
-    if not isinstance(parameters, dict) or not parameters:
-        raise ValueError("hparam_tuning.params must be a nonempty mapping")
-    specs = {}
-    for path, spec in parameters.items():
-        baseline = get_hparam(config, path)
-        if isinstance(spec, dict):
-            unknown = spec.keys() - {"initial", "choices"}
-            if unknown:
-                raise ValueError(f"{path}: unknown search options {sorted(unknown)}")
-            specs[path] = dict(initial=spec.get("initial", baseline), choices=spec.get("choices"),
-                               explicit_initial="initial" in spec)
-        else:
-            specs[path] = dict(initial=baseline, choices=spec, explicit_initial=False)
-    return specs
-
-
 def interval_search_space(config):
-    """Validate the online search space and keep explicitly configured starting values."""
+    """Validate the online search space and choose an in-range starting point."""
+    parameters = config["hparam_tuning"].get("parameters", {})
+    if not parameters:
+        raise ValueError("Interval search needs a nonempty parameters mapping")
     choices, initial = {}, {}
-    for path, spec in tuning_params(config).items():
-        value, values = round_hparam(spec["initial"]), spec["choices"]
+    for path, values in parameters.items():
+        value = get_hparam(config, path)
         parts = path.split(".")
         if len(parts) != 2 or parts[1] not in ("initial_lr", "momentum"):
             raise ValueError(f"Interval search supports group.initial_lr or group.momentum: {path}")
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value) or value < 0:
-            raise ValueError(f"{path}: initial must be a nonnegative finite number")
         if values is None:
             if parts[1] != "initial_lr" or value <= 0:
                 raise ValueError(f"{path}: multiplicative search needs a positive initial LR")
@@ -966,30 +826,19 @@ def interval_search_space(config):
             ):
                 raise ValueError(f"{path}: choices must be nonnegative finite numbers")
             values = sorted(set(values))
-            group = config["param_groups"][parts[0]]
-            if parts[1] == "momentum" and group["algorithm"] == "sgd" and group["nesterov"]:
+            if parts[1] == "momentum" and config["param_groups"][parts[0]]["nesterov"]:
                 values = [v for v in values if v > 0]
-                if spec["explicit_initial"] and value == 0:
-                    raise ValueError(f"{path}: SGD Nesterov needs positive initial momentum")
             if not values:
                 raise ValueError(f"{path}: no valid choices (Nesterov needs positive momentum)")
-            if not spec["explicit_initial"]:
-                value = min(values, key=lambda candidate: abs(candidate - value))
+            value = min(values, key=lambda candidate: abs(candidate - value))
         choices[path], initial[path] = values, value
     return choices, initial
 
 
 def directional_search(initial, choices, score, *, initial_lr_search=False,
                        factor=0.6, max_side_steps=20, dropoff_margin=0.02, on_event=None):
-    """Start at configured values, then probe the fixed, unit-anchored LR grid."""
+    """Cached coordinate sweeps with directional probes and stable ties."""
     cache = {}
-
-    def lr_index(value):
-        return round(log(value) / log(factor))
-
-    def grid_lr(index):
-        # Every LR in the old SEARCH_HPARAMS has initial_value=1.0.
-        return round_hparam(1.0 * factor ** index)
 
     def emit(event, point, **fields):
         if on_event is not None:
@@ -1007,21 +856,13 @@ def directional_search(initial, choices, score, *, initial_lr_search=False,
     def neighbors(path, center, direction):
         values = choices[path]
         seen = {center}
-        if values is None:
-            index = lr_index(center)
-            # Keep an off-grid baseline as the starting candidate, and include
-            # the nearest grid point on each side without skipping either one.
-            if direction * (grid_lr(index) - center) <= 0:
-                index -= direction
         for distance in range(1, max_side_steps + 1):
             if values is None:
-                value = grid_lr(index - direction * (distance - 1))
+                value = round_hparam(center * factor ** (-direction * distance))
                 if not isfinite(value) or value <= 0:
                     break
             else:
-                # An explicit start (e.g. momentum=0.85) need not be in the choices.
-                index = (bisect_left(values, center) - distance if direction < 0
-                         else bisect_right(values, center) + distance - 1)
+                index = values.index(center) + direction * distance
                 if not 0 <= index < len(values):
                     break
                 value = values[index]
@@ -1085,18 +926,14 @@ def directional_search(initial, choices, score, *, initial_lr_search=False,
 def run_interval_search(run, model, config):
     """Choose each committed interval using replayed main/cooldown training probes.
 
-    seconds includes setup, training probes, evaluation, checkpoint copies and logging.
-    Search logs distinguish lookahead scores from committed scores.
+    seconds includes probe and committed training, but excludes evaluation and
+    checkpoint copies. Search logs distinguish lookahead scores from committed scores.
     """
-    run_start = time.perf_counter()
     config = normalize_config(config)
     tuning = config["hparam_tuning"]
-    if tuning["algorithm"] not in ("interval", "interval_linear"):
-        raise ValueError(f"Unknown interval algorithm: {tuning['algorithm']!r}")
-    linear_decay = tuning["algorithm"] == "interval_linear"
     choices, current = interval_search_space(config)
-    interval_steps = 1 if linear_decay else tuning.get("interval_steps", 40)
-    cooldown_steps = 0 if linear_decay else tuning.get("cooldown_steps", 40)
+    interval_steps = tuning.get("interval_steps", 40)
+    cooldown_steps = tuning.get("cooldown_steps", 40)
     max_side_steps = tuning.get("max_side_steps", 20)
     factor = tuning.get("lr_factor", 0.6)
     margin = tuning.get("initial_dropoff_margin", 0.02)
@@ -1111,6 +948,11 @@ def run_interval_search(run, model, config):
         raise ValueError("lr_factor must be between 0 and 1; initial_dropoff_margin must be nonnegative")
     if metric not in ("val_acc", "tta_val_acc"):
         raise ValueError(f"Unknown tuning metric: {metric!r}")
+    # Include effective defaults in the run log.
+    tuning.update(interval_steps=interval_steps, cooldown_steps=cooldown_steps,
+                  max_side_steps=max_side_steps, lr_factor=factor,
+                  initial_dropoff_margin=margin, metric=metric)
+    log_config(run, config, label="base_config")
     set_training_seed()
     test_loader = CifarLoader("cifar10", train=False, batch_size=2000)
     train_loader = CifarLoader("cifar10", train=True, batch_size=config["batch_size"],
@@ -1119,20 +961,6 @@ def run_interval_search(run, model, config):
         raise ValueError("batch_size must not exceed the training dataset size")
     steps_per_epoch = 1 if config["overfit"] else len(train_loader)
     total_steps = config["num_epochs"] * steps_per_epoch
-    if linear_decay:
-        interval_steps = total_steps
-    # Log effective settings, including the single full-run interval in linear mode.
-    tuning.update(interval_steps=interval_steps, cooldown_steps=cooldown_steps,
-                  max_side_steps=max_side_steps, lr_factor=factor, metric=metric)
-    if linear_decay:
-        tuning.pop("initial_dropoff_margin", None)
-    else:
-        tuning["initial_dropoff_margin"] = margin
-    log_config(run, config, label="base_config")
-    base_schedules = configured_hparam_schedules(config["param_groups"], steps_per_epoch,
-                                                total_steps)
-    committed_schedules = {path: [] if linear_decay or path in choices else copy.deepcopy(lines)
-                           for path, lines in base_schedules.items()}
     optimizer = make_optimizer(model, config["param_groups"], steps_per_epoch)
     model.reset()
     fixed_batch = next(iter(train_loader)) if config["overfit"] else None
@@ -1140,11 +968,15 @@ def run_interval_search(run, model, config):
                       else train_loader.normalized_images()[:5000])
     stream = TrainingBatchStream(train_loader, fixed_batch)
     device = next(model.parameters()).device
-    completed = 0
+    completed, training_seconds = 0, 0.0
     history = []
     cooldown_values = {}
     last_train_loss = None
     committed_losses = []
+
+    def synchronize():
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
 
     def snapshot():
         return dict(model=copy.deepcopy(model.state_dict()),
@@ -1154,8 +986,6 @@ def run_interval_search(run, model, config):
 
     def restore(state):
         model.load_state_dict(state["model"])
-        # load_state_dict may reuse momentum tensors: each trial needs its own copy
-        # so optimizer.step() cannot mutate the saved main/cooldown checkpoint.
         optimizer.load_state_dict(copy.deepcopy(state["optimizer"]))
         optimizer.zero_grad(set_to_none=True)
         stream.load_state_dict(state["stream"])
@@ -1164,13 +994,18 @@ def run_interval_search(run, model, config):
             torch.cuda.set_rng_state_all(state["cuda_rng"])
 
     def train_segment(values, steps, start_step, commit=False):
-        nonlocal completed, last_train_loss
-        schedules = segment_hparam_schedules(base_schedules, values, start_step, steps,
-                                             linear_decay=linear_decay)
+        nonlocal training_seconds, completed, last_train_loss
+        synchronize()
+        start = time.perf_counter()
         valid = True
         model.train()
         for local_step in range(steps):
-            apply_hparam_schedules(optimizer, schedules, start_step + local_step)
+            for group in optimizer.param_groups:
+                name = group["name"]
+                group["lr"] = round_hparam(values.get(
+                    f"{name}.initial_lr", group["lr_scheduler"](start_step + local_step, steps_per_epoch)))
+                group["momentum"] = round_hparam(values.get(
+                    f"{name}.momentum", config["param_groups"][name]["momentum"]))
             inputs, labels = stream.next_batch()
             loss = F.cross_entropy(model(inputs), labels, label_smoothing=0.2)
             last_train_loss = loss.item()
@@ -1183,6 +1018,8 @@ def run_interval_search(run, model, config):
             if commit:
                 completed += 1
                 committed_losses.append((completed, last_train_loss))
+        synchronize()
+        training_seconds += time.perf_counter() - start
         return valid
 
     def score():
@@ -1233,8 +1070,7 @@ def run_interval_search(run, model, config):
             return score()
 
         if start_step == 0 or not lookahead_steps:
-            current, selected_score = search(current, choices, main_score,
-                                             initial=start_step == 0 and not linear_decay)
+            current, selected_score = search(current, choices, main_score, initial=start_step == 0)
         else:
             current, selected_score = search(current, {}, main_score, phase="baseline")
         selected_cooldown = None
@@ -1270,11 +1106,6 @@ def run_interval_search(run, model, config):
             raise RuntimeError(f"No finite candidate found at training step {start_step}")
         log_event("train_hparams", run=run, interval=len(history), start_step=start_step,
                   completed_steps=main_steps, total_steps=total_steps, **current)
-        selected_schedules = segment_hparam_schedules(
-            base_schedules, current, start_step, main_steps, linear_decay=linear_decay)
-        log_event("train_schedules", run=run, interval=len(history))
-        for path, lines in selected_schedules.items():
-            print(f"  {path}: {json.dumps(lines)}", flush=True)
         committed_losses.clear()
         restore(start_state)
         if not train_segment(current, main_steps, start_step, commit=True):
@@ -1286,21 +1117,14 @@ def run_interval_search(run, model, config):
                   step=completed, total_steps=total_steps, **{metric: committed_score})
         history.append(dict(start_step=start_step, steps=main_steps,
                             main_hparams=dict(current), cooldown_hparams=selected_cooldown,
-                            cooldown_steps=lookahead_steps, score=selected_score,
-                            hparam_schedules=selected_schedules))
-        for path in committed_schedules:
-            if linear_decay or path in choices:
-                committed_schedules[path].extend(selected_schedules[path])
+                            cooldown_steps=lookahead_steps, score=selected_score))
 
     val_acc = evaluate(model, test_loader, tta_level=0)
     tta_val_acc = evaluate(model, test_loader, tta_level=2)
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
-    seconds = time.perf_counter() - run_start
-    log_final_eval(val_acc, tta_val_acc, seconds)
-    return dict(val_acc=val_acc, tta_val_acc=tta_val_acc, seconds=seconds,
+    log_final_eval(val_acc, tta_val_acc, training_seconds)
+    return dict(val_acc=val_acc, tta_val_acc=tta_val_acc, seconds=training_seconds,
                 batch_size=config["batch_size"], num_epochs=config["num_epochs"],
-                overfit=config["overfit"], intervals=history, hparam_schedules=committed_schedules,
+                overfit=config["overfit"], intervals=history,
                 **{f"{group['name']}_lr": group["lr"] for group in optimizer.param_groups})
 
 
@@ -1308,7 +1132,7 @@ def run_experiment(run, model, config):
     """Run one config or a search; return its best config, result, and trials."""
     config = normalize_config(config)
     tuning = config.get("hparam_tuning")
-    if tuning is not None and tuning.get("algorithm") in ("interval", "interval_linear"):
+    if tuning is not None and tuning.get("algorithm") == "interval":
         result = run_interval_search(run, model, config)
         return dict(best_config=config, best_result=result,
                     trials=[dict(run=run, config=config, result=result)])
@@ -1338,10 +1162,12 @@ def run_experiment(run, model, config):
         algorithm = tuning["algorithm"]
         if algorithm not in ("grid", "coordinate"):
             raise ValueError(f"Unknown tuning algorithm: {algorithm!r}")
-        parameters = tuning_params(config)
+        parameters = tuning["parameters"]
+        if not parameters:
+            raise ValueError("hparam_tuning.parameters must not be empty")
         choices = {}
-        for path, spec in parameters.items():
-            values = spec["choices"]
+        for path, values in parameters.items():
+            get_hparam(config, path)
             if not isinstance(values, (list, tuple)) or not values:
                 raise ValueError(f"{path}: choices must be a nonempty list")
             # Values that coincide after rounding represent the same candidate.
@@ -1361,11 +1187,8 @@ def run_experiment(run, model, config):
             # Start inside the search space, preferring the configured values.
             current = config
             for path, values in choices.items():
-                spec = parameters[path]
-                value = spec["initial"]
-                if not spec["explicit_initial"] and value not in values:
-                    value = values[0]
-                current = with_hparam(current, path, value)
+                if get_hparam(current, path) not in values:
+                    current = with_hparam(current, path, values[0])
             best = evaluate_config(current)
             locked = set()
             while len(locked) < len(choices):
@@ -1393,7 +1216,6 @@ def run_experiment(run, model, config):
 
 def main(run, model, batch_size, param_groups, num_epochs=8, overfit=False,
          hparam_tuning=None, _log_config=True):
-    run_start = time.perf_counter()
     config = normalize_config(dict(
         batch_size=batch_size,
         num_epochs=num_epochs,
@@ -1421,7 +1243,6 @@ def main(run, model, batch_size, param_groups, num_epochs=8, overfit=False,
         )
     steps_per_epoch = 1 if overfit else len(train_loader)
     total_train_steps = num_epochs * steps_per_epoch
-    schedules = configured_hparam_schedules(param_groups, steps_per_epoch, total_train_steps)
     initial_lrs = {
         name: round_hparam(config["lr_scheduler"](0, steps_per_epoch))
         for name, config in param_groups.items()
@@ -1442,12 +1263,17 @@ def main(run, model, batch_size, param_groups, num_epochs=8, overfit=False,
         train_images = train_loader.normalized_images()[:5000]
     model.init_whiten(train_images)
 
+    training_seconds = 0.0
     device = next(model.parameters()).device
     for epoch in range(num_epochs):
         ####################
         #     Training     #
         ####################
 
+        # Synchronize CUDA so elapsed time includes completed training work only.
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        training_start = time.perf_counter()
         model.train()
         for inputs, labels in train_batches:
             outputs = model(inputs)
@@ -1455,12 +1281,17 @@ def main(run, model, batch_size, param_groups, num_epochs=8, overfit=False,
                 outputs, labels, label_smoothing=0.2, reduction="mean"
             )
             loss.backward()
-            apply_hparam_schedules(optimizer, schedules, step)
+            for group in optimizer.param_groups:
+                group["lr"] = round_hparam(group["lr_scheduler"](step, steps_per_epoch))
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
             step += 1
             if step >= total_train_steps:
                 break
+
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        training_seconds += time.perf_counter() - training_start
 
         ####################
         #    Evaluation    #
@@ -1473,15 +1304,12 @@ def main(run, model, batch_size, param_groups, num_epochs=8, overfit=False,
     ####################
 
     tta_val_acc = evaluate(model, test_loader, tta_level=2)
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
-    seconds = time.perf_counter() - run_start
-    log_final_eval(val_acc, tta_val_acc, seconds)
+    log_final_eval(val_acc, tta_val_acc, training_seconds)
 
     return dict(
         val_acc=val_acc,
         tta_val_acc=tta_val_acc,
-        seconds=seconds,
+        seconds=training_seconds,
         batch_size=batch_size,
         num_epochs=num_epochs,
         overfit=overfit,
@@ -1498,3 +1326,412 @@ if __name__ == "__main__":
     # main("warmup", model, **RUN_CONFIGS[0])
     for run, config in enumerate(RUN_CONFIGS):
         run_experiment(run, model, config)
+
+
+# Run output
+
+base_config run=0
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "interval",
+    "interval_steps": 40,
+    "cooldown_steps": 40,
+    "parameters": {"conv.initial_lr": null, "conv.momentum": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]},
+    "max_side_steps": 20,
+    "lr_factor": 0.6,
+    "initial_dropoff_margin": 0.02,
+    "metric": "tta_val_acc"
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": {"type": "constant", "initial_lr": 0.0}, "momentum": 0.85, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 100, "decay_epochs": 3}, "momentum": 0.85, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 100, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": {"type": "linear", "initial_lr": 1300, "decay_epochs": 8}, "momentum": 0.85, "nesterov": true},
+    "conv": {"algorithm": "muon", "lr_scheduler": {"type": "linear", "initial_lr": 0.19, "decay_epochs": 8}, "momentum": 0.6, "nesterov": false}
+  }
+}
+search run=0 interval=0 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.19 conv.momentum=0.6 main=0.712
+main hparams: conv.initial_lr=0.32 conv.momentum=0.6 main=0.491
+main hparams: conv.initial_lr=0.11 conv.momentum=0.6 main=0.7889
+main hparams: conv.initial_lr=0.068 conv.momentum=0.6 main=0.7925
+main hparams: conv.initial_lr=0.041 conv.momentum=0.6 main=0.7405
+main hparams: conv.initial_lr=0.11 conv.momentum=0.5 main=0.7693
+main hparams: conv.initial_lr=0.11 conv.momentum=0.7 main=0.7646
+search_path step=0 conv.initial_lr=0.19 conv.momentum=0.6 tta_val_acc=0.712
+search_path step=1 conv.initial_lr=0.11 conv.momentum=0.6 tta_val_acc=0.7889
+search run=0 interval=0 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.11 conv.momentum=0.6
+conv.initial_lr=0.11 -> tta_val_acc=0.7891
+conv.initial_lr=0.066 -> tta_val_acc=0.8656
+conv.initial_lr=0.04 -> tta_val_acc=0.8872
+conv.initial_lr=0.024 -> tta_val_acc=0.8975
+conv.initial_lr=0.014 -> tta_val_acc=0.8943
+search_path step=0 conv.initial_lr=0.11 tta_val_acc=0.7891
+search_path step=1 conv.initial_lr=0.024 tta_val_acc=0.8975
+search run=0 interval=0 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.024
+main hparams: conv.initial_lr=0.11 conv.momentum=0.6 best_cooldown=0.8975
+main hparams: conv.initial_lr=0.066 conv.momentum=0.6 best_cooldown=0.8909
+main hparams: conv.initial_lr=0.18 conv.momentum=0.6 best_cooldown=0.9002
+main hparams: conv.initial_lr=0.31 conv.momentum=0.6 best_cooldown=0.8795
+main hparams: conv.initial_lr=0.18 conv.momentum=0.5 best_cooldown=0.8995
+main hparams: conv.initial_lr=0.18 conv.momentum=0.7 best_cooldown=0.8995
+main hparams: conv.initial_lr=0.3 conv.momentum=0.6 best_cooldown=0.8866
+search_path step=0 conv.initial_lr=0.11 conv.momentum=0.6 tta_val_acc=0.8975
+search_path step=1 conv.initial_lr=0.18 conv.momentum=0.6 tta_val_acc=0.9002
+search run=0 interval=0 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.18 conv.momentum=0.6
+conv.initial_lr=0.024 -> tta_val_acc=0.9002
+conv.initial_lr=0.014 -> tta_val_acc=0.8952
+conv.initial_lr=0.04 -> tta_val_acc=0.8937
+search_path step=0 conv.initial_lr=0.024 tta_val_acc=0.9002
+train_hparams run=0 interval=0 start_step=0 completed_steps=40 total_steps=200 conv.initial_lr=0.18 conv.momentum=0.6
+train_loss run=0 interval=0 step=1 loss=2.30835
+train_loss run=0 interval=0 step=2 loss=2.29289
+train_loss run=0 interval=0 step=3 loss=2.28352
+train_loss run=0 interval=0 step=4 loss=2.0811
+train_loss run=0 interval=0 step=5 loss=1.95679
+train_loss run=0 interval=0 step=6 loss=1.88884
+train_loss run=0 interval=0 step=7 loss=1.85027
+train_loss run=0 interval=0 step=8 loss=1.7466
+train_loss run=0 interval=0 step=9 loss=1.68915
+train_loss run=0 interval=0 step=10 loss=1.68149
+train_loss run=0 interval=0 step=11 loss=1.66132
+train_loss run=0 interval=0 step=12 loss=1.60701
+train_loss run=0 interval=0 step=13 loss=1.58275
+train_loss run=0 interval=0 step=14 loss=1.57193
+train_loss run=0 interval=0 step=15 loss=1.53864
+train_loss run=0 interval=0 step=16 loss=1.54546
+train_loss run=0 interval=0 step=17 loss=1.5722
+train_loss run=0 interval=0 step=18 loss=1.49512
+train_loss run=0 interval=0 step=19 loss=1.47783
+train_loss run=0 interval=0 step=20 loss=1.41046
+train_loss run=0 interval=0 step=21 loss=1.41914
+train_loss run=0 interval=0 step=22 loss=1.41618
+train_loss run=0 interval=0 step=23 loss=1.36197
+train_loss run=0 interval=0 step=24 loss=1.35771
+train_loss run=0 interval=0 step=25 loss=1.37627
+train_loss run=0 interval=0 step=26 loss=1.38225
+train_loss run=0 interval=0 step=27 loss=1.32584
+train_loss run=0 interval=0 step=28 loss=1.3405
+train_loss run=0 interval=0 step=29 loss=1.35311
+train_loss run=0 interval=0 step=30 loss=1.31455
+train_loss run=0 interval=0 step=31 loss=1.3224
+train_loss run=0 interval=0 step=32 loss=1.30353
+train_loss run=0 interval=0 step=33 loss=1.33437
+train_loss run=0 interval=0 step=34 loss=1.30981
+train_loss run=0 interval=0 step=35 loss=1.34179
+train_loss run=0 interval=0 step=36 loss=1.3227
+train_loss run=0 interval=0 step=37 loss=1.30038
+train_loss run=0 interval=0 step=38 loss=1.30726
+train_loss run=0 interval=0 step=39 loss=1.28882
+train_loss run=0 interval=0 step=40 loss=1.28875
+interval_boundary_eval run=0 interval=0 step=40 total_steps=200 tta_val_acc=0.7677
+search run=0 interval=1 phase=baseline metric=tta_val_acc
+main hparams: conv.initial_lr=0.18 conv.momentum=0.6 main=0.7511
+search_path step=0 conv.initial_lr=0.18 conv.momentum=0.6 tta_val_acc=0.7511
+search run=0 interval=1 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.18 conv.momentum=0.6
+conv.initial_lr=0.024 -> tta_val_acc=0.9156
+conv.initial_lr=0.014 -> tta_val_acc=0.914
+conv.initial_lr=0.04 -> tta_val_acc=0.9022
+search_path step=0 conv.initial_lr=0.024 tta_val_acc=0.9156
+search run=0 interval=1 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.024
+main hparams: conv.initial_lr=0.18 conv.momentum=0.6 best_cooldown=0.9156
+main hparams: conv.initial_lr=0.11 conv.momentum=0.6 best_cooldown=0.9236
+main hparams: conv.initial_lr=0.065 conv.momentum=0.6 best_cooldown=0.9219
+main hparams: conv.initial_lr=0.11 conv.momentum=0.5 best_cooldown=0.9235
+main hparams: conv.initial_lr=0.11 conv.momentum=0.7 best_cooldown=0.9212
+main hparams: conv.initial_lr=0.066 conv.momentum=0.6 best_cooldown=0.9201
+search_path step=0 conv.initial_lr=0.18 conv.momentum=0.6 tta_val_acc=0.9156
+search_path step=1 conv.initial_lr=0.11 conv.momentum=0.6 tta_val_acc=0.9236
+search run=0 interval=1 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.11 conv.momentum=0.6
+conv.initial_lr=0.024 -> tta_val_acc=0.9236
+conv.initial_lr=0.014 -> tta_val_acc=0.9239
+conv.initial_lr=0.0086 -> tta_val_acc=0.9217
+conv.initial_lr=0.0084 -> tta_val_acc=0.9214
+conv.initial_lr=0.023 -> tta_val_acc=0.9236
+search_path step=0 conv.initial_lr=0.024 tta_val_acc=0.9236
+search_path step=1 conv.initial_lr=0.014 tta_val_acc=0.9239
+search run=0 interval=1 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.014
+main hparams: conv.initial_lr=0.11 conv.momentum=0.6 best_cooldown=0.9239
+main hparams: conv.initial_lr=0.066 conv.momentum=0.6 best_cooldown=0.9217
+main hparams: conv.initial_lr=0.18 conv.momentum=0.6 best_cooldown=0.914
+main hparams: conv.initial_lr=0.11 conv.momentum=0.5 best_cooldown=0.9222
+main hparams: conv.initial_lr=0.11 conv.momentum=0.7 best_cooldown=0.9211
+search_path step=0 conv.initial_lr=0.11 conv.momentum=0.6 tta_val_acc=0.9239
+train_hparams run=0 interval=1 start_step=40 completed_steps=40 total_steps=200 conv.initial_lr=0.11 conv.momentum=0.6
+train_loss run=0 interval=1 step=41 loss=1.28213
+train_loss run=0 interval=1 step=42 loss=1.23857
+train_loss run=0 interval=1 step=43 loss=1.20234
+train_loss run=0 interval=1 step=44 loss=1.23294
+train_loss run=0 interval=1 step=45 loss=1.19967
+train_loss run=0 interval=1 step=46 loss=1.21404
+train_loss run=0 interval=1 step=47 loss=1.19273
+train_loss run=0 interval=1 step=48 loss=1.21077
+train_loss run=0 interval=1 step=49 loss=1.20015
+train_loss run=0 interval=1 step=50 loss=1.20133
+train_loss run=0 interval=1 step=51 loss=1.15802
+train_loss run=0 interval=1 step=52 loss=1.18716
+train_loss run=0 interval=1 step=53 loss=1.17286
+train_loss run=0 interval=1 step=54 loss=1.1821
+train_loss run=0 interval=1 step=55 loss=1.17475
+train_loss run=0 interval=1 step=56 loss=1.19106
+train_loss run=0 interval=1 step=57 loss=1.14935
+train_loss run=0 interval=1 step=58 loss=1.17876
+train_loss run=0 interval=1 step=59 loss=1.15648
+train_loss run=0 interval=1 step=60 loss=1.15466
+train_loss run=0 interval=1 step=61 loss=1.15724
+train_loss run=0 interval=1 step=62 loss=1.17131
+train_loss run=0 interval=1 step=63 loss=1.16038
+train_loss run=0 interval=1 step=64 loss=1.15865
+train_loss run=0 interval=1 step=65 loss=1.1502
+train_loss run=0 interval=1 step=66 loss=1.17779
+train_loss run=0 interval=1 step=67 loss=1.16853
+train_loss run=0 interval=1 step=68 loss=1.15663
+train_loss run=0 interval=1 step=69 loss=1.16299
+train_loss run=0 interval=1 step=70 loss=1.15278
+train_loss run=0 interval=1 step=71 loss=1.16607
+train_loss run=0 interval=1 step=72 loss=1.15306
+train_loss run=0 interval=1 step=73 loss=1.17647
+train_loss run=0 interval=1 step=74 loss=1.14624
+train_loss run=0 interval=1 step=75 loss=1.1866
+train_loss run=0 interval=1 step=76 loss=1.12165
+train_loss run=0 interval=1 step=77 loss=1.12853
+train_loss run=0 interval=1 step=78 loss=1.1326
+train_loss run=0 interval=1 step=79 loss=1.12691
+train_loss run=0 interval=1 step=80 loss=1.125
+interval_boundary_eval run=0 interval=1 step=80 total_steps=200 tta_val_acc=0.7984
+search run=0 interval=2 phase=baseline metric=tta_val_acc
+main hparams: conv.initial_lr=0.11 conv.momentum=0.6 main=0.8256
+search_path step=0 conv.initial_lr=0.11 conv.momentum=0.6 tta_val_acc=0.8256
+search run=0 interval=2 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.11 conv.momentum=0.6
+conv.initial_lr=0.014 -> tta_val_acc=0.9248
+conv.initial_lr=0.0084 -> tta_val_acc=0.9233
+conv.initial_lr=0.023 -> tta_val_acc=0.9254
+conv.initial_lr=0.039 -> tta_val_acc=0.9208
+conv.initial_lr=0.038 -> tta_val_acc=0.9218
+search_path step=0 conv.initial_lr=0.014 tta_val_acc=0.9248
+search_path step=1 conv.initial_lr=0.023 tta_val_acc=0.9254
+search run=0 interval=2 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.023
+main hparams: conv.initial_lr=0.11 conv.momentum=0.6 best_cooldown=0.9254
+main hparams: conv.initial_lr=0.066 conv.momentum=0.6 best_cooldown=0.9264
+main hparams: conv.initial_lr=0.04 conv.momentum=0.6 best_cooldown=0.929
+main hparams: conv.initial_lr=0.024 conv.momentum=0.6 best_cooldown=0.9268
+main hparams: conv.initial_lr=0.04 conv.momentum=0.5 best_cooldown=0.9286
+main hparams: conv.initial_lr=0.04 conv.momentum=0.7 best_cooldown=0.9289
+main hparams: conv.initial_lr=0.067 conv.momentum=0.6 best_cooldown=0.9305
+main hparams: conv.initial_lr=0.067 conv.momentum=0.5 best_cooldown=0.9303
+main hparams: conv.initial_lr=0.067 conv.momentum=0.7 best_cooldown=0.925
+search_path step=0 conv.initial_lr=0.11 conv.momentum=0.6 tta_val_acc=0.9254
+search_path step=1 conv.initial_lr=0.04 conv.momentum=0.6 tta_val_acc=0.929
+search_path step=2 conv.initial_lr=0.067 conv.momentum=0.6 tta_val_acc=0.9305
+search run=0 interval=2 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.067 conv.momentum=0.6
+conv.initial_lr=0.023 -> tta_val_acc=0.9305
+conv.initial_lr=0.014 -> tta_val_acc=0.9311
+conv.initial_lr=0.0083 -> tta_val_acc=0.9299
+conv.initial_lr=0.0084 -> tta_val_acc=0.9297
+search_path step=0 conv.initial_lr=0.023 tta_val_acc=0.9305
+search_path step=1 conv.initial_lr=0.014 tta_val_acc=0.9311
+search run=0 interval=2 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.014
+main hparams: conv.initial_lr=0.067 conv.momentum=0.6 best_cooldown=0.9311
+main hparams: conv.initial_lr=0.04 conv.momentum=0.6 best_cooldown=0.9306
+main hparams: conv.initial_lr=0.11 conv.momentum=0.6 best_cooldown=0.9248
+main hparams: conv.initial_lr=0.067 conv.momentum=0.5 best_cooldown=0.9312
+main hparams: conv.initial_lr=0.067 conv.momentum=0.4 best_cooldown=0.9328
+main hparams: conv.initial_lr=0.067 conv.momentum=0.3 best_cooldown=0.9319
+main hparams: conv.initial_lr=0.04 conv.momentum=0.4 best_cooldown=0.929
+main hparams: conv.initial_lr=0.11 conv.momentum=0.4 best_cooldown=0.929
+search_path step=0 conv.initial_lr=0.067 conv.momentum=0.6 tta_val_acc=0.9311
+search_path step=1 conv.initial_lr=0.067 conv.momentum=0.4 tta_val_acc=0.9328
+search run=0 interval=2 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.067 conv.momentum=0.4
+conv.initial_lr=0.014 -> tta_val_acc=0.9328
+conv.initial_lr=0.0084 -> tta_val_acc=0.9316
+conv.initial_lr=0.023 -> tta_val_acc=0.9314
+search_path step=0 conv.initial_lr=0.014 tta_val_acc=0.9328
+train_hparams run=0 interval=2 start_step=80 completed_steps=40 total_steps=200 conv.initial_lr=0.067 conv.momentum=0.4
+train_loss run=0 interval=2 step=81 loss=1.15122
+train_loss run=0 interval=2 step=82 loss=1.11815
+train_loss run=0 interval=2 step=83 loss=1.1091
+train_loss run=0 interval=2 step=84 loss=1.09449
+train_loss run=0 interval=2 step=85 loss=1.10528
+train_loss run=0 interval=2 step=86 loss=1.07937
+train_loss run=0 interval=2 step=87 loss=1.093
+train_loss run=0 interval=2 step=88 loss=1.0891
+train_loss run=0 interval=2 step=89 loss=1.06459
+train_loss run=0 interval=2 step=90 loss=1.07787
+train_loss run=0 interval=2 step=91 loss=1.06379
+train_loss run=0 interval=2 step=92 loss=1.07602
+train_loss run=0 interval=2 step=93 loss=1.07408
+train_loss run=0 interval=2 step=94 loss=1.08684
+train_loss run=0 interval=2 step=95 loss=1.08537
+train_loss run=0 interval=2 step=96 loss=1.07611
+train_loss run=0 interval=2 step=97 loss=1.07003
+train_loss run=0 interval=2 step=98 loss=1.07056
+train_loss run=0 interval=2 step=99 loss=1.07958
+train_loss run=0 interval=2 step=100 loss=1.07592
+train_loss run=0 interval=2 step=101 loss=1.05029
+train_loss run=0 interval=2 step=102 loss=1.03979
+train_loss run=0 interval=2 step=103 loss=1.0344
+train_loss run=0 interval=2 step=104 loss=1.05147
+train_loss run=0 interval=2 step=105 loss=1.02202
+train_loss run=0 interval=2 step=106 loss=1.05243
+train_loss run=0 interval=2 step=107 loss=1.03403
+train_loss run=0 interval=2 step=108 loss=1.03819
+train_loss run=0 interval=2 step=109 loss=1.04543
+train_loss run=0 interval=2 step=110 loss=1.04665
+train_loss run=0 interval=2 step=111 loss=1.03579
+train_loss run=0 interval=2 step=112 loss=1.0386
+train_loss run=0 interval=2 step=113 loss=1.05617
+train_loss run=0 interval=2 step=114 loss=1.03425
+train_loss run=0 interval=2 step=115 loss=1.03484
+train_loss run=0 interval=2 step=116 loss=1.0563
+train_loss run=0 interval=2 step=117 loss=1.04077
+train_loss run=0 interval=2 step=118 loss=1.03318
+train_loss run=0 interval=2 step=119 loss=1.04089
+train_loss run=0 interval=2 step=120 loss=1.02399
+interval_boundary_eval run=0 interval=2 step=120 total_steps=200 tta_val_acc=0.9063
+search run=0 interval=3 phase=baseline metric=tta_val_acc
+main hparams: conv.initial_lr=0.067 conv.momentum=0.4 main=0.9149
+search_path step=0 conv.initial_lr=0.067 conv.momentum=0.4 tta_val_acc=0.9149
+search run=0 interval=3 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.067 conv.momentum=0.4
+conv.initial_lr=0.014 -> tta_val_acc=0.9367
+conv.initial_lr=0.0084 -> tta_val_acc=0.9369
+conv.initial_lr=0.005 -> tta_val_acc=0.9361
+search_path step=0 conv.initial_lr=0.014 tta_val_acc=0.9367
+search_path step=1 conv.initial_lr=0.0084 tta_val_acc=0.9369
+search run=0 interval=3 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.0084
+main hparams: conv.initial_lr=0.067 conv.momentum=0.4 best_cooldown=0.9369
+main hparams: conv.initial_lr=0.04 conv.momentum=0.4 best_cooldown=0.9368
+main hparams: conv.initial_lr=0.11 conv.momentum=0.4 best_cooldown=0.9307
+main hparams: conv.initial_lr=0.067 conv.momentum=0.3 best_cooldown=0.9374
+main hparams: conv.initial_lr=0.067 conv.momentum=0.2 best_cooldown=0.9349
+main hparams: conv.initial_lr=0.04 conv.momentum=0.3 best_cooldown=0.9368
+main hparams: conv.initial_lr=0.11 conv.momentum=0.3 best_cooldown=0.93
+search_path step=0 conv.initial_lr=0.067 conv.momentum=0.4 tta_val_acc=0.9369
+search_path step=1 conv.initial_lr=0.067 conv.momentum=0.3 tta_val_acc=0.9374
+search run=0 interval=3 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.067 conv.momentum=0.3
+conv.initial_lr=0.0084 -> tta_val_acc=0.9374
+conv.initial_lr=0.005 -> tta_val_acc=0.9358
+conv.initial_lr=0.014 -> tta_val_acc=0.9374
+conv.initial_lr=0.023 -> tta_val_acc=0.9358
+search_path step=0 conv.initial_lr=0.0084 tta_val_acc=0.9374
+train_hparams run=0 interval=3 start_step=120 completed_steps=40 total_steps=200 conv.initial_lr=0.067 conv.momentum=0.3
+train_loss run=0 interval=3 step=121 loss=1.02903
+train_loss run=0 interval=3 step=122 loss=1.03526
+train_loss run=0 interval=3 step=123 loss=1.02217
+train_loss run=0 interval=3 step=124 loss=1.07079
+train_loss run=0 interval=3 step=125 loss=1.02235
+train_loss run=0 interval=3 step=126 loss=1.02461
+train_loss run=0 interval=3 step=127 loss=1.00382
+train_loss run=0 interval=3 step=128 loss=1.01554
+train_loss run=0 interval=3 step=129 loss=1.01612
+train_loss run=0 interval=3 step=130 loss=1.01049
+train_loss run=0 interval=3 step=131 loss=1.02184
+train_loss run=0 interval=3 step=132 loss=1.02148
+train_loss run=0 interval=3 step=133 loss=1.01939
+train_loss run=0 interval=3 step=134 loss=1.01434
+train_loss run=0 interval=3 step=135 loss=1.01277
+train_loss run=0 interval=3 step=136 loss=1.02556
+train_loss run=0 interval=3 step=137 loss=1.02363
+train_loss run=0 interval=3 step=138 loss=1.00014
+train_loss run=0 interval=3 step=139 loss=1.00397
+train_loss run=0 interval=3 step=140 loss=1.00959
+train_loss run=0 interval=3 step=141 loss=1.00257
+train_loss run=0 interval=3 step=142 loss=1.02353
+train_loss run=0 interval=3 step=143 loss=1.01572
+train_loss run=0 interval=3 step=144 loss=1.00592
+train_loss run=0 interval=3 step=145 loss=1.03384
+train_loss run=0 interval=3 step=146 loss=1.02607
+train_loss run=0 interval=3 step=147 loss=1.01313
+train_loss run=0 interval=3 step=148 loss=1.01164
+train_loss run=0 interval=3 step=149 loss=1.01377
+train_loss run=0 interval=3 step=150 loss=1.02098
+train_loss run=0 interval=3 step=151 loss=0.9944
+train_loss run=0 interval=3 step=152 loss=0.993171
+train_loss run=0 interval=3 step=153 loss=0.992568
+train_loss run=0 interval=3 step=154 loss=0.990397
+train_loss run=0 interval=3 step=155 loss=0.994467
+train_loss run=0 interval=3 step=156 loss=0.989039
+train_loss run=0 interval=3 step=157 loss=0.98047
+train_loss run=0 interval=3 step=158 loss=0.989631
+train_loss run=0 interval=3 step=159 loss=1.01431
+train_loss run=0 interval=3 step=160 loss=0.982035
+interval_boundary_eval run=0 interval=3 step=160 total_steps=200 tta_val_acc=0.9131
+search run=0 interval=4 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.067 conv.momentum=0.3 main=0.9182
+main hparams: conv.initial_lr=0.04 conv.momentum=0.3 main=0.9332
+main hparams: conv.initial_lr=0.024 conv.momentum=0.3 main=0.9356
+main hparams: conv.initial_lr=0.014 conv.momentum=0.3 main=0.9374
+main hparams: conv.initial_lr=0.0087 conv.momentum=0.3 main=0.9376
+main hparams: conv.initial_lr=0.0052 conv.momentum=0.3 main=0.9358
+main hparams: conv.initial_lr=0.0087 conv.momentum=0.2 main=0.9374
+main hparams: conv.initial_lr=0.0087 conv.momentum=0.4 main=0.9381
+main hparams: conv.initial_lr=0.0087 conv.momentum=0.5 main=0.9385
+main hparams: conv.initial_lr=0.0087 conv.momentum=0.6 main=0.9388
+main hparams: conv.initial_lr=0.0087 conv.momentum=0.7 main=0.9391
+main hparams: conv.initial_lr=0.0087 conv.momentum=0.8 main=0.9388
+main hparams: conv.initial_lr=0.0052 conv.momentum=0.7 main=0.9373
+main hparams: conv.initial_lr=0.014 conv.momentum=0.7 main=0.937
+search_path step=0 conv.initial_lr=0.067 conv.momentum=0.3 tta_val_acc=0.9182
+search_path step=1 conv.initial_lr=0.0087 conv.momentum=0.3 tta_val_acc=0.9376
+search_path step=2 conv.initial_lr=0.0087 conv.momentum=0.7 tta_val_acc=0.9391
+train_hparams run=0 interval=4 start_step=160 completed_steps=40 total_steps=200 conv.initial_lr=0.0087 conv.momentum=0.7
+train_loss run=0 interval=4 step=161 loss=0.980862
+train_loss run=0 interval=4 step=162 loss=0.979482
+train_loss run=0 interval=4 step=163 loss=0.975692
+train_loss run=0 interval=4 step=164 loss=0.972535
+train_loss run=0 interval=4 step=165 loss=0.982552
+train_loss run=0 interval=4 step=166 loss=0.968655
+train_loss run=0 interval=4 step=167 loss=0.969453
+train_loss run=0 interval=4 step=168 loss=0.977558
+train_loss run=0 interval=4 step=169 loss=0.976201
+train_loss run=0 interval=4 step=170 loss=0.964463
+train_loss run=0 interval=4 step=171 loss=0.973137
+train_loss run=0 interval=4 step=172 loss=0.967521
+train_loss run=0 interval=4 step=173 loss=0.969055
+train_loss run=0 interval=4 step=174 loss=0.972651
+train_loss run=0 interval=4 step=175 loss=0.952598
+train_loss run=0 interval=4 step=176 loss=0.938396
+train_loss run=0 interval=4 step=177 loss=0.935334
+train_loss run=0 interval=4 step=178 loss=0.940368
+train_loss run=0 interval=4 step=179 loss=0.939456
+train_loss run=0 interval=4 step=180 loss=0.938408
+train_loss run=0 interval=4 step=181 loss=0.944706
+train_loss run=0 interval=4 step=182 loss=0.940112
+train_loss run=0 interval=4 step=183 loss=0.936735
+train_loss run=0 interval=4 step=184 loss=0.936134
+train_loss run=0 interval=4 step=185 loss=0.935606
+train_loss run=0 interval=4 step=186 loss=0.937809
+train_loss run=0 interval=4 step=187 loss=0.941767
+train_loss run=0 interval=4 step=188 loss=0.942834
+train_loss run=0 interval=4 step=189 loss=0.934952
+train_loss run=0 interval=4 step=190 loss=0.94032
+train_loss run=0 interval=4 step=191 loss=0.939868
+train_loss run=0 interval=4 step=192 loss=0.935305
+train_loss run=0 interval=4 step=193 loss=0.930841
+train_loss run=0 interval=4 step=194 loss=0.937671
+train_loss run=0 interval=4 step=195 loss=0.938711
+train_loss run=0 interval=4 step=196 loss=0.936944
+train_loss run=0 interval=4 step=197 loss=0.935865
+train_loss run=0 interval=4 step=198 loss=0.935345
+train_loss run=0 interval=4 step=199 loss=0.927869
+train_loss run=0 interval=4 step=200 loss=0.933767
+interval_boundary_eval run=0 interval=4 step=200 total_steps=200 tta_val_acc=0.9391
+val_acc=0.9268 tta_val_acc=0.9391 seconds=297.4634
