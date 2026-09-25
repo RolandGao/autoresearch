@@ -91,18 +91,22 @@ class SearchTests(unittest.TestCase):
 
     def test_tuning_initial_values_do_not_change_untuned_baseline(self):
         baseline_lrs = {125: 0.04, 500: 0.079, 2000: 0.19}
+        tuning_starts = {125: 0.04, 500: 0.12, 2000: 0.24}
         for original in train.INTERVAL_RUN_CONFIGS + train.INTERVAL_LINEAR_RUN_CONFIGS:
             with self.subTest(batch_size=original["batch_size"],
                               algorithm=original["hparam_tuning"]["algorithm"]):
                 baseline = baseline_lrs[original["batch_size"]]
                 self.assertEqual(train.get_hparam(original, "conv.initial_lr"), baseline)
                 _, initial = train.interval_search_space(original)
-                self.assertEqual(initial["conv.initial_lr"], 1.0)
+                spec = original["hparam_tuning"]["params"]["conv.initial_lr"]
+                self.assertEqual(spec["initial"], tuning_starts[original["batch_size"]])
+                self.assertEqual(initial["conv.initial_lr"], train.snap_lr_to_grid(spec["initial"], spec["mult"]))
                 if original["hparam_tuning"]["algorithm"] == "interval_linear":
                     self.assertEqual(initial["head.momentum"], 0.85)
                     self.assertEqual(initial["norm_bias.momentum"], 0.85)
-                    self.assertEqual(initial["head.initial_lr"], train.get_hparam(original, "head.initial_lr"))
-                    self.assertEqual(initial["norm_bias.initial_lr"], train.get_hparam(original, "norm_bias.initial_lr"))
+                    for path in ("head.initial_lr", "norm_bias.initial_lr"):
+                        spec = original["hparam_tuning"]["params"][path]
+                        self.assertEqual(initial[path], train.snap_lr_to_grid(spec["initial"], spec["mult"]))
                 config = copy.deepcopy(original)
                 config["hparam_tuning"] = None
                 with patch.object(train, "main", return_value=dict(val_acc=0.9, tta_val_acc=0.94)) as main:
@@ -128,6 +132,13 @@ class SearchTests(unittest.TestCase):
                 calls = []
 
                 def evaluate(run, model, **candidate):
+                    for name, group in config["param_groups"].items():
+                        actual = candidate["param_groups"][name]
+                        for field, expected in group.items():
+                            if name == "conv" and field in ("lr_scheduler", "momentum"):
+                                continue
+                            self.assertEqual(actual[field].config if callable(actual[field]) else actual[field],
+                                             expected.config if callable(expected) else expected)
                     point = (train.get_hparam(candidate, "conv.initial_lr"),
                              train.get_hparam(candidate, "conv.momentum"))
                     calls.append(point)
@@ -223,12 +234,12 @@ class SearchTests(unittest.TestCase):
         best, _ = train.directional_search(
             {"conv.initial_lr": 0.04}, {"conv.initial_lr": None}, score,
             max_side_steps=5)
-        self.assertEqual(best["conv.initial_lr"], 0.04)
+        self.assertEqual(best["conv.initial_lr"], 0.047)
         self.assertIn(0.028, calls)
-        self.assertIn(0.047, calls)
+        self.assertIn(0.078, calls)
         self.assertEqual(len(calls), 9)  # center, three smaller, five larger
 
-    def test_lr_search_starts_at_baseline_without_snapping_or_skipping_neighbors(self):
+    def test_lr_search_snaps_start_and_probes_adjacent_exponents(self):
         calls = []
 
         def score(point):
@@ -237,8 +248,31 @@ class SearchTests(unittest.TestCase):
 
         best, _ = train.directional_search(
             {"head.initial_lr": 84}, {"head.initial_lr": None}, score)
-        self.assertEqual(calls, [84, 60, 99])
-        self.assertEqual(best["head.initial_lr"], 84)
+        self.assertEqual(calls, [99, 60, 170])
+        self.assertEqual(best["head.initial_lr"], 99)
+
+    def test_configured_lr_starts_snap_to_each_parameter_grid(self):
+        config = copy.deepcopy(train.RUN_CONFIGS[0])
+        for algorithm in ("interval", "interval_linear"):
+            config["hparam_tuning"] = dict(algorithm=algorithm, params={
+                "conv.initial_lr": dict(initial=0.24, mult=0.6),
+                "head.initial_lr": dict(initial=0.24, mult=0.8),
+                "head.momentum": dict(initial=0.85, choices=[0.8, 0.9])})
+            choices, initial = train.interval_search_space(config)
+            self.assertEqual(initial, {"conv.initial_lr": 0.22, "head.initial_lr": 0.26,
+                                       "head.momentum": 0.85})
+            calls = []
+            factors = {"conv.initial_lr": 0.6, "head.initial_lr": 0.8}
+
+            def score(point):
+                calls.append(point)
+                for path, mult in factors.items():
+                    self.assertIn(point[path], {train.round_hparam(mult ** k) for k in range(-20, 30)})
+                return -sum(abs(point[path] - initial[path]) for path in initial)
+
+            best, _ = train.directional_search(initial, choices, score, factors=factors)
+            self.assertEqual(calls[0], initial)
+            self.assertEqual(best, initial)
 
     def test_lr_grid_stays_fixed_across_searches(self):
         current = {"conv.initial_lr": 0.36}
@@ -328,11 +362,11 @@ class SearchTests(unittest.TestCase):
             self.assertEqual([u["conv"][0] for u in trial],
                              [train.round_hparam(lr * f) for f in (1, 0.75, 0.5, 0.25, 0)])
             self.assertEqual([u["conv"][1] for u in trial], [momentum] * 5)
-            self.assertEqual([u["head"][0] for u in trial], [0.0012, 0.0009, 0.0006, 0.0003, 0])
+            self.assertEqual([u["head"][0] for u in trial], [0.0012] * 5)
         for path, lines in result["hparam_schedules"].items():
             self.assertEqual(len(lines), 1)
             self.assertEqual((lines[0]["start_step"], lines[0]["end_step"]), (0, 4))
-            if path.endswith(".initial_lr"):
+            if path == "conv.initial_lr":
                 self.assertEqual(lines[0]["end"], 0)
             else:
                 self.assertEqual(lines[0]["start"], lines[0]["end"])
@@ -342,6 +376,80 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(logged["hparam_tuning"]["cooldown_steps"], 0)
         self.assertNotIn("initial_dropoff_margin", logged["hparam_tuning"])
         self.assertNotIn("phase=cooldown", output.getvalue())
+
+    def test_per_lr_multipliers_and_validation(self):
+        config = copy.deepcopy(train.RUN_CONFIGS[0])
+        config["hparam_tuning"] = dict(algorithm="interval_linear", params={
+            "conv.initial_lr": dict(initial=1, mult=0.8),
+            "head.initial_lr": dict(initial=1)})
+        specs = train.tuning_params(config)
+        factors = {path: spec["mult"] for path, spec in specs.items()}
+        self.assertEqual(factors, {"conv.initial_lr": 0.8, "head.initial_lr": 0.6})
+        choices, initial = train.interval_search_space(config)
+        for initial_search in (False, True):
+            calls = []
+
+            def score(point):
+                calls.append(point)
+                return -sum(abs(value - 1) for value in point.values())
+
+            train.directional_search(initial, choices, score, factors=factors,
+                                     initial_lr_search=initial_search, max_side_steps=1)
+            self.assertEqual([p["conv.initial_lr"] for p in calls if p["head.initial_lr"] == 1],
+                             [1, 1.2, 0.8] if initial_search else [1, 0.8, 1.2])
+            self.assertEqual([p["head.initial_lr"] for p in calls if p["conv.initial_lr"] == 1],
+                             [1, 1.7, 0.6] if initial_search else [1, 0.6, 1.7])
+        for invalid in (0, 1, -0.6, float("nan"), float("inf"), True, "0.8"):
+            config["hparam_tuning"]["params"]["conv.initial_lr"]["mult"] = invalid
+            with self.subTest(mult=invalid), self.assertRaisesRegex(ValueError, "mult"):
+                train.tuning_params(config)
+
+    def test_interval_variants_preserve_every_unsearched_update(self):
+        for algorithm in ("interval", "interval_linear"):
+            with self.subTest(algorithm=algorithm):
+                config = copy.deepcopy(train.RUN_CONFIGS[0])
+                config.update(batch_size=2, num_epochs=5, overfit=True, hparam_tuning=dict(
+                    algorithm=algorithm, interval_steps=2, cooldown_steps=2, max_side_steps=1,
+                    params={"conv.initial_lr": dict(initial=0.001, mult=0.8)}))
+                for name, group in config["param_groups"].items():
+                    group["lr_scheduler"] = train.constant_lr_scheduler(
+                        0 if name.endswith("_weight") else 0.001)
+                config["param_groups"]["whiten_bias"]["lr_scheduler"] = train.linear_lr_scheduler(0.001, 3)
+                config["param_groups"]["head"]["lr_scheduler"] = train.linear_lr_scheduler(0.001, 5)
+                clock = dict(time=0, training=0)
+                model = TinyModel(clock)
+                original_step = train.GroupOptimizer.step
+                updates = []
+
+                def step(optimizer):
+                    current_step = model.training_steps.item() - 1
+                    updates.append(current_step)
+                    for group in optimizer.param_groups:
+                        baseline = config["param_groups"][group["name"]]
+                        if group["name"] != "conv":
+                            self.assertEqual(group["lr"], baseline["lr_scheduler"](current_step, 1))
+                        for field in ("momentum", "nesterov", "algorithm"):
+                            self.assertEqual(group[field], baseline[field])
+                    original_step(optimizer)
+
+                def evaluate(model, loader, tta_level=0):
+                    return model.training_steps.item() / 100
+
+                with patch.object(train, "CifarLoader", TinyLoader), \
+                     patch.object(train.GroupOptimizer, "step", step), \
+                     patch.object(train, "evaluate", side_effect=evaluate), \
+                     patch.object(train, "directional_search", wraps=train.directional_search) as search, \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    result = train.run_experiment(0, model, config)["best_result"]
+                self.assertGreater(len(updates), 5)
+                if algorithm == "interval":
+                    self.assertTrue(any(i["cooldown_steps"] > 0 for i in result["intervals"]))
+                for call in search.call_args_list:
+                    self.assertEqual(call.kwargs["factors"], {"conv.initial_lr": 0.8})
+                baseline = train.configured_hparam_schedules(config["param_groups"], 1, 5)
+                for path, lines in baseline.items():
+                    if path != "conv.initial_lr":
+                        self.assertEqual(result["hparam_schedules"][path], lines)
 
     def test_invalid_interval_space_and_nesterov_zero_momentum(self):
         config = copy.deepcopy(train.RUN_CONFIGS[0])
