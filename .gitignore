@@ -35,3 +35,6 @@ automatic_lr*/cifar10
 !/logs/
 !/logs/**
 cifar96/cifar10
+
+# Debug spectra and videos (train_cifar.py debug=True)
+untracked_logs/

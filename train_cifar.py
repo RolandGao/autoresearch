@@ -12,6 +12,7 @@ Descends from https://github.com/tysam-code/hlb-CIFAR10/blob/main/main.py
 import copy
 import json
 import os
+import subprocess
 import sys
 import time
 from bisect import bisect_left, bisect_right
@@ -29,6 +30,7 @@ if __name__ == "__main__":
         print(source_file.read(), end="")
     print("\n\n# Run output\n", flush=True)
 
+import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -726,6 +728,201 @@ def log_final_eval(val_acc, tta_val_acc, seconds):
 
 
 ############################################
+#              Debug spectra               #
+############################################
+
+DEBUG_LOG_DIR = "untracked_logs"
+SPECTRUM_LAYERS = ("first_conv", "last_conv", "head")
+SPECTRUM_KINDS = ("weight", "update", "input")
+SPECTRUM_CHUNK_SIZE = 100  # Images per unfold chunk for input Gram matrices.
+
+
+@torch.no_grad()
+def singular_values(matrix):
+    """Descending singular values of a 2D matrix, computed in float64."""
+    return torch.linalg.svdvals(matrix.double()).sort(descending=True).values
+
+
+@torch.no_grad()
+def input_singular_values(module, inputs):
+    """Singular values of the matrix a layer multiplies by its weight.
+
+    Conv inputs are unfolded into [N * H * W, C * kh * kw] patches, matching the
+    weight's [out, in * kh * kw] reshape. Singular values come from the smaller
+    float64 Gram matrix; accumulating X.T @ X in chunks bounds memory and avoids
+    TF32 matmuls.
+    """
+    if isinstance(module, nn.Conv2d):
+        padding = (
+            [k // 2 for k in module.kernel_size]
+            if module.padding == "same"
+            else module.padding
+        )
+
+        def rows(x):
+            patches = F.unfold(x.double(), module.kernel_size, padding=padding)
+            return patches.transpose(1, 2).reshape(-1, patches.shape[1])
+
+    else:
+
+        def rows(x):
+            return x.double().reshape(-1, x.shape[-1])
+
+    first = rows(inputs[:1])
+    if len(first) * len(inputs) < first.shape[1]:
+        x = rows(inputs)
+        gram = x @ x.T
+    else:
+        gram = sum(x.T @ x for x in map(rows, inputs.split(SPECTRUM_CHUNK_SIZE)))
+    return torch.linalg.eigvalsh(gram).clamp_min(0).sqrt().flip(0)
+
+
+class SpectrumRecorder:
+    """Per-step singular values of the first Conv, last Conv and head for debug runs.
+
+    For each layer it records the weight w_t, the update w_{t+1} - w_t (learning
+    rate and Muon's weight normalization included) and the input at step t.
+    """
+
+    def __init__(self, run, model):
+        convs = [m for m in model.modules() if isinstance(m, Conv)]
+        self.run = run
+        self.layers = dict(first_conv=convs[0], last_conv=convs[-1], head=model.head)
+        self.values = {
+            f"{layer}.{kind}": [] for layer in SPECTRUM_LAYERS for kind in SPECTRUM_KINDS
+        }
+        self.steps, self.inputs, self.weights = [], {}, {}
+        self.capturing = False
+        self.handles = [
+            module.register_forward_pre_hook(self._capture(name))
+            for name, module in self.layers.items()
+        ]
+
+    def _capture(self, name):
+        def hook(module, args):
+            if self.capturing:
+                self.inputs[name] = args[0].detach()
+
+        return hook
+
+    def before_step(self):
+        """Call right before the training forward pass."""
+        self.weights = {
+            name: module.weight.detach().clone()
+            for name, module in self.layers.items()
+        }
+        self.inputs.clear()
+        self.capturing = True
+
+    @torch.no_grad()
+    def after_step(self, step):
+        """Call right after optimizer.step()."""
+        self.capturing = False
+        for name, module in self.layers.items():
+            previous = self.weights[name]
+            spectra = dict(
+                weight=singular_values(previous.reshape(len(previous), -1)),
+                update=singular_values(
+                    (module.weight - previous).reshape(len(previous), -1)
+                ),
+                input=input_singular_values(module, self.inputs.pop(name)),
+            )
+            for kind, values in spectra.items():
+                self.values[f"{name}.{kind}"].append(values.float().cpu().numpy())
+        self.steps.append(step)
+
+    def finish(self):
+        """Save one .npz per run plus a video of the spectra over training."""
+        for handle in self.handles:
+            handle.remove()
+        os.makedirs(DEBUG_LOG_DIR, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%fZ")
+        stem = os.path.join(
+            DEBUG_LOG_DIR, f"cifar_spectra_{timestamp}_{os.getpid()}_{self.run}"
+        )
+        steps = np.array(self.steps)
+        spectra = {key: np.stack(values) for key, values in self.values.items()}
+        np.savez_compressed(f"{stem}.npz", step=steps, **spectra)
+        render_spectrum_video(self.run, steps, spectra, f"{stem}.mp4")
+        log_event(
+            "debug_spectra",
+            run=self.run,
+            steps=len(steps),
+            data=f"{stem}.npz",
+            video=f"{stem}.mp4",
+        )
+
+
+def render_spectrum_video(run, steps, spectra, path):
+    """Animate sorted singular values per step; the grey curve is the first step."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    # 15 x 11 inches at 80 dpi keeps both frame dimensions even for yuv420p.
+    fig, axes = plt.subplots(
+        len(SPECTRUM_LAYERS),
+        len(SPECTRUM_KINDS),
+        figsize=(15, 11),
+        dpi=80,
+        squeeze=False,
+    )
+    lines = {}
+    for row, layer in enumerate(SPECTRUM_LAYERS):
+        for col, kind in enumerate(SPECTRUM_KINDS):
+            key = f"{layer}.{kind}"
+            values = spectra[key]
+            index = np.arange(1, values.shape[1] + 1)
+            marker = "." if values.shape[1] <= 32 else None
+            ax = axes[row][col]
+            ax.plot(index, values[0], color="0.75", lw=1, marker=marker)
+            lines[key] = ax.plot(
+                index, values[0], color="C0", lw=1.5, marker=marker, animated=True
+            )[0]
+            positive = values[np.isfinite(values) & (values > 0)]
+            if positive.size:
+                # Values more than 1e8 below the peak are numerical noise.
+                top = positive.max()
+                ax.set_yscale("log", nonpositive="mask")
+                ax.set_ylim(max(positive.min(), top * 1e-8) / 1.5, top * 1.5)
+            ax.set_title(key)
+            ax.set_xlabel("index (sorted descending)")
+            ax.set_ylabel("singular value")
+            ax.grid(True, alpha=0.3)
+    title = fig.suptitle("", animated=True)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+
+    # Draw the static figure once, then blit the animated artists per frame.
+    canvas = fig.canvas
+    canvas.draw()
+    background = canvas.copy_from_bbox(fig.bbox)
+    width, height = canvas.get_width_height()
+    fps = min(60, max(10, round(len(steps) / 30)))
+    ffmpeg = subprocess.Popen(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{width}x{height}",
+            "-r", str(fps), "-i", "-",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", path,
+        ],
+        stdin=subprocess.PIPE,
+    )
+    for i, step in enumerate(steps):
+        canvas.restore_region(background)
+        for key, line in lines.items():
+            line.set_ydata(spectra[key][i])
+            line.axes.draw_artist(line)
+        title.set_text(f"run {run}: step {step} ({i + 1}/{len(steps)})")
+        fig.draw_artist(title)
+        ffmpeg.stdin.write(canvas.buffer_rgba())
+    ffmpeg.stdin.close()
+    plt.close(fig)
+    if ffmpeg.wait():
+        raise RuntimeError(f"ffmpeg failed to write {path}")
+
+
+############################################
 #               Evaluation                 #
 ############################################
 
@@ -968,6 +1165,9 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # Both are required. Muon requires ns_steps/ns_eps; SGDH requires normalization_eps.
 # Conditioner settings can be searched using explicit choices in hparam_tuning.params.
 run_type = "global_neighbour"  # "baseline", "interval", or "global_neighbour"
+# Log per-step singular values of the final (post-search) run of each config to
+# untracked_logs/, with one .npz and one .mp4 per run. Search trials are not logged.
+debug = False
 
 # Parameter groups and tuning starts use the best TTA candidates in
 # logs/cifar_baseline_20260925_062517_263845Z_68746.log.
@@ -1692,7 +1892,7 @@ def directional_search(
             return current, current_score
 
 
-def run_interval_search(run, model, config):
+def run_interval_search(run, model, config, debug):
     """Choose each committed interval using replayed main/cooldown training probes.
 
     seconds includes setup, training probes, evaluation, checkpoint copies and logging.
@@ -1771,6 +1971,7 @@ def run_interval_search(run, model, config):
     completed = 0
     history = []
     cooldown_values = {}
+    recorder = SpectrumRecorder(run, model) if debug else None
 
     def snapshot():
         return dict(
@@ -1802,6 +2003,8 @@ def run_interval_search(run, model, config):
         for local_step in range(steps):
             apply_hparam_schedules(optimizer, schedules, start_step + local_step)
             inputs, labels = stream.next_batch()
+            if commit and recorder is not None:
+                recorder.before_step()
             loss = F.cross_entropy(
                 model(inputs), labels, label_smoothing=0.2, reduction="mean"
             )
@@ -1810,6 +2013,8 @@ def run_interval_search(run, model, config):
                 break
             loss.backward()
             optimizer.step()
+            if commit and recorder is not None:
+                recorder.after_step(start_step + local_step)
             optimizer.zero_grad(set_to_none=True)
             if commit:
                 completed += 1
@@ -2005,6 +2210,8 @@ def run_interval_search(run, model, config):
         torch.cuda.synchronize(device)
     seconds = time.perf_counter() - run_start
     log_final_eval(val_acc, tta_val_acc, seconds)
+    if recorder is not None:
+        recorder.finish()
     return dict(
         val_acc=val_acc,
         tta_val_acc=tta_val_acc,
@@ -2019,7 +2226,10 @@ def run_interval_search(run, model, config):
 
 
 def run_experiment(run, model, config):
-    """Run one config or a search; return its best config, result, and trials."""
+    """Run one config or a search; return its best config, result, and trials.
+
+    With the module-level debug switch, the final run records its spectra.
+    """
     config = normalize_config(config, key=None)
     require_fields(
         config,
@@ -2032,7 +2242,7 @@ def run_experiment(run, model, config):
     if tuning is not None:
         validate_tuning_config(tuning)
     if tuning is not None and tuning["algorithm"] in ("interval", "global_neighbour"):
-        result = run_interval_search(run, model, config)
+        result = run_interval_search(run, model, config, debug=debug)
         return dict(
             best_config=config,
             best_result=result,
@@ -2050,7 +2260,13 @@ def run_experiment(run, model, config):
             trial_run = run if tuning is None else f"{run}.{len(trials)}"
             if tuning is not None:
                 log_config_diff(trial_run, run, config, candidate)
-            result = main(trial_run, model, **candidate, _log_config=tuning is None)
+            result = main(
+                trial_run,
+                model,
+                **candidate,
+                _log_config=tuning is None,
+                debug=debug and tuning is None,
+            )
             if metric is not None and not isfinite(result[metric]):
                 raise ValueError(f"Run {trial_run}: {metric} must be finite")
             trial = dict(run=trial_run, config=candidate, result=result)
@@ -2117,6 +2333,10 @@ def run_experiment(run, model, config):
             **{metric: best["result"][metric]},
         )
         log_changes("changes", flatten_config(config), flatten_config(best["config"]))
+        if debug:
+            # Search trials are not recorded; replay the selected config as the final run.
+            log_event("debug_final_run", run=run, trial=best["run"])
+            main(f"{run}.final", model, **best["config"], _log_config=False, debug=True)
 
     return dict(best_config=best["config"], best_result=best["result"], trials=trials)
 
@@ -2130,6 +2350,7 @@ def main(
     overfit,
     hparam_tuning,
     _log_config,
+    debug,
 ):
     run_start = time.perf_counter()
     config = normalize_config(
@@ -2174,6 +2395,7 @@ def main(
 
     model.reset()
     step = 0
+    recorder = SpectrumRecorder(run, model) if debug else None
 
     # Initialize the whitening layer using training images
     if overfit:
@@ -2193,6 +2415,8 @@ def main(
 
         model.train()
         for inputs, labels in train_batches:
+            if recorder is not None:
+                recorder.before_step()
             outputs = model(inputs)
             loss = F.cross_entropy(
                 outputs, labels, label_smoothing=0.2, reduction="mean"
@@ -2200,6 +2424,8 @@ def main(
             loss.backward()
             apply_hparam_schedules(optimizer, schedules, step)
             optimizer.step()
+            if recorder is not None:
+                recorder.after_step(step)
             optimizer.zero_grad(set_to_none=True)
             step += 1
             if step >= total_train_steps:
@@ -2220,6 +2446,8 @@ def main(
         torch.cuda.synchronize(device)
     seconds = time.perf_counter() - run_start
     log_final_eval(val_acc, tta_val_acc, seconds)
+    if recorder is not None:
+        recorder.finish()
 
     return dict(
         val_acc=val_acc,
