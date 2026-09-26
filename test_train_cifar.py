@@ -12,6 +12,9 @@ import torch
 
 import train_cifar as train
 
+# Tests must not depend on the script's debug switch.
+train.debug = False
+
 
 def search_config(
     algorithm,
@@ -80,19 +83,26 @@ class SearchTests(unittest.TestCase):
         torch.set_num_threads(2)
 
     def test_experiment_configs_and_fixed_nesterov(self):
-        self.assertEqual([name for name, _ in train.RUNS], ["exp1", "exp2"])
+        decays = ("linear_decay", "constant")
+        exp2_names = [
+            f"exp2_{decay}_momentum_{order}_conditioning"
+            for decay in decays
+            for order in ("before", "after")
+        ]
+        self.assertEqual(
+            [name for name, _ in train.RUNS],
+            [f"exp1_{decay}" for decay in decays] + exp2_names,
+        )
+        # LR decay is fixed per run instead of searched.
         expected_paths = {
             "exp1": [
                 "conv.initial_lr",
-                "conv.decay",
                 "conv.momentum",
                 "head.initial_lr",
-                "head.decay",
                 "head.momentum",
             ],
             "exp2": [
                 "head.initial_lr",
-                "head.decay",
                 "head.momentum",
                 "head.svd_mean_percentage_damping",
                 "head.input_conditioner_momentum",
@@ -100,6 +110,9 @@ class SearchTests(unittest.TestCase):
         }
         baseline = train.BASELINE_RUN_CONFIGS[2]
         for name, original in train.RUNS:
+            experiment = name.split("_")[0]
+            decay = "constant" if "_constant" in name else "linear_decay"
+            changed = ("conv", "head") if experiment == "exp1" else ("head",)
             config = train.normalize_config(original, key=None)
             self.assertEqual(config["batch_size"], 2000)
             self.assertEqual(config["num_epochs"], 8)
@@ -108,38 +121,54 @@ class SearchTests(unittest.TestCase):
             self.assertEqual(config["hparam_tuning"]["algorithm"], "global_neighbour")
             self.assertEqual(config["hparam_tuning"]["metric"], "tta_val_acc")
             self.assertEqual(
-                list(config["hparam_tuning"]["params"]), expected_paths[name]
+                list(config["hparam_tuning"]["params"]), expected_paths[experiment]
             )
+            for group_name in changed:
+                self.assertEqual(
+                    train.get_hparam(config, f"{group_name}.decay"), decay
+                )
             choices, initial = train.interval_search_space(config)
             for group_name, group in config["param_groups"].items():
                 train.GroupOptimizer.validate_group(group, runtime=False)
                 self.assertEqual(
                     group["nesterov"], baseline["param_groups"][group_name]["nesterov"]
                 )
-                if group_name not in ("conv" if name == "exp1" else "head",):
+                if group_name not in changed:
                     self.assertEqual(group, baseline["param_groups"][group_name])
             self.assertEqual(choices["head.momentum"], train.MOMENTUM_CHOICES[1:])
             self.assertEqual(initial["head.momentum"], 0.85)
             model = TinyModel(dict(time=0, training=0))
             train.make_optimizer(model, config["param_groups"])
-        exp1, exp2 = (config for _, config in train.RUNS)
-        self.assertEqual(exp1["param_groups"]["conv"]["algorithm"], "sgdh")
-        self.assertEqual(exp2["param_groups"]["head"]["algorithm"], "input_conditioned")
-        self.assertEqual(
-            exp2["hparam_tuning"]["params"]["head.input_conditioner_momentum"][
-                "choices"
-            ],
-            train.MOMENTUM_CHOICES,
-        )
+        runs = dict(train.RUNS)
+        for decay in decays:
+            self.assertEqual(
+                runs[f"exp1_{decay}"]["param_groups"]["conv"]["algorithm"], "sgdh"
+            )
+        for name in exp2_names:
+            head = runs[name]["param_groups"]["head"]
+            self.assertEqual(head["algorithm"], "input_conditioned")
+            self.assertEqual(
+                head["gradient_momentum_before_conditioning"], "_before_" in name
+            )
+            self.assertEqual(
+                runs[name]["hparam_tuning"]["params"][
+                    "head.input_conditioner_momentum"
+                ]["choices"],
+                train.MOMENTUM_CHOICES,
+            )
         self.assertEqual(
             train.INPUT_CONDITIONER_FIELDS,
-            {"svd_mean_percentage_damping", "input_conditioner_momentum"},
+            {
+                "svd_mean_percentage_damping",
+                "input_conditioner_momentum",
+                "gradient_momentum_before_conditioning",
+            },
         )
 
     def test_global_decay_candidates_replay_and_preserve_unsearched_schedules(self):
         for preferred_decay in ("constant", "linear_decay"):
             with self.subTest(preferred_decay=preferred_decay):
-                config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["exp1"])
+                config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["exp1_linear_decay"])
                 config.update(batch_size=2, num_epochs=3, overfit=True)
                 for name, group in config["param_groups"].items():
                     group["lr_scheduler"] = [
@@ -251,6 +280,7 @@ class SearchTests(unittest.TestCase):
             "input_conditioned": dict(
                 svd_mean_percentage_damping=0.01,
                 input_conditioner_momentum=0.9,
+                gradient_momentum_before_conditioning=True,
             ),
         }
         for algorithm, fields in extras.items():
@@ -1362,6 +1392,7 @@ class SearchTests(unittest.TestCase):
                         svd_mean_percentage_damping=0.2,
                         name="test",
                         input_conditioner_momentum=0.0,
+                        gradient_momentum_before_conditioning=True,
                     )
                 ]
             )
@@ -1397,6 +1428,64 @@ class SearchTests(unittest.TestCase):
                 )
                 self.assertFalse(optimizer._input_covariances)
 
+    def test_input_conditioned_momentum_after_conditioning(self):
+        # Orders only differ when the covariance changes, so vary the inputs.
+        batches = [
+            torch.tensor([[1.0, 0.0], [1.0, 1.0], [2.0, 1.0]], dtype=torch.float64)
+            * (step + 1)
+            + torch.tensor([[0.0, step]], dtype=torch.float64)
+            for step in range(3)
+        ]
+        for nesterov in (False, True):
+            finals = {}
+            for momentum_first in (False, True):
+                parameter = torch.nn.Parameter(torch.ones(3, 2, dtype=torch.float64))
+                reference = torch.nn.Parameter(parameter.detach().clone())
+                optimizer = train.GroupOptimizer(
+                    [
+                        dict(
+                            params=[parameter],
+                            algorithm="input_conditioned",
+                            lr=0.1,
+                            momentum=0.6,
+                            nesterov=nesterov,
+                            svd_mean_percentage_damping=0.2,
+                            input_conditioner_momentum=0.0,
+                            gradient_momentum_before_conditioning=momentum_first,
+                            name="test",
+                        )
+                    ]
+                )
+                sgd = torch.optim.SGD(
+                    [reference], lr=0.1, momentum=0.6, nesterov=nesterov
+                )
+                for step, inputs in enumerate(batches):
+                    gradient = (
+                        torch.tensor(
+                            [[1.0, 2.0], [4.0, 1.0], [3.0, -2.0]], dtype=torch.float64
+                        )
+                        + step
+                    )
+                    covariance = inputs.T @ inputs / len(inputs)
+                    damped = covariance + 0.2 * covariance.trace() / 2 * torch.eye(
+                        2, dtype=torch.float64
+                    )
+                    parameter.grad = gradient.clone()
+                    reference.grad = torch.linalg.solve(damped, gradient.T).T
+                    optimizer.record_input(parameter, inputs)
+                    optimizer.step()
+                    sgd.step()
+                    torch.testing.assert_close(parameter.grad, gradient, rtol=0, atol=0)
+                    if not momentum_first:
+                        # Plain SGD momentum over the conditioned gradients.
+                        torch.testing.assert_close(parameter, reference)
+                        torch.testing.assert_close(
+                            optimizer.state[parameter]["momentum_buffer"],
+                            sgd.state[reference]["momentum_buffer"],
+                        )
+                finals[momentum_first] = parameter.detach().clone()
+            self.assertFalse(torch.allclose(finals[False], finals[True]))
+
     def test_input_conditioned_singular_covariance_and_half_precision(self):
         devices = ["cpu", "cuda"] if torch.cuda.is_available() else ["cpu"]
         for device in devices:
@@ -1415,6 +1504,7 @@ class SearchTests(unittest.TestCase):
                             svd_mean_percentage_damping=0.0,
                             name="test",
                             input_conditioner_momentum=0.0,
+                            gradient_momentum_before_conditioning=True,
                         )
                     ]
                 )
@@ -1448,6 +1538,7 @@ class SearchTests(unittest.TestCase):
                     nesterov=False,
                     svd_mean_percentage_damping=0.5,
                     input_conditioner_momentum=0.75,
+                    gradient_momentum_before_conditioning=True,
                     name="test",
                 )
             ]
@@ -1501,6 +1592,7 @@ class SearchTests(unittest.TestCase):
                         nesterov=False,
                         svd_mean_percentage_damping=0.1,
                         input_conditioner_momentum=0.9,
+                        gradient_momentum_before_conditioning=True,
                         name="test",
                     )
                 ]
@@ -1541,6 +1633,7 @@ class SearchTests(unittest.TestCase):
             algorithm="input_conditioned",
             svd_mean_percentage_damping=0.01,
             input_conditioner_momentum=0.0,
+            gradient_momentum_before_conditioning=True,
         )
         model = TinyModel(dict(time=0, training=0))
         optimizer = train.make_optimizer(model, config["param_groups"])
@@ -1577,6 +1670,7 @@ class SearchTests(unittest.TestCase):
         for field, invalid_values in {
             "svd_mean_percentage_damping": [-1, float("inf"), True],
             "input_conditioner_momentum": [-0.1, 1, 0.999, float("nan"), True],
+            "gradient_momentum_before_conditioning": [0, 1, 1.0, None, "True"],
         }.items():
             for value in invalid_values:
                 with (
@@ -1588,6 +1682,7 @@ class SearchTests(unittest.TestCase):
                             {
                                 "svd_mean_percentage_damping": 0.01,
                                 "input_conditioner_momentum": 0.0,
+                                "gradient_momentum_before_conditioning": True,
                             },
                             **{field: value},
                         )
@@ -1624,6 +1719,7 @@ class SearchTests(unittest.TestCase):
                     algorithm="input_conditioned",
                     svd_mean_percentage_damping=0.1,
                     input_conditioner_momentum=0,
+                    gradient_momentum_before_conditioning=True,
                 )
                 model = TinyModel(dict(time=0, training=0))
                 options_seen = []
@@ -1726,6 +1822,7 @@ class SearchTests(unittest.TestCase):
             algorithm="input_conditioned",
             svd_mean_percentage_damping=0.01,
             input_conditioner_momentum=0.0,
+            gradient_momentum_before_conditioning=True,
         )
         original = json.dumps(config)
         clock = dict(time=0, training=0)
@@ -1835,6 +1932,7 @@ class SearchTests(unittest.TestCase):
                     config["param_groups"]["head"].update(
                         algorithm="input_conditioned",
                         input_conditioner_momentum=0.9,
+                        gradient_momentum_before_conditioning=True,
                         svd_mean_percentage_damping=0.01,
                     )
                     model = TinyModel(dict(time=0, training=0)).to(device)
