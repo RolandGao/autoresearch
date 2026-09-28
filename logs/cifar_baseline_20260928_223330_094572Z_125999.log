@@ -2663,3 +2663,38 @@ if __name__ == "__main__":
     # main("warmup", model, **RUN_CONFIGS[0])
     for run, config in RUNS:
         run_experiment(run, model, config)
+
+
+# Run output
+
+base_config run=exp5_head_grid
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "grid",
+    "metric": "tta_val_acc",
+    "params": {"head.initial_lr": {"initial": 1300, "choices": [100.0, 170.0, 280.0, 470.0, 780.0, 1300.0, 2200.0, 3600.0, 6000.0, 10000.0, 17000.0]}, "head.momentum": {"initial": 0.0, "choices": [0.0, 0.5, 0.7, 0.8, 0.9]}, "head.decay": {"initial": "linear_decay", "choices": ["linear_decay", "constant"]}, "head.momentum_version": {"initial": 1, "choices": [1, 2]}}
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[75, 100, 0.0], [125, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[200, 99, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "head": {"algorithm": "input_conditioned", "lr_scheduler": [[200, 1300, 0.0]], "momentum": 0.0, "momentum_version": 1, "nesterov": true, "svd_mean_percentage_damping": 0.01, "input_conditioner_momentum": 0.0, "gradient_momentum_before_conditioning": false},
+    "conv": {"algorithm": "muon2", "lr_scheduler": [[200, 0.22, 0.0]], "momentum": 0.7, "momentum_version": 1, "nesterov": true}
+  }
+}
+config_diff run=exp5_head_grid.0 base_run=exp5_head_grid
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0, 0.0]]
+val_acc=0.9205 tta_val_acc=0.9304 seconds=12.6087
+config_diff run=exp5_head_grid.1 base_run=exp5_head_grid
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0, 0.0]]
+    head.momentum_version: 1 -> 2
+val_acc=0.9205 tta_val_acc=0.9304 seconds=12.0312
+config_diff run=exp5_head_grid.2 base_run=exp5_head_grid
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0]]

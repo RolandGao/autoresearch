@@ -90,7 +90,7 @@ class SearchTests(unittest.TestCase):
             for order in ("before", "after")
         ]
         self.assertEqual(
-            [name for name, _ in train.RUNS],
+            [name for name in train.EXPERIMENT_RUN_CONFIGS if name != "exp5_head_grid"],
             ["exp3"] + exp4_names,
         )
         # LR decay is fixed per run instead of searched.
@@ -104,7 +104,9 @@ class SearchTests(unittest.TestCase):
             ],
         }
         baseline = train.BASELINE_RUN_CONFIGS[2]
-        for name, original in train.RUNS:
+        for name, original in train.EXPERIMENT_RUN_CONFIGS.items():
+            if name == "exp5_head_grid":
+                continue
             experiment = name.split("_")[0]
             decay = "constant" if "_constant" in name else "linear_decay"
             changed = ("conv",) if experiment == "exp3" else ("head",)
@@ -134,11 +136,11 @@ class SearchTests(unittest.TestCase):
                 self.assertEqual(choices["conv.momentum"], train.MOMENTUM_CHOICES)
                 self.assertEqual(initial["conv.momentum"], 0.7)
             else:
-                self.assertEqual(choices["head.momentum"], train.MOMENTUM_CHOICES[1:])
+                self.assertEqual(choices["head.momentum"], train.MOMENTUM_CHOICES)
                 self.assertEqual(initial["head.momentum"], 0.85)
             model = TinyModel(dict(time=0, training=0))
             train.make_optimizer(model, config["param_groups"])
-        runs = dict(train.RUNS)
+        runs = train.EXPERIMENT_RUN_CONFIGS
         conv = runs["exp3"]["param_groups"]["conv"]
         self.assertEqual(conv["algorithm"], "muon2")
         self.assertEqual(conv["momentum_version"], 1)
@@ -165,6 +167,82 @@ class SearchTests(unittest.TestCase):
                 "gradient_momentum_before_conditioning",
             },
         )
+
+    def test_head_grid_covers_all_requested_combinations(self):
+        self.assertEqual([name for name, _ in train.RUNS], ["exp5_head_grid"])
+        config = train.RUNS[0][1]
+        self.assertEqual(config["batch_size"], 2000)
+        self.assertEqual(config["num_epochs"], 8)
+        self.assertFalse(config["overfit"])
+        self.assertEqual(config["hparam_tuning"]["algorithm"], "grid")
+        self.assertEqual(config["hparam_tuning"]["metric"], "tta_val_acc")
+        expected_lrs = {100, 170, 280, 470, 780, 1300, 2200, 3600, 6000, 10000, 17000}
+        seen = set()
+
+        def evaluate(run, model, **candidate):
+            head = candidate["param_groups"]["head"]
+            for name, group in candidate["param_groups"].items():
+                train.GroupOptimizer.validate_group(group, runtime=False)
+                if name == "conv":
+                    self.assertEqual(group["algorithm"], "muon2")
+                    self.assertEqual(group["lr_scheduler"], [(200, 0.22, 0.0)])
+                    self.assertEqual(group["momentum"], 0.7)
+                    self.assertEqual(group["momentum_version"], 1)
+                    self.assertTrue(group["nesterov"])
+                elif name != "head":
+                    self.assertEqual(
+                        group, train.BASELINE_RUN_CONFIGS[2]["param_groups"][name]
+                    )
+            self.assertEqual(head["algorithm"], "input_conditioned")
+            self.assertFalse(head["gradient_momentum_before_conditioning"])
+            self.assertEqual(head["svd_mean_percentage_damping"], 0.01)
+            self.assertEqual(head["input_conditioner_momentum"], 0.0)
+            self.assertTrue(head["nesterov"])
+            point = (
+                train.get_hparam(candidate, "head.initial_lr"),
+                head["momentum"],
+                train.get_hparam(candidate, "head.decay"),
+                head["momentum_version"],
+            )
+            self.assertNotIn(point, seen)
+            seen.add(point)
+            return dict(val_acc=0.9, tta_val_acc=0.94)
+
+        with (
+            patch.object(train, "main", side_effect=evaluate),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            result = train.run_experiment("exp5_head_grid", None, config)
+        expected = {
+            (lr, momentum, decay, version)
+            for lr in expected_lrs
+            for momentum in (0, 0.5, 0.7, 0.8, 0.9)
+            for decay in ("constant", "linear_decay")
+            for version in (1, 2)
+        }
+        self.assertEqual(seen, expected)
+        self.assertEqual(len(result["trials"]), 220)
+
+    def test_input_conditioned_zero_momentum_uses_current_gradient(self):
+        for version in (1, 2):
+            config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["exp5_head_grid"])
+            head = config["param_groups"]["head"]
+            head["momentum_version"] = version
+            head["lr_scheduler"] = [(2, 0.1)]
+            model = TinyModel(dict(time=0, training=0))
+            optimizer = train.make_optimizer(model, config["param_groups"])
+            parameter = model.head.weight
+            inputs = torch.eye(parameter.shape[1])
+            covariance = inputs.T @ inputs / len(inputs)
+            for scale in (1.0, -2.0):
+                parameter.grad = torch.full_like(parameter, scale)
+                before = parameter.detach().clone()
+                optimizer.record_input(parameter, inputs)
+                expected = train.GroupOptimizer.condition(
+                    parameter.grad, covariance, 0.01
+                )
+                optimizer.step()
+                torch.testing.assert_close(parameter, before - 0.1 * expected)
 
     def test_global_decay_candidates_replay_and_preserve_unsearched_schedules(self):
         for preferred_decay in ("constant", "linear_decay"):

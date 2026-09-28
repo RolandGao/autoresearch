@@ -203,7 +203,7 @@ class GroupOptimizer(torch.optim.Optimizer):
             if group["momentum"] < 0:
                 raise ValueError(f"{name}: momentum must be nonnegative")
             if (
-                group["algorithm"] == "sgd"
+                group["algorithm"] in ("sgd", "input_conditioned")
                 and group["nesterov"]
                 and group["momentum"] <= 0
             ):
@@ -243,7 +243,7 @@ class GroupOptimizer(torch.optim.Optimizer):
         if not isinstance(group["nesterov"], bool):
             raise ValueError("nesterov must be a boolean")
         if (
-            group["algorithm"] == "sgd"
+            group["algorithm"] in ("sgd", "input_conditioned")
             and group["nesterov"]
             and group["momentum"] == 0
         ):
@@ -1257,7 +1257,7 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # Conditioner settings can be searched using explicit choices in hparam_tuning.params.
 # Each parameter group accepts momentum_version: 1 (default) keeps the original
 # momentum; 2 uses a zero-initialized EMA with bias correction by 1 - momentum**t.
-run_type = "grid"  # "baseline", "interval", "global_neighbour", or "grid"
+run_type = "global_neighbour"  # "baseline", "interval", or "global_neighbour"
 # Log per-step singular values of the final (post-search) run of each config to
 # untracked_logs/<log filename>/, with one .npz and one .mp4 per run.
 # Search trials are not logged.
@@ -1661,42 +1661,10 @@ for decay, momentum_first in product(LR_DECAYS, (True, False)):
     order = "before" if momentum_first else "after"
     EXPERIMENT_RUN_CONFIGS[f"exp4_{decay}_momentum_{order}_conditioning"] = config
 
-# exp5: exhaustively compare head LR, gradient momentum, decay, and momentum version.
-# Use Muon2 for conv; keep its LR/momentum and the other groups at baseline values.
-HEAD_GRID_LR = BASELINE_RUN_CONFIGS[2]["param_groups"]["head"]["lr_scheduler"][0][1]
-HEAD_GRID_LR_CHOICES = sorted(
-    round_hparam(HEAD_GRID_LR * 0.6 ** k) for k in range(-5, 6)
-)
-config = copy.deepcopy(BASELINE_RUN_CONFIGS[2])
-conv = config["param_groups"]["conv"]
-conv["algorithm"] = "muon2"
-del conv["ns_steps"], conv["ns_eps"]
-config["param_groups"]["head"] = dict(
-    algorithm="input_conditioned",
-    lr_scheduler=lr_decay_schedule(200, HEAD_GRID_LR, "linear_decay"),
-    momentum=0.0,
-    momentum_version=1,
-    nesterov=True,  # At momentum=0 the optimizer uses the conditioned gradient directly.
-    svd_mean_percentage_damping=0.01,
-    input_conditioner_momentum=0.0,
-    gradient_momentum_before_conditioning=False,
-)
-config["hparam_tuning"] = dict(
-    algorithm="grid",
-    metric="tta_val_acc",
-    params={
-        "head.initial_lr": dict(initial=HEAD_GRID_LR, choices=HEAD_GRID_LR_CHOICES),
-        "head.momentum": dict(initial=0.0, choices=[0.0, 0.5, 0.7, 0.8, 0.9]),
-        "head.decay": dict(initial="linear_decay", choices=list(LR_DECAYS)),
-        "head.momentum_version": dict(initial=1, choices=[1, 2]),
-    },
-)
-EXPERIMENT_RUN_CONFIGS["exp5_head_grid"] = config
-
-experiments_to_run = ["exp5_head_grid"]
+experiments_to_run = list(EXPERIMENT_RUN_CONFIGS)
 RUNS = (
     [(name, EXPERIMENT_RUN_CONFIGS[name]) for name in experiments_to_run]
-    if run_type in ("global_neighbour", "grid")
+    if run_type == "global_neighbour"
     else list(
         enumerate(
             {"baseline": BASELINE_RUN_CONFIGS, "interval": INTERVAL_RUN_CONFIGS}[
@@ -1930,7 +1898,7 @@ def interval_search_space(config):
             values = sorted({round_hparam(v) for v in values})
             if (
                 field == "momentum"
-                and group["algorithm"] == "sgd"
+                and group["algorithm"] in ("sgd", "input_conditioned")
                 and group["nesterov"]
             ):
                 # SGD Nesterov requires positive gradient momentum. Covariance EMA
@@ -2663,3 +2631,314 @@ if __name__ == "__main__":
     # main("warmup", model, **RUN_CONFIGS[0])
     for run, config in RUNS:
         run_experiment(run, model, config)
+
+
+# Run output
+
+base_config run=exp3
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "global_neighbour",
+    "metric": "tta_val_acc",
+    "max_side_steps": 20,
+    "params": {"conv.initial_lr": {"initial": 0.22, "choices": null, "mult": 0.6}, "conv.momentum": {"initial": 0.7, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}},
+    "interval_steps": 200,
+    "cooldown_steps": 0
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[75, 100, 0.0], [125, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[200, 99, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": [[200, 1300, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "conv": {"algorithm": "muon2", "lr_scheduler": [[200, 0.22, 0.0]], "momentum": 0.7, "momentum_version": 1, "nesterov": true}
+  }
+}
+search run=exp3 interval=0 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 main=0.9414
+main hparams: conv.initial_lr=0.13 conv.momentum=0.7 main=0.9397
+main hparams: conv.initial_lr=0.36 conv.momentum=0.7 main=0.9357
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 main=0.9408
+main hparams: conv.initial_lr=0.22 conv.momentum=0.8 main=0.9379
+search_path step=0 conv.initial_lr=0.22 conv.momentum=0.7 tta_val_acc=0.9414
+train_hparams run=exp3 interval=0 start_step=0 completed_steps=200 total_steps=200 conv.initial_lr=0.22 conv.momentum=0.7
+train_schedules run=exp3 interval=0
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  whiten_weight.nesterov: [[200, true]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  norm_weight.nesterov: [[200, true]]
+  whiten_bias.initial_lr: [[75, 100, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.85]]
+  whiten_bias.nesterov: [[200, true]]
+  norm_bias.initial_lr: [[200, 99, 0.0]]
+  norm_bias.momentum: [[200, 0.85]]
+  norm_bias.nesterov: [[200, true]]
+  head.initial_lr: [[200, 1300, 0.0]]
+  head.momentum: [[200, 0.85]]
+  head.nesterov: [[200, true]]
+  conv.initial_lr: [[200, 0.22, 0.0]]
+  conv.momentum: [[200, 0.7]]
+  conv.nesterov: [[200, true]]
+interval_boundary_eval run=exp3 interval=0 step=200 total_steps=200 tta_val_acc=0.9414
+val_acc=0.9305 tta_val_acc=0.9414 seconds=94.9335
+debug_spectra run=exp3 steps=200 data=untracked_logs/cifar_baseline_20260928_194903_644687Z_117375.log/cifar_spectra_20260928_195041_310836Z_117375_exp3.npz video=untracked_logs/cifar_baseline_20260928_194903_644687Z_117375.log/cifar_spectra_20260928_195041_310836Z_117375_exp3.mp4
+base_config run=exp4_linear_decay_momentum_before_conditioning
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "global_neighbour",
+    "metric": "tta_val_acc",
+    "max_side_steps": 20,
+    "params": {"head.initial_lr": {"initial": 1300, "choices": null, "mult": 0.6}, "head.momentum": {"initial": 0.85, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "head.svd_mean_percentage_damping": {"initial": 0.01, "choices": [0, 0.001, 0.01, 0.1, 1]}, "head.input_conditioner_momentum": {"initial": 0.0, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}},
+    "interval_steps": 200,
+    "cooldown_steps": 0
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[75, 100, 0.0], [125, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[200, 99, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "head": {"algorithm": "input_conditioned", "lr_scheduler": [[200, 1300, 0.0]], "momentum": 0.85, "momentum_version": 2, "nesterov": true, "svd_mean_percentage_damping": 0.01, "input_conditioner_momentum": 0.0, "gradient_momentum_before_conditioning": true},
+    "conv": {"algorithm": "muon", "ns_steps": 3, "ns_eps": 0.0, "lr_scheduler": [[200, 0.22, 0.0]], "momentum": 0.7, "momentum_version": 1, "nesterov": true}
+  }
+}
+search run=exp4_linear_decay_momentum_before_conditioning interval=0 phase=main metric=tta_val_acc
+main hparams: head.initial_lr=1300 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9378
+main hparams: head.initial_lr=770 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9329
+main hparams: head.initial_lr=2100 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9376
+main hparams: head.initial_lr=1300 head.momentum=0.8 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9352
+main hparams: head.initial_lr=1300 head.momentum=0.9 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9381
+main hparams: head.initial_lr=1300 head.momentum=0.95 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9377
+main hparams: head.initial_lr=1300 head.momentum=0.9 head.svd_mean_percentage_damping=0.001 head.input_conditioner_momentum=0 main=0.9366
+main hparams: head.initial_lr=1300 head.momentum=0.9 head.svd_mean_percentage_damping=0.1 head.input_conditioner_momentum=0 main=0.9315
+main hparams: head.initial_lr=1300 head.momentum=0.9 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0.1 main=0.9369
+main hparams: head.initial_lr=770 head.momentum=0.9 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9344
+main hparams: head.initial_lr=2100 head.momentum=0.9 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.937
+search_path step=0 head.initial_lr=1300 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 tta_val_acc=0.9378
+search_path step=1 head.initial_lr=1300 head.momentum=0.9 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 tta_val_acc=0.9381
+train_hparams run=exp4_linear_decay_momentum_before_conditioning interval=0 start_step=0 completed_steps=200 total_steps=200 head.initial_lr=1300 head.momentum=0.9 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0
+train_schedules run=exp4_linear_decay_momentum_before_conditioning interval=0
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  whiten_weight.nesterov: [[200, true]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  norm_weight.nesterov: [[200, true]]
+  whiten_bias.initial_lr: [[75, 100, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.85]]
+  whiten_bias.nesterov: [[200, true]]
+  norm_bias.initial_lr: [[200, 99, 0.0]]
+  norm_bias.momentum: [[200, 0.85]]
+  norm_bias.nesterov: [[200, true]]
+  head.initial_lr: [[200, 1300.0, 0.0]]
+  head.momentum: [[200, 0.9]]
+  head.nesterov: [[200, true]]
+  head.gradient_momentum_before_conditioning: [[200, true]]
+  head.input_conditioner_momentum: [[200, 0.0]]
+  head.svd_mean_percentage_damping: [[200, 0.01]]
+  conv.initial_lr: [[200, 0.22, 0.0]]
+  conv.momentum: [[200, 0.7]]
+  conv.nesterov: [[200, true]]
+  conv.ns_eps: [[200, 0.0]]
+  conv.ns_steps: [[200, 3]]
+interval_boundary_eval run=exp4_linear_decay_momentum_before_conditioning interval=0 step=200 total_steps=200 tta_val_acc=0.9381
+val_acc=0.9289 tta_val_acc=0.9381 seconds=158.3716
+debug_spectra run=exp4_linear_decay_momentum_before_conditioning steps=200 data=untracked_logs/cifar_baseline_20260928_194903_644687Z_117375.log/cifar_spectra_20260928_195323_273315Z_117375_exp4_linear_decay_momentum_before_conditioning.npz video=untracked_logs/cifar_baseline_20260928_194903_644687Z_117375.log/cifar_spectra_20260928_195323_273315Z_117375_exp4_linear_decay_momentum_before_conditioning.mp4
+base_config run=exp4_linear_decay_momentum_after_conditioning
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "global_neighbour",
+    "metric": "tta_val_acc",
+    "max_side_steps": 20,
+    "params": {"head.initial_lr": {"initial": 1300, "choices": null, "mult": 0.6}, "head.momentum": {"initial": 0.85, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "head.svd_mean_percentage_damping": {"initial": 0.01, "choices": [0, 0.001, 0.01, 0.1, 1]}, "head.input_conditioner_momentum": {"initial": 0.0, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}},
+    "interval_steps": 200,
+    "cooldown_steps": 0
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[75, 100, 0.0], [125, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[200, 99, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "head": {"algorithm": "input_conditioned", "lr_scheduler": [[200, 1300, 0.0]], "momentum": 0.85, "momentum_version": 2, "nesterov": true, "svd_mean_percentage_damping": 0.01, "input_conditioner_momentum": 0.0, "gradient_momentum_before_conditioning": false},
+    "conv": {"algorithm": "muon", "ns_steps": 3, "ns_eps": 0.0, "lr_scheduler": [[200, 0.22, 0.0]], "momentum": 0.7, "momentum_version": 1, "nesterov": true}
+  }
+}
+search run=exp4_linear_decay_momentum_after_conditioning interval=0 phase=main metric=tta_val_acc
+main hparams: head.initial_lr=1300 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9339
+main hparams: head.initial_lr=770 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9299
+main hparams: head.initial_lr=2100 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9354
+main hparams: head.initial_lr=3500 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9384
+main hparams: head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9397
+main hparams: head.initial_lr=9800 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9385
+main hparams: head.initial_lr=5900 head.momentum=0.8 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9387
+main hparams: head.initial_lr=5900 head.momentum=0.9 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9393
+main hparams: head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.001 head.input_conditioner_momentum=0 main=0.9391
+main hparams: head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.1 head.input_conditioner_momentum=0 main=0.9378
+main hparams: head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0.1 main=0.9381
+search_path step=0 head.initial_lr=1300 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 tta_val_acc=0.9339
+search_path step=1 head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 tta_val_acc=0.9397
+train_hparams run=exp4_linear_decay_momentum_after_conditioning interval=0 start_step=0 completed_steps=200 total_steps=200 head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0
+train_schedules run=exp4_linear_decay_momentum_after_conditioning interval=0
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  whiten_weight.nesterov: [[200, true]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  norm_weight.nesterov: [[200, true]]
+  whiten_bias.initial_lr: [[75, 100, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.85]]
+  whiten_bias.nesterov: [[200, true]]
+  norm_bias.initial_lr: [[200, 99, 0.0]]
+  norm_bias.momentum: [[200, 0.85]]
+  norm_bias.nesterov: [[200, true]]
+  head.initial_lr: [[200, 5900.0, 0.0]]
+  head.momentum: [[200, 0.85]]
+  head.nesterov: [[200, true]]
+  head.gradient_momentum_before_conditioning: [[200, false]]
+  head.input_conditioner_momentum: [[200, 0.0]]
+  head.svd_mean_percentage_damping: [[200, 0.01]]
+  conv.initial_lr: [[200, 0.22, 0.0]]
+  conv.momentum: [[200, 0.7]]
+  conv.nesterov: [[200, true]]
+  conv.ns_eps: [[200, 0.0]]
+  conv.ns_steps: [[200, 3]]
+interval_boundary_eval run=exp4_linear_decay_momentum_after_conditioning interval=0 step=200 total_steps=200 tta_val_acc=0.9397
+val_acc=0.9309 tta_val_acc=0.9397 seconds=158.6555
+debug_spectra run=exp4_linear_decay_momentum_after_conditioning steps=200 data=untracked_logs/cifar_baseline_20260928_194903_644687Z_117375.log/cifar_spectra_20260928_195606_048519Z_117375_exp4_linear_decay_momentum_after_conditioning.npz video=untracked_logs/cifar_baseline_20260928_194903_644687Z_117375.log/cifar_spectra_20260928_195606_048519Z_117375_exp4_linear_decay_momentum_after_conditioning.mp4
+base_config run=exp4_constant_momentum_before_conditioning
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "global_neighbour",
+    "metric": "tta_val_acc",
+    "max_side_steps": 20,
+    "params": {"head.initial_lr": {"initial": 1300, "choices": null, "mult": 0.6}, "head.momentum": {"initial": 0.85, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "head.svd_mean_percentage_damping": {"initial": 0.01, "choices": [0, 0.001, 0.01, 0.1, 1]}, "head.input_conditioner_momentum": {"initial": 0.0, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}},
+    "interval_steps": 200,
+    "cooldown_steps": 0
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[75, 100, 0.0], [125, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[200, 99, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "head": {"algorithm": "input_conditioned", "lr_scheduler": [[200, 1300]], "momentum": 0.85, "momentum_version": 2, "nesterov": true, "svd_mean_percentage_damping": 0.01, "input_conditioner_momentum": 0.0, "gradient_momentum_before_conditioning": true},
+    "conv": {"algorithm": "muon", "ns_steps": 3, "ns_eps": 0.0, "lr_scheduler": [[200, 0.22, 0.0]], "momentum": 0.7, "momentum_version": 1, "nesterov": true}
+  }
+}
+search run=exp4_constant_momentum_before_conditioning interval=0 phase=main metric=tta_val_acc
+main hparams: head.initial_lr=1300 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9361
+main hparams: head.initial_lr=770 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9334
+main hparams: head.initial_lr=2100 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9391
+main hparams: head.initial_lr=3500 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9413
+main hparams: head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9418
+main hparams: head.initial_lr=9800 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9379
+main hparams: head.initial_lr=5900 head.momentum=0.8 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9415
+main hparams: head.initial_lr=5900 head.momentum=0.9 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.939
+main hparams: head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.001 head.input_conditioner_momentum=0 main=0.9396
+main hparams: head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.1 head.input_conditioner_momentum=0 main=0.9397
+main hparams: head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0.1 main=0.9405
+search_path step=0 head.initial_lr=1300 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 tta_val_acc=0.9361
+search_path step=1 head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 tta_val_acc=0.9418
+train_hparams run=exp4_constant_momentum_before_conditioning interval=0 start_step=0 completed_steps=200 total_steps=200 head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0
+train_schedules run=exp4_constant_momentum_before_conditioning interval=0
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  whiten_weight.nesterov: [[200, true]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  norm_weight.nesterov: [[200, true]]
+  whiten_bias.initial_lr: [[75, 100, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.85]]
+  whiten_bias.nesterov: [[200, true]]
+  norm_bias.initial_lr: [[200, 99, 0.0]]
+  norm_bias.momentum: [[200, 0.85]]
+  norm_bias.nesterov: [[200, true]]
+  head.initial_lr: [[200, 5900.0]]
+  head.momentum: [[200, 0.85]]
+  head.nesterov: [[200, true]]
+  head.gradient_momentum_before_conditioning: [[200, true]]
+  head.input_conditioner_momentum: [[200, 0.0]]
+  head.svd_mean_percentage_damping: [[200, 0.01]]
+  conv.initial_lr: [[200, 0.22, 0.0]]
+  conv.momentum: [[200, 0.7]]
+  conv.nesterov: [[200, true]]
+  conv.ns_eps: [[200, 0.0]]
+  conv.ns_steps: [[200, 3]]
+interval_boundary_eval run=exp4_constant_momentum_before_conditioning interval=0 step=200 total_steps=200 tta_val_acc=0.9418
+val_acc=0.9321 tta_val_acc=0.9418 seconds=158.1673
+debug_spectra run=exp4_constant_momentum_before_conditioning steps=200 data=untracked_logs/cifar_baseline_20260928_194903_644687Z_117375.log/cifar_spectra_20260928_195848_449670Z_117375_exp4_constant_momentum_before_conditioning.npz video=untracked_logs/cifar_baseline_20260928_194903_644687Z_117375.log/cifar_spectra_20260928_195848_449670Z_117375_exp4_constant_momentum_before_conditioning.mp4
+base_config run=exp4_constant_momentum_after_conditioning
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "global_neighbour",
+    "metric": "tta_val_acc",
+    "max_side_steps": 20,
+    "params": {"head.initial_lr": {"initial": 1300, "choices": null, "mult": 0.6}, "head.momentum": {"initial": 0.85, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "head.svd_mean_percentage_damping": {"initial": 0.01, "choices": [0, 0.001, 0.01, 0.1, 1]}, "head.input_conditioner_momentum": {"initial": 0.0, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}},
+    "interval_steps": 200,
+    "cooldown_steps": 0
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[75, 100, 0.0], [125, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[200, 99, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
+    "head": {"algorithm": "input_conditioned", "lr_scheduler": [[200, 1300]], "momentum": 0.85, "momentum_version": 2, "nesterov": true, "svd_mean_percentage_damping": 0.01, "input_conditioner_momentum": 0.0, "gradient_momentum_before_conditioning": false},
+    "conv": {"algorithm": "muon", "ns_steps": 3, "ns_eps": 0.0, "lr_scheduler": [[200, 0.22, 0.0]], "momentum": 0.7, "momentum_version": 1, "nesterov": true}
+  }
+}
+search run=exp4_constant_momentum_after_conditioning interval=0 phase=main metric=tta_val_acc
+main hparams: head.initial_lr=1300 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9372
+main hparams: head.initial_lr=770 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9332
+main hparams: head.initial_lr=2100 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9387
+main hparams: head.initial_lr=3500 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9398
+main hparams: head.initial_lr=5900 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.937
+main hparams: head.initial_lr=3500 head.momentum=0.8 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9381
+main hparams: head.initial_lr=3500 head.momentum=0.9 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 main=0.9386
+main hparams: head.initial_lr=3500 head.momentum=0.85 head.svd_mean_percentage_damping=0.001 head.input_conditioner_momentum=0 main=0.9392
+main hparams: head.initial_lr=3500 head.momentum=0.85 head.svd_mean_percentage_damping=0.1 head.input_conditioner_momentum=0 main=0.9387
+main hparams: head.initial_lr=3500 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0.1 main=0.9375
+search_path step=0 head.initial_lr=1300 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 tta_val_acc=0.9372
+search_path step=1 head.initial_lr=3500 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0 tta_val_acc=0.9398
+train_hparams run=exp4_constant_momentum_after_conditioning interval=0 start_step=0 completed_steps=200 total_steps=200 head.initial_lr=3500 head.momentum=0.85 head.svd_mean_percentage_damping=0.01 head.input_conditioner_momentum=0
+train_schedules run=exp4_constant_momentum_after_conditioning interval=0
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  whiten_weight.nesterov: [[200, true]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  norm_weight.nesterov: [[200, true]]
+  whiten_bias.initial_lr: [[75, 100, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.85]]
+  whiten_bias.nesterov: [[200, true]]
+  norm_bias.initial_lr: [[200, 99, 0.0]]
+  norm_bias.momentum: [[200, 0.85]]
+  norm_bias.nesterov: [[200, true]]
+  head.initial_lr: [[200, 3500.0]]
+  head.momentum: [[200, 0.85]]
+  head.nesterov: [[200, true]]
+  head.gradient_momentum_before_conditioning: [[200, false]]
+  head.input_conditioner_momentum: [[200, 0.0]]
+  head.svd_mean_percentage_damping: [[200, 0.01]]
+  conv.initial_lr: [[200, 0.22, 0.0]]
+  conv.momentum: [[200, 0.7]]
+  conv.nesterov: [[200, true]]
+  conv.ns_eps: [[200, 0.0]]
+  conv.ns_steps: [[200, 3]]
+interval_boundary_eval run=exp4_constant_momentum_after_conditioning interval=0 step=200 total_steps=200 tta_val_acc=0.9398
+val_acc=0.9280 tta_val_acc=0.9398 seconds=148.0976
+debug_spectra run=exp4_constant_momentum_after_conditioning steps=200 data=untracked_logs/cifar_baseline_20260928_194903_644687Z_117375.log/cifar_spectra_20260928_200120_505913Z_117375_exp4_constant_momentum_after_conditioning.npz video=untracked_logs/cifar_baseline_20260928_194903_644687Z_117375.log/cifar_spectra_20260928_200120_505913Z_117375_exp4_constant_momentum_after_conditioning.mp4
