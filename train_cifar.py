@@ -1856,7 +1856,12 @@ for source, name in (
     })
     EXPERIMENT_RUN_CONFIGS[name] = config
 
-experiments_to_run = ["exp10_head_sgd_v3_grid", "exp11_head_input_conditioned_v3_grid"]
+# Run only the previously untested lower learning rates for SGD.
+EXPERIMENT_RUN_CONFIGS["exp10_head_sgd_v3_grid"]["hparam_tuning"]["params"][
+    "head.initial_lr"
+]["choices"] = sorted(round_hparam(6000 * 0.6 ** k) for k in range(4, 9))
+
+experiments_to_run = ["exp10_head_sgd_v3_grid"]
 RUNS = (
     [(name, EXPERIMENT_RUN_CONFIGS[name]) for name in experiments_to_run]
     if run_type in ("global_neighbour", "grid")

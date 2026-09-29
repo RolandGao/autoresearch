@@ -225,7 +225,7 @@ class SearchTests(unittest.TestCase):
     def test_head_grid_covers_all_requested_combinations(self):
         self.assertEqual(
             [name for name, _ in train.RUNS],
-            ["exp10_head_sgd_v3_grid", "exp11_head_input_conditioned_v3_grid"],
+            ["exp10_head_sgd_v3_grid"],
         )
         grids = {
             "exp5_head_grid": {100, 170, 280, 470, 780, 1300, 2200, 3600, 6000, 10000, 17000},
@@ -238,7 +238,8 @@ class SearchTests(unittest.TestCase):
         grids["exp9_head_lion_grid"] = {train.round_hparam(0.6 ** k) for k in range(-10, 6)}
         v3_grids = ("exp10_head_sgd_v3_grid", "exp11_head_input_conditioned_v3_grid")
         for name in v3_grids:
-            grids[name] = {train.round_hparam(6000 * 0.6 ** k) for k in range(-8, 4)}
+            exponents = range(4, 9) if name == "exp10_head_sgd_v3_grid" else range(-8, 4)
+            grids[name] = {train.round_hparam(6000 * 0.6 ** k) for k in exponents}
         for name, expected_lrs in grids.items():
             config = train.EXPERIMENT_RUN_CONFIGS[name]
             self.assertEqual(config["batch_size"], 2000)

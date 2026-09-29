@@ -9,7 +9,7 @@ the SGD/Lion comparison log. Compatible LR extensions are joined into one grid.
 Writes comparison curves, per-grid heatmaps and LR curves (PNG/PDF), and a CSV under
 untracked_logs/<last log filename>/plots_combined/ (plots/ for one log).
 Comparison curves select the best momentum at each LR, separately for each
-optimizer, schedule, and momentum version. Does not import training code.
+optimizer, schedule, momentum version, and Nesterov setting. Does not import training code.
 """
 
 import argparse
@@ -35,7 +35,9 @@ DEFAULT_LOGS = [
     Path("logs/cifar_baseline_20260929_001548_198729Z_135547.log"),
     Path("logs/cifar_baseline_20260929_020116_300964Z_141192.log"),
 ]
-GRID_FIELDS = ("head.initial_lr", "head.momentum", "head.decay", "head.momentum_version")
+GRID_FIELDS = (
+    "head.initial_lr", "head.momentum", "head.decay", "head.momentum_version", "head.nesterov",
+)
 ALGORITHM_LABELS = {"input_conditioned": "Input-conditioned", "sgd": "SGD", "lion": "Lion"}
 
 
@@ -64,8 +66,8 @@ def parse_log(path, run):
     if config["hparam_tuning"]["algorithm"] != "grid":
         raise ValueError(f"{run!r} is not a grid search")
     specs = config["hparam_tuning"]["params"]
-    if set(specs) not in (set(GRID_FIELDS), set(GRID_FIELDS[:-1])):
-        raise ValueError(f"Expected a head LR/momentum/decay grid with optional momentum version")
+    if not set(GRID_FIELDS[:3]) <= set(specs) <= set(GRID_FIELDS):
+        raise ValueError("Expected a head LR/momentum/decay grid with optional momentum version and Nesterov")
 
     rows, trial, head = [], None, None
     seen = set()
@@ -88,7 +90,7 @@ def parse_log(path, run):
             if len(lines) != 1 or (len(lines[0]) == 3 and lines[0][2] != 0):
                 raise ValueError(f"{trial}: expected a constant or linear-to-zero schedule")
             decay = "constant" if len(lines[0]) == 2 else "linear_decay"
-            point = (lines[0][1], head["momentum"], decay, head["momentum_version"])
+            point = (lines[0][1], head["momentum"], decay, head["momentum_version"], head["nesterov"])
             if point in seen:
                 raise ValueError(f"Duplicate grid point: {point}")
             for field, value in zip(GRID_FIELDS, point):
@@ -104,6 +106,7 @@ def parse_log(path, run):
                 momentum=point[1],
                 decay=point[2],
                 momentum_version=point[3],
+                nesterov=point[4],
                 val_acc=float(metrics["val_acc"]),
                 tta_val_acc=float(metrics["tta_val_acc"]),
                 seconds=float(metrics["seconds"]),
@@ -154,6 +157,10 @@ def plot_results(config, rows, directory, metric, heatmap_min):
     versions = specs.get("head.momentum_version", {"choices": [
         config["param_groups"]["head"]["momentum_version"]
     ]})["choices"]
+    nesterov_choices = specs.get("head.nesterov", {"choices": [
+        config["param_groups"]["head"]["nesterov"]
+    ]})["choices"]
+    columns = [(decay, nesterov) for decay in decays for nesterov in nesterov_choices]
     expected = math.prod(len(spec["choices"]) for spec in specs.values())
     label = (
         "TTA validation accuracy (%)"
@@ -177,13 +184,14 @@ def plot_results(config, rows, directory, metric, heatmap_min):
         f"batch size {config['batch_size']} | {config['num_epochs']} epochs"
         f"{conditioning}"
     )
-    shape = (len(versions), len(decays))
+    shape = (len(versions), len(columns))
     fig, axes = plt.subplots(
-        *shape, figsize=(max(16, len(lrs) * 1.2), 9),
+        *shape, figsize=(max(16, len(lrs) * 1.2, len(columns) * 7), 4.5 * len(versions)),
         squeeze=False, layout="constrained",
     )
     curves, curve_axes = plt.subplots(
-        *shape, figsize=(14, 9), squeeze=False, sharex=True, sharey=True, layout="constrained"
+        *shape, figsize=(7 * len(columns), 4.5 * len(versions)),
+        squeeze=False, sharex=True, sharey=True, layout="constrained"
     )
     fig.suptitle(title, fontsize=15)
     curves.suptitle(title, fontsize=15)
@@ -193,11 +201,12 @@ def plot_results(config, rows, directory, metric, heatmap_min):
     norm = Normalize(vmin=heatmap_min, vmax=maximum)
     colors = plt.get_cmap("tab10")
     for i, version in enumerate(versions):
-        for j, decay in enumerate(decays):
+        for j, (decay, nesterov) in enumerate(columns):
             ax, curve_ax = axes[i, j], curve_axes[i, j]
             subset = [
                 row for row in rows
                 if row["momentum_version"] == version and row["decay"] == decay
+                and row["nesterov"] == nesterov
             ]
             lookup = {
                 (row["momentum"], row["initial_lr"]): row[metric] * 100
@@ -208,7 +217,10 @@ def plot_results(config, rows, directory, metric, heatmap_min):
             ])
             values[~np.isfinite(values)] = np.nan
             plotted = ax.imshow(values, cmap=cmap, norm=norm, aspect="auto")
-            panel = f"{decay.replace('_', ' ').capitalize()} | momentum version {version}"
+            panel = (
+                f"{decay.replace('_', ' ').capitalize()} | momentum version {version}"
+                f" | Nesterov {nesterov}"
+            )
             if np.isfinite(values).any():
                 winner = np.unravel_index(np.nanargmax(values), values.shape)
                 panel += (
@@ -271,7 +283,7 @@ def plot_results(config, rows, directory, metric, heatmap_min):
     print(
         f"Best {metric}={best[metric]:.4f}: LR={best['initial_lr']:g}, "
         f"momentum={best['momentum']:g}, decay={best['decay']}, "
-        f"momentum_version={best['momentum_version']} ({best['trial']})"
+        f"momentum_version={best['momentum_version']}, nesterov={best['nesterov']} ({best['trial']})"
     )
 
 
@@ -280,18 +292,23 @@ def plot_comparison(datasets, directory, metric, floor):
     rows = [row for _, _, records in datasets for row in records]
     versions = sorted({row["momentum_version"] for row in rows})
     decays = sorted({row["decay"] for row in rows})
+    nesterov_choices = sorted({row["nesterov"] for row in rows}, reverse=True)
+    columns = [(decay, nesterov) for decay in decays for nesterov in nesterov_choices]
     maximum = math.ceil(max(row[metric] for row in rows if math.isfinite(row[metric])) * 1000) / 10
     fig, axes = plt.subplots(
-        len(versions), len(decays), figsize=(14, 4 * len(versions)),
+        len(versions), len(columns), figsize=(7 * len(columns), 4 * len(versions)),
         squeeze=False, sharex=True, sharey=True, layout="constrained",
     )
     fig.suptitle(f"Head optimizer comparison | {len(rows)} trials\nBest momentum at each LR", fontsize=15)
     label = "TTA validation accuracy (%)" if metric == "tta_val_acc" else "Validation accuracy (%)"
     for i, version in enumerate(versions):
-        for j, decay in enumerate(decays):
+        for j, (decay, nesterov) in enumerate(columns):
             ax = axes[i, j]
             for index, (name, _, records) in enumerate(datasets):
-                subset = [r for r in records if r["momentum_version"] == version and r["decay"] == decay]
+                subset = [
+                    r for r in records if r["momentum_version"] == version
+                    and r["decay"] == decay and r["nesterov"] == nesterov
+                ]
                 lrs = sorted({r["initial_lr"] for r in subset})
                 scores = []
                 for lr in lrs:
@@ -299,7 +316,10 @@ def plot_comparison(datasets, directory, metric, floor):
                     scores.append(max(values) if values else np.nan)
                 if lrs:
                     ax.plot(lrs, scores, marker="o", markersize=4, color=f"C{index % 10}", label=name)
-            ax.set_title(f"{decay.replace('_', ' ').capitalize()} | momentum version {version}")
+            ax.set_title(
+                f"{decay.replace('_', ' ').capitalize()} | momentum version {version}"
+                f" | Nesterov {nesterov}"
+            )
             ax.set_xscale("log")
             ax.set_xlabel("Head initial learning rate (log scale)")
             ax.set_ylabel(label)
