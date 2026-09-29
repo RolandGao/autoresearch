@@ -1663,6 +1663,8 @@ debug = True
 
 # Parameter groups and tuning starts use the best TTA candidates in
 # logs/cifar_baseline_20260925_062517_263845Z_68746.log.
+# BS 2000 uses the best run (TTA 0.9413) from
+# logs/cifar_baseline_20260929_192907_944004Z_300062.log.
 BASE_RUN_CONFIGS = [
     dict(
         batch_size=125,
@@ -1871,15 +1873,15 @@ BASE_RUN_CONFIGS = [
             ),
             whiten_bias=dict(
                 algorithm="sgd",
-                lr_scheduler=[(75, 100, 0.0), (125, 0.0)],
-                momentum=0.85,
+                lr_scheduler=[(75, 36, 0.0), (125, 0.0)],
+                momentum=0.8,
                 momentum_version=3,
                 nesterov=True,
             ),
             norm_bias=dict(
                 algorithm="sgd",
                 lr_scheduler=[(200, 99, 0.0)],
-                momentum=0.85,
+                momentum=0.8,
                 momentum_version=3,
                 nesterov=True,
             ),
@@ -1896,7 +1898,7 @@ BASE_RUN_CONFIGS = [
                 ns_eps=0.0,
                 lr_scheduler=[(200, 0.22, 0.0)],
                 momentum=0.7,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
         ),
@@ -1945,7 +1947,8 @@ for base_config in BASE_RUN_CONFIGS:
                 mult=0.6,
             ),
             "norm_bias.momentum": dict(
-                initial=0.85, choices=list(MOMENTUM_CHOICES[1:])
+                initial=base_config["param_groups"]["norm_bias"]["momentum"],
+                choices=list(MOMENTUM_CHOICES[1:]),
             ),
         },
     )

@@ -197,7 +197,7 @@ class SearchTests(unittest.TestCase):
         runs = train.EXPERIMENT_RUN_CONFIGS
         conv = runs["exp3"]["param_groups"]["conv"]
         self.assertEqual(conv["algorithm"], "muon2")
-        self.assertEqual(conv["momentum_version"], 1)
+        self.assertEqual(conv["momentum_version"], 3)
         self.assertNotIn("ns_steps", conv)
         self.assertNotIn("ns_eps", conv)
         for name in exp4_names:
@@ -266,7 +266,7 @@ class SearchTests(unittest.TestCase):
                         self.assertEqual(group["algorithm"], "muon2")
                         self.assertEqual(group["lr_scheduler"], [(200, 0.22, 0.0)])
                         self.assertEqual(group["momentum"], 0.7)
-                        self.assertEqual(group["momentum_version"], 1)
+                        self.assertEqual(group["momentum_version"], 3)
                         self.assertTrue(group["nesterov"])
                     elif name != "head":
                         self.assertEqual(
@@ -616,7 +616,10 @@ class SearchTests(unittest.TestCase):
                 )
                 if original["hparam_tuning"]["algorithm"] == "global_neighbour":
                     self.assertEqual(initial["head.momentum"], 0.85)
-                    self.assertEqual(initial["norm_bias.momentum"], 0.85)
+                    self.assertEqual(
+                        initial["norm_bias.momentum"],
+                        0.8 if original["batch_size"] == 2000 else 0.85,
+                    )
                     for path in ("head.initial_lr", "norm_bias.initial_lr"):
                         spec = original["hparam_tuning"]["params"][path]
                         self.assertEqual(
@@ -1621,7 +1624,7 @@ class SearchTests(unittest.TestCase):
         )
         baseline = train.BASELINE_RUN_CONFIGS[2]
         self.assertEqual(baseline["param_groups"]["head"]["momentum_version"], 3)
-        self.assertEqual(baseline["param_groups"]["conv"]["momentum_version"], 1)
+        self.assertEqual(baseline["param_groups"]["conv"]["momentum_version"], 3)
         for name, group in config["param_groups"].items():
             self.assertEqual(group["momentum_version"], 3)
             self.assertEqual(group["lr_scheduler"], baseline["param_groups"][name]["lr_scheduler"])

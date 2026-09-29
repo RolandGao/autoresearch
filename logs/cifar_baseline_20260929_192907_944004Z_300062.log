@@ -3271,3 +3271,57 @@ base_config run=exp12_bs2000_all_active_v3
   }
 }
 search run=exp12_bs2000_all_active_v3 interval=0 phase=main metric=tta_val_acc
+main hparams: whiten_bias.initial_lr=99 whiten_bias.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9387
+main hparams: whiten_bias.initial_lr=60 whiten_bias.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9389
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9395
+main hparams: whiten_bias.initial_lr=21 whiten_bias.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9388
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.85 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9406
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.7 norm_bias.initial_lr=99 norm_bias.momentum=0.85 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9398
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=60 norm_bias.momentum=0.85 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9394
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=170 norm_bias.momentum=0.85 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9382
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9413
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9388
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=770 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9398
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=2100 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9388
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.8 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9405
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.9 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9397
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.13 conv.momentum=0.7 main=0.9387
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.36 conv.momentum=0.7 main=0.937
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.6 main=0.9393
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.8 main=0.9383
+main hparams: whiten_bias.initial_lr=21 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9409
+main hparams: whiten_bias.initial_lr=60 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9397
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.7 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9367
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.9 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9408
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=60 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9405
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=170 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9389
+main hparams: whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.9 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 main=0.9395
+search_path step=0 whiten_bias.initial_lr=99 whiten_bias.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 tta_val_acc=0.9387
+search_path step=1 whiten_bias.initial_lr=36 whiten_bias.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.85 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 tta_val_acc=0.9395
+search_path step=2 whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.85 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 tta_val_acc=0.9406
+search_path step=3 whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7 tta_val_acc=0.9413
+train_hparams run=exp12_bs2000_all_active_v3 interval=0 start_step=0 completed_steps=200 total_steps=200 whiten_bias.initial_lr=36 whiten_bias.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 conv.initial_lr=0.22 conv.momentum=0.7
+train_schedules run=exp12_bs2000_all_active_v3 interval=0
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  whiten_weight.nesterov: [[200, true]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  norm_weight.nesterov: [[200, true]]
+  whiten_bias.initial_lr: [[75, 36.0, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.8]]
+  whiten_bias.nesterov: [[200, true]]
+  norm_bias.initial_lr: [[200, 99.0, 0.0]]
+  norm_bias.momentum: [[200, 0.8]]
+  norm_bias.nesterov: [[200, true]]
+  head.initial_lr: [[200, 1300.0, 0.0]]
+  head.momentum: [[200, 0.85]]
+  head.nesterov: [[200, true]]
+  conv.initial_lr: [[200, 0.22, 0.0]]
+  conv.momentum: [[200, 0.7]]
+  conv.nesterov: [[200, true]]
+  conv.ns_eps: [[200, 0.0]]
+  conv.ns_steps: [[200, 3]]
+interval_boundary_eval run=exp12_bs2000_all_active_v3 interval=0 step=200 total_steps=200 tta_val_acc=0.9413
+val_acc=0.9351 tta_val_acc=0.9413 seconds=287.5656
+debug_spectra run=exp12_bs2000_all_active_v3 steps=200 data=untracked_logs/cifar_baseline_20260929_192907_944004Z_300062.log/cifar_spectra_20260929_193358_062750Z_300062_exp12_bs2000_all_active_v3.npz video=untracked_logs/cifar_baseline_20260929_192907_944004Z_300062.log/cifar_spectra_20260929_193358_062750Z_300062_exp12_bs2000_all_active_v3.mp4
