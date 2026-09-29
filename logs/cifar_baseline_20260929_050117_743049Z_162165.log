@@ -1460,11 +1460,6 @@ def slice_schedule(lines, start_step, end_step):
     return result
 
 
-def is_zero_lr_schedule(lines):
-    """Whether a group is frozen for its entire configured run."""
-    return all(value == 0 for line in lines for value in line[1:])
-
-
 def scale_lr_schedule(lines, initial):
     """Change the LR amplitude while retaining the explicitly configured shape."""
     previous = lines[0][1]
@@ -1495,10 +1490,6 @@ def segment_hparam_schedules(base_schedules, values, start_step, steps, global_s
             continue
         field = path.split(".", 1)[1]
         for name in group_names:
-            if field in ("initial_lr", "decay") and is_zero_lr_schedule(
-                base_schedules[f"{name}.initial_lr"]
-            ):
-                continue
             target = f"{name}.{field}"
             schedule_path = f"{name}.initial_lr" if field == "decay" else target
             if schedule_path not in base_schedules:
@@ -1558,8 +1549,7 @@ def apply_hparam_schedules(optimizer, schedules, step):
 #     "conv.momentum": dict(initial=0.6, choices=[0.6, 0.7, 0.8]),
 # })
 # In grid/coordinate/global_neighbour searches, all.<field> applies one value to every
-# parameter group (e.g. all.initial_lr). Shared LR/decay leaves all-zero LR
-# schedules frozen. Other groups must start with a shared value.
+# parameter group (e.g. all.initial_lr). Groups must start with a shared value.
 # Use algorithm="coordinate" to tune parameters in order, revisiting them
 # whenever another parameter changes. Specify the selection metric explicitly.
 # None runs the config once without tuning. Batch sizes are kept exact.
@@ -2107,20 +2097,15 @@ EXPERIMENT_RUN_CONFIGS["exp10_head_sgd_v3_grid"]["hparam_tuning"]["params"][
     "head.initial_lr"
 ]["choices"] = sorted(round_hparam(6000 * 0.6 ** k) for k in range(4, 9))
 
-# All groups use K-FAC, preserving the baseline's frozen weight groups.
-# Each neighbour candidate shares LR across active groups and momentum/factor EMA
-# across all groups, including biases.
+# All parameters train, including whitening weights and both bias groups.
+# Each neighbour candidate shares LR, momentum, and factor EMA across all groups.
 KFAC_LR_CHOICES = sorted(round_hparam(0.15 * 0.6 ** k) for k in range(-7, 8))
 for algorithm in ("kfac", "kfac-jacobian"):
     config = copy.deepcopy(BASELINE_RUN_CONFIGS[2])
     config["param_groups"] = {
         name: dict(
             algorithm=algorithm,
-            lr_scheduler=(
-                copy.deepcopy(group["lr_scheduler"])
-                if is_zero_lr_schedule(group["lr_scheduler"])
-                else lr_decay_schedule(200, 0.15, "linear_decay")
-            ),
+            lr_scheduler=lr_decay_schedule(200, 0.15, "linear_decay"),
             momentum=0.9,
             momentum_version=3,
             nesterov=True,
@@ -2128,7 +2113,7 @@ for algorithm in ("kfac", "kfac-jacobian"):
             kfac_factor_momentum=0.0,
             kfac_probes=1,
         )
-        for name, group in config["param_groups"].items()
+        for name in config["param_groups"]
     }
     config["hparam_tuning"] = dict(
         algorithm="global_neighbour", metric="tta_val_acc", max_side_steps=20,
@@ -2216,19 +2201,12 @@ def make_optimizer(model, param_groups):
 
 
 def get_hparam(config, path):
-    """Read shared options, excluding frozen groups for all.initial_lr/decay."""
+    """Read a run/group option; all.<field> requires a shared group value."""
     if path in ("batch_size", "num_epochs", "overfit"):
         return config[path]
     parts = path.split(".")
     if len(parts) == 2 and parts[0] == "all":
-        field = parts[1]
-        values = [
-            get_hparam(config, f"{name}.{field}")
-            for name, group in config["param_groups"].items()
-            if field not in ("initial_lr", "decay") or not is_zero_lr_schedule(group["lr_scheduler"])
-        ]
-        if not values and config["param_groups"] and field in ("initial_lr", "decay"):
-            return 0.0 if field == "initial_lr" else "constant"
+        values = [get_hparam(config, f"{name}.{parts[1]}") for name in config["param_groups"]]
         if not values or any(value != values[0] for value in values[1:]):
             raise ValueError(f"{path}: all parameter groups must share the same value")
         return values[0]
@@ -2262,8 +2240,6 @@ def with_hparam(config, path, value):
         names = list(updated["param_groups"]) if name == "all" else [name]
         for group_name in names:
             group = updated["param_groups"][group_name]
-            if name == "all" and field in ("initial_lr", "decay") and is_zero_lr_schedule(group["lr_scheduler"]):
-                continue
             if field in group:
                 group[field] = value
             elif field == "decay":
@@ -3124,3 +3100,72 @@ if __name__ == "__main__":
         compile_and_warmup_model(model, RUN_CONFIGS)
     for run, config in RUNS:
         run_experiment(run, model, config)
+
+
+# Run output
+
+base_config run=all_kfac
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "global_neighbour",
+    "metric": "tta_val_acc",
+    "max_side_steps": 20,
+    "params": {"all.initial_lr": {"initial": 0.15, "choices": [0.0042, 0.007, 0.012, 0.019, 0.032, 0.054, 0.09, 0.15, 0.25, 0.42, 0.69, 1.2, 1.9, 3.2, 5.4]}, "all.momentum": {"initial": 0.9, "choices": [0.0, 0.5, 0.7, 0.8, 0.9]}, "all.kfac_factor_momentum": {"initial": 0.0, "choices": [0.0, 0.5]}},
+    "interval_steps": 200,
+    "cooldown_steps": 0
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
+    "norm_weight": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
+    "whiten_bias": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
+    "norm_bias": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
+    "head": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
+    "conv": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1}
+  }
+}
+search run=all_kfac interval=0 phase=main metric=tta_val_acc
+Traceback (most recent call last):
+  File "/workspace/autoresearch/train_cifar.py", line 3102, in <module>
+    run_experiment(run, model, config)
+  File "/workspace/autoresearch/train_cifar.py", line 2881, in run_experiment
+    result = run_interval_search(run, model, config, debug=debug)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 2725, in run_interval_search
+    current, selected_score = search(
+                              ^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 2686, in search
+    best, best_score = directional_search(
+                       ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 2459, in directional_search
+    current_score = evaluate_point(current)
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 2418, in evaluate_point
+    value = score(dict(point))
+            ^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 2728, in <lambda>
+    lambda values: main_score(values, None),
+                   ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 2712, in main_score
+    if not train_segment(values, main_steps, start_step, commit=False):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 2651, in train_segment
+    optimizer.step()
+  File "/venv/main/lib/python3.12/site-packages/torch/optim/optimizer.py", line 530, in wrapper
+    out = func(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 602, in step
+    g = self._condition_kfac(p, g, group)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 469, in _condition_kfac
+    return self.condition(gradient[None, :], g, damping).reshape_as(parameter)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 581, in condition
+    return torch.zeros_like(g)
+           ^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt

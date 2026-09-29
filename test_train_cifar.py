@@ -2691,15 +2691,27 @@ class KFACTests(unittest.TestCase):
         ))
         for algorithm in train.KFAC_ALGORITHMS:
             config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS[f"all_{algorithm}"])
+            self.assertEqual(config["hparam_tuning"]["algorithm"], "global_neighbour")
+            choices, initial = train.interval_search_space(config)
+            self.assertEqual(set(product(*choices.values())), expected)
+            self.assertEqual(initial, {
+                "all.initial_lr": 0.15, "all.momentum": 0.9,
+                "all.kfac_factor_momentum": 0.0,
+            })
+            config["hparam_tuning"]["algorithm"] = "grid"
+            del config["hparam_tuning"]["max_side_steps"]
             original = copy.deepcopy(config)
             seen = set()
 
             def fake_main(run, model, **candidate):
                 points = set()
-                for group in candidate["param_groups"].values():
+                for name, group in candidate["param_groups"].items():
                     train.GroupOptimizer.validate_group(group, runtime=False)
                     self.assertEqual(group["algorithm"], algorithm)
                     self.assertTrue(group["nesterov"])
+                    if name in ("whiten_weight", "norm_weight"):
+                        self.assertEqual(group["lr_scheduler"], [(200, 0.0)])
+                        continue
                     points.add((group["lr_scheduler"][0][1], group["momentum"], group["kfac_factor_momentum"]))
                 self.assertEqual(len(points), 1)
                 point = points.pop()
@@ -2710,7 +2722,8 @@ class KFACTests(unittest.TestCase):
                 ])
                 train.apply_hparam_schedules(optimizer, schedules, 100)
                 for group in optimizer.param_groups:
-                    self.assertEqual(group["lr"], train.round_hparam(point[0] / 2))
+                    expected_lr = 0.0 if group["name"] in ("whiten_weight", "norm_weight") else train.round_hparam(point[0] / 2)
+                    self.assertEqual(group["lr"], expected_lr)
                     self.assertEqual(group["momentum"], point[1])
                     self.assertEqual(group["kfac_factor_momentum"], point[2])
                     self.assertTrue(group["nesterov"])
@@ -2733,8 +2746,93 @@ class KFACTests(unittest.TestCase):
             train.tuning_params(config)
         del config["hparam_tuning"]["params"]["head.momentum"]
         config["hparam_tuning"]["algorithm"] = "interval"
-        with self.assertRaisesRegex(ValueError, "require grid or coordinate"):
+        with self.assertRaisesRegex(ValueError, "require grid, coordinate, or global_neighbour"):
             train.tuning_params(config)
+
+    def test_global_neighbour_applies_shared_values_to_every_training_step(self):
+        for algorithm in train.KFAC_ALGORITHMS:
+            config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS[f"all_{algorithm}"])
+            config.update(batch_size=2, num_epochs=2, overfit=True)
+            for name, group in config["param_groups"].items():
+                lines = [(2, 0.0)] if name in ("whiten_weight", "norm_weight") else [(2, 0.001, 0.0)]
+                group.update(lr_scheduler=lines, momentum=0.0)
+            config["hparam_tuning"]["params"] = {
+                "all.initial_lr": dict(initial=0.001, choices=[0.001, 0.002]),
+                "all.momentum": dict(initial=0.0, choices=[0.0, 0.5]),
+                "all.kfac_factor_momentum": dict(initial=0.0, choices=[0.0, 0.5]),
+            }
+            original = copy.deepcopy(config)
+            model = TinyModel(dict(time=0, training=0))
+            optimizers, applied = [], []
+            make_optimizer, step = train.make_optimizer, train.GroupOptimizer.step
+
+            def capture_optimizer(*args):
+                optimizer = make_optimizer(*args)
+                optimizers.append(optimizer)
+                return optimizer
+
+            def checked_step(optimizer):
+                settings = {
+                    (g["lr"], g["momentum"], g["kfac_factor_momentum"], g["nesterov"])
+                    for g in optimizer.param_groups
+                    if g["name"] not in ("whiten_weight", "norm_weight")
+                }
+                self.assertEqual(len(settings), 1)
+                point = settings.pop()
+                self.assertTrue(point[3])
+                applied.append(point)
+                frozen = {}
+                for group in optimizer.param_groups:
+                    if group["name"] in ("whiten_weight", "norm_weight"):
+                        self.assertEqual(group["lr"], 0.0)
+                        for parameter in group["params"]:
+                            frozen[parameter] = parameter.detach().clone()
+                result = step(optimizer)
+                for parameter, before in frozen.items():
+                    torch.testing.assert_close(parameter, before, rtol=0, atol=0)
+                return result
+
+            def score(*args, **kwargs):
+                group = optimizers[0].param_groups[0]
+                return group["lr"] + 0.2 * (group["momentum"] + group["kfac_factor_momentum"])
+
+            with (
+                patch.object(train, "CifarLoader", TinyLoader),
+                patch.object(train, "make_optimizer", side_effect=capture_optimizer),
+                patch.object(train.GroupOptimizer, "step", checked_step),
+                patch.object(train, "evaluate", side_effect=score),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                result = train.run_experiment("shared_neighbour", model, config)["best_result"]
+            self.assertEqual(model.training_steps.item(), 2)
+            self.assertEqual(len(result["intervals"]), 1)
+            interval = result["intervals"][0]
+            self.assertEqual(interval["cooldown_steps"], 0)
+            self.assertEqual(interval["main_hparams"], {
+                "all.initial_lr": 0.002, "all.momentum": 0.5,
+                "all.kfac_factor_momentum": 0.5,
+            })
+            self.assertEqual(applied[-2:], [(0.002, 0.5, 0.5, True), (0.001, 0.5, 0.5, True)])
+            for name in config["param_groups"]:
+                expected_lr = [(2, 0.0)] if name in ("whiten_weight", "norm_weight") else [(2, 0.002, 0.0)]
+                self.assertEqual(result["hparam_schedules"][f"{name}.initial_lr"], expected_lr)
+                self.assertEqual(result["hparam_schedules"][f"{name}.kfac_factor_momentum"], [(2, 0.5)])
+            self.assertEqual(config, original)
+
+    def test_shared_lr_and_decay_preserve_frozen_schedules(self):
+        config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["all_kfac"])
+        self.assertEqual(train.get_hparam(config, "all.initial_lr"), 0.15)
+        changed = train.with_hparam(config, "all.initial_lr", 5.4)
+        changed = train.with_hparam(changed, "all.decay", "constant")
+        schedules = train.configured_hparam_schedules(config["param_groups"], 200)
+        selected = train.segment_hparam_schedules(
+            schedules, {"all.initial_lr": 5.4, "all.decay": "constant"},
+            0, 200, global_search=True,
+        )
+        for name, group in changed["param_groups"].items():
+            expected = [(200, 0.0)] if name in ("whiten_weight", "norm_weight") else [(200, 5.4)]
+            self.assertEqual(group["lr_scheduler"], expected)
+            self.assertEqual(selected[f"{name}.initial_lr"], expected)
 
     def optimizer(self, model, algorithm, **options):
         defaults = dict(
@@ -2889,10 +2987,14 @@ class KFACTests(unittest.TestCase):
             optimizer.prepare_kfac(logits)
             torch.nn.functional.cross_entropy(logits, torch.tensor([0, 1, 0])).backward()
             optimizer.step()
-            for parameter in model.parameters():
-                self.assertTrue(torch.isfinite(parameter).all())
-                self.assertFalse(torch.equal(parameter, before[parameter]))
-                self.assertIn("kfac_output_covariance", optimizer.state[parameter])
+            for group in optimizer.param_groups:
+                for parameter in group["params"]:
+                    self.assertTrue(torch.isfinite(parameter).all())
+                    if group["name"] in ("whiten_weight", "norm_weight"):
+                        torch.testing.assert_close(parameter, before[parameter], rtol=0, atol=0)
+                    else:
+                        self.assertFalse(torch.equal(parameter, before[parameter]))
+                    self.assertIn("kfac_output_covariance", optimizer.state[parameter])
             checkpoint = copy.deepcopy(optimizer.state_dict())
             optimizer.zero_grad(set_to_none=True)
             with torch.no_grad():

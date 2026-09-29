@@ -3117,3 +3117,194 @@ config_diff run=all_kfac.0 base_run=all_kfac
     head.momentum: 0.9 -> 0
     conv.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
     conv.momentum: 0.9 -> 0
+val_acc=0.8419 tta_val_acc=0.8670 seconds=56.2657
+config_diff run=all_kfac.1 base_run=all_kfac
+  changes:
+    whiten_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_weight.momentum: 0.9 -> 0
+    whiten_weight.kfac_factor_momentum: 0 -> 0.5
+    norm_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_weight.momentum: 0.9 -> 0
+    norm_weight.kfac_factor_momentum: 0 -> 0.5
+    whiten_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_bias.momentum: 0.9 -> 0
+    whiten_bias.kfac_factor_momentum: 0 -> 0.5
+    norm_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_bias.momentum: 0.9 -> 0
+    norm_bias.kfac_factor_momentum: 0 -> 0.5
+    head.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    head.momentum: 0.9 -> 0
+    head.kfac_factor_momentum: 0 -> 0.5
+    conv.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    conv.momentum: 0.9 -> 0
+    conv.kfac_factor_momentum: 0 -> 0.5
+val_acc=0.8534 tta_val_acc=0.8755 seconds=55.8429
+config_diff run=all_kfac.2 base_run=all_kfac
+  changes:
+    whiten_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_weight.momentum: 0.9 -> 0.5
+    norm_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_weight.momentum: 0.9 -> 0.5
+    whiten_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_bias.momentum: 0.9 -> 0.5
+    norm_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_bias.momentum: 0.9 -> 0.5
+    head.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    head.momentum: 0.9 -> 0.5
+    conv.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    conv.momentum: 0.9 -> 0.5
+val_acc=0.8428 tta_val_acc=0.8645 seconds=55.9342
+config_diff run=all_kfac.3 base_run=all_kfac
+  changes:
+    whiten_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_weight.momentum: 0.9 -> 0.5
+    whiten_weight.kfac_factor_momentum: 0 -> 0.5
+    norm_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_weight.momentum: 0.9 -> 0.5
+    norm_weight.kfac_factor_momentum: 0 -> 0.5
+    whiten_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_bias.momentum: 0.9 -> 0.5
+    whiten_bias.kfac_factor_momentum: 0 -> 0.5
+    norm_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_bias.momentum: 0.9 -> 0.5
+    norm_bias.kfac_factor_momentum: 0 -> 0.5
+    head.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    head.momentum: 0.9 -> 0.5
+    head.kfac_factor_momentum: 0 -> 0.5
+    conv.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    conv.momentum: 0.9 -> 0.5
+    conv.kfac_factor_momentum: 0 -> 0.5
+val_acc=0.8497 tta_val_acc=0.8756 seconds=55.8782
+config_diff run=all_kfac.4 base_run=all_kfac
+  changes:
+    whiten_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_weight.momentum: 0.9 -> 0.7
+    norm_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_weight.momentum: 0.9 -> 0.7
+    whiten_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_bias.momentum: 0.9 -> 0.7
+    norm_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_bias.momentum: 0.9 -> 0.7
+    head.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    head.momentum: 0.9 -> 0.7
+    conv.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    conv.momentum: 0.9 -> 0.7
+val_acc=0.8335 tta_val_acc=0.8579 seconds=55.8919
+config_diff run=all_kfac.5 base_run=all_kfac
+  changes:
+    whiten_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_weight.momentum: 0.9 -> 0.7
+    whiten_weight.kfac_factor_momentum: 0 -> 0.5
+    norm_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_weight.momentum: 0.9 -> 0.7
+    norm_weight.kfac_factor_momentum: 0 -> 0.5
+    whiten_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_bias.momentum: 0.9 -> 0.7
+    whiten_bias.kfac_factor_momentum: 0 -> 0.5
+    norm_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_bias.momentum: 0.9 -> 0.7
+    norm_bias.kfac_factor_momentum: 0 -> 0.5
+    head.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    head.momentum: 0.9 -> 0.7
+    head.kfac_factor_momentum: 0 -> 0.5
+    conv.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    conv.momentum: 0.9 -> 0.7
+    conv.kfac_factor_momentum: 0 -> 0.5
+val_acc=0.8441 tta_val_acc=0.8732 seconds=55.9072
+config_diff run=all_kfac.6 base_run=all_kfac
+  changes:
+    whiten_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_weight.momentum: 0.9 -> 0.8
+    norm_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_weight.momentum: 0.9 -> 0.8
+    whiten_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_bias.momentum: 0.9 -> 0.8
+    norm_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_bias.momentum: 0.9 -> 0.8
+    head.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    head.momentum: 0.9 -> 0.8
+    conv.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    conv.momentum: 0.9 -> 0.8
+val_acc=0.8372 tta_val_acc=0.8567 seconds=55.9006
+config_diff run=all_kfac.7 base_run=all_kfac
+  changes:
+    whiten_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_weight.momentum: 0.9 -> 0.8
+    whiten_weight.kfac_factor_momentum: 0 -> 0.5
+    norm_weight.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_weight.momentum: 0.9 -> 0.8
+    norm_weight.kfac_factor_momentum: 0 -> 0.5
+    whiten_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    whiten_bias.momentum: 0.9 -> 0.8
+    whiten_bias.kfac_factor_momentum: 0 -> 0.5
+    norm_bias.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    norm_bias.momentum: 0.9 -> 0.8
+    norm_bias.kfac_factor_momentum: 0 -> 0.5
+    head.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    head.momentum: 0.9 -> 0.8
+    head.kfac_factor_momentum: 0 -> 0.5
+    conv.lr_scheduler: [[200, 0.15, 0.0]] -> [[200, 0.0042, 0.0]]
+    conv.momentum: 0.9 -> 0.8
+    conv.kfac_factor_momentum: 0 -> 0.5
+Traceback (most recent call last):
+  File "/workspace/autoresearch/train_cifar.py", line 3082, in <module>
+    recorder.finish()
+    ^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 2916, in run_experiment
+    algorithm = tuning["algorithm"]
+                    ~~^^^^^^^^^^^^^~
+  File "/workspace/autoresearch/train_cifar.py", line 2879, in evaluate_config
+    validate_tuning_config(tuning)
+                 ^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 3031, in main
+    # Initialize the whitening layer using training images
+                      ^^^^^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1778, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1789, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 958, in forward
+    x = self.layers(x)
+        ^^^^^^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1778, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1789, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+            ^^^^^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1778, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1789, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 904, in forward
+    x = self.conv2(x)
+        ^^^^^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1778, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1884, in _call_impl
+    return inner()
+           ^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1845, in inner
+    hook_result = hook(self, args, result)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 382, in _capture_kfac
+    factor = self._kfac_input_factor(module, args[0], output) if need_input else None
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 360, in _kfac_input_factor
+    rows = F.unfold(
+           ^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/nn/functional.py", line 6145, in unfold
+    return torch._C._nn.im2col(
+           ^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt

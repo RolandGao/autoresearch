@@ -3124,3 +3124,30 @@ if __name__ == "__main__":
         compile_and_warmup_model(model, RUN_CONFIGS)
     for run, config in RUNS:
         run_experiment(run, model, config)
+
+
+# Run output
+
+base_config run=all_kfac
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "global_neighbour",
+    "metric": "tta_val_acc",
+    "max_side_steps": 20,
+    "params": {"all.initial_lr": {"initial": 0.15, "choices": [0.0042, 0.007, 0.012, 0.019, 0.032, 0.054, 0.09, 0.15, 0.25, 0.42, 0.69, 1.2, 1.9, 3.2, 5.4]}, "all.momentum": {"initial": 0.9, "choices": [0.0, 0.5, 0.7, 0.8, 0.9]}, "all.kfac_factor_momentum": {"initial": 0.0, "choices": [0.0, 0.5]}},
+    "interval_steps": 200,
+    "cooldown_steps": 0
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "kfac", "lr_scheduler": [[200, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
+    "norm_weight": {"algorithm": "kfac", "lr_scheduler": [[200, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
+    "whiten_bias": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
+    "norm_bias": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
+    "head": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
+    "conv": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1}
+  }
+}
+search run=all_kfac interval=0 phase=main metric=tta_val_acc
