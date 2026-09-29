@@ -145,6 +145,8 @@ INPUT_CONDITIONER_FIELDS = {
     "input_conditioner_momentum",
     "gradient_momentum_before_conditioning",
 }
+KFAC_ALGORITHMS = {"kfac", "kfac-jacobian"}
+KFAC_FIELDS = {"kfac_damping", "kfac_factor_momentum", "kfac_probes"}
 ALGORITHM_FIELDS = {
     "sgd": set(),
     "lion": set(),
@@ -153,6 +155,8 @@ ALGORITHM_FIELDS = {
     "muon2": set(),
     "sgdh": {"normalization_eps"},
     "input_conditioned": INPUT_CONDITIONER_FIELDS,
+    "kfac": KFAC_FIELDS,
+    "kfac-jacobian": KFAC_FIELDS,
 }
 
 
@@ -198,6 +202,9 @@ class GroupOptimizer(torch.optim.Optimizer):
             self.validate_group(group, runtime=True)
         super().__init__(param_groups, defaults={"momentum_version": 1})
         self._input_covariances = {}
+        self._kfac_layers = {}
+        self._kfac_pending = {}
+        self._kfac_factors = {}
         for group in self.param_groups:
             group["lr"] = round_hparam(group["lr"])
             group["momentum"] = round_hparam(group["momentum"])
@@ -274,6 +281,198 @@ class GroupOptimizer(torch.optim.Optimizer):
             raise ValueError("normalization_eps must be positive")
         if group["algorithm"] == "input_conditioned":
             input_conditioner_options(group)
+        if group["algorithm"] in KFAC_ALGORITHMS:
+            if round_hparam(group["kfac_factor_momentum"]) >= 1:
+                raise ValueError("kfac_factor_momentum must be in [0, 1)")
+            probes = group["kfac_probes"]
+            if isinstance(probes, bool) or not isinstance(probes, int) or probes <= 0:
+                raise ValueError("kfac_probes must be a positive integer")
+
+    def bind_kfac_layers(self, model):
+        """Bind independent weight/bias blocks, including BatchNorm affine blocks.
+
+        Conv2d uses the spatially uncorrelated KFC approximation: A averages
+        input patches and G sums spatial derivative moments, averaging examples.
+        BatchNorm scale is the diagonal restriction of an affine weight matrix,
+        so its block is A * G (Hadamard product); its bias block is G.
+        Weight/bias cross terms are omitted to keep parameter groups independent.
+        """
+        for handle in getattr(model, "_kfac_hooks", []):
+            handle.remove()
+        model._kfac_hooks = []
+        self._kfac_layers.clear()
+        self._kfac_pending.clear()
+        self._kfac_factors.clear()
+        selected = {
+            p: group for group in self.param_groups
+            if group["algorithm"] in KFAC_ALGORITHMS for p in group["params"]
+        }
+        found = set()
+        for module in model.modules():
+            params = [p for p in module.parameters(recurse=False) if p in selected]
+            if not params:
+                continue
+            if not isinstance(module, (nn.Linear, nn.Conv2d, nn.BatchNorm2d)):
+                raise ValueError("K-FAC supports Linear, Conv2d, and BatchNorm2d parameters")
+            if isinstance(module, nn.Conv2d) and module.groups != 1:
+                raise ValueError("K-FAC does not support grouped convolutions")
+            if any(p is not module.weight and p is not module.bias for p in params):
+                raise ValueError("K-FAC requires module weight or bias parameters")
+            if found.intersection(params):
+                raise ValueError("K-FAC does not support shared parameters")
+            found.update(params)
+            self._kfac_layers[module] = [(p, selected[p]) for p in params]
+            model._kfac_hooks.append(module.register_forward_hook(self._capture_kfac))
+        if found != set(selected):
+            raise ValueError("Some K-FAC parameters have no supported owning layer")
+
+    @torch.no_grad()
+    def _kfac_input_factor(self, module, inputs, output):
+        dtype = torch.float64 if inputs.dtype == torch.float64 else torch.float32
+        with torch.autocast(device_type=inputs.device.type, enabled=False):
+            x = inputs.detach().to(dtype)
+            if isinstance(module, nn.Linear):
+                if x.ndim != 2:
+                    raise ValueError("K-FAC Linear inputs must have shape [batch, features]")
+                return x.T @ x / len(x)
+            if isinstance(module, nn.BatchNorm2d):
+                if module.training or not module.track_running_stats:
+                    variance, mean = torch.var_mean(x, dim=(0, 2, 3), correction=0)
+                else:
+                    mean, variance = module.running_mean.to(dtype), module.running_var.to(dtype)
+                x = (x - mean[None, :, None, None]) * torch.rsqrt(
+                    variance[None, :, None, None] + module.eps
+                )
+            # Bound unfolded patch storage, including for the large CIFAR batches.
+            sites = output.shape[2] * output.shape[3]
+            chunk_size = max(1, 16384 // sites)
+            covariance, count = None, 0
+            for chunk in x.split(chunk_size):
+                if isinstance(module, nn.Conv2d):
+                    if module.padding_mode != "zeros" or isinstance(module.padding, str):
+                        chunk = F.pad(
+                            chunk, module._reversed_padding_repeated_twice,
+                            mode="constant" if module.padding_mode == "zeros" else module.padding_mode,
+                        )
+                        padding = 0
+                    else:
+                        padding = module.padding
+                    rows = F.unfold(
+                        chunk, module.kernel_size, dilation=module.dilation,
+                        padding=padding, stride=module.stride,
+                    ).transpose(1, 2).reshape(-1, module.weight[0].numel())
+                else:
+                    rows = chunk.permute(0, 2, 3, 1).reshape(-1, chunk.shape[1])
+                moment = rows.T @ rows
+                if covariance is None:
+                    covariance = moment
+                else:
+                    covariance.add_(moment)
+                count += len(rows)
+            return covariance / count
+
+    def _capture_kfac(self, module, args, output):
+        if not module.training or not torch.is_grad_enabled():
+            return
+        if module in self._kfac_pending:
+            raise RuntimeError("K-FAC requires one call per layer per training forward")
+        if not output.requires_grad:
+            return
+        need_input = any(p is module.weight for p, _ in self._kfac_layers[module])
+        factor = self._kfac_input_factor(module, args[0], output) if need_input else None
+        self._kfac_pending[module] = (output, factor)
+
+    @staticmethod
+    def _kfac_probe(logits, algorithm):
+        """Unscaled random VJP seed with covariance H_CE or I per example."""
+        dtype = torch.float64 if logits.dtype == torch.float64 else torch.float32
+        noise = torch.empty_like(logits, dtype=dtype).bernoulli_(0.5).mul_(2).sub_(1)
+        if algorithm == "kfac":
+            probabilities = logits.detach().to(dtype).softmax(-1)
+            weighted = probabilities.sqrt() * noise
+            noise = weighted - probabilities * weighted.sum(-1, keepdim=True)
+        return noise.to(logits.dtype)
+
+    def prepare_kfac(self, logits):
+        """Estimate factors before loss.backward(), without touching parameter grads.
+
+        kfac uses E[J.T (diag(p) - p p.T) J]; kfac-jacobian uses E[J.T J].
+        Applying the latter inverse to the usual CE gradient approximates
+        J^+ grad_logits(loss), with no CE Hessian. Random probes have independent
+        signs for every example and logit; kfac_probes controls their average.
+        Neither label smoothing nor the loss's batch reduction scales the probes.
+        The approximations also discard cross-layer and cross-spatial terms.
+        """
+        if not self._kfac_layers:
+            return
+        if logits.ndim != 2 or not logits.requires_grad or len(logits) == 0:
+            raise ValueError("K-FAC requires differentiable [batch, classes] logits")
+        if self._kfac_factors:
+            raise RuntimeError("K-FAC factors were already prepared for this step")
+        buckets = {}
+        for module, parameters in self._kfac_layers.items():
+            if module not in self._kfac_pending:
+                raise RuntimeError("K-FAC needs outputs from the current training forward")
+            for p, group in parameters:
+                key = (group["algorithm"], group["kfac_probes"])
+                buckets.setdefault(key, {}).setdefault(module, []).append(p)
+        try:
+            for (algorithm, probes), modules in buckets.items():
+                outputs = [self._kfac_pending[m][0] for m in modules]
+                moments = {}
+                for _ in range(probes):
+                    derivatives = torch.autograd.grad(
+                        logits, outputs, grad_outputs=self._kfac_probe(logits, algorithm),
+                        retain_graph=True,
+                    )
+                    with torch.no_grad(), torch.autocast(device_type=logits.device.type, enabled=False):
+                        for module, derivative in zip(modules, derivatives):
+                            dtype = torch.float64 if derivative.dtype == torch.float64 else torch.float32
+                            rows = derivative.detach().to(dtype)
+                            if rows.ndim == 4:
+                                rows = rows.permute(0, 2, 3, 1).reshape(-1, rows.shape[1])
+                            moment = rows.T @ rows / (len(logits) * probes)
+                            if module not in moments:
+                                moments[module] = moment
+                            else:
+                                moments[module].add_(moment)
+                for module, parameters in modules.items():
+                    for p in parameters:
+                        kind = "bias" if p is module.bias else (
+                            "scale" if isinstance(module, nn.BatchNorm2d) else "weight"
+                        )
+                        self._kfac_factors[p] = (
+                            self._kfac_pending[module][1] if kind != "bias" else None,
+                            moments[module], kind,
+                        )
+        finally:
+            # Do not keep autograd graphs alive in the optimizer or checkpoints.
+            self._kfac_pending.clear()
+
+    def _condition_kfac(self, parameter, gradient, group):
+        factors = self._kfac_factors.pop(parameter, None)
+        if factors is None:
+            raise RuntimeError("K-FAC requires prepare_kfac(logits) before loss.backward() and step()")
+        a, g, kind = factors
+        state = self.state[parameter]
+        beta = group["kfac_factor_momentum"]
+        for key, factor in (("kfac_input_covariance", a), ("kfac_output_covariance", g)):
+            if factor is not None:
+                if key not in state:
+                    state[key] = factor.clone()
+                else:
+                    state[key].lerp_(factor, 1 - beta)
+        g = state["kfac_output_covariance"]
+        damping = group["kfac_damping"]
+        gradient = gradient.to(g.dtype)
+        if kind == "bias":
+            return self.condition(gradient[None, :], g, damping).reshape_as(parameter)
+        a = state["kfac_input_covariance"]
+        if kind == "scale":
+            return self.condition(gradient[None, :], a * g, damping).reshape_as(parameter)
+        matrix = gradient.reshape(len(gradient), -1)
+        matrix = self.condition(matrix, a, damping)
+        return self.condition(matrix.T, g, damping).T.reshape_as(parameter)
 
     @torch.no_grad()
     def record_input(self, parameter, inputs):
@@ -325,6 +524,8 @@ class GroupOptimizer(torch.optim.Optimizer):
     def zero_grad(self, set_to_none):
         super().zero_grad(set_to_none=set_to_none)
         self._input_covariances.clear()
+        self._kfac_pending.clear()
+        self._kfac_factors.clear()
 
     def load_state_dict(self, state_dict):
         for group in state_dict["param_groups"]:
@@ -336,13 +537,24 @@ class GroupOptimizer(torch.optim.Optimizer):
         for group, saved_group in zip(self.param_groups, state_dict["param_groups"]):
             for parameter, index in zip(group["params"], saved_group["params"]):
                 saved_state = state_dict["state"].get(index, {})
-                for key in ("input_covariance", "exp_avg", "exp_avg_sq"):
+                precise_keys = ["input_covariance", "exp_avg", "exp_avg_sq",
+                                "kfac_input_covariance", "kfac_output_covariance"]
+                if group["algorithm"] in KFAC_ALGORITHMS:
+                    precise_keys.append("momentum_buffer")
+                for key in precise_keys:
                     if key in saved_state:
                         self.state[parameter][key] = saved_state[key].to(
                             parameter.device
                         ).clone()
+        # PyTorch replaces group dictionaries when loading. Hooks must use the
+        # restored groups so later probe-count searches act on the live options.
+        groups = {p: group for group in self.param_groups for p in group["params"]}
+        for module, parameters in self._kfac_layers.items():
+            self._kfac_layers[module] = [(p, groups[p]) for p, _ in parameters]
         # The current batch's covariance is transient; only its EMA is checkpointed.
         self._input_covariances.clear()
+        self._kfac_pending.clear()
+        self._kfac_factors.clear()
         return result
 
     @staticmethod
@@ -386,6 +598,8 @@ class GroupOptimizer(torch.optim.Optimizer):
                 g = p.grad
                 if g is None:
                     continue
+                if group["algorithm"] in KFAC_ALGORITHMS:
+                    g = self._condition_kfac(p, g, group)
                 if group["algorithm"] == "adam":
                     state = self.state[p]
                     dtype = torch.float64 if p.dtype == torch.float64 else torch.float32
@@ -1360,6 +1574,11 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # momentum_version=1. Adam uses momentum as beta1, plus explicit beta2 and eps
 # (e.g. 0.9, 0.999, 1e-8); it requires nesterov=False and momentum_version=1,
 # and always applies its own first/second-moment bias correction.
+# kfac and kfac-jacobian support every CIFAR group, including normalization and
+# biases. kfac_damping is a fraction of each factor's mean eigenvalue (0 uses
+# pseudoinverses); kfac_factor_momentum is its EMA beta; kfac_probes is the number
+# of random logits VJPs per step. Momentum is applied after preconditioning.
+# kfac-jacobian replaces the CE Fisher's logits Hessian with identity.
 run_type = "grid"  # "baseline", "interval", "global_neighbour", or "grid"
 # Log per-step singular values of the final (post-search) run of each config to
 # untracked_logs/<log filename>/, with one .npz and one .mp4 per run.
@@ -1861,7 +2080,31 @@ EXPERIMENT_RUN_CONFIGS["exp10_head_sgd_v3_grid"]["hparam_tuning"]["params"][
     "head.initial_lr"
 ]["choices"] = sorted(round_hparam(6000 * 0.6 ** k) for k in range(4, 9))
 
-experiments_to_run = ["exp10_head_sgd_v3_grid"]
+# All parameters train, including whitening weights and both bias groups.
+# These are starting configurations, not tuned replacements for the baselines.
+for algorithm in ("kfac", "kfac-jacobian"):
+    initial_lr = 0.001 if algorithm == "kfac" else 0.01
+    config = copy.deepcopy(BASELINE_RUN_CONFIGS[2])
+    config["param_groups"] = {
+        name: dict(
+            algorithm=algorithm,
+            lr_scheduler=lr_decay_schedule(200, initial_lr, "linear_decay"),
+            momentum=0.9,
+            momentum_version=3,
+            nesterov=False,
+            kfac_damping=0.03,
+            kfac_factor_momentum=0.95,
+            kfac_probes=1,
+        )
+        for name in config["param_groups"]
+    }
+    config["hparam_tuning"] = dict(
+        algorithm="grid", metric="tta_val_acc",
+        params={"head.initial_lr": dict(initial=initial_lr, choices=[initial_lr])},
+    )
+    EXPERIMENT_RUN_CONFIGS[f"all_{algorithm}"] = config
+
+experiments_to_run = ["all_kfac", "all_kfac-jacobian"]
 RUNS = (
     [(name, EXPERIMENT_RUN_CONFIGS[name]) for name in experiments_to_run]
     if run_type in ("global_neighbour", "grid")
@@ -1888,6 +2131,7 @@ def normalize_config(value, key):
         "cooldown_steps",
         "max_side_steps",
         "ns_steps",
+        "kfac_probes",
     ):
         return copy.deepcopy(value)
     if key == "lr_scheduler":
@@ -1931,6 +2175,7 @@ def make_optimizer(model, param_groups):
         ]
     )
     optimizer.bind_input_layers(model)
+    optimizer.bind_kfac_layers(model)
     return optimizer
 
 
@@ -2355,12 +2600,14 @@ def run_interval_search(run, model, config, debug):
             inputs, labels = stream.next_batch()
             if commit and recorder is not None:
                 recorder.before_step()
+            outputs = model(inputs)
             loss = F.cross_entropy(
-                model(inputs), labels, label_smoothing=0.2, reduction="mean"
+                outputs, labels, label_smoothing=0.2, reduction="mean"
             )
             if not isfinite(loss.item()):
                 valid = False
                 break
+            optimizer.prepare_kfac(outputs)
             loss.backward()
             optimizer.step()
             if commit and recorder is not None:
@@ -2766,6 +3013,7 @@ def main(
             loss = F.cross_entropy(
                 outputs, labels, label_smoothing=0.2, reduction="mean"
             )
+            optimizer.prepare_kfac(outputs)
             loss.backward()
             apply_hparam_schedules(optimizer, schedules, step)
             optimizer.step()

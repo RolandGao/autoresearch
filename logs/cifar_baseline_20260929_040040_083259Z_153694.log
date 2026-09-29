@@ -2839,3 +2839,273 @@ base_config run=exp10_head_sgd_v3_grid
 config_diff run=exp10_head_sgd_v3_grid.0 base_run=exp10_head_sgd_v3_grid
   changes:
     head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 100.0, 0.0]]
+val_acc=0.9267 tta_val_acc=0.9372 seconds=11.1877
+config_diff run=exp10_head_sgd_v3_grid.1 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 100.0, 0.0]]
+    head.nesterov: true -> false
+val_acc=0.9267 tta_val_acc=0.9372 seconds=10.6445
+config_diff run=exp10_head_sgd_v3_grid.2 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 100.0, 0.0]]
+    head.momentum: 0 -> 0.5
+val_acc=0.9229 tta_val_acc=0.9341 seconds=10.6405
+config_diff run=exp10_head_sgd_v3_grid.3 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 100.0, 0.0]]
+    head.momentum: 0 -> 0.5
+    head.nesterov: true -> false
+val_acc=0.9296 tta_val_acc=0.9356 seconds=10.6355
+config_diff run=exp10_head_sgd_v3_grid.4 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 100.0, 0.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.9261 tta_val_acc=0.9338 seconds=10.6397
+config_diff run=exp10_head_sgd_v3_grid.5 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 100.0, 0.0]]
+    head.momentum: 0 -> 0.7
+    head.nesterov: true -> false
+val_acc=0.9260 tta_val_acc=0.9343 seconds=10.6354
+config_diff run=exp10_head_sgd_v3_grid.6 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 100.0, 0.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.9270 tta_val_acc=0.9349 seconds=10.6364
+config_diff run=exp10_head_sgd_v3_grid.7 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 100.0, 0.0]]
+    head.momentum: 0 -> 0.8
+    head.nesterov: true -> false
+val_acc=0.9274 tta_val_acc=0.9365 seconds=10.6359
+config_diff run=exp10_head_sgd_v3_grid.8 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 100.0, 0.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.9253 tta_val_acc=0.9346 seconds=10.6385
+config_diff run=exp10_head_sgd_v3_grid.9 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 100.0, 0.0]]
+    head.momentum: 0 -> 0.9
+    head.nesterov: true -> false
+val_acc=0.9282 tta_val_acc=0.9374 seconds=10.6377
+config_diff run=exp10_head_sgd_v3_grid.10 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 170.0, 0.0]]
+val_acc=0.9295 tta_val_acc=0.9392 seconds=10.6381
+config_diff run=exp10_head_sgd_v3_grid.11 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 170.0, 0.0]]
+    head.nesterov: true -> false
+val_acc=0.9295 tta_val_acc=0.9392 seconds=10.6399
+config_diff run=exp10_head_sgd_v3_grid.12 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 170.0, 0.0]]
+    head.momentum: 0 -> 0.5
+val_acc=0.9284 tta_val_acc=0.9367 seconds=10.6395
+config_diff run=exp10_head_sgd_v3_grid.13 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 170.0, 0.0]]
+    head.momentum: 0 -> 0.5
+    head.nesterov: true -> false
+val_acc=0.9246 tta_val_acc=0.9350 seconds=10.6386
+config_diff run=exp10_head_sgd_v3_grid.14 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 170.0, 0.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.9276 tta_val_acc=0.9351 seconds=10.6374
+config_diff run=exp10_head_sgd_v3_grid.15 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 170.0, 0.0]]
+    head.momentum: 0 -> 0.7
+    head.nesterov: true -> false
+val_acc=0.9290 tta_val_acc=0.9348 seconds=10.6393
+config_diff run=exp10_head_sgd_v3_grid.16 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 170.0, 0.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.9280 tta_val_acc=0.9383 seconds=10.6403
+config_diff run=exp10_head_sgd_v3_grid.17 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 170.0, 0.0]]
+    head.momentum: 0 -> 0.8
+    head.nesterov: true -> false
+val_acc=0.9279 tta_val_acc=0.9369 seconds=10.6356
+config_diff run=exp10_head_sgd_v3_grid.18 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 170.0, 0.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.9260 tta_val_acc=0.9350 seconds=10.6376
+config_diff run=exp10_head_sgd_v3_grid.19 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 170.0, 0.0]]
+    head.momentum: 0 -> 0.9
+    head.nesterov: true -> false
+val_acc=0.9260 tta_val_acc=0.9371 seconds=10.6378
+config_diff run=exp10_head_sgd_v3_grid.20 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 280.0, 0.0]]
+val_acc=0.9299 tta_val_acc=0.9378 seconds=10.6370
+config_diff run=exp10_head_sgd_v3_grid.21 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 280.0, 0.0]]
+    head.nesterov: true -> false
+val_acc=0.9299 tta_val_acc=0.9378 seconds=10.6373
+config_diff run=exp10_head_sgd_v3_grid.22 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 280.0, 0.0]]
+    head.momentum: 0 -> 0.5
+val_acc=0.9287 tta_val_acc=0.9400 seconds=10.6387
+config_diff run=exp10_head_sgd_v3_grid.23 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 280.0, 0.0]]
+    head.momentum: 0 -> 0.5
+    head.nesterov: true -> false
+val_acc=0.9277 tta_val_acc=0.9366 seconds=10.6358
+config_diff run=exp10_head_sgd_v3_grid.24 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 280.0, 0.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.9260 tta_val_acc=0.9391 seconds=10.6366
+config_diff run=exp10_head_sgd_v3_grid.25 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 280.0, 0.0]]
+    head.momentum: 0 -> 0.7
+    head.nesterov: true -> false
+val_acc=0.9264 tta_val_acc=0.9361 seconds=10.6379
+config_diff run=exp10_head_sgd_v3_grid.26 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 280.0, 0.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.9298 tta_val_acc=0.9381 seconds=10.6383
+config_diff run=exp10_head_sgd_v3_grid.27 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 280.0, 0.0]]
+    head.momentum: 0 -> 0.8
+    head.nesterov: true -> false
+val_acc=0.9312 tta_val_acc=0.9410 seconds=10.6370
+config_diff run=exp10_head_sgd_v3_grid.28 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 280.0, 0.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.9292 tta_val_acc=0.9386 seconds=10.6403
+config_diff run=exp10_head_sgd_v3_grid.29 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 280.0, 0.0]]
+    head.momentum: 0 -> 0.9
+    head.nesterov: true -> false
+val_acc=0.9276 tta_val_acc=0.9390 seconds=10.6394
+config_diff run=exp10_head_sgd_v3_grid.30 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 470.0, 0.0]]
+val_acc=0.9298 tta_val_acc=0.9406 seconds=10.6424
+config_diff run=exp10_head_sgd_v3_grid.31 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 470.0, 0.0]]
+    head.nesterov: true -> false
+val_acc=0.9298 tta_val_acc=0.9406 seconds=10.6378
+config_diff run=exp10_head_sgd_v3_grid.32 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 470.0, 0.0]]
+    head.momentum: 0 -> 0.5
+val_acc=0.9300 tta_val_acc=0.9392 seconds=10.6393
+config_diff run=exp10_head_sgd_v3_grid.33 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 470.0, 0.0]]
+    head.momentum: 0 -> 0.5
+    head.nesterov: true -> false
+val_acc=0.9318 tta_val_acc=0.9373 seconds=10.6369
+config_diff run=exp10_head_sgd_v3_grid.34 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 470.0, 0.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.9289 tta_val_acc=0.9390 seconds=10.6392
+config_diff run=exp10_head_sgd_v3_grid.35 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 470.0, 0.0]]
+    head.momentum: 0 -> 0.7
+    head.nesterov: true -> false
+val_acc=0.9266 tta_val_acc=0.9368 seconds=10.6381
+config_diff run=exp10_head_sgd_v3_grid.36 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 470.0, 0.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.9276 tta_val_acc=0.9363 seconds=10.6355
+config_diff run=exp10_head_sgd_v3_grid.37 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 470.0, 0.0]]
+    head.momentum: 0 -> 0.8
+    head.nesterov: true -> false
+val_acc=0.9291 tta_val_acc=0.9373 seconds=10.6369
+config_diff run=exp10_head_sgd_v3_grid.38 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 470.0, 0.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.9298 tta_val_acc=0.9394 seconds=10.6427
+config_diff run=exp10_head_sgd_v3_grid.39 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 470.0, 0.0]]
+    head.momentum: 0 -> 0.9
+    head.nesterov: true -> false
+val_acc=0.9306 tta_val_acc=0.9389 seconds=10.6402
+config_diff run=exp10_head_sgd_v3_grid.40 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 780.0, 0.0]]
+val_acc=0.9317 tta_val_acc=0.9410 seconds=10.6413
+config_diff run=exp10_head_sgd_v3_grid.41 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 780.0, 0.0]]
+    head.nesterov: true -> false
+val_acc=0.9317 tta_val_acc=0.9410 seconds=10.6387
+config_diff run=exp10_head_sgd_v3_grid.42 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 780.0, 0.0]]
+    head.momentum: 0 -> 0.5
+val_acc=0.9305 tta_val_acc=0.9394 seconds=10.6431
+config_diff run=exp10_head_sgd_v3_grid.43 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 780.0, 0.0]]
+    head.momentum: 0 -> 0.5
+    head.nesterov: true -> false
+val_acc=0.9323 tta_val_acc=0.9394 seconds=11.3147
+config_diff run=exp10_head_sgd_v3_grid.44 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 780.0, 0.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.9301 tta_val_acc=0.9380 seconds=10.9801
+config_diff run=exp10_head_sgd_v3_grid.45 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 780.0, 0.0]]
+    head.momentum: 0 -> 0.7
+    head.nesterov: true -> false
+val_acc=0.9325 tta_val_acc=0.9378 seconds=10.6434
+config_diff run=exp10_head_sgd_v3_grid.46 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 780.0, 0.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.9306 tta_val_acc=0.9389 seconds=10.6483
+config_diff run=exp10_head_sgd_v3_grid.47 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 780.0, 0.0]]
+    head.momentum: 0 -> 0.8
+    head.nesterov: true -> false
+val_acc=0.9303 tta_val_acc=0.9396 seconds=10.6416
+config_diff run=exp10_head_sgd_v3_grid.48 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 780.0, 0.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.9289 tta_val_acc=0.9406 seconds=10.6467
+config_diff run=exp10_head_sgd_v3_grid.49 base_run=exp10_head_sgd_v3_grid
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 780.0, 0.0]]
+    head.momentum: 0 -> 0.9
+    head.nesterov: true -> false
+val_acc=0.9295 tta_val_acc=0.9394 seconds=10.6471
+search_best run=exp10_head_sgd_v3_grid trial=exp10_head_sgd_v3_grid.27 tta_val_acc=0.941
+  changes:
+    head.lr_scheduler: [[200, 6000, 0.0]] -> [[200, 280.0, 0.0]]
+    head.momentum: 0 -> 0.8
+    head.nesterov: true -> false
+debug_final_run run=exp10_head_sgd_v3_grid trial=exp10_head_sgd_v3_grid.27
+val_acc=0.9312 tta_val_acc=0.9410 seconds=44.4498
+debug_spectra run=exp10_head_sgd_v3_grid.final steps=200 data=untracked_logs/cifar_baseline_20260929_040040_083259Z_153694.log/cifar_spectra_20260929_041020_805906Z_153694_exp10_head_sgd_v3_grid.final.npz video=untracked_logs/cifar_baseline_20260929_040040_083259Z_153694.log/cifar_spectra_20260929_041020_805906Z_153694_exp10_head_sgd_v3_grid.final.mp4

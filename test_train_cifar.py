@@ -2682,5 +2682,276 @@ class SearchTests(unittest.TestCase):
                     )
 
 
+class KFACTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        torch.set_num_threads(2)
+
+    def optimizer(self, model, algorithm, **options):
+        defaults = dict(
+            algorithm=algorithm, lr=0.02, momentum=0.0, nesterov=False,
+            kfac_damping=0.0, kfac_factor_momentum=0.0, kfac_probes=1,
+        )
+        defaults.update(options)
+        optimizer = train.GroupOptimizer([
+            dict(name=name, params=[p], **defaults) for name, p in model.named_parameters()
+            if p.requires_grad
+        ])
+        optimizer.bind_kfac_layers(model)
+        return optimizer
+
+    def exact_probes(self, logits, algorithm):
+        """Enumerate a square root of the full logits metric, eliminating MC noise."""
+        batch, classes = logits.shape
+        if algorithm == "kfac":
+            probabilities = logits.detach().softmax(-1)
+            hessian = torch.diag_embed(probabilities) - probabilities[:, :, None] * probabilities[:, None, :]
+            eigenvalues, eigenvectors = torch.linalg.eigh(hessian)
+            root = eigenvectors * eigenvalues.clamp_min(0).sqrt()[:, None, :]
+        else:
+            root = torch.eye(classes, dtype=logits.dtype, device=logits.device).expand(batch, -1, -1)
+        seeds = []
+        for example, column in product(range(batch), range(classes)):
+            seed = torch.zeros_like(logits)
+            seed[example] = root[example, :, column] * (batch * classes) ** 0.5
+            seeds.append(seed)
+        return seeds
+
+    def prepare_exact(self, optimizer, logits, algorithm):
+        seeds = self.exact_probes(logits, algorithm)
+        for group in optimizer.param_groups:
+            group["kfac_probes"] = len(seeds)
+        with patch.object(optimizer, "_kfac_probe", side_effect=seeds):
+            optimizer.prepare_kfac(logits)
+
+    def test_probe_covariance_is_ce_hessian_or_identity(self):
+        # Exhaust the Rademacher distribution for three logits.
+        bits = torch.tensor(list(product((0., 1.), repeat=3)), dtype=torch.float64)
+        logits = torch.tensor([1., -2., 0.5], dtype=torch.float64).expand(8, -1)
+        for algorithm in train.KFAC_ALGORITHMS:
+            with patch.object(torch.Tensor, "bernoulli_", lambda tensor, _: tensor.copy_(bits)):
+                seeds = train.GroupOptimizer._kfac_probe(logits, algorithm)
+            covariance = seeds.T @ seeds / 8
+            p = logits[0].softmax(-1)
+            expected = torch.diag(p) - p[:, None] * p[None, :] if algorithm == "kfac" else torch.eye(3, dtype=p.dtype)
+            torch.testing.assert_close(covariance, expected)
+
+    def test_linear_factors_and_independent_bias_updates(self):
+        x = torch.tensor([[1., 2.], [-1., 3.], [2., -1.]], dtype=torch.float64)
+        labels = torch.tensor([0, 1, 2])
+        for algorithm in train.KFAC_ALGORITHMS:
+            torch.manual_seed(4)
+            model = torch.nn.Linear(2, 3).double()
+            optimizer = self.optimizer(model, algorithm)
+            before = {name: p.detach().clone() for name, p in model.named_parameters()}
+            logits = model(x) / 2  # Include the head's downstream logits scaling.
+            self.prepare_exact(optimizer, logits, algorithm)
+            self.assertTrue(all(p.grad is None for p in model.parameters()))
+            self.assertFalse(optimizer._kfac_pending)
+            loss = torch.nn.functional.cross_entropy(logits, labels, label_smoothing=0.2)
+            loss.backward()
+            a = x.T @ x / len(x)
+            if algorithm == "kfac":
+                p = logits.detach().softmax(-1)
+                g = (torch.diag_embed(p) - p[:, :, None] * p[:, None, :]).mean(0) / 4
+            else:
+                g = torch.eye(3, dtype=x.dtype) / 4
+            expected_weight = torch.linalg.pinv(g, hermitian=True) @ model.weight.grad @ torch.linalg.inv(a)
+            expected_bias = torch.linalg.pinv(g, hermitian=True) @ model.bias.grad
+            optimizer.step()
+            torch.testing.assert_close(model.weight, before["weight"] - 0.02 * expected_weight)
+            torch.testing.assert_close(model.bias, before["bias"] - 0.02 * expected_bias)
+            torch.testing.assert_close(optimizer.state[model.weight]["kfac_input_covariance"], a)
+            torch.testing.assert_close(optimizer.state[model.bias]["kfac_output_covariance"], g)
+            with self.assertRaisesRegex(RuntimeError, "prepare_kfac"):
+                optimizer.step()
+
+    def test_jacobian_update_matches_explicit_pseudoinverse(self):
+        model = torch.nn.Linear(2, 3, bias=False).double()
+        optimizer = self.optimizer(model, "kfac-jacobian")
+        x = torch.tensor([[1., 2.]], dtype=torch.float64)
+        weight = model.weight.detach().clone()
+        logits = model(x) / 3
+        self.prepare_exact(optimizer, logits, "kfac-jacobian")
+        loss = torch.nn.functional.cross_entropy(logits, torch.tensor([1]))
+        residual = torch.autograd.grad(loss, logits, retain_graph=True)[0].flatten()
+        jacobian = torch.autograd.functional.jacobian(lambda w: (x @ w.T / 3).flatten(), weight).reshape(3, -1)
+        expected = (torch.linalg.pinv(jacobian) @ residual).reshape_as(weight)
+        loss.backward()
+        optimizer.step()
+        torch.testing.assert_close(model.weight, weight - 0.02 * expected)
+
+    def test_conv_patch_and_spatial_factors(self):
+        for padding in (0, "same"):
+            model = torch.nn.Conv2d(1, 2, 2, padding=padding).double()
+            optimizer = self.optimizer(model, "kfac-jacobian", kfac_damping=0.03)
+            x = torch.arange(18, dtype=torch.float64).reshape(2, 1, 3, 3) / 10
+            output = model(x)
+            sites = output.shape[2] * output.shape[3]
+            logits = output.mean((2, 3))
+            self.prepare_exact(optimizer, logits, "kfac-jacobian")
+            padded = torch.nn.functional.pad(x, (0, 1, 0, 1)) if padding == "same" else x
+            patches = torch.nn.functional.unfold(padded, 2).transpose(1, 2).reshape(-1, 4)
+            a, g, _ = optimizer._kfac_factors[model.weight]
+            torch.testing.assert_close(a, patches.T @ patches / len(patches))
+            torch.testing.assert_close(g, torch.eye(2, dtype=x.dtype) / sites)
+            torch.nn.functional.cross_entropy(logits, torch.tensor([0, 1])).backward()
+            optimizer.step()
+            self.assertTrue(all(torch.isfinite(p).all() for p in model.parameters()))
+
+    def test_batchnorm_scale_restricts_affine_kronecker_block(self):
+        model = train.BatchNorm(2, momentum=0.6, eps=1e-5).double()
+        optimizer = self.optimizer(model, "kfac-jacobian", kfac_damping=0.1)
+        x = torch.tensor([[[[1., 3.]], [[2., 4.]]], [[[4., 8.]], [[-1., 2.]]]], dtype=torch.float64)
+        before = {name: p.detach().clone() for name, p in model.named_parameters()}
+        output = model(x)
+        logits = output[:, :, 0, 0] + 2 * output[:, :, 0, 1]
+        self.prepare_exact(optimizer, logits, "kfac-jacobian")
+        variance, mean = torch.var_mean(x, dim=(0, 2, 3), correction=0)
+        normalized = (x - mean[None, :, None, None]) / (variance[None, :, None, None] + model.eps).sqrt()
+        rows = normalized.permute(0, 2, 3, 1).reshape(-1, 2)
+        a = rows.T @ rows / len(rows)
+        g = 5 * torch.eye(2, dtype=x.dtype)
+        torch.testing.assert_close(optimizer._kfac_factors[model.weight][0], a)
+        torch.testing.assert_close(optimizer._kfac_factors[model.weight][1], g)
+        torch.nn.functional.cross_entropy(logits, torch.tensor([0, 1])).backward()
+        directions = {}
+        for name, parameter in model.named_parameters():
+            block = a * g if name == "weight" else g
+            damped = block + 0.1 * block.diagonal().mean() * torch.eye(2, dtype=x.dtype)
+            directions[name] = torch.linalg.solve(damped, parameter.grad)
+        optimizer.step()
+        for name, parameter in model.named_parameters():
+            torch.testing.assert_close(parameter, before[name] - 0.02 * directions[name])
+
+    def test_all_group_configs_hooks_and_checkpoint(self):
+        for algorithm in train.KFAC_ALGORITHMS:
+            config = train.normalize_config(train.EXPERIMENT_RUN_CONFIGS[f"all_{algorithm}"], None)
+            train.validate_tuning_config(config["hparam_tuning"])
+            train.tuning_params(config)
+            train.configured_hparam_schedules(config["param_groups"], 200)
+            model = TinyModel(dict(time=0, training=0))
+            optimizer = train.make_optimizer(model, config["param_groups"])
+            self.assertEqual({g["algorithm"] for g in optimizer.param_groups}, {algorithm})
+            self.assertEqual({p for g in optimizer.param_groups for p in g["params"]}, set(model.parameters()))
+            x = torch.randn(3, 3, 8, 8)
+            before = {p: p.detach().clone() for p in model.parameters()}
+            logits = model(x)
+            optimizer.prepare_kfac(logits)
+            torch.nn.functional.cross_entropy(logits, torch.tensor([0, 1, 0])).backward()
+            optimizer.step()
+            for parameter in model.parameters():
+                self.assertTrue(torch.isfinite(parameter).all())
+                self.assertFalse(torch.equal(parameter, before[parameter]))
+                self.assertIn("kfac_output_covariance", optimizer.state[parameter])
+            checkpoint = copy.deepcopy(optimizer.state_dict())
+            optimizer.zero_grad(set_to_none=True)
+            with torch.no_grad():
+                model(x)
+            self.assertFalse(optimizer._kfac_pending)
+            for group in optimizer.param_groups:
+                for parameter in group["params"]:
+                    optimizer.state[parameter]["kfac_output_covariance"].zero_()
+            optimizer.load_state_dict(checkpoint)
+            for group, saved_group in zip(optimizer.param_groups, checkpoint["param_groups"]):
+                for parameter, index in zip(group["params"], saved_group["params"]):
+                    restored = optimizer.state[parameter]["kfac_output_covariance"]
+                    saved = checkpoint["state"][index]["kfac_output_covariance"]
+                    torch.testing.assert_close(restored, saved)
+                    self.assertNotEqual(restored.data_ptr(), saved.data_ptr())
+            replacement = train.make_optimizer(model, config["param_groups"])
+            self.assertEqual(len(model.head._forward_hooks), 1)
+            model(x)
+            self.assertFalse(optimizer._kfac_pending)
+            self.assertTrue(replacement._kfac_pending)
+            train.make_optimizer(model, train.BASELINE_RUN_CONFIGS[2]["param_groups"])
+            self.assertEqual(len(model.head._forward_hooks), 0)
+
+    def test_kfac_validation_and_missing_capture(self):
+        for algorithm in train.KFAC_ALGORITHMS:
+            model = torch.nn.Linear(2, 2)
+            for options in (
+                {"kfac_damping": -1}, {"kfac_factor_momentum": 1},
+                {"kfac_probes": 0}, {"kfac_probes": 1.5}, {"kfac_probes": True},
+            ):
+                with self.assertRaises(ValueError):
+                    self.optimizer(model, algorithm, **options)
+            optimizer = self.optimizer(model, algorithm)
+            model(torch.ones(1, 2)).sum().backward()
+            with self.assertRaisesRegex(RuntimeError, "prepare_kfac"):
+                optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            with self.assertRaisesRegex(RuntimeError, "current training forward"):
+                optimizer.prepare_kfac(torch.ones(1, 2, requires_grad=True))
+
+    def test_factor_ema_and_half_precision_checkpoint_replay(self):
+        model = torch.nn.Linear(2, 2).half()
+        optimizer = self.optimizer(
+            model, "kfac-jacobian", kfac_damping=0.1,
+            kfac_factor_momentum=0.5, momentum=0.9, momentum_version=3,
+        )
+        x = torch.tensor([[1., 2.], [3., -1.]], dtype=torch.float16)
+
+        def step(inputs):
+            logits = model(inputs)
+            optimizer.prepare_kfac(logits)
+            torch.nn.functional.cross_entropy(logits.float(), torch.tensor([0, 1])).backward()
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+
+        step(x)
+        checkpoint = copy.deepcopy(optimizer.state_dict())
+        weights = copy.deepcopy(model.state_dict())
+        rng = torch.get_rng_state()
+        initial_a = optimizer.state[model.weight]["kfac_input_covariance"].clone()
+        expected_a = 2.5 * initial_a  # EMA of X'X and (2X)'(2X).
+        results = []
+        for _ in range(2):
+            model.load_state_dict(weights)
+            optimizer.load_state_dict(checkpoint)
+            torch.set_rng_state(rng)
+            for group, saved_group in zip(optimizer.param_groups, checkpoint["param_groups"]):
+                parameter = group["params"][0]
+                for key, saved in checkpoint["state"][saved_group["params"][0]].items():
+                    if not isinstance(saved, torch.Tensor):
+                        continue
+                    restored = optimizer.state[parameter][key]
+                    self.assertEqual(restored.dtype, torch.float32)
+                    self.assertNotEqual(restored.data_ptr(), saved.data_ptr())
+                    torch.testing.assert_close(restored, saved, rtol=0, atol=0)
+            step(2 * x)
+            torch.testing.assert_close(optimizer.state[model.weight]["kfac_input_covariance"], expected_a)
+            results.append(copy.deepcopy(model.state_dict()))
+        for key in results[0]:
+            torch.testing.assert_close(results[0][key], results[1][key], rtol=0, atol=0)
+        optimizer.load_state_dict(checkpoint)
+        for group in optimizer.param_groups:
+            group["kfac_probes"] = 2
+        logits = model(x)
+        with patch.object(optimizer, "_kfac_probe", wraps=optimizer._kfac_probe) as probe:
+            optimizer.prepare_kfac(logits)
+            self.assertEqual(probe.call_count, 2)
+
+    def test_both_training_paths_with_all_kfac_groups(self):
+        for algorithm, search in product(train.KFAC_ALGORITHMS, ("grid", "global_neighbour")):
+            with self.subTest(algorithm=algorithm, search=search):
+                config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS[f"all_{algorithm}"])
+                config.update(batch_size=2, num_epochs=2, overfit=True)
+                for group in config["param_groups"].values():
+                    group["lr_scheduler"] = [(2, 0.001)]
+                config["hparam_tuning"] = dict(
+                    algorithm=search, metric="tta_val_acc",
+                    params={"head.initial_lr": dict(initial=0.001, choices=[0.001])},
+                )
+                if search == "global_neighbour":
+                    config["hparam_tuning"]["max_side_steps"] = 1
+                model = TinyModel(dict(time=0, training=0))
+                with patch.object(train, "CifarLoader", TinyLoader), contextlib.redirect_stdout(io.StringIO()):
+                    result = train.run_experiment("kfac_test", model, config)
+                self.assertTrue(torch.isfinite(torch.tensor(result["best_result"]["val_acc"])))
+                self.assertEqual(model.training_steps.item(), 2)
+                self.assertTrue(all(torch.isfinite(p).all() for p in model.parameters()))
+
+
 if __name__ == "__main__":
     unittest.main(num_epochs=8, overfit=False, hparam_tuning=None, _log_config=True)

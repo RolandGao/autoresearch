@@ -149,19 +149,30 @@ def merge_lr_extensions(datasets):
     return list(merged.values())
 
 
-def plot_results(config, rows, directory, metric, heatmap_min):
-    specs = config["hparam_tuning"]["params"]
-    lrs = sorted(specs["head.initial_lr"]["choices"])
-    momenta = sorted(specs["head.momentum"]["choices"])
-    decays = specs["head.decay"]["choices"]
-    versions = specs.get("head.momentum_version", {"choices": [
-        config["param_groups"]["head"]["momentum_version"]
-    ]})["choices"]
-    nesterov_choices = specs.get("head.nesterov", {"choices": [
-        config["param_groups"]["head"]["nesterov"]
-    ]})["choices"]
-    columns = [(decay, nesterov) for decay in decays for nesterov in nesterov_choices]
-    expected = math.prod(len(spec["choices"]) for spec in specs.values())
+def plot_results(config, rows, directory, metric, heatmap_min, grid_configs=None, heatmap_max_lr=None):
+    # Each version gets a row of panels. Keep each grid's actual LR range and
+    # schedule/Nesterov combinations, so untested panels are never invented.
+    panels_by_version = {}
+    expected = 0
+    for grid in grid_configs or [config]:
+        specs = grid["hparam_tuning"]["params"]
+        head = grid["param_groups"]["head"]
+        lrs = sorted(specs["head.initial_lr"]["choices"])
+        momenta = sorted(specs["head.momentum"]["choices"])
+        versions = specs.get("head.momentum_version", {"choices": [head["momentum_version"]]})["choices"]
+        nesterov_choices = specs.get("head.nesterov", {"choices": [head["nesterov"]]})["choices"]
+        expected += math.prod(len(spec["choices"]) for spec in specs.values())
+        for version in versions:
+            panels_by_version.setdefault(version, []).extend(
+                (version, decay, nesterov, lrs, momenta)
+                for decay in specs["head.decay"]["choices"]
+                for nesterov in nesterov_choices
+            )
+    panel_rows = [panels_by_version[v] for v in sorted(panels_by_version)]
+    max_lrs = max(
+        sum(heatmap_max_lr is None or lr <= heatmap_max_lr for lr in panel[3])
+        for panels in panel_rows for panel in panels
+    )
     label = (
         "TTA validation accuracy (%)"
         if metric == "tta_val_acc"
@@ -184,24 +195,30 @@ def plot_results(config, rows, directory, metric, heatmap_min):
         f"batch size {config['batch_size']} | {config['num_epochs']} epochs"
         f"{conditioning}"
     )
-    shape = (len(versions), len(columns))
+    shape = (len(panel_rows), max(map(len, panel_rows)))
     fig, axes = plt.subplots(
-        *shape, figsize=(max(16, len(lrs) * 1.2, len(columns) * 7), 4.5 * len(versions)),
+        *shape, figsize=(max(16, max_lrs * 1.2, shape[1] * 7), 4.5 * shape[0]),
         squeeze=False, layout="constrained",
     )
     curves, curve_axes = plt.subplots(
-        *shape, figsize=(7 * len(columns), 4.5 * len(versions)),
+        *shape, figsize=(7 * shape[1], 4.5 * shape[0]),
         squeeze=False, sharex=True, sharey=True, layout="constrained"
     )
     fig.suptitle(title, fontsize=15)
+    if heatmap_max_lr is not None:
+        shown = sum(row["initial_lr"] <= heatmap_max_lr for row in rows)
+        fig.suptitle(f"{title}\nHeatmaps: LR ≤ {heatmap_max_lr:g} | {shown} trials shown", fontsize=15)
     curves.suptitle(title, fontsize=15)
     cmap = plt.get_cmap("viridis").copy()
     cmap.set_under("#f8d6d2")
     cmap.set_bad("#dddddd")
     norm = Normalize(vmin=heatmap_min, vmax=maximum)
     colors = plt.get_cmap("tab10")
-    for i, version in enumerate(versions):
-        for j, (decay, nesterov) in enumerate(columns):
+    for i, panels in enumerate(panel_rows):
+        for j in range(len(panels), shape[1]):
+            axes[i, j].set_visible(False)
+            curve_axes[i, j].set_visible(False)
+        for j, (version, decay, nesterov, lrs, momenta) in enumerate(panels):
             ax, curve_ax = axes[i, j], curve_axes[i, j]
             subset = [
                 row for row in rows
@@ -216,6 +233,12 @@ def plot_results(config, rows, directory, metric, heatmap_min):
                 [lookup.get((m, lr), np.nan) for lr in lrs] for m in momenta
             ])
             values[~np.isfinite(values)] = np.nan
+            curve_values = values
+            mask = [heatmap_max_lr is None or lr <= heatmap_max_lr for lr in lrs]
+            heatmap_lrs = [lr for lr, keep in zip(lrs, mask) if keep]
+            if not heatmap_lrs:
+                raise ValueError("--heatmap-max-lr excludes every LR in a panel")
+            values = values[:, mask]
             plotted = ax.imshow(values, cmap=cmap, norm=norm, aspect="auto")
             panel = (
                 f"{decay.replace('_', ' ').capitalize()} | momentum version {version}"
@@ -224,7 +247,7 @@ def plot_results(config, rows, directory, metric, heatmap_min):
             if np.isfinite(values).any():
                 winner = np.unravel_index(np.nanargmax(values), values.shape)
                 panel += (
-                    f"\nBest {values[winner]:.2f}% | LR {lrs[winner[1]]:g}, "
+                    f"\nBest {values[winner]:.2f}% | LR {heatmap_lrs[winner[1]]:g}, "
                     f"momentum {momenta[winner[0]]:g}"
                 )
                 ax.add_patch(Rectangle(
@@ -233,7 +256,7 @@ def plot_results(config, rows, directory, metric, heatmap_min):
                 ))
             ax.set_title(panel, fontsize=11)
             curve_ax.set_title(panel, fontsize=11)
-            ax.set_xticks(range(len(lrs)), [f"{lr:g}" for lr in lrs], rotation=45)
+            ax.set_xticks(range(len(heatmap_lrs)), [f"{lr:g}" for lr in heatmap_lrs], rotation=45)
             ax.set_yticks(range(len(momenta)), [f"{m:g}" for m in momenta])
             ax.set_xlabel("Head initial learning rate")
             ax.set_ylabel("Head momentum")
@@ -249,7 +272,7 @@ def plot_results(config, rows, directory, metric, heatmap_min):
                         fontsize=8, color="white" if dark else "black",
                     )
                 curve_ax.plot(
-                    lrs, values[row_index], marker="o", markersize=4,
+                    lrs, curve_values[row_index], marker="o", markersize=4,
                     color=colors(row_index), label=f"momentum {m:g}",
                 )
             curve_ax.set_xscale("log")
@@ -333,6 +356,52 @@ def plot_comparison(datasets, directory, metric, floor):
     plt.close(fig)
 
 
+def plot_version_comparison(rows, directory, metric, floor):
+    """Overlay momentum versions for one optimizer, keeping Nesterov explicit."""
+    decays = sorted({row["decay"] for row in rows})
+    settings = sorted({(r["momentum_version"], r["nesterov"]) for r in rows})
+    versions = sorted({version for version, _ in settings})
+    finite = [r[metric] * 100 for r in rows if math.isfinite(r[metric])]
+    maximum = max(floor + 0.1, math.ceil(max(finite) * 10) / 10)
+    algorithm = ALGORITHM_LABELS.get(rows[0]["algorithm"], rows[0]["algorithm"])
+    fig, axes = plt.subplots(
+        1, len(decays), figsize=(7 * len(decays), 5), squeeze=False,
+        sharex=True, sharey=True, layout="constrained",
+    )
+    fig.suptitle(f"{algorithm} momentum versions | {len(rows)} trials\nBest momentum at each LR", fontsize=15)
+    ylabel = "TTA validation accuracy (%)" if metric == "tta_val_acc" else "Validation accuracy (%)"
+    for ax, decay in zip(axes[0], decays):
+        for version, nesterov in settings:
+            subset = [r for r in rows if (
+                r["decay"], r["momentum_version"], r["nesterov"]
+            ) == (decay, version, nesterov)]
+            if not subset:
+                continue
+            lrs = sorted({r["initial_lr"] for r in subset})
+            scores = []
+            for lr in lrs:
+                values = [r[metric] * 100 for r in subset if r["initial_lr"] == lr and math.isfinite(r[metric])]
+                scores.append(max(values) if values else np.nan)
+            ax.plot(
+                lrs, scores, label=f"Version {version}, Nesterov {nesterov}",
+                color=f"C{versions.index(version) % 10}",
+                linestyle="-" if nesterov else "--",
+                marker="o" if nesterov else "s", markersize=4,
+            )
+        ax.set_title(decay.replace("_", " ").capitalize())
+        ax.set_xscale("log")
+        ax.set_xlabel("Head initial learning rate (log scale)")
+        ax.set_ylabel(ylabel)
+        ax.grid(alpha=0.25)
+        ax.legend(fontsize=9)
+    fig.supxlabel("Each point selects the best tested momentum. Untested settings are omitted.", fontsize=10)
+    save_figure(fig, directory, f"{metric}_momentum_versions")
+    axes[0, 0].set_ylim(floor, maximum + 0.1)
+    fig.supxlabel(f"Zoomed to {floor:g}% and above. Each point selects the best tested momentum; see the full-range plot for lower scores.", fontsize=10)
+    save_figure(fig, directory, f"{metric}_momentum_versions_zoom")
+    plt.close(fig)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("logs", nargs="*", type=Path, default=DEFAULT_LOGS)
@@ -343,6 +412,7 @@ def main():
         help="Color scale and curve zoom floor in percent; annotations remain exact",
     )
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--heatmap-max-lr", type=float, help="Highest LR shown in heatmaps")
     args = parser.parse_args()
     paths = list(dict.fromkeys(path.resolve() for path in args.logs))
     datasets = []
@@ -377,12 +447,24 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
     print(csv_path)
-    for index, (_, config, records) in enumerate(datasets):
-        run_directory = directory if len(datasets) == 1 else directory / f"{index + 1}_{records[0]['run']}"
-        run_directory.mkdir(parents=True, exist_ok=True)
-        plot_results(config, records, run_directory, args.metric, args.heatmap_min)
-    if len(datasets) > 1:
+    same_optimizer = len({r["algorithm"] for r in rows}) == 1
+    if same_optimizer:
+        plot_results(
+            datasets[0][1], rows, directory, args.metric, args.heatmap_min,
+            grid_configs=[config for _, config, _ in datasets],
+            heatmap_max_lr=args.heatmap_max_lr,
+        )
+    else:
+        for index, (_, config, records) in enumerate(datasets):
+            run_directory = directory / f"{index + 1}_{records[0]['run']}"
+            run_directory.mkdir(parents=True, exist_ok=True)
+            plot_results(
+                config, records, run_directory, args.metric, args.heatmap_min,
+                heatmap_max_lr=args.heatmap_max_lr,
+            )
         plot_comparison(datasets, directory, args.metric, args.heatmap_min)
+    if same_optimizer and len({r["momentum_version"] for r in rows}) > 1:
+        plot_version_comparison(rows, directory, args.metric, args.heatmap_min)
 
 
 if __name__ == "__main__":
