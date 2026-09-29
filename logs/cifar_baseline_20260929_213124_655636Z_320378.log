@@ -2272,7 +2272,7 @@ for algorithm in ("muon", "muon2"):
         del conv["ns_steps"], conv["ns_eps"]
     EXPERIMENT_RUN_CONFIGS[f"exp13_bs2000_baseline_{algorithm}"] = config
 
-experiments_to_run = ["tuned_kfac", "tuned_kfac-jacobian"]
+experiments_to_run = ["exp13_bs2000_baseline_muon", "exp13_bs2000_baseline_muon2"]
 RUNS = (
     [(name, EXPERIMENT_RUN_CONFIGS[name]) for name in experiments_to_run]
     if run_type in ("global_neighbour", "grid")
@@ -3256,3 +3256,41 @@ if __name__ == "__main__":
         compile_and_warmup_model(model, RUN_CONFIGS)
     for run, config in RUNS:
         run_experiment(run, model, config)
+
+
+# Run output
+
+config run=exp13_bs2000_baseline_muon
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 3, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 3, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[75, 36, 0.0], [125, 0.0]], "momentum": 0.8, "momentum_version": 3, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[200, 99, 0.0]], "momentum": 0.8, "momentum_version": 3, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": [[200, 1300, 0.0]], "momentum": 0.85, "momentum_version": 3, "nesterov": true},
+    "conv": {"algorithm": "muon", "ns_steps": 3, "ns_eps": 0.0, "lr_scheduler": [[200, 0.22, 0.0]], "momentum": 0.7, "momentum_version": 3, "nesterov": true}
+  },
+  "hparam_tuning": null
+}
+val_acc=0.9351 tta_val_acc=0.9413 seconds=43.8739
+debug_spectra run=exp13_bs2000_baseline_muon steps=200 data=untracked_logs/cifar_baseline_20260929_213124_655636Z_320378.log/cifar_spectra_20260929_213211_271847Z_320378_exp13_bs2000_baseline_muon.npz video=untracked_logs/cifar_baseline_20260929_213124_655636Z_320378.log/cifar_spectra_20260929_213211_271847Z_320378_exp13_bs2000_baseline_muon.mp4
+config run=exp13_bs2000_baseline_muon2
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 3, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 3, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[75, 36, 0.0], [125, 0.0]], "momentum": 0.8, "momentum_version": 3, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[200, 99, 0.0]], "momentum": 0.8, "momentum_version": 3, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": [[200, 1300, 0.0]], "momentum": 0.85, "momentum_version": 3, "nesterov": true},
+    "conv": {"algorithm": "muon2", "lr_scheduler": [[200, 0.22, 0.0]], "momentum": 0.7, "momentum_version": 3, "nesterov": true}
+  },
+  "hparam_tuning": null
+}
+val_acc=0.9302 tta_val_acc=0.9389 seconds=43.7329
+debug_spectra run=exp13_bs2000_baseline_muon2 steps=200 data=untracked_logs/cifar_baseline_20260929_213124_655636Z_320378.log/cifar_spectra_20260929_213259_125656Z_320378_exp13_bs2000_baseline_muon2.npz video=untracked_logs/cifar_baseline_20260929_213124_655636Z_320378.log/cifar_spectra_20260929_213259_125656Z_320378_exp13_bs2000_baseline_muon2.mp4

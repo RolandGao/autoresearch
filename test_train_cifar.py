@@ -1612,7 +1612,6 @@ class SearchTests(unittest.TestCase):
 
     def test_bs2000_all_active_v3_search_preserves_schedules(self):
         config = train.EXPERIMENT_RUN_CONFIGS["exp12_bs2000_all_active_v3"]
-        self.assertEqual(train.experiments_to_run, ["exp12_bs2000_all_active_v3"])
         self.assertEqual(config["batch_size"], 2000)
         self.assertEqual(config["num_epochs"], 8)
         self.assertEqual(config["hparam_tuning"]["algorithm"], "global_neighbour")
@@ -3269,12 +3268,10 @@ class KFACTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "kfac_filter_normalization"):
             self.optimizer(model, "kfac", kfac_filter_normalization=True)
 
-    def test_kfac_experiments_are_retained_but_not_selected(self):
+    def test_kfac_experiment_configs(self):
         for algorithm, prefix in product(train.KFAC_ALGORITHMS, ("all", "tuned")):
             name = f"{prefix}_{algorithm}"
             config = train.EXPERIMENT_RUN_CONFIGS[name]
-            self.assertNotIn(name, train.experiments_to_run)
-            self.assertNotIn(name, [run for run, _ in train.RUNS])
             for group in config["param_groups"].values():
                 train.GroupOptimizer.validate_group(group, runtime=False)
                 self.assertEqual(group["algorithm"], algorithm)

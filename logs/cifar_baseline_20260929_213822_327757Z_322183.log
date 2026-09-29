@@ -3256,3 +3256,46 @@ if __name__ == "__main__":
         compile_and_warmup_model(model, RUN_CONFIGS)
     for run, config in RUNS:
         run_experiment(run, model, config)
+
+
+# Run output
+
+config run=tuned_kfac
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "param_groups": {
+    "whiten_weight": {"algorithm": "kfac", "lr_scheduler": [[200, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.3, "kfac_input_damping": 0.3, "kfac_factor_momentum": 0.0, "kfac_probes": 1, "gradient_momentum_before_conditioning": true},
+    "norm_weight": {"algorithm": "kfac", "lr_scheduler": [[200, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.3, "kfac_input_damping": 0.3, "kfac_factor_momentum": 0.0, "kfac_probes": 1, "gradient_momentum_before_conditioning": true},
+    "whiten_bias": {"algorithm": "kfac", "lr_scheduler": [[75, 0.04, 0.0], [125, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.3, "kfac_input_damping": 0.3, "kfac_factor_momentum": 0.0, "kfac_probes": 1, "gradient_momentum_before_conditioning": true},
+    "norm_bias": {"algorithm": "kfac", "lr_scheduler": [[200, 0.04, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.3, "kfac_input_damping": 0.3, "kfac_factor_momentum": 0.0, "kfac_probes": 1, "gradient_momentum_before_conditioning": true},
+    "head": {"algorithm": "kfac", "lr_scheduler": [[200, 0.08, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.3, "kfac_input_damping": 0.3, "kfac_factor_momentum": 0.0, "kfac_probes": 1, "gradient_momentum_before_conditioning": true},
+    "conv": {"algorithm": "kfac", "lr_scheduler": [[200, 0.2, 0.0]], "momentum": 0.6, "momentum_version": 3, "nesterov": true, "kfac_damping": 1.0, "kfac_input_damping": 3.0, "kfac_factor_momentum": 0.0, "kfac_probes": 1, "gradient_momentum_before_conditioning": true}
+  },
+  "hparam_tuning": null
+}
+Traceback (most recent call last):
+  File "/workspace/autoresearch/train_cifar.py", line 3258, in <module>
+    run_experiment(run, model, config)
+  File "/workspace/autoresearch/train_cifar.py", line 3070, in run_experiment
+    best = evaluate_config(config)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 3055, in evaluate_config
+    result = main(
+             ^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 3216, in main
+    recorder.after_step(step)
+  File "/venv/main/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 1202, in after_step
+    input=input_singular_values(module, self.inputs.pop(name)),
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/venv/main/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/autoresearch/train_cifar.py", line 1151, in input_singular_values
+    return torch.linalg.eigvalsh(gram).clamp_min(0).sqrt().flip(0)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch._C._LinAlgError: linalg.eigh: The algorithm failed to converge because the input matrix is ill-conditioned or has too many repeated eigenvalues (error code: 2295).
