@@ -19,6 +19,7 @@ from bisect import bisect_left, bisect_right
 from datetime import datetime, timezone
 from itertools import product
 from math import ceil, isfinite, log
+from types import SimpleNamespace
 
 timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%fZ")
 log_path = os.path.join("logs", f"cifar_baseline_{timestamp}_{os.getpid()}.log")
@@ -55,6 +56,9 @@ torch.backends.cudnn.allow_tf32 = USE_TF32
 torch.backends.cuda.matmul.allow_tf32 = USE_TF32
 
 USE_COMPILED_MUON = False
+USE_COMPILED_MODEL = False  # Enable only after an end-to-end sweep timing comparison.
+MODEL_COMPILE_MODE = "default"
+MODEL_WARMUP_STEPS = 3
 MUON_DTYPE = torch.bfloat16
 TRAINING_SEED = 0
 
@@ -143,6 +147,8 @@ INPUT_CONDITIONER_FIELDS = {
 }
 ALGORITHM_FIELDS = {
     "sgd": set(),
+    "lion": set(),
+    "adam": {"beta2", "eps"},
     "muon": {"ns_steps", "ns_eps"},
     "muon2": set(),
     "sgdh": {"normalization_eps"},
@@ -185,7 +191,7 @@ def input_conditioner_options(group):
 
 
 class GroupOptimizer(torch.optim.Optimizer):
-    """Apply SGD, Muon, Muon2, SGDH, or an input-conditioned update per group."""
+    """Apply a configured optimizer independently to each parameter group."""
 
     def __init__(self, param_groups):
         for group in param_groups:
@@ -202,12 +208,6 @@ class GroupOptimizer(torch.optim.Optimizer):
                 raise ValueError(f"{name}: learning rate must be nonnegative")
             if group["momentum"] < 0:
                 raise ValueError(f"{name}: momentum must be nonnegative")
-            if (
-                group["algorithm"] == "sgd"
-                and group["nesterov"]
-                and group["momentum"] <= 0
-            ):
-                raise ValueError(f"{name}: Nesterov requires positive momentum")
             if group["algorithm"] in ("muon", "muon2", "sgdh") and any(
                 p.ndim < 2 for p in group["params"]
             ):
@@ -242,12 +242,6 @@ class GroupOptimizer(torch.optim.Optimizer):
             raise ValueError("momentum_version must be 1 or 2")
         if not isinstance(group["nesterov"], bool):
             raise ValueError("nesterov must be a boolean")
-        if (
-            group["algorithm"] == "sgd"
-            and group["nesterov"]
-            and group["momentum"] == 0
-        ):
-            raise ValueError("Nesterov requires positive momentum")
         fields = ({"lr", "momentum"} if runtime else {"momentum"}) | (
             ALGORITHM_FIELDS[group["algorithm"]]
             - {"ns_steps", "gradient_momentum_before_conditioning"}
@@ -263,6 +257,15 @@ class GroupOptimizer(torch.optim.Optimizer):
                 raise ValueError(f"{field} must be a nonnegative finite number")
         if version == 2 and round_hparam(group["momentum"]) >= 1:
             raise ValueError("momentum_version 2 requires momentum in [0, 1)")
+        if group["algorithm"] in ("lion", "adam") and version != 1:
+            raise ValueError(f"{group['algorithm']} requires momentum_version=1")
+        if group["algorithm"] == "adam":
+            if round_hparam(group["momentum"]) >= 1 or group["beta2"] >= 1:
+                raise ValueError("Adam momentum (beta1) and beta2 must be in [0, 1)")
+            if group["eps"] <= 0:
+                raise ValueError("Adam eps must be positive")
+            if group["nesterov"]:
+                raise ValueError("Adam requires nesterov=False")
         if group["algorithm"] == "muon":
             steps = group["ns_steps"]
             if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
@@ -328,15 +331,16 @@ class GroupOptimizer(torch.optim.Optimizer):
             self.validate_group(group, runtime=True)
         result = super().load_state_dict(state_dict)
         # Optimizer loading casts floating state to the parameter dtype. Restore
-        # the covariance EMA separately to preserve FP32 with FP16 weights, and
-        # give it independent storage so updates cannot modify the checkpoint.
+        # the covariance and Adam EMAs separately to preserve FP32 with FP16
+        # weights, using independent storage so updates cannot modify the checkpoint.
         for group, saved_group in zip(self.param_groups, state_dict["param_groups"]):
             for parameter, index in zip(group["params"], saved_group["params"]):
-                covariance = state_dict["state"].get(index, {}).get("input_covariance")
-                if covariance is not None:
-                    self.state[parameter]["input_covariance"] = covariance.to(
-                        parameter.device
-                    ).clone()
+                saved_state = state_dict["state"].get(index, {})
+                for key in ("input_covariance", "exp_avg", "exp_avg_sq"):
+                    if key in saved_state:
+                        self.state[parameter][key] = saved_state[key].to(
+                            parameter.device
+                        ).clone()
         # The current batch's covariance is transient; only its EMA is checkpointed.
         self._input_covariances.clear()
         return result
@@ -382,6 +386,26 @@ class GroupOptimizer(torch.optim.Optimizer):
                 g = p.grad
                 if g is None:
                     continue
+                if group["algorithm"] == "adam":
+                    state = self.state[p]
+                    dtype = torch.float64 if p.dtype == torch.float64 else torch.float32
+                    gradient = g.to(dtype)
+                    if "exp_avg" not in state:
+                        state["exp_avg"] = torch.zeros_like(gradient)
+                        state["exp_avg_sq"] = torch.zeros_like(gradient)
+                        state["adam_step"] = 0
+                    state["adam_step"] += 1
+                    t, beta2 = state["adam_step"], group["beta2"]
+                    state["exp_avg"].mul_(momentum).add_(gradient, alpha=1 - momentum)
+                    state["exp_avg_sq"].mul_(beta2).addcmul_(
+                        gradient, gradient, value=1 - beta2
+                    )
+                    if lr != 0:
+                        mean = state["exp_avg"] / (1 - momentum ** t)
+                        denominator = (state["exp_avg_sq"] / (1 - beta2 ** t)).sqrt()
+                        denominator.add_(group["eps"])
+                        p.add_(mean / denominator, alpha=-lr)
+                    continue
                 covariance = None
                 if conditioned:
                     covariance = self._input_covariances.pop(p, None)
@@ -406,7 +430,7 @@ class GroupOptimizer(torch.optim.Optimizer):
                 if (
                     momentum_version == 2
                     or momentum
-                    or group["algorithm"] in ("muon", "muon2", "sgdh")
+                    or group["algorithm"] in ("muon", "muon2", "sgdh", "lion")
                 ):
                     state = self.state[p]
                     if momentum_version == 2:
@@ -440,7 +464,11 @@ class GroupOptimizer(torch.optim.Optimizer):
                 if lr == 0:
                     self._input_covariances.pop(p, None)
                     continue
-                if group["algorithm"] in ("muon", "muon2"):
+                if group["algorithm"] == "lion":
+                    # Requested Lion variant: sign of the momentum/Nesterov
+                    # direction. Zero coordinates stay zero; preserve the buffer.
+                    g = g.sign()
+                elif group["algorithm"] in ("muon", "muon2"):
                     p.mul_(len(p) ** 0.5 / p.norm())  # normalize the weight
                     matrix = g.reshape(len(g), -1)
                     if group["algorithm"] == "muon2":
@@ -1058,6 +1086,66 @@ def evaluate(model, loader, tta_level):
     return (logits.argmax(1) == loader.labels).float().mean().item()
 
 
+def compile_and_warmup_model(model, configs):
+    """Compile once and warm training/TTA graphs before any experiment is timed."""
+    # Conditioning and spectrum hooks are attached after warmup. Without guards,
+    # compiled graphs can silently ignore hooks added after the first forward.
+    torch._dynamo.config.skip_nnmodule_hook_guards = False
+    started = time.perf_counter()
+    batch_sizes = {config["batch_size"] for config in configs}
+    for config in configs:
+        tuning = config["hparam_tuning"]
+        if tuning is not None and "batch_size" in tuning["params"]:
+            batch_sizes.update(tuning["params"]["batch_size"]["choices"])
+    log_event("compile_warmup_start", mode=MODEL_COMPILE_MODE, batch_sizes=sorted(batch_sizes))
+    parameter = next(model.parameters())
+    device, dtype = parameter.device, parameter.dtype
+    devices = [device.index] if device.type == "cuda" else []
+    saved_state = copy.deepcopy(model.state_dict())
+    saved_modes = {module: module.training for module in model.modules()}
+    saved_grads = {p: p.grad for p in model.parameters()}
+    model.compile(mode=MODEL_COMPILE_MODE)
+    try:
+        with torch.random.fork_rng(devices=devices):
+            model.train()
+            model.zero_grad(set_to_none=True)
+            for batch_size in sorted(batch_sizes):
+                inputs = torch.randn(
+                    batch_size, 3, 32, 32, device=device, dtype=dtype
+                ).to(memory_format=torch.channels_last)
+                labels = torch.arange(batch_size, device=device) % model.head.out_features
+                for _ in range(MODEL_WARMUP_STEPS):
+                    outputs = model(inputs)
+                    loss = F.cross_entropy(
+                        outputs, labels, label_smoothing=0.2, reduction="mean"
+                    )
+                    loss.backward()
+                    model.zero_grad(set_to_none=True)
+                    del outputs, loss
+                del inputs, labels
+
+            # infer() uses model.train() with inference_mode(), and translated
+            # views have different strides. Warm the actual evaluation paths.
+            images = torch.randn(2000, 3, 32, 32, device=device, dtype=dtype).to(
+                memory_format=torch.channels_last
+            )
+            loader = SimpleNamespace(normalized_images=lambda: images)
+            for _ in range(MODEL_WARMUP_STEPS):
+                infer(model, loader, tta_level=0)
+                infer(model, loader, tta_level=2)
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+    finally:
+        model.load_state_dict(saved_state)
+        for p, gradient in saved_grads.items():
+            p.grad = gradient
+        for module, training in saved_modes.items():
+            module.training = training
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    log_event("compile_warmup_complete", seconds=time.perf_counter() - started)
+
+
 ############################################
 #                Training                  #
 ############################################
@@ -1095,18 +1183,23 @@ def normalize_schedule(lines, total_steps, name):
     return result
 
 
-def hparam_at_step(lines, step):
-    """Interpolate with an exclusive end value, rounding each applied value."""
+def schedule_value_at_step(lines, step):
+    """Interpolate with an exclusive end value, preserving numeric precision."""
     for line in lines:
         steps, start = line[:2]
         if 0 <= step < steps:
             if len(line) == 2:
-                return round_hparam(start)
+                return start
             # The end value is reached one update after this segment finishes.
             fraction = step / steps
-            return round_hparam(start * (1 - fraction) + line[2] * fraction)
+            return start * (1 - fraction) + line[2] * fraction
         step -= steps
     raise ValueError("Step is outside the hyperparameter schedule")
+
+
+def hparam_at_step(lines, step):
+    """Interpolate a schedule and round the applied value."""
+    return round_hparam(schedule_value_at_step(lines, step))
 
 
 def configured_hparam_schedules(param_groups, total_steps):
@@ -1195,7 +1288,7 @@ def segment_hparam_schedules(base_schedules, values, start_step, steps, global_s
             total_steps = sum(line[0] for line in lines)
             if start_step < 0 or steps <= 0 or start_step + steps > total_steps:
                 raise ValueError("Search interval is outside the configured schedule")
-            value = round_hparam(values[path])
+            value = normalize_config(values[path], path.rsplit(".", 1)[-1])
             line = (steps, value)
             schedules[path] = (
                 slice_schedule(lines, 0, start_step)
@@ -1214,7 +1307,9 @@ def apply_hparam_schedules(optimizer, schedules, step):
             "nesterov",
             *sorted(ALGORITHM_FIELDS[group["algorithm"]]),
         ):
-            group[field] = hparam_at_step(schedules[f"{name}.{field}"], step)
+            group[field] = normalize_config(
+                schedule_value_at_step(schedules[f"{name}.{field}"], step), field
+            )
 
 
 # Set hparam_tuning to, for example:
@@ -1257,6 +1352,10 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # Conditioner settings can be searched using explicit choices in hparam_tuning.params.
 # Each parameter group accepts momentum_version: 1 (default) keeps the original
 # momentum; 2 uses a zero-initialized EMA with bias correction by 1 - momentum**t.
+# Lion here takes the sign of the existing momentum/Nesterov direction and uses
+# momentum_version=1. Adam uses momentum as beta1, plus explicit beta2 and eps
+# (e.g. 0.9, 0.999, 1e-8); it requires nesterov=False and momentum_version=1,
+# and always applies its own first/second-moment bias correction.
 run_type = "grid"  # "baseline", "interval", "global_neighbour", or "grid"
 # Log per-step singular values of the final (post-search) run of each config to
 # untracked_logs/<log filename>/, with one .npz and one .mp4 per run.
@@ -1693,7 +1792,27 @@ config["hparam_tuning"] = dict(
 )
 EXPERIMENT_RUN_CONFIGS["exp5_head_grid"] = config
 
-experiments_to_run = ["exp5_head_grid"]
+# Continue the same LR grid above its previous maximum (k=-5), without reruns.
+HEAD_GRID_HIGH_LR_CHOICES = sorted(
+    round_hparam(HEAD_GRID_LR * 0.6 ** k) for k in range(-10, -5)
+)
+config = copy.deepcopy(EXPERIMENT_RUN_CONFIGS["exp5_head_grid"])
+config["hparam_tuning"]["params"]["head.initial_lr"]["choices"] = HEAD_GRID_HIGH_LR_CHOICES
+EXPERIMENT_RUN_CONFIGS["exp5_head_grid_high_lr"] = config
+
+# Compare plain SGD and sign updates on the original 11-LR head grid.
+# Conv remains Muon2; these heads do not use input conditioning.
+for algorithm, name in (("sgd", "exp6_head_sgd_grid"), ("lion", "exp7_head_lion_grid")):
+    config = copy.deepcopy(EXPERIMENT_RUN_CONFIGS["exp5_head_grid"])
+    head = config["param_groups"]["head"]
+    head["algorithm"] = algorithm
+    for field in INPUT_CONDITIONER_FIELDS:
+        del head[field]
+    if algorithm == "lion":
+        del config["hparam_tuning"]["params"]["head.momentum_version"]
+    EXPERIMENT_RUN_CONFIGS[name] = config
+
+experiments_to_run = ["exp5_head_grid_high_lr"]
 RUNS = (
     [(name, EXPERIMENT_RUN_CONFIGS[name]) for name in experiments_to_run]
     if run_type in ("global_neighbour", "grid")
@@ -1709,7 +1828,10 @@ RUN_CONFIGS = [config for _, config in RUNS]
 
 
 def normalize_config(value, key):
-    """Round hyperparameter values, keeping batch sizes and step counts exact."""
+    """Round hyperparameters, preserving step counts, batch sizes, and Adam beta2."""
+    # Adam beta2=0.999 must not round to 1, including in tuning specifications.
+    if key == "beta2" or (isinstance(key, str) and key.endswith(".beta2")):
+        return copy.deepcopy(value)
     if key in (
         "batch_size",
         "num_epochs",
@@ -1790,7 +1912,7 @@ def get_hparam(config, path):
 def with_hparam(config, path, value):
     get_hparam(config, path)  # Validate the path before modifying anything.
     updated = copy.deepcopy(config)
-    value = value if path in ("batch_size", "num_epochs") else round_hparam(value)
+    value = normalize_config(value, path.rsplit(".", 1)[-1])
     if "." not in path:
         updated[path] = value
     else:
@@ -1875,7 +1997,8 @@ def interval_search_space(config):
     """Validate searchable fields and snap multiplicative LR starts to their grids."""
     choices, initial = {}, {}
     for path, spec in tuning_params(config).items():
-        value, values = round_hparam(spec["initial"]), spec["choices"]
+        value = normalize_config(spec["initial"], path.rsplit(".", 1)[-1])
+        values = spec["choices"]
         parts = path.split(".")
         if len(parts) != 2:
             raise ValueError(f"Unsupported interval search parameter: {path}")
@@ -1927,23 +2050,7 @@ def interval_search_space(config):
                 )
             ):
                 raise ValueError(f"{path}: choices must be nonnegative finite numbers")
-            values = sorted({round_hparam(v) for v in values})
-            if (
-                field == "momentum"
-                and group["algorithm"] == "sgd"
-                and group["nesterov"]
-            ):
-                # SGD Nesterov requires positive gradient momentum. Covariance EMA
-                # momentum is independent and still includes zero.
-                values = [v for v in values if v > 0]
-                if value == 0:
-                    raise ValueError(
-                        f"{path}: SGD Nesterov needs positive initial momentum"
-                    )
-            if not values:
-                raise ValueError(
-                    f"{path}: no valid choices (Nesterov needs positive momentum)"
-                )
+            values = sorted({normalize_config(v, field) for v in values})
             if field != "initial_lr":
                 for candidate in [value, *values]:
                     GroupOptimizer.validate_group(
@@ -2572,11 +2679,6 @@ def main(
     train_loader = CifarLoader(
         "cifar10", train=True, batch_size=batch_size, aug=dict(flip=True, translate=2)
     )
-    if run == "warmup":
-        # The only purpose of the first run is to warmup the compiled model, so we can use dummy data
-        train_loader.labels = torch.randint(
-            0, 10, size=(len(train_loader.labels),), device=train_loader.labels.device
-        )
     steps_per_epoch = 1 if overfit else len(train_loader)
     total_train_steps = num_epochs * steps_per_epoch
     schedules = configured_hparam_schedules(param_groups, total_train_steps)
@@ -2655,19 +2757,18 @@ def main(
 
 
 if __name__ == "__main__":
-    # We re-use the compiled model between runs to save the non-data-dependent compilation time
+    # Reuse the same model and compiled graphs across all candidates.
     set_training_seed()
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
-    # model.compile(mode="max-autotune")
-
-    # main("warmup", model, **RUN_CONFIGS[0])
+    if USE_COMPILED_MODEL:
+        compile_and_warmup_model(model, RUN_CONFIGS)
     for run, config in RUNS:
         run_experiment(run, model, config)
 
 
 # Run output
 
-base_config run=exp5_head_grid
+base_config run=exp5_head_grid_high_lr
 {
   "batch_size": 2000,
   "num_epochs": 8,
@@ -2675,7 +2776,7 @@ base_config run=exp5_head_grid
   "hparam_tuning": {
     "algorithm": "grid",
     "metric": "tta_val_acc",
-    "params": {"head.initial_lr": {"initial": 1300, "choices": [100.0, 170.0, 280.0, 470.0, 780.0, 1300.0, 2200.0, 3600.0, 6000.0, 10000.0, 17000.0]}, "head.momentum": {"initial": 0.0, "choices": [0.0, 0.5, 0.7, 0.8, 0.9]}, "head.decay": {"initial": "linear_decay", "choices": ["linear_decay", "constant"]}, "head.momentum_version": {"initial": 1, "choices": [1, 2]}}
+    "params": {"head.initial_lr": {"initial": 1300, "choices": [28000.0, 46000.0, 77000.0, 130000.0, 210000.0]}, "head.momentum": {"initial": 0.0, "choices": [0.0, 0.5, 0.7, 0.8, 0.9]}, "head.decay": {"initial": "linear_decay", "choices": ["linear_decay", "constant"]}, "head.momentum_version": {"initial": 1, "choices": [1, 2]}}
   },
   "param_groups": {
     "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 1, "nesterov": true},
@@ -2686,1167 +2787,539 @@ base_config run=exp5_head_grid
     "conv": {"algorithm": "muon2", "lr_scheduler": [[200, 0.22, 0.0]], "momentum": 0.7, "momentum_version": 1, "nesterov": true}
   }
 }
-config_diff run=exp5_head_grid.0 base_run=exp5_head_grid
+config_diff run=exp5_head_grid_high_lr.0 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0, 0.0]]
-val_acc=0.9205 tta_val_acc=0.9304 seconds=12.6087
-config_diff run=exp5_head_grid.1 base_run=exp5_head_grid
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0, 0.0]]
+val_acc=0.9303 tta_val_acc=0.9387 seconds=12.5514
+config_diff run=exp5_head_grid_high_lr.1 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0, 0.0]]
     head.momentum_version: 1 -> 2
-val_acc=0.9205 tta_val_acc=0.9304 seconds=12.0312
-config_diff run=exp5_head_grid.2 base_run=exp5_head_grid
+val_acc=0.9303 tta_val_acc=0.9387 seconds=11.9991
+config_diff run=exp5_head_grid_high_lr.2 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0]]
-val_acc=0.9171 tta_val_acc=0.9301 seconds=12.0160
-config_diff run=exp5_head_grid.3 base_run=exp5_head_grid
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0]]
+val_acc=0.9257 tta_val_acc=0.9366 seconds=11.9776
+config_diff run=exp5_head_grid_high_lr.3 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0]]
     head.momentum_version: 1 -> 2
-val_acc=0.9171 tta_val_acc=0.9301 seconds=12.0124
-config_diff run=exp5_head_grid.4 base_run=exp5_head_grid
+val_acc=0.9257 tta_val_acc=0.9366 seconds=12.0017
+config_diff run=exp5_head_grid_high_lr.4 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0, 0.0]]
     head.momentum: 0 -> 0.5
-val_acc=0.9196 tta_val_acc=0.9292 seconds=12.0225
-config_diff run=exp5_head_grid.5 base_run=exp5_head_grid
+val_acc=0.9228 tta_val_acc=0.9326 seconds=11.9995
+config_diff run=exp5_head_grid_high_lr.5 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0, 0.0]]
-    head.momentum: 0 -> 0.5
-    head.momentum_version: 1 -> 2
-val_acc=0.9193 tta_val_acc=0.9280 seconds=12.0236
-config_diff run=exp5_head_grid.6 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0]]
-    head.momentum: 0 -> 0.5
-val_acc=0.9226 tta_val_acc=0.9297 seconds=12.0223
-config_diff run=exp5_head_grid.7 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0, 0.0]]
     head.momentum: 0 -> 0.5
     head.momentum_version: 1 -> 2
-val_acc=0.9210 tta_val_acc=0.9306 seconds=12.0275
-config_diff run=exp5_head_grid.8 base_run=exp5_head_grid
+val_acc=0.9252 tta_val_acc=0.9386 seconds=11.9855
+config_diff run=exp5_head_grid_high_lr.6 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0, 0.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9188 tta_val_acc=0.9301 seconds=12.0182
-config_diff run=exp5_head_grid.9 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0, 0.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9205 tta_val_acc=0.9323 seconds=12.0276
-config_diff run=exp5_head_grid.10 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9222 tta_val_acc=0.9298 seconds=12.0205
-config_diff run=exp5_head_grid.11 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9207 tta_val_acc=0.9301 seconds=12.0335
-config_diff run=exp5_head_grid.12 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0, 0.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9202 tta_val_acc=0.9303 seconds=12.0211
-config_diff run=exp5_head_grid.13 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0, 0.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9202 tta_val_acc=0.9294 seconds=12.0319
-config_diff run=exp5_head_grid.14 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9214 tta_val_acc=0.9341 seconds=12.0249
-config_diff run=exp5_head_grid.15 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9212 tta_val_acc=0.9319 seconds=12.0273
-config_diff run=exp5_head_grid.16 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0, 0.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9230 tta_val_acc=0.9316 seconds=12.0254
-config_diff run=exp5_head_grid.17 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0, 0.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9225 tta_val_acc=0.9295 seconds=12.0246
-config_diff run=exp5_head_grid.18 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9250 tta_val_acc=0.9313 seconds=12.0319
-config_diff run=exp5_head_grid.19 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 100.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9193 tta_val_acc=0.9299 seconds=12.0378
-config_diff run=exp5_head_grid.20 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0, 0.0]]
-val_acc=0.9214 tta_val_acc=0.9297 seconds=12.0233
-config_diff run=exp5_head_grid.21 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0, 0.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9214 tta_val_acc=0.9297 seconds=12.0293
-config_diff run=exp5_head_grid.22 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0]]
-val_acc=0.9182 tta_val_acc=0.9288 seconds=12.0094
-config_diff run=exp5_head_grid.23 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9182 tta_val_acc=0.9288 seconds=12.0296
-config_diff run=exp5_head_grid.24 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0]]
     head.momentum: 0 -> 0.5
-val_acc=0.9204 tta_val_acc=0.9325 seconds=12.0276
-config_diff run=exp5_head_grid.25 base_run=exp5_head_grid
+val_acc=0.9189 tta_val_acc=0.9322 seconds=12.0041
+config_diff run=exp5_head_grid_high_lr.7 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0]]
     head.momentum: 0 -> 0.5
     head.momentum_version: 1 -> 2
-val_acc=0.9195 tta_val_acc=0.9297 seconds=12.0328
-config_diff run=exp5_head_grid.26 base_run=exp5_head_grid
+val_acc=0.9286 tta_val_acc=0.9360 seconds=12.0024
+config_diff run=exp5_head_grid_high_lr.8 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0, 0.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.6413 tta_val_acc=0.6524 seconds=12.0026
+config_diff run=exp5_head_grid_high_lr.9 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0, 0.0]]
+    head.momentum: 0 -> 0.7
+    head.momentum_version: 1 -> 2
+val_acc=0.9267 tta_val_acc=0.9370 seconds=11.9978
+config_diff run=exp5_head_grid_high_lr.10 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9563
+config_diff run=exp5_head_grid_high_lr.11 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0]]
+    head.momentum: 0 -> 0.7
+    head.momentum_version: 1 -> 2
+val_acc=0.9224 tta_val_acc=0.9341 seconds=12.0103
+config_diff run=exp5_head_grid_high_lr.12 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0, 0.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.3560 tta_val_acc=0.3522 seconds=12.0018
+config_diff run=exp5_head_grid_high_lr.13 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0, 0.0]]
+    head.momentum: 0 -> 0.8
+    head.momentum_version: 1 -> 2
+val_acc=0.9240 tta_val_acc=0.9346 seconds=12.0103
+config_diff run=exp5_head_grid_high_lr.14 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8638
+config_diff run=exp5_head_grid_high_lr.15 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0]]
+    head.momentum: 0 -> 0.8
+    head.momentum_version: 1 -> 2
+val_acc=0.9253 tta_val_acc=0.9336 seconds=12.0104
+config_diff run=exp5_head_grid_high_lr.16 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0, 0.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8953
+config_diff run=exp5_head_grid_high_lr.17 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0, 0.0]]
+    head.momentum: 0 -> 0.9
+    head.momentum_version: 1 -> 2
+val_acc=0.9266 tta_val_acc=0.9355 seconds=12.0110
+config_diff run=exp5_head_grid_high_lr.18 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9163
+config_diff run=exp5_head_grid_high_lr.19 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0]]
+    head.momentum: 0 -> 0.9
+    head.momentum_version: 1 -> 2
+val_acc=0.9238 tta_val_acc=0.9332 seconds=12.0112
+config_diff run=exp5_head_grid_high_lr.20 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0, 0.0]]
+val_acc=0.9269 tta_val_acc=0.9343 seconds=12.0003
+config_diff run=exp5_head_grid_high_lr.21 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0, 0.0]]
+    head.momentum_version: 1 -> 2
+val_acc=0.9269 tta_val_acc=0.9343 seconds=12.0008
+config_diff run=exp5_head_grid_high_lr.22 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0]]
+val_acc=0.9254 tta_val_acc=0.9348 seconds=11.9992
+config_diff run=exp5_head_grid_high_lr.23 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0]]
+    head.momentum_version: 1 -> 2
+val_acc=0.9254 tta_val_acc=0.9348 seconds=12.0061
+config_diff run=exp5_head_grid_high_lr.24 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0, 0.0]]
     head.momentum: 0 -> 0.5
-val_acc=0.9221 tta_val_acc=0.9321 seconds=12.0354
-config_diff run=exp5_head_grid.27 base_run=exp5_head_grid
+val_acc=0.5038 tta_val_acc=0.5143 seconds=12.0086
+config_diff run=exp5_head_grid_high_lr.25 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0]]
-    head.momentum: 0 -> 0.5
-    head.momentum_version: 1 -> 2
-val_acc=0.9233 tta_val_acc=0.9321 seconds=12.0352
-config_diff run=exp5_head_grid.28 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0, 0.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9239 tta_val_acc=0.9319 seconds=12.0341
-config_diff run=exp5_head_grid.29 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0, 0.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9219 tta_val_acc=0.9329 seconds=12.0341
-config_diff run=exp5_head_grid.30 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9219 tta_val_acc=0.9310 seconds=12.0146
-config_diff run=exp5_head_grid.31 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9212 tta_val_acc=0.9310 seconds=12.0244
-config_diff run=exp5_head_grid.32 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0, 0.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9205 tta_val_acc=0.9313 seconds=12.0124
-config_diff run=exp5_head_grid.33 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0, 0.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9193 tta_val_acc=0.9291 seconds=12.0292
-config_diff run=exp5_head_grid.34 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9234 tta_val_acc=0.9309 seconds=12.0267
-config_diff run=exp5_head_grid.35 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9205 tta_val_acc=0.9301 seconds=12.0279
-config_diff run=exp5_head_grid.36 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0, 0.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9231 tta_val_acc=0.9325 seconds=12.0344
-config_diff run=exp5_head_grid.37 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0, 0.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9200 tta_val_acc=0.9293 seconds=12.0317
-config_diff run=exp5_head_grid.38 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9228 tta_val_acc=0.9339 seconds=12.0256
-config_diff run=exp5_head_grid.39 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 170.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9222 tta_val_acc=0.9288 seconds=12.0397
-config_diff run=exp5_head_grid.40 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0, 0.0]]
-val_acc=0.9230 tta_val_acc=0.9316 seconds=12.0009
-config_diff run=exp5_head_grid.41 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0, 0.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9230 tta_val_acc=0.9316 seconds=12.0254
-config_diff run=exp5_head_grid.42 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0]]
-val_acc=0.9236 tta_val_acc=0.9333 seconds=12.0250
-config_diff run=exp5_head_grid.43 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9236 tta_val_acc=0.9333 seconds=12.0273
-config_diff run=exp5_head_grid.44 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0, 0.0]]
-    head.momentum: 0 -> 0.5
-val_acc=0.9215 tta_val_acc=0.9311 seconds=12.0303
-config_diff run=exp5_head_grid.45 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0, 0.0]]
     head.momentum: 0 -> 0.5
     head.momentum_version: 1 -> 2
-val_acc=0.9207 tta_val_acc=0.9328 seconds=12.0289
-config_diff run=exp5_head_grid.46 base_run=exp5_head_grid
+val_acc=0.9165 tta_val_acc=0.9277 seconds=12.0165
+config_diff run=exp5_head_grid_high_lr.26 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0]]
     head.momentum: 0 -> 0.5
-val_acc=0.9219 tta_val_acc=0.9290 seconds=12.0175
-config_diff run=exp5_head_grid.47 base_run=exp5_head_grid
+val_acc=0.6133 tta_val_acc=0.6205 seconds=12.0144
+config_diff run=exp5_head_grid_high_lr.27 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0]]
-    head.momentum: 0 -> 0.5
-    head.momentum_version: 1 -> 2
-val_acc=0.9227 tta_val_acc=0.9310 seconds=12.0365
-config_diff run=exp5_head_grid.48 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0, 0.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9208 tta_val_acc=0.9316 seconds=12.0289
-config_diff run=exp5_head_grid.49 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0, 0.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9202 tta_val_acc=0.9299 seconds=12.0310
-config_diff run=exp5_head_grid.50 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9232 tta_val_acc=0.9342 seconds=12.0223
-config_diff run=exp5_head_grid.51 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9219 tta_val_acc=0.9316 seconds=12.0169
-config_diff run=exp5_head_grid.52 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0, 0.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9248 tta_val_acc=0.9331 seconds=12.0303
-config_diff run=exp5_head_grid.53 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0, 0.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9209 tta_val_acc=0.9312 seconds=12.0326
-config_diff run=exp5_head_grid.54 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9232 tta_val_acc=0.9354 seconds=12.0328
-config_diff run=exp5_head_grid.55 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9207 tta_val_acc=0.9303 seconds=12.0315
-config_diff run=exp5_head_grid.56 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0, 0.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9225 tta_val_acc=0.9343 seconds=12.0187
-config_diff run=exp5_head_grid.57 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0, 0.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9176 tta_val_acc=0.9316 seconds=12.0336
-config_diff run=exp5_head_grid.58 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9284 tta_val_acc=0.9367 seconds=12.0278
-config_diff run=exp5_head_grid.59 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 280.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9257 tta_val_acc=0.9311 seconds=12.0325
-config_diff run=exp5_head_grid.60 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0, 0.0]]
-val_acc=0.9220 tta_val_acc=0.9302 seconds=12.0234
-config_diff run=exp5_head_grid.61 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0, 0.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9220 tta_val_acc=0.9302 seconds=12.0300
-config_diff run=exp5_head_grid.62 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0]]
-val_acc=0.9223 tta_val_acc=0.9302 seconds=12.0163
-config_diff run=exp5_head_grid.63 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9223 tta_val_acc=0.9302 seconds=12.0322
-config_diff run=exp5_head_grid.64 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0, 0.0]]
-    head.momentum: 0 -> 0.5
-val_acc=0.9208 tta_val_acc=0.9300 seconds=12.0315
-config_diff run=exp5_head_grid.65 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0]]
     head.momentum: 0 -> 0.5
     head.momentum_version: 1 -> 2
-val_acc=0.9251 tta_val_acc=0.9328 seconds=12.0323
-config_diff run=exp5_head_grid.66 base_run=exp5_head_grid
+val_acc=0.8431 tta_val_acc=0.8585 seconds=12.0210
+config_diff run=exp5_head_grid_high_lr.28 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0, 0.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8942
+config_diff run=exp5_head_grid_high_lr.29 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0, 0.0]]
+    head.momentum: 0 -> 0.7
+    head.momentum_version: 1 -> 2
+val_acc=0.9064 tta_val_acc=0.9139 seconds=11.9908
+config_diff run=exp5_head_grid_high_lr.30 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8759
+config_diff run=exp5_head_grid_high_lr.31 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0]]
+    head.momentum: 0 -> 0.7
+    head.momentum_version: 1 -> 2
+val_acc=0.5844 tta_val_acc=0.5942 seconds=12.0076
+config_diff run=exp5_head_grid_high_lr.32 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0, 0.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9251
+config_diff run=exp5_head_grid_high_lr.33 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0, 0.0]]
+    head.momentum: 0 -> 0.8
+    head.momentum_version: 1 -> 2
+val_acc=0.8311 tta_val_acc=0.8394 seconds=12.0144
+config_diff run=exp5_head_grid_high_lr.34 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8818
+config_diff run=exp5_head_grid_high_lr.35 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0]]
+    head.momentum: 0 -> 0.8
+    head.momentum_version: 1 -> 2
+val_acc=0.7150 tta_val_acc=0.7256 seconds=12.0107
+config_diff run=exp5_head_grid_high_lr.36 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0, 0.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8875
+config_diff run=exp5_head_grid_high_lr.37 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0, 0.0]]
+    head.momentum: 0 -> 0.9
+    head.momentum_version: 1 -> 2
+val_acc=0.6444 tta_val_acc=0.6508 seconds=12.0067
+config_diff run=exp5_head_grid_high_lr.38 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8072
+config_diff run=exp5_head_grid_high_lr.39 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 46000.0]]
+    head.momentum: 0 -> 0.9
+    head.momentum_version: 1 -> 2
+val_acc=0.1782 tta_val_acc=0.1854 seconds=12.0081
+config_diff run=exp5_head_grid_high_lr.40 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0, 0.0]]
+val_acc=0.9036 tta_val_acc=0.9122 seconds=11.9955
+config_diff run=exp5_head_grid_high_lr.41 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0, 0.0]]
+    head.momentum_version: 1 -> 2
+val_acc=0.9036 tta_val_acc=0.9122 seconds=12.0090
+config_diff run=exp5_head_grid_high_lr.42 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0]]
+val_acc=0.8743 tta_val_acc=0.8909 seconds=12.0027
+config_diff run=exp5_head_grid_high_lr.43 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0]]
+    head.momentum_version: 1 -> 2
+val_acc=0.8743 tta_val_acc=0.8909 seconds=12.0094
+config_diff run=exp5_head_grid_high_lr.44 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0, 0.0]]
     head.momentum: 0 -> 0.5
-val_acc=0.9253 tta_val_acc=0.9316 seconds=12.0412
-config_diff run=exp5_head_grid.67 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8882
+config_diff run=exp5_head_grid_high_lr.45 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0]]
-    head.momentum: 0 -> 0.5
-    head.momentum_version: 1 -> 2
-val_acc=0.9232 tta_val_acc=0.9319 seconds=12.0305
-config_diff run=exp5_head_grid.68 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0, 0.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9248 tta_val_acc=0.9338 seconds=12.0116
-config_diff run=exp5_head_grid.69 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0, 0.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9219 tta_val_acc=0.9302 seconds=12.0220
-config_diff run=exp5_head_grid.70 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9243 tta_val_acc=0.9315 seconds=12.0313
-config_diff run=exp5_head_grid.71 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9244 tta_val_acc=0.9331 seconds=12.0391
-config_diff run=exp5_head_grid.72 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0, 0.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9259 tta_val_acc=0.9342 seconds=12.0461
-config_diff run=exp5_head_grid.73 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0, 0.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9215 tta_val_acc=0.9290 seconds=12.0353
-config_diff run=exp5_head_grid.74 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9228 tta_val_acc=0.9351 seconds=12.0353
-config_diff run=exp5_head_grid.75 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9238 tta_val_acc=0.9343 seconds=12.0371
-config_diff run=exp5_head_grid.76 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0, 0.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9263 tta_val_acc=0.9368 seconds=12.0293
-config_diff run=exp5_head_grid.77 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0, 0.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9239 tta_val_acc=0.9350 seconds=12.0356
-config_diff run=exp5_head_grid.78 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9257 tta_val_acc=0.9359 seconds=12.0274
-config_diff run=exp5_head_grid.79 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 470.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9227 tta_val_acc=0.9334 seconds=12.0337
-config_diff run=exp5_head_grid.80 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0, 0.0]]
-val_acc=0.9213 tta_val_acc=0.9301 seconds=12.0508
-config_diff run=exp5_head_grid.81 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0, 0.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9213 tta_val_acc=0.9301 seconds=12.0397
-config_diff run=exp5_head_grid.82 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0]]
-val_acc=0.9216 tta_val_acc=0.9313 seconds=12.0289
-config_diff run=exp5_head_grid.83 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9216 tta_val_acc=0.9313 seconds=12.0444
-config_diff run=exp5_head_grid.84 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0, 0.0]]
-    head.momentum: 0 -> 0.5
-val_acc=0.9225 tta_val_acc=0.9313 seconds=12.0417
-config_diff run=exp5_head_grid.85 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0, 0.0]]
     head.momentum: 0 -> 0.5
     head.momentum_version: 1 -> 2
-val_acc=0.9207 tta_val_acc=0.9317 seconds=12.0609
-config_diff run=exp5_head_grid.86 base_run=exp5_head_grid
+val_acc=0.5745 tta_val_acc=0.5760 seconds=12.0031
+config_diff run=exp5_head_grid_high_lr.46 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0]]
     head.momentum: 0 -> 0.5
-val_acc=0.9239 tta_val_acc=0.9318 seconds=12.0389
-config_diff run=exp5_head_grid.87 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8518
+config_diff run=exp5_head_grid_high_lr.47 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0]]
-    head.momentum: 0 -> 0.5
-    head.momentum_version: 1 -> 2
-val_acc=0.9216 tta_val_acc=0.9305 seconds=12.0676
-config_diff run=exp5_head_grid.88 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0, 0.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9237 tta_val_acc=0.9327 seconds=12.1195
-config_diff run=exp5_head_grid.89 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0, 0.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9219 tta_val_acc=0.9320 seconds=12.0823
-config_diff run=exp5_head_grid.90 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9275 tta_val_acc=0.9341 seconds=12.0188
-config_diff run=exp5_head_grid.91 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9252 tta_val_acc=0.9352 seconds=12.0461
-config_diff run=exp5_head_grid.92 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0, 0.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9262 tta_val_acc=0.9377 seconds=12.0285
-config_diff run=exp5_head_grid.93 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0, 0.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9212 tta_val_acc=0.9314 seconds=12.0466
-config_diff run=exp5_head_grid.94 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9281 tta_val_acc=0.9353 seconds=12.0223
-config_diff run=exp5_head_grid.95 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9226 tta_val_acc=0.9322 seconds=12.0446
-config_diff run=exp5_head_grid.96 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0, 0.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9289 tta_val_acc=0.9382 seconds=12.0300
-config_diff run=exp5_head_grid.97 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0, 0.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9234 tta_val_acc=0.9343 seconds=12.0301
-config_diff run=exp5_head_grid.98 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9272 tta_val_acc=0.9372 seconds=12.0199
-config_diff run=exp5_head_grid.99 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 780.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9277 tta_val_acc=0.9350 seconds=12.0357
-config_diff run=exp5_head_grid.100 base_run=exp5_head_grid
-  changes: (none)
-val_acc=0.9246 tta_val_acc=0.9319 seconds=12.0211
-config_diff run=exp5_head_grid.101 base_run=exp5_head_grid
-  changes:
-    head.momentum_version: 1 -> 2
-val_acc=0.9246 tta_val_acc=0.9319 seconds=12.0298
-config_diff run=exp5_head_grid.102 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 1300.0]]
-val_acc=0.9215 tta_val_acc=0.9324 seconds=12.0228
-config_diff run=exp5_head_grid.103 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 1300.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9215 tta_val_acc=0.9324 seconds=12.0419
-config_diff run=exp5_head_grid.104 base_run=exp5_head_grid
-  changes:
-    head.momentum: 0 -> 0.5
-val_acc=0.9230 tta_val_acc=0.9336 seconds=12.0299
-config_diff run=exp5_head_grid.105 base_run=exp5_head_grid
-  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0]]
     head.momentum: 0 -> 0.5
     head.momentum_version: 1 -> 2
-val_acc=0.9257 tta_val_acc=0.9342 seconds=12.0380
-config_diff run=exp5_head_grid.106 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9170
+config_diff run=exp5_head_grid_high_lr.48 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 1300.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0, 0.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9109
+config_diff run=exp5_head_grid_high_lr.49 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0, 0.0]]
+    head.momentum: 0 -> 0.7
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9447
+config_diff run=exp5_head_grid_high_lr.50 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8278
+config_diff run=exp5_head_grid_high_lr.51 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0]]
+    head.momentum: 0 -> 0.7
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8496
+config_diff run=exp5_head_grid_high_lr.52 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0, 0.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8573
+config_diff run=exp5_head_grid_high_lr.53 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0, 0.0]]
+    head.momentum: 0 -> 0.8
+    head.momentum_version: 1 -> 2
+val_acc=0.1981 tta_val_acc=0.1984 seconds=12.0760
+config_diff run=exp5_head_grid_high_lr.54 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8860
+config_diff run=exp5_head_grid_high_lr.55 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0]]
+    head.momentum: 0 -> 0.8
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8995
+config_diff run=exp5_head_grid_high_lr.56 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0, 0.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8111
+config_diff run=exp5_head_grid_high_lr.57 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0, 0.0]]
+    head.momentum: 0 -> 0.9
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9082
+config_diff run=exp5_head_grid_high_lr.58 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8206
+config_diff run=exp5_head_grid_high_lr.59 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 77000.0]]
+    head.momentum: 0 -> 0.9
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8302
+config_diff run=exp5_head_grid_high_lr.60 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0, 0.0]]
+val_acc=0.3833 tta_val_acc=0.3839 seconds=12.0018
+config_diff run=exp5_head_grid_high_lr.61 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0, 0.0]]
+    head.momentum_version: 1 -> 2
+val_acc=0.3833 tta_val_acc=0.3839 seconds=12.0121
+config_diff run=exp5_head_grid_high_lr.62 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0]]
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8783
+config_diff run=exp5_head_grid_high_lr.63 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0]]
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8898
+config_diff run=exp5_head_grid_high_lr.64 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0, 0.0]]
     head.momentum: 0 -> 0.5
-val_acc=0.9273 tta_val_acc=0.9359 seconds=12.0266
-config_diff run=exp5_head_grid.107 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9849
+config_diff run=exp5_head_grid_high_lr.65 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 1300.0]]
-    head.momentum: 0 -> 0.5
-    head.momentum_version: 1 -> 2
-val_acc=0.9274 tta_val_acc=0.9361 seconds=12.0467
-config_diff run=exp5_head_grid.108 base_run=exp5_head_grid
-  changes:
-    head.momentum: 0 -> 0.7
-val_acc=0.9278 tta_val_acc=0.9359 seconds=12.0563
-config_diff run=exp5_head_grid.109 base_run=exp5_head_grid
-  changes:
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9240 tta_val_acc=0.9333 seconds=12.0335
-config_diff run=exp5_head_grid.110 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 1300.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9271 tta_val_acc=0.9366 seconds=12.0293
-config_diff run=exp5_head_grid.111 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 1300.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9238 tta_val_acc=0.9348 seconds=12.0345
-config_diff run=exp5_head_grid.112 base_run=exp5_head_grid
-  changes:
-    head.momentum: 0 -> 0.8
-val_acc=0.9297 tta_val_acc=0.9383 seconds=12.0309
-config_diff run=exp5_head_grid.113 base_run=exp5_head_grid
-  changes:
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9265 tta_val_acc=0.9329 seconds=12.0304
-config_diff run=exp5_head_grid.114 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 1300.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9276 tta_val_acc=0.9351 seconds=12.0275
-config_diff run=exp5_head_grid.115 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 1300.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9255 tta_val_acc=0.9340 seconds=12.0374
-config_diff run=exp5_head_grid.116 base_run=exp5_head_grid
-  changes:
-    head.momentum: 0 -> 0.9
-val_acc=0.9313 tta_val_acc=0.9396 seconds=12.0426
-config_diff run=exp5_head_grid.117 base_run=exp5_head_grid
-  changes:
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9252 tta_val_acc=0.9326 seconds=12.0370
-config_diff run=exp5_head_grid.118 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 1300.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9286 tta_val_acc=0.9376 seconds=12.0354
-config_diff run=exp5_head_grid.119 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 1300.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9257 tta_val_acc=0.9386 seconds=12.0209
-config_diff run=exp5_head_grid.120 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0, 0.0]]
-val_acc=0.9204 tta_val_acc=0.9318 seconds=12.0201
-config_diff run=exp5_head_grid.121 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0, 0.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9204 tta_val_acc=0.9318 seconds=12.0187
-config_diff run=exp5_head_grid.122 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0]]
-val_acc=0.9217 tta_val_acc=0.9334 seconds=12.0339
-config_diff run=exp5_head_grid.123 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9217 tta_val_acc=0.9334 seconds=12.0346
-config_diff run=exp5_head_grid.124 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0, 0.0]]
-    head.momentum: 0 -> 0.5
-val_acc=0.9281 tta_val_acc=0.9372 seconds=12.0216
-config_diff run=exp5_head_grid.125 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0, 0.0]]
     head.momentum: 0 -> 0.5
     head.momentum_version: 1 -> 2
-val_acc=0.9281 tta_val_acc=0.9365 seconds=12.0426
-config_diff run=exp5_head_grid.126 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8400
+config_diff run=exp5_head_grid_high_lr.66 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0]]
     head.momentum: 0 -> 0.5
-val_acc=0.9269 tta_val_acc=0.9364 seconds=12.0377
-config_diff run=exp5_head_grid.127 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8989
+config_diff run=exp5_head_grid_high_lr.67 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0]]
-    head.momentum: 0 -> 0.5
-    head.momentum_version: 1 -> 2
-val_acc=0.9260 tta_val_acc=0.9363 seconds=12.0384
-config_diff run=exp5_head_grid.128 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0, 0.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9282 tta_val_acc=0.9388 seconds=12.0361
-config_diff run=exp5_head_grid.129 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0, 0.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9279 tta_val_acc=0.9366 seconds=12.0318
-config_diff run=exp5_head_grid.130 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9281 tta_val_acc=0.9385 seconds=12.0260
-config_diff run=exp5_head_grid.131 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9247 tta_val_acc=0.9345 seconds=12.0335
-config_diff run=exp5_head_grid.132 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0, 0.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9309 tta_val_acc=0.9383 seconds=12.0346
-config_diff run=exp5_head_grid.133 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0, 0.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9263 tta_val_acc=0.9353 seconds=12.0370
-config_diff run=exp5_head_grid.134 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9310 tta_val_acc=0.9403 seconds=12.0209
-config_diff run=exp5_head_grid.135 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9251 tta_val_acc=0.9386 seconds=12.0440
-config_diff run=exp5_head_grid.136 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0, 0.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9287 tta_val_acc=0.9374 seconds=12.0340
-config_diff run=exp5_head_grid.137 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0, 0.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9286 tta_val_acc=0.9367 seconds=12.0370
-config_diff run=exp5_head_grid.138 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9272 tta_val_acc=0.9373 seconds=12.0245
-config_diff run=exp5_head_grid.139 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 2200.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9295 tta_val_acc=0.9369 seconds=12.0354
-config_diff run=exp5_head_grid.140 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0, 0.0]]
-val_acc=0.9284 tta_val_acc=0.9353 seconds=12.0187
-config_diff run=exp5_head_grid.141 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0, 0.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9284 tta_val_acc=0.9353 seconds=12.0509
-config_diff run=exp5_head_grid.142 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0]]
-val_acc=0.9285 tta_val_acc=0.9356 seconds=12.0326
-config_diff run=exp5_head_grid.143 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9285 tta_val_acc=0.9356 seconds=12.0302
-config_diff run=exp5_head_grid.144 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0, 0.0]]
-    head.momentum: 0 -> 0.5
-val_acc=0.9302 tta_val_acc=0.9386 seconds=12.0404
-config_diff run=exp5_head_grid.145 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0]]
     head.momentum: 0 -> 0.5
     head.momentum_version: 1 -> 2
-val_acc=0.9262 tta_val_acc=0.9340 seconds=12.0358
-config_diff run=exp5_head_grid.146 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9060
+config_diff run=exp5_head_grid_high_lr.68 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0, 0.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8211
+config_diff run=exp5_head_grid_high_lr.69 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0, 0.0]]
+    head.momentum: 0 -> 0.7
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9103
+config_diff run=exp5_head_grid_high_lr.70 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0]]
+    head.momentum: 0 -> 0.7
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8444
+config_diff run=exp5_head_grid_high_lr.71 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0]]
+    head.momentum: 0 -> 0.7
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8512
+config_diff run=exp5_head_grid_high_lr.72 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0, 0.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8636
+config_diff run=exp5_head_grid_high_lr.73 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0, 0.0]]
+    head.momentum: 0 -> 0.8
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8491
+config_diff run=exp5_head_grid_high_lr.74 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0]]
+    head.momentum: 0 -> 0.8
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8895
+config_diff run=exp5_head_grid_high_lr.75 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0]]
+    head.momentum: 0 -> 0.8
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9086
+config_diff run=exp5_head_grid_high_lr.76 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0, 0.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8138
+config_diff run=exp5_head_grid_high_lr.77 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0, 0.0]]
+    head.momentum: 0 -> 0.9
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9113
+config_diff run=exp5_head_grid_high_lr.78 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0]]
+    head.momentum: 0 -> 0.9
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8847
+config_diff run=exp5_head_grid_high_lr.79 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 130000.0]]
+    head.momentum: 0 -> 0.9
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9260
+config_diff run=exp5_head_grid_high_lr.80 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0, 0.0]]
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8627
+config_diff run=exp5_head_grid_high_lr.81 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0, 0.0]]
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8743
+config_diff run=exp5_head_grid_high_lr.82 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0]]
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8629
+config_diff run=exp5_head_grid_high_lr.83 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0]]
+    head.momentum_version: 1 -> 2
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8954
+config_diff run=exp5_head_grid_high_lr.84 base_run=exp5_head_grid_high_lr
+  changes:
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0, 0.0]]
     head.momentum: 0 -> 0.5
-val_acc=0.9301 tta_val_acc=0.9395 seconds=12.0227
-config_diff run=exp5_head_grid.147 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9233
+config_diff run=exp5_head_grid_high_lr.85 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0]]
-    head.momentum: 0 -> 0.5
-    head.momentum_version: 1 -> 2
-val_acc=0.9289 tta_val_acc=0.9370 seconds=12.0320
-config_diff run=exp5_head_grid.148 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0, 0.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9292 tta_val_acc=0.9384 seconds=12.0310
-config_diff run=exp5_head_grid.149 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0, 0.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9288 tta_val_acc=0.9381 seconds=12.0409
-config_diff run=exp5_head_grid.150 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9267 tta_val_acc=0.9366 seconds=12.0282
-config_diff run=exp5_head_grid.151 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9277 tta_val_acc=0.9376 seconds=12.0397
-config_diff run=exp5_head_grid.152 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0, 0.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9313 tta_val_acc=0.9382 seconds=12.0354
-config_diff run=exp5_head_grid.153 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0, 0.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9291 tta_val_acc=0.9377 seconds=12.0376
-config_diff run=exp5_head_grid.154 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9287 tta_val_acc=0.9373 seconds=12.0278
-config_diff run=exp5_head_grid.155 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9291 tta_val_acc=0.9374 seconds=12.0504
-config_diff run=exp5_head_grid.156 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0, 0.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9300 tta_val_acc=0.9391 seconds=12.0433
-config_diff run=exp5_head_grid.157 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0, 0.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9288 tta_val_acc=0.9382 seconds=12.0406
-config_diff run=exp5_head_grid.158 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9277 tta_val_acc=0.9359 seconds=12.0518
-config_diff run=exp5_head_grid.159 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 3600.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9261 tta_val_acc=0.9355 seconds=12.0482
-config_diff run=exp5_head_grid.160 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0, 0.0]]
-val_acc=0.9260 tta_val_acc=0.9388 seconds=12.0379
-config_diff run=exp5_head_grid.161 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0, 0.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9260 tta_val_acc=0.9388 seconds=12.0408
-config_diff run=exp5_head_grid.162 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0]]
-val_acc=0.9289 tta_val_acc=0.9388 seconds=12.0260
-config_diff run=exp5_head_grid.163 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9289 tta_val_acc=0.9388 seconds=12.0314
-config_diff run=exp5_head_grid.164 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0, 0.0]]
-    head.momentum: 0 -> 0.5
-val_acc=0.9275 tta_val_acc=0.9373 seconds=12.0287
-config_diff run=exp5_head_grid.165 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0, 0.0]]
     head.momentum: 0 -> 0.5
     head.momentum_version: 1 -> 2
-val_acc=0.9298 tta_val_acc=0.9405 seconds=12.0287
-config_diff run=exp5_head_grid.166 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9042
+config_diff run=exp5_head_grid_high_lr.86 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0]]
     head.momentum: 0 -> 0.5
-val_acc=0.9284 tta_val_acc=0.9385 seconds=12.0332
-config_diff run=exp5_head_grid.167 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9083
+config_diff run=exp5_head_grid_high_lr.87 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0]]
-    head.momentum: 0 -> 0.5
-    head.momentum_version: 1 -> 2
-val_acc=0.9297 tta_val_acc=0.9394 seconds=12.0385
-config_diff run=exp5_head_grid.168 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0, 0.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9279 tta_val_acc=0.9399 seconds=12.0325
-config_diff run=exp5_head_grid.169 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0, 0.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9300 tta_val_acc=0.9414 seconds=12.0311
-config_diff run=exp5_head_grid.170 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9274 tta_val_acc=0.9383 seconds=12.0336
-config_diff run=exp5_head_grid.171 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9270 tta_val_acc=0.9398 seconds=12.0370
-config_diff run=exp5_head_grid.172 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0, 0.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9282 tta_val_acc=0.9380 seconds=12.0321
-config_diff run=exp5_head_grid.173 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0, 0.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9297 tta_val_acc=0.9404 seconds=12.0383
-config_diff run=exp5_head_grid.174 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.9305 tta_val_acc=0.9398 seconds=12.0331
-config_diff run=exp5_head_grid.175 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9300 tta_val_acc=0.9377 seconds=12.0435
-config_diff run=exp5_head_grid.176 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0, 0.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9238 tta_val_acc=0.9342 seconds=12.0324
-config_diff run=exp5_head_grid.177 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0, 0.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9311 tta_val_acc=0.9397 seconds=12.0488
-config_diff run=exp5_head_grid.178 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.9255 tta_val_acc=0.9361 seconds=12.0337
-config_diff run=exp5_head_grid.179 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9308 tta_val_acc=0.9384 seconds=12.0420
-config_diff run=exp5_head_grid.180 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0, 0.0]]
-val_acc=0.9304 tta_val_acc=0.9400 seconds=12.0244
-config_diff run=exp5_head_grid.181 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0, 0.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9304 tta_val_acc=0.9400 seconds=12.0255
-config_diff run=exp5_head_grid.182 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0]]
-val_acc=0.9294 tta_val_acc=0.9407 seconds=12.0234
-config_diff run=exp5_head_grid.183 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9294 tta_val_acc=0.9407 seconds=12.0332
-config_diff run=exp5_head_grid.184 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0, 0.0]]
-    head.momentum: 0 -> 0.5
-val_acc=0.9288 tta_val_acc=0.9395 seconds=12.0337
-config_diff run=exp5_head_grid.185 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0]]
     head.momentum: 0 -> 0.5
     head.momentum_version: 1 -> 2
-val_acc=0.9317 tta_val_acc=0.9401 seconds=12.0341
-config_diff run=exp5_head_grid.186 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9178
+config_diff run=exp5_head_grid_high_lr.88 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0]]
-    head.momentum: 0 -> 0.5
-val_acc=0.9267 tta_val_acc=0.9365 seconds=12.0332
-config_diff run=exp5_head_grid.187 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0]]
-    head.momentum: 0 -> 0.5
-    head.momentum_version: 1 -> 2
-val_acc=0.9310 tta_val_acc=0.9398 seconds=12.0546
-config_diff run=exp5_head_grid.188 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0, 0.0]]
     head.momentum: 0 -> 0.7
-val_acc=0.9290 tta_val_acc=0.9386 seconds=12.0276
-config_diff run=exp5_head_grid.189 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9359
+config_diff run=exp5_head_grid_high_lr.89 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0, 0.0]]
     head.momentum: 0 -> 0.7
     head.momentum_version: 1 -> 2
-val_acc=0.9320 tta_val_acc=0.9389 seconds=12.0315
-config_diff run=exp5_head_grid.190 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9160
+config_diff run=exp5_head_grid_high_lr.90 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0]]
     head.momentum: 0 -> 0.7
-val_acc=0.9299 tta_val_acc=0.9378 seconds=12.0312
-config_diff run=exp5_head_grid.191 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8592
+config_diff run=exp5_head_grid_high_lr.91 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0]]
     head.momentum: 0 -> 0.7
     head.momentum_version: 1 -> 2
-val_acc=0.9295 tta_val_acc=0.9385 seconds=12.0356
-config_diff run=exp5_head_grid.192 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8241
+config_diff run=exp5_head_grid_high_lr.92 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0, 0.0]]
     head.momentum: 0 -> 0.8
-val_acc=0.9287 tta_val_acc=0.9332 seconds=12.0374
-config_diff run=exp5_head_grid.193 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8668
+config_diff run=exp5_head_grid_high_lr.93 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0, 0.0]]
     head.momentum: 0 -> 0.8
     head.momentum_version: 1 -> 2
-val_acc=0.9290 tta_val_acc=0.9395 seconds=12.0397
-config_diff run=exp5_head_grid.194 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8340
+config_diff run=exp5_head_grid_high_lr.94 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0]]
     head.momentum: 0 -> 0.8
-val_acc=0.9235 tta_val_acc=0.9349 seconds=12.0245
-config_diff run=exp5_head_grid.195 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8102
+config_diff run=exp5_head_grid_high_lr.95 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9277 tta_val_acc=0.9393 seconds=12.0338
-config_diff run=exp5_head_grid.196 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0, 0.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.8721 tta_val_acc=0.8808 seconds=12.0360
-config_diff run=exp5_head_grid.197 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0, 0.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9305 tta_val_acc=0.9404 seconds=12.0445
-config_diff run=exp5_head_grid.198 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0]]
-    head.momentum: 0 -> 0.9
-val_acc=0.4551 tta_val_acc=0.4511 seconds=12.0461
-config_diff run=exp5_head_grid.199 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 10000.0]]
-    head.momentum: 0 -> 0.9
-    head.momentum_version: 1 -> 2
-val_acc=0.9285 tta_val_acc=0.9371 seconds=12.0296
-config_diff run=exp5_head_grid.200 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0, 0.0]]
-val_acc=0.9272 tta_val_acc=0.9357 seconds=12.0464
-config_diff run=exp5_head_grid.201 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0, 0.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9272 tta_val_acc=0.9357 seconds=12.0312
-config_diff run=exp5_head_grid.202 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0]]
-val_acc=0.9305 tta_val_acc=0.9391 seconds=12.0385
-config_diff run=exp5_head_grid.203 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0]]
-    head.momentum_version: 1 -> 2
-val_acc=0.9305 tta_val_acc=0.9391 seconds=12.0399
-config_diff run=exp5_head_grid.204 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0, 0.0]]
-    head.momentum: 0 -> 0.5
-val_acc=0.9286 tta_val_acc=0.9402 seconds=12.0356
-config_diff run=exp5_head_grid.205 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0, 0.0]]
-    head.momentum: 0 -> 0.5
-    head.momentum_version: 1 -> 2
-val_acc=0.9289 tta_val_acc=0.9382 seconds=12.0476
-config_diff run=exp5_head_grid.206 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0]]
-    head.momentum: 0 -> 0.5
-val_acc=0.9278 tta_val_acc=0.9380 seconds=12.0370
-config_diff run=exp5_head_grid.207 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0]]
-    head.momentum: 0 -> 0.5
-    head.momentum_version: 1 -> 2
-val_acc=0.9261 tta_val_acc=0.9385 seconds=12.0429
-config_diff run=exp5_head_grid.208 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0, 0.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9250 tta_val_acc=0.9351 seconds=12.0370
-config_diff run=exp5_head_grid.209 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0, 0.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9263 tta_val_acc=0.9374 seconds=12.0492
-config_diff run=exp5_head_grid.210 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0]]
-    head.momentum: 0 -> 0.7
-val_acc=0.9229 tta_val_acc=0.9309 seconds=12.0404
-config_diff run=exp5_head_grid.211 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-val_acc=0.9259 tta_val_acc=0.9369 seconds=12.0230
-config_diff run=exp5_head_grid.212 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0, 0.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.8767 tta_val_acc=0.8884 seconds=12.0454
-config_diff run=exp5_head_grid.213 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0]]
     head.momentum: 0 -> 0.8
     head.momentum_version: 1 -> 2
-val_acc=0.9304 tta_val_acc=0.9385 seconds=12.0253
-config_diff run=exp5_head_grid.214 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9140
+config_diff run=exp5_head_grid_high_lr.96 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0]]
-    head.momentum: 0 -> 0.8
-val_acc=0.4317 tta_val_acc=0.4708 seconds=12.0415
-config_diff run=exp5_head_grid.215 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0]]
-    head.momentum: 0 -> 0.8
-    head.momentum_version: 1 -> 2
-val_acc=0.9276 tta_val_acc=0.9375 seconds=12.0464
-config_diff run=exp5_head_grid.216 base_run=exp5_head_grid
-  changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0, 0.0]]
     head.momentum: 0 -> 0.9
-val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9440
-config_diff run=exp5_head_grid.217 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.7920
+config_diff run=exp5_head_grid_high_lr.97 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0, 0.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0, 0.0]]
     head.momentum: 0 -> 0.9
     head.momentum_version: 1 -> 2
-val_acc=0.9295 tta_val_acc=0.9370 seconds=12.0448
-config_diff run=exp5_head_grid.218 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8955
+config_diff run=exp5_head_grid_high_lr.98 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0]]
     head.momentum: 0 -> 0.9
-val_acc=0.1000 tta_val_acc=0.1000 seconds=11.9461
-config_diff run=exp5_head_grid.219 base_run=exp5_head_grid
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8853
+config_diff run=exp5_head_grid_high_lr.99 base_run=exp5_head_grid_high_lr
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 17000.0]]
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 210000.0]]
     head.momentum: 0 -> 0.9
     head.momentum_version: 1 -> 2
-val_acc=0.9267 tta_val_acc=0.9360 seconds=12.0494
-search_best run=exp5_head_grid trial=exp5_head_grid.169 tta_val_acc=0.9414
+val_acc=0.1000 tta_val_acc=0.1000 seconds=11.8863
+search_best run=exp5_head_grid_high_lr trial=exp5_head_grid_high_lr.0 tta_val_acc=0.9387
   changes:
-    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 6000.0, 0.0]]
-    head.momentum: 0 -> 0.7
-    head.momentum_version: 1 -> 2
-debug_final_run run=exp5_head_grid trial=exp5_head_grid.169
-val_acc=0.9300 tta_val_acc=0.9414 seconds=45.2623
-debug_spectra run=exp5_head_grid.final steps=200 data=untracked_logs/cifar_baseline_20260928_223330_094572Z_125999.log/cifar_spectra_20260928_231825_939301Z_125999_exp5_head_grid.final.npz video=untracked_logs/cifar_baseline_20260928_223330_094572Z_125999.log/cifar_spectra_20260928_231825_939301Z_125999_exp5_head_grid.final.mp4
+    head.lr_scheduler: [[200, 1300, 0.0]] -> [[200, 28000.0, 0.0]]
+debug_final_run run=exp5_head_grid_high_lr trial=exp5_head_grid_high_lr.0
+val_acc=0.9303 tta_val_acc=0.9387 seconds=45.1973
+debug_spectra run=exp5_head_grid_high_lr.final steps=200 data=untracked_logs/cifar_baseline_20260929_020116_300964Z_141192.log/cifar_spectra_20260929_022157_583856Z_141192_exp5_head_grid_high_lr.final.npz video=untracked_logs/cifar_baseline_20260929_020116_300964Z_141192.log/cifar_spectra_20260929_022157_583856Z_141192_exp5_head_grid_high_lr.final.mp4

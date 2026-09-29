@@ -19,6 +19,7 @@ from bisect import bisect_left, bisect_right
 from datetime import datetime, timezone
 from itertools import product
 from math import ceil, isfinite, log
+from types import SimpleNamespace
 
 timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%fZ")
 log_path = os.path.join("logs", f"cifar_baseline_{timestamp}_{os.getpid()}.log")
@@ -55,6 +56,9 @@ torch.backends.cudnn.allow_tf32 = USE_TF32
 torch.backends.cuda.matmul.allow_tf32 = USE_TF32
 
 USE_COMPILED_MUON = False
+USE_COMPILED_MODEL = False  # Enable only after an end-to-end sweep timing comparison.
+MODEL_COMPILE_MODE = "default"
+MODEL_WARMUP_STEPS = 3
 MUON_DTYPE = torch.bfloat16
 TRAINING_SEED = 0
 
@@ -143,6 +147,8 @@ INPUT_CONDITIONER_FIELDS = {
 }
 ALGORITHM_FIELDS = {
     "sgd": set(),
+    "lion": set(),
+    "adam": {"beta2", "eps"},
     "muon": {"ns_steps", "ns_eps"},
     "muon2": set(),
     "sgdh": {"normalization_eps"},
@@ -185,7 +191,7 @@ def input_conditioner_options(group):
 
 
 class GroupOptimizer(torch.optim.Optimizer):
-    """Apply SGD, Muon, Muon2, SGDH, or an input-conditioned update per group."""
+    """Apply a configured optimizer independently to each parameter group."""
 
     def __init__(self, param_groups):
         for group in param_groups:
@@ -202,12 +208,6 @@ class GroupOptimizer(torch.optim.Optimizer):
                 raise ValueError(f"{name}: learning rate must be nonnegative")
             if group["momentum"] < 0:
                 raise ValueError(f"{name}: momentum must be nonnegative")
-            if (
-                group["algorithm"] == "sgd"
-                and group["nesterov"]
-                and group["momentum"] <= 0
-            ):
-                raise ValueError(f"{name}: Nesterov requires positive momentum")
             if group["algorithm"] in ("muon", "muon2", "sgdh") and any(
                 p.ndim < 2 for p in group["params"]
             ):
@@ -237,17 +237,11 @@ class GroupOptimizer(torch.optim.Optimizer):
         if (
             isinstance(version, bool)
             or not isinstance(version, int)
-            or version not in (1, 2)
+            or version not in (1, 2, 3)
         ):
-            raise ValueError("momentum_version must be 1 or 2")
+            raise ValueError("momentum_version must be 1, 2, or 3")
         if not isinstance(group["nesterov"], bool):
             raise ValueError("nesterov must be a boolean")
-        if (
-            group["algorithm"] == "sgd"
-            and group["nesterov"]
-            and group["momentum"] == 0
-        ):
-            raise ValueError("Nesterov requires positive momentum")
         fields = ({"lr", "momentum"} if runtime else {"momentum"}) | (
             ALGORITHM_FIELDS[group["algorithm"]]
             - {"ns_steps", "gradient_momentum_before_conditioning"}
@@ -261,8 +255,17 @@ class GroupOptimizer(torch.optim.Optimizer):
                 or value < 0
             ):
                 raise ValueError(f"{field} must be a nonnegative finite number")
-        if version == 2 and round_hparam(group["momentum"]) >= 1:
-            raise ValueError("momentum_version 2 requires momentum in [0, 1)")
+        if version in (2, 3) and round_hparam(group["momentum"]) >= 1:
+            raise ValueError(f"momentum_version {version} requires momentum in [0, 1)")
+        if group["algorithm"] in ("lion", "adam") and version != 1:
+            raise ValueError(f"{group['algorithm']} requires momentum_version=1")
+        if group["algorithm"] == "adam":
+            if round_hparam(group["momentum"]) >= 1 or group["beta2"] >= 1:
+                raise ValueError("Adam momentum (beta1) and beta2 must be in [0, 1)")
+            if group["eps"] <= 0:
+                raise ValueError("Adam eps must be positive")
+            if group["nesterov"]:
+                raise ValueError("Adam requires nesterov=False")
         if group["algorithm"] == "muon":
             steps = group["ns_steps"]
             if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
@@ -328,15 +331,16 @@ class GroupOptimizer(torch.optim.Optimizer):
             self.validate_group(group, runtime=True)
         result = super().load_state_dict(state_dict)
         # Optimizer loading casts floating state to the parameter dtype. Restore
-        # the covariance EMA separately to preserve FP32 with FP16 weights, and
-        # give it independent storage so updates cannot modify the checkpoint.
+        # the covariance and Adam EMAs separately to preserve FP32 with FP16
+        # weights, using independent storage so updates cannot modify the checkpoint.
         for group, saved_group in zip(self.param_groups, state_dict["param_groups"]):
             for parameter, index in zip(group["params"], saved_group["params"]):
-                covariance = state_dict["state"].get(index, {}).get("input_covariance")
-                if covariance is not None:
-                    self.state[parameter]["input_covariance"] = covariance.to(
-                        parameter.device
-                    ).clone()
+                saved_state = state_dict["state"].get(index, {})
+                for key in ("input_covariance", "exp_avg", "exp_avg_sq"):
+                    if key in saved_state:
+                        self.state[parameter][key] = saved_state[key].to(
+                            parameter.device
+                        ).clone()
         # The current batch's covariance is transient; only its EMA is checkpointed.
         self._input_covariances.clear()
         return result
@@ -382,6 +386,26 @@ class GroupOptimizer(torch.optim.Optimizer):
                 g = p.grad
                 if g is None:
                     continue
+                if group["algorithm"] == "adam":
+                    state = self.state[p]
+                    dtype = torch.float64 if p.dtype == torch.float64 else torch.float32
+                    gradient = g.to(dtype)
+                    if "exp_avg" not in state:
+                        state["exp_avg"] = torch.zeros_like(gradient)
+                        state["exp_avg_sq"] = torch.zeros_like(gradient)
+                        state["adam_step"] = 0
+                    state["adam_step"] += 1
+                    t, beta2 = state["adam_step"], group["beta2"]
+                    state["exp_avg"].mul_(momentum).add_(gradient, alpha=1 - momentum)
+                    state["exp_avg_sq"].mul_(beta2).addcmul_(
+                        gradient, gradient, value=1 - beta2
+                    )
+                    if lr != 0:
+                        mean = state["exp_avg"] / (1 - momentum ** t)
+                        denominator = (state["exp_avg_sq"] / (1 - beta2 ** t)).sqrt()
+                        denominator.add_(group["eps"])
+                        p.add_(mean / denominator, alpha=-lr)
+                    continue
                 covariance = None
                 if conditioned:
                     covariance = self._input_covariances.pop(p, None)
@@ -404,12 +428,12 @@ class GroupOptimizer(torch.optim.Optimizer):
                             g, covariance, group["svd_mean_percentage_damping"]
                         )
                 if (
-                    momentum_version == 2
+                    momentum_version in (2, 3)
                     or momentum
-                    or group["algorithm"] in ("muon", "muon2", "sgdh")
+                    or group["algorithm"] in ("muon", "muon2", "sgdh", "lion")
                 ):
                     state = self.state[p]
-                    if momentum_version == 2:
+                    if momentum_version in (2, 3):
                         if "momentum_buffer" not in state:
                             state["momentum_buffer"] = torch.zeros_like(g)
                             state["momentum_step"] = 0
@@ -430,17 +454,23 @@ class GroupOptimizer(torch.optim.Optimizer):
                         state["momentum_buffer"].mul_(momentum).add_(g)
                     if momentum_version == 1:
                         buf = state["momentum_buffer"]
-                    g = (
-                        g.add(buf, alpha=momentum)
-                        if group["nesterov"] and momentum
-                        else buf
-                    )
+                    if group["nesterov"] and momentum:
+                        if momentum_version == 3:
+                            g = g.mul(1 - momentum).add(buf, alpha=momentum)
+                        else:
+                            g = g.add(buf, alpha=momentum)
+                    else:
+                        g = buf
 
                 # A zero learning rate must leave weights unchanged for every algorithm.
                 if lr == 0:
                     self._input_covariances.pop(p, None)
                     continue
-                if group["algorithm"] in ("muon", "muon2"):
+                if group["algorithm"] == "lion":
+                    # Requested Lion variant: sign of the momentum/Nesterov
+                    # direction. Zero coordinates stay zero; preserve the buffer.
+                    g = g.sign()
+                elif group["algorithm"] in ("muon", "muon2"):
                     p.mul_(len(p) ** 0.5 / p.norm())  # normalize the weight
                     matrix = g.reshape(len(g), -1)
                     if group["algorithm"] == "muon2":
@@ -1058,6 +1088,66 @@ def evaluate(model, loader, tta_level):
     return (logits.argmax(1) == loader.labels).float().mean().item()
 
 
+def compile_and_warmup_model(model, configs):
+    """Compile once and warm training/TTA graphs before any experiment is timed."""
+    # Conditioning and spectrum hooks are attached after warmup. Without guards,
+    # compiled graphs can silently ignore hooks added after the first forward.
+    torch._dynamo.config.skip_nnmodule_hook_guards = False
+    started = time.perf_counter()
+    batch_sizes = {config["batch_size"] for config in configs}
+    for config in configs:
+        tuning = config["hparam_tuning"]
+        if tuning is not None and "batch_size" in tuning["params"]:
+            batch_sizes.update(tuning["params"]["batch_size"]["choices"])
+    log_event("compile_warmup_start", mode=MODEL_COMPILE_MODE, batch_sizes=sorted(batch_sizes))
+    parameter = next(model.parameters())
+    device, dtype = parameter.device, parameter.dtype
+    devices = [device.index] if device.type == "cuda" else []
+    saved_state = copy.deepcopy(model.state_dict())
+    saved_modes = {module: module.training for module in model.modules()}
+    saved_grads = {p: p.grad for p in model.parameters()}
+    model.compile(mode=MODEL_COMPILE_MODE)
+    try:
+        with torch.random.fork_rng(devices=devices):
+            model.train()
+            model.zero_grad(set_to_none=True)
+            for batch_size in sorted(batch_sizes):
+                inputs = torch.randn(
+                    batch_size, 3, 32, 32, device=device, dtype=dtype
+                ).to(memory_format=torch.channels_last)
+                labels = torch.arange(batch_size, device=device) % model.head.out_features
+                for _ in range(MODEL_WARMUP_STEPS):
+                    outputs = model(inputs)
+                    loss = F.cross_entropy(
+                        outputs, labels, label_smoothing=0.2, reduction="mean"
+                    )
+                    loss.backward()
+                    model.zero_grad(set_to_none=True)
+                    del outputs, loss
+                del inputs, labels
+
+            # infer() uses model.train() with inference_mode(), and translated
+            # views have different strides. Warm the actual evaluation paths.
+            images = torch.randn(2000, 3, 32, 32, device=device, dtype=dtype).to(
+                memory_format=torch.channels_last
+            )
+            loader = SimpleNamespace(normalized_images=lambda: images)
+            for _ in range(MODEL_WARMUP_STEPS):
+                infer(model, loader, tta_level=0)
+                infer(model, loader, tta_level=2)
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+    finally:
+        model.load_state_dict(saved_state)
+        for p, gradient in saved_grads.items():
+            p.grad = gradient
+        for module, training in saved_modes.items():
+            module.training = training
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    log_event("compile_warmup_complete", seconds=time.perf_counter() - started)
+
+
 ############################################
 #                Training                  #
 ############################################
@@ -1095,18 +1185,23 @@ def normalize_schedule(lines, total_steps, name):
     return result
 
 
-def hparam_at_step(lines, step):
-    """Interpolate with an exclusive end value, rounding each applied value."""
+def schedule_value_at_step(lines, step):
+    """Interpolate with an exclusive end value, preserving numeric precision."""
     for line in lines:
         steps, start = line[:2]
         if 0 <= step < steps:
             if len(line) == 2:
-                return round_hparam(start)
+                return start
             # The end value is reached one update after this segment finishes.
             fraction = step / steps
-            return round_hparam(start * (1 - fraction) + line[2] * fraction)
+            return start * (1 - fraction) + line[2] * fraction
         step -= steps
     raise ValueError("Step is outside the hyperparameter schedule")
+
+
+def hparam_at_step(lines, step):
+    """Interpolate a schedule and round the applied value."""
+    return round_hparam(schedule_value_at_step(lines, step))
 
 
 def configured_hparam_schedules(param_groups, total_steps):
@@ -1195,7 +1290,7 @@ def segment_hparam_schedules(base_schedules, values, start_step, steps, global_s
             total_steps = sum(line[0] for line in lines)
             if start_step < 0 or steps <= 0 or start_step + steps > total_steps:
                 raise ValueError("Search interval is outside the configured schedule")
-            value = round_hparam(values[path])
+            value = normalize_config(values[path], path.rsplit(".", 1)[-1])
             line = (steps, value)
             schedules[path] = (
                 slice_schedule(lines, 0, start_step)
@@ -1214,7 +1309,9 @@ def apply_hparam_schedules(optimizer, schedules, step):
             "nesterov",
             *sorted(ALGORITHM_FIELDS[group["algorithm"]]),
         ):
-            group[field] = hparam_at_step(schedules[f"{name}.{field}"], step)
+            group[field] = normalize_config(
+                schedule_value_at_step(schedules[f"{name}.{field}"], step), field
+            )
 
 
 # Set hparam_tuning to, for example:
@@ -1257,6 +1354,12 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # Conditioner settings can be searched using explicit choices in hparam_tuning.params.
 # Each parameter group accepts momentum_version: 1 (default) keeps the original
 # momentum; 2 uses a zero-initialized EMA with bias correction by 1 - momentum**t.
+# Version 3 uses the same corrected EMA, with Nesterov direction
+# (1 - momentum) * g + momentum * corrected_buffer. Without Nesterov, 2 and 3 match.
+# Lion here takes the sign of the existing momentum/Nesterov direction and uses
+# momentum_version=1. Adam uses momentum as beta1, plus explicit beta2 and eps
+# (e.g. 0.9, 0.999, 1e-8); it requires nesterov=False and momentum_version=1,
+# and always applies its own first/second-moment bias correction.
 run_type = "grid"  # "baseline", "interval", "global_neighbour", or "grid"
 # Log per-step singular values of the final (post-search) run of each config to
 # untracked_logs/<log filename>/, with one .npz and one .mp4 per run.
@@ -1693,7 +1796,67 @@ config["hparam_tuning"] = dict(
 )
 EXPERIMENT_RUN_CONFIGS["exp5_head_grid"] = config
 
-experiments_to_run = ["exp5_head_grid"]
+# Continue the same LR grid above its previous maximum (k=-5), without reruns.
+HEAD_GRID_HIGH_LR_CHOICES = sorted(
+    round_hparam(HEAD_GRID_LR * 0.6 ** k) for k in range(-10, -5)
+)
+config = copy.deepcopy(EXPERIMENT_RUN_CONFIGS["exp5_head_grid"])
+config["hparam_tuning"]["params"]["head.initial_lr"]["choices"] = HEAD_GRID_HIGH_LR_CHOICES
+EXPERIMENT_RUN_CONFIGS["exp5_head_grid_high_lr"] = config
+
+# Compare plain SGD and sign updates on the original 11-LR head grid.
+# Conv remains Muon2; these heads do not use input conditioning.
+for algorithm, name in (("sgd", "exp6_head_sgd_grid"), ("lion", "exp7_head_lion_grid")):
+    config = copy.deepcopy(EXPERIMENT_RUN_CONFIGS["exp5_head_grid"])
+    head = config["param_groups"]["head"]
+    head["algorithm"] = algorithm
+    for field in INPUT_CONDITIONER_FIELDS:
+        del head[field]
+    if algorithm == "lion":
+        del config["hparam_tuning"]["params"]["head.momentum_version"]
+    EXPERIMENT_RUN_CONFIGS[name] = config
+
+# Lion without momentum: search learning rates suited to sign updates.
+config = copy.deepcopy(EXPERIMENT_RUN_CONFIGS["exp7_head_lion_grid"])
+config["param_groups"]["head"]["momentum"] = 0.0
+config["param_groups"]["head"]["lr_scheduler"] = lr_decay_schedule(200, 1.0, "linear_decay")
+config["hparam_tuning"]["params"]["head.initial_lr"] = dict(
+    initial=1.0, choices=[10.0 ** k for k in range(-5, 3)],
+)
+config["hparam_tuning"]["params"]["head.momentum"] = dict(initial=0.0, choices=[0.0])
+EXPERIMENT_RUN_CONFIGS["exp8_head_lion_zero_momentum_grid"] = config
+
+# Lion: sweep LR and momentum with linear decay only.
+config = copy.deepcopy(EXPERIMENT_RUN_CONFIGS["exp7_head_lion_grid"])
+config["param_groups"]["head"]["lr_scheduler"] = lr_decay_schedule(200, 1.0, "linear_decay")
+config["hparam_tuning"]["params"]["head.initial_lr"] = dict(
+    initial=1.0, choices=sorted(round_hparam(0.6 ** k) for k in range(-10, 6)),
+)
+config["hparam_tuning"]["params"]["head.decay"] = dict(
+    initial="linear_decay", choices=["linear_decay"],
+)
+EXPERIMENT_RUN_CONFIGS["exp9_head_lion_grid"] = config
+
+# Compare head optimizers using version 3 momentum and both Nesterov settings.
+HEAD_V3_LR_CHOICES = sorted(round_hparam(6000 * 0.6 ** k) for k in range(-8, 4))
+for source, name in (
+    ("exp6_head_sgd_grid", "exp10_head_sgd_v3_grid"),
+    ("exp5_head_grid", "exp11_head_input_conditioned_v3_grid"),
+):
+    config = copy.deepcopy(EXPERIMENT_RUN_CONFIGS[source])
+    config["param_groups"]["head"].update(
+        momentum_version=3,
+        lr_scheduler=lr_decay_schedule(200, 6000, "linear_decay"),
+    )
+    config["hparam_tuning"]["params"].update({
+        "head.initial_lr": dict(initial=6000, choices=HEAD_V3_LR_CHOICES),
+        "head.decay": dict(initial="linear_decay", choices=["linear_decay"]),
+        "head.momentum_version": dict(initial=3, choices=[3]),
+        "head.nesterov": dict(initial=True, choices=[True, False]),
+    })
+    EXPERIMENT_RUN_CONFIGS[name] = config
+
+experiments_to_run = ["exp10_head_sgd_v3_grid", "exp11_head_input_conditioned_v3_grid"]
 RUNS = (
     [(name, EXPERIMENT_RUN_CONFIGS[name]) for name in experiments_to_run]
     if run_type in ("global_neighbour", "grid")
@@ -1709,7 +1872,10 @@ RUN_CONFIGS = [config for _, config in RUNS]
 
 
 def normalize_config(value, key):
-    """Round hyperparameter values, keeping batch sizes and step counts exact."""
+    """Round hyperparameters, preserving step counts, batch sizes, and Adam beta2."""
+    # Adam beta2=0.999 must not round to 1, including in tuning specifications.
+    if key == "beta2" or (isinstance(key, str) and key.endswith(".beta2")):
+        return copy.deepcopy(value)
     if key in (
         "batch_size",
         "num_epochs",
@@ -1790,7 +1956,7 @@ def get_hparam(config, path):
 def with_hparam(config, path, value):
     get_hparam(config, path)  # Validate the path before modifying anything.
     updated = copy.deepcopy(config)
-    value = value if path in ("batch_size", "num_epochs") else round_hparam(value)
+    value = normalize_config(value, path.rsplit(".", 1)[-1])
     if "." not in path:
         updated[path] = value
     else:
@@ -1875,7 +2041,8 @@ def interval_search_space(config):
     """Validate searchable fields and snap multiplicative LR starts to their grids."""
     choices, initial = {}, {}
     for path, spec in tuning_params(config).items():
-        value, values = round_hparam(spec["initial"]), spec["choices"]
+        value = normalize_config(spec["initial"], path.rsplit(".", 1)[-1])
+        values = spec["choices"]
         parts = path.split(".")
         if len(parts) != 2:
             raise ValueError(f"Unsupported interval search parameter: {path}")
@@ -1927,23 +2094,7 @@ def interval_search_space(config):
                 )
             ):
                 raise ValueError(f"{path}: choices must be nonnegative finite numbers")
-            values = sorted({round_hparam(v) for v in values})
-            if (
-                field == "momentum"
-                and group["algorithm"] == "sgd"
-                and group["nesterov"]
-            ):
-                # SGD Nesterov requires positive gradient momentum. Covariance EMA
-                # momentum is independent and still includes zero.
-                values = [v for v in values if v > 0]
-                if value == 0:
-                    raise ValueError(
-                        f"{path}: SGD Nesterov needs positive initial momentum"
-                    )
-            if not values:
-                raise ValueError(
-                    f"{path}: no valid choices (Nesterov needs positive momentum)"
-                )
+            values = sorted({normalize_config(v, field) for v in values})
             if field != "initial_lr":
                 for candidate in [value, *values]:
                     GroupOptimizer.validate_group(
@@ -2572,11 +2723,6 @@ def main(
     train_loader = CifarLoader(
         "cifar10", train=True, batch_size=batch_size, aug=dict(flip=True, translate=2)
     )
-    if run == "warmup":
-        # The only purpose of the first run is to warmup the compiled model, so we can use dummy data
-        train_loader.labels = torch.randint(
-            0, 10, size=(len(train_loader.labels),), device=train_loader.labels.device
-        )
     steps_per_epoch = 1 if overfit else len(train_loader)
     total_train_steps = num_epochs * steps_per_epoch
     schedules = configured_hparam_schedules(param_groups, total_train_steps)
@@ -2655,11 +2801,10 @@ def main(
 
 
 if __name__ == "__main__":
-    # We re-use the compiled model between runs to save the non-data-dependent compilation time
+    # Reuse the same model and compiled graphs across all candidates.
     set_training_seed()
     model = CifarNet().cuda().to(memory_format=torch.channels_last)
-    # model.compile(mode="max-autotune")
-
-    # main("warmup", model, **RUN_CONFIGS[0])
+    if USE_COMPILED_MODEL:
+        compile_and_warmup_model(model, RUN_CONFIGS)
     for run, config in RUNS:
         run_experiment(run, model, config)

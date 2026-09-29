@@ -5,6 +5,7 @@ import json
 import unittest
 import ast
 import inspect
+from itertools import product
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -82,6 +83,59 @@ class SearchTests(unittest.TestCase):
     def setUpClass(cls):
         torch.set_num_threads(2)
 
+    def test_compile_warmup_preserves_state_and_honors_new_hooks(self):
+        model = torch.nn.Sequential()
+        model.add_module("conv", torch.nn.Conv2d(3, 2, 1))
+        model.add_module("norm", torch.nn.BatchNorm2d(2))
+        model.add_module("pool", torch.nn.AdaptiveAvgPool2d(1))
+        model.add_module("flatten", torch.nn.Flatten())
+        model.add_module("head", torch.nn.Linear(2, 10))
+        model.conv.eval()
+        parameter = next(model.parameters())
+        parameter.grad = torch.ones_like(parameter)
+        original_gradient = parameter.grad
+        state = copy.deepcopy(model.state_dict())
+        modes = {module: module.training for module in model.modules()}
+        rng = torch.random.get_rng_state().clone()
+        compile_model = model.compile
+        configs = [dict(
+            batch_size=2,
+            hparam_tuning=dict(params={"batch_size": dict(choices=[2, 3])}),
+        )]
+        with (
+            patch.object(torch._dynamo.config, "skip_nnmodule_hook_guards", True),
+            patch.object(
+                model, "compile",
+                side_effect=lambda **kwargs: compile_model(backend="eager"),
+            ) as compile_call,
+            patch.object(train, "infer", wraps=train.infer) as infer_call,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            train.compile_and_warmup_model(model, configs)
+            compile_call.assert_called_once_with(mode=train.MODEL_COMPILE_MODE)
+            self.assertEqual(
+                [call.kwargs["tta_level"] for call in infer_call.call_args_list],
+                [0, 2] * train.MODEL_WARMUP_STEPS,
+            )
+            self.assertFalse(torch._dynamo.config.skip_nnmodule_hook_guards)
+            torch.testing.assert_close(torch.random.get_rng_state(), rng, rtol=0, atol=0)
+            for key, value in model.state_dict().items():
+                torch.testing.assert_close(value, state[key], rtol=0, atol=0)
+            self.assertEqual({module: module.training for module in model.modules()}, modes)
+            self.assertIs(parameter.grad, original_gradient)
+            captured = []
+            handle = model.head.register_forward_pre_hook(
+                lambda module, args: captured.append(args[0].detach())
+            )
+            try:
+                model.train()
+                model(torch.randn(2, 3, 32, 32)).sum().backward()
+                self.assertEqual(len(captured), 1)
+                self.assertEqual(captured[0].shape, (2, 2))
+            finally:
+                handle.remove()
+                torch._dynamo.reset()
+
     def test_experiment_configs_and_fixed_nesterov(self):
         decays = ("linear_decay", "constant")
         exp4_names = [
@@ -90,7 +144,7 @@ class SearchTests(unittest.TestCase):
             for order in ("before", "after")
         ]
         self.assertEqual(
-            [name for name in train.EXPERIMENT_RUN_CONFIGS if name != "exp5_head_grid"],
+            [name for name in train.EXPERIMENT_RUN_CONFIGS if name == "exp3" or name.startswith("exp4_")],
             ["exp3"] + exp4_names,
         )
         # LR decay is fixed per run instead of searched.
@@ -105,7 +159,7 @@ class SearchTests(unittest.TestCase):
         }
         baseline = train.BASELINE_RUN_CONFIGS[2]
         for name, original in train.EXPERIMENT_RUN_CONFIGS.items():
-            if name == "exp5_head_grid":
+            if name != "exp3" and not name.startswith("exp4_"):
                 continue
             experiment = name.split("_")[0]
             decay = "constant" if "_constant" in name else "linear_decay"
@@ -169,62 +223,95 @@ class SearchTests(unittest.TestCase):
         )
 
     def test_head_grid_covers_all_requested_combinations(self):
-        self.assertEqual([name for name, _ in train.RUNS], ["exp5_head_grid"])
-        config = train.RUNS[0][1]
-        self.assertEqual(config["batch_size"], 2000)
-        self.assertEqual(config["num_epochs"], 8)
-        self.assertFalse(config["overfit"])
-        self.assertEqual(config["hparam_tuning"]["algorithm"], "grid")
-        self.assertEqual(config["hparam_tuning"]["metric"], "tta_val_acc")
-        expected_lrs = {100, 170, 280, 470, 780, 1300, 2200, 3600, 6000, 10000, 17000}
-        seen = set()
-
-        def evaluate(run, model, **candidate):
-            head = candidate["param_groups"]["head"]
-            for name, group in candidate["param_groups"].items():
-                train.GroupOptimizer.validate_group(group, runtime=False)
-                if name == "conv":
-                    self.assertEqual(group["algorithm"], "muon2")
-                    self.assertEqual(group["lr_scheduler"], [(200, 0.22, 0.0)])
-                    self.assertEqual(group["momentum"], 0.7)
-                    self.assertEqual(group["momentum_version"], 1)
-                    self.assertTrue(group["nesterov"])
-                elif name != "head":
-                    self.assertEqual(
-                        group, train.BASELINE_RUN_CONFIGS[2]["param_groups"][name]
-                    )
-            self.assertEqual(head["algorithm"], "input_conditioned")
-            self.assertFalse(head["gradient_momentum_before_conditioning"])
-            self.assertEqual(head["svd_mean_percentage_damping"], 0.01)
-            self.assertEqual(head["input_conditioner_momentum"], 0.0)
-            self.assertTrue(head["nesterov"])
-            point = (
-                train.get_hparam(candidate, "head.initial_lr"),
-                head["momentum"],
-                train.get_hparam(candidate, "head.decay"),
-                head["momentum_version"],
-            )
-            self.assertNotIn(point, seen)
-            seen.add(point)
-            return dict(val_acc=0.9, tta_val_acc=0.94)
-
-        with (
-            patch.object(train, "main", side_effect=evaluate),
-            contextlib.redirect_stdout(io.StringIO()),
-        ):
-            result = train.run_experiment("exp5_head_grid", None, config)
-        expected = {
-            (lr, momentum, decay, version)
-            for lr in expected_lrs
-            for momentum in (0, 0.5, 0.7, 0.8, 0.9)
-            for decay in ("constant", "linear_decay")
-            for version in (1, 2)
+        self.assertEqual(
+            [name for name, _ in train.RUNS],
+            ["exp10_head_sgd_v3_grid", "exp11_head_input_conditioned_v3_grid"],
+        )
+        grids = {
+            "exp5_head_grid": {100, 170, 280, 470, 780, 1300, 2200, 3600, 6000, 10000, 17000},
+            "exp5_head_grid_high_lr": {28000, 46000, 77000, 130000, 210000},
         }
-        self.assertEqual(seen, expected)
-        self.assertEqual(len(result["trials"]), 220)
+        self.assertTrue(grids["exp5_head_grid"].isdisjoint(grids["exp5_head_grid_high_lr"]))
+        grids["exp6_head_sgd_grid"] = grids["exp5_head_grid"]
+        grids["exp7_head_lion_grid"] = grids["exp5_head_grid"]
+        grids["exp8_head_lion_zero_momentum_grid"] = {10.0 ** k for k in range(-5, 3)}
+        grids["exp9_head_lion_grid"] = {train.round_hparam(0.6 ** k) for k in range(-10, 6)}
+        v3_grids = ("exp10_head_sgd_v3_grid", "exp11_head_input_conditioned_v3_grid")
+        for name in v3_grids:
+            grids[name] = {train.round_hparam(6000 * 0.6 ** k) for k in range(-8, 4)}
+        for name, expected_lrs in grids.items():
+            config = train.EXPERIMENT_RUN_CONFIGS[name]
+            self.assertEqual(config["batch_size"], 2000)
+            self.assertEqual(config["num_epochs"], 8)
+            self.assertFalse(config["overfit"])
+            self.assertEqual(config["hparam_tuning"]["algorithm"], "grid")
+            self.assertEqual(config["hparam_tuning"]["metric"], "tta_val_acc")
+            is_lion = name in (
+                "exp7_head_lion_grid", "exp8_head_lion_zero_momentum_grid", "exp9_head_lion_grid"
+            )
+            versions = (3,) if name in v3_grids else (1,) if is_lion else (1, 2)
+            nesterov_choices = (True, False) if name in v3_grids else (True,)
+            momenta = (0,) if name == "exp8_head_lion_zero_momentum_grid" else (0, 0.5, 0.7, 0.8, 0.9)
+            decays = ("linear_decay",) if name in (*v3_grids, "exp9_head_lion_grid") else ("constant", "linear_decay")
+            algorithm = (
+                "sgd" if name in ("exp6_head_sgd_grid", "exp10_head_sgd_v3_grid") else
+                "lion" if is_lion else "input_conditioned"
+            )
+            if algorithm == "lion":
+                self.assertNotIn("head.momentum_version", config["hparam_tuning"]["params"])
+            seen = set()
+
+            def evaluate(run, model, **candidate):
+                head = candidate["param_groups"]["head"]
+                for name, group in candidate["param_groups"].items():
+                    train.GroupOptimizer.validate_group(group, runtime=False)
+                    if name == "conv":
+                        self.assertEqual(group["algorithm"], "muon2")
+                        self.assertEqual(group["lr_scheduler"], [(200, 0.22, 0.0)])
+                        self.assertEqual(group["momentum"], 0.7)
+                        self.assertEqual(group["momentum_version"], 1)
+                        self.assertTrue(group["nesterov"])
+                    elif name != "head":
+                        self.assertEqual(
+                            group, train.BASELINE_RUN_CONFIGS[2]["param_groups"][name]
+                        )
+                self.assertEqual(head["algorithm"], algorithm)
+                if algorithm == "input_conditioned":
+                    self.assertFalse(head["gradient_momentum_before_conditioning"])
+                    self.assertEqual(head["svd_mean_percentage_damping"], 0.01)
+                    self.assertEqual(head["input_conditioner_momentum"], 0.0)
+                else:
+                    self.assertTrue(train.INPUT_CONDITIONER_FIELDS.isdisjoint(head))
+                self.assertIsInstance(head["nesterov"], bool)
+                point = (
+                    train.get_hparam(candidate, "head.initial_lr"),
+                    head["momentum"],
+                    train.get_hparam(candidate, "head.decay"),
+                    head["momentum_version"],
+                    head["nesterov"],
+                )
+                self.assertNotIn(point, seen)
+                seen.add(point)
+                return dict(val_acc=0.9, tta_val_acc=0.94)
+
+            with (
+                patch.object(train, "main", side_effect=evaluate),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                result = train.run_experiment(name, None, config)
+            expected = {
+                (lr, momentum, decay, version, nesterov)
+                for lr in expected_lrs
+                for momentum in momenta
+                for decay in decays
+                for version in versions
+                for nesterov in nesterov_choices
+            }
+            self.assertEqual(seen, expected)
+            self.assertEqual(len(result["trials"]), len(expected))
 
     def test_input_conditioned_zero_momentum_uses_current_gradient(self):
-        for version in (1, 2):
+        for version in (1, 2, 3):
             config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["exp5_head_grid"])
             head = config["param_groups"]["head"]
             head["momentum_version"] = version
@@ -354,6 +441,8 @@ class SearchTests(unittest.TestCase):
         parameter = torch.nn.Parameter(torch.ones(2, 2))
         extras = {
             "sgd": {},
+            "lion": {},
+            "adam": dict(beta2=0.999, eps=1e-8),
             "muon": dict(ns_steps=3, ns_eps=0.0),
             "muon2": {},
             "sgdh": dict(normalization_eps=1e-6),
@@ -370,7 +459,7 @@ class SearchTests(unittest.TestCase):
                 algorithm=algorithm,
                 lr=0.1,
                 momentum=0.6,
-                nesterov=True,
+                nesterov=algorithm != "adam",
                 **fields,
             )
             train.GroupOptimizer([dict(group)])
@@ -1282,15 +1371,14 @@ class SearchTests(unittest.TestCase):
             {"batch_size": dict(initial=125, choices=[125])},
             {"conv.initial_lr": dict(initial=0.04, choices=[])},
             {"whiten_weight.initial_lr": dict(initial=0, choices=None, mult=0.6)},
-            {"head.momentum": dict(initial=0, choices=[0])},
         ):
             config["hparam_tuning"]["params"] = parameters
             with self.subTest(parameters=parameters), self.assertRaises(ValueError):
                 train.interval_search_space(config)
 
-    def test_momentum_version_two_bias_correction_and_checkpoint(self):
-        for momentum, nesterov in ((0.0, False), (0.6, False), (0.6, True)):
-            with self.subTest(momentum=momentum, nesterov=nesterov):
+    def test_bias_corrected_momentum_versions_and_checkpoint(self):
+        for version, momentum, nesterov in product((2, 3), (0.0, 0.6), (False, True)):
+            with self.subTest(version=version, momentum=momentum, nesterov=nesterov):
                 parameter = torch.nn.Parameter(torch.ones(2, dtype=torch.float64))
                 group = dict(
                     name="test",
@@ -1298,7 +1386,7 @@ class SearchTests(unittest.TestCase):
                     algorithm="sgd",
                     lr=0.1,
                     momentum=momentum,
-                    momentum_version=2,
+                    momentum_version=version,
                     nesterov=nesterov,
                 )
                 optimizer = train.GroupOptimizer([dict(group)])
@@ -1316,7 +1404,8 @@ class SearchTests(unittest.TestCase):
                         weight * g for weight, g in zip(weights, gradients[:t])
                     ) / sum(weights)
                     direction = (
-                        gradient + momentum * corrected if nesterov else corrected
+                        ((1 - momentum) if version == 3 else 1) * gradient
+                        + momentum * corrected if nesterov else corrected
                     )
                     before = parameter.detach().clone()
                     optimizer.step()
@@ -1332,6 +1421,149 @@ class SearchTests(unittest.TestCase):
                         optimizer = train.GroupOptimizer([dict(group)])
                         optimizer.load_state_dict(checkpoint)
 
+    def test_version_three_preserves_constant_conditioned_gradient_scale(self):
+        for nesterov, momentum_first in product((False, True), (False, True)):
+            with self.subTest(nesterov=nesterov, momentum_first=momentum_first):
+                config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["exp5_head_grid"])
+                config["param_groups"]["head"].update(
+                    momentum_version=3, momentum=0.9, nesterov=nesterov,
+                    gradient_momentum_before_conditioning=momentum_first,
+                    lr_scheduler=[(4, 0.1)],
+                )
+                model = TinyModel(dict(time=0, training=0))
+                optimizer = train.make_optimizer(model, config["param_groups"])
+                parameter = model.head.weight
+                gradient = torch.ones_like(parameter)
+                inputs = 2 * torch.eye(parameter.shape[1])
+                covariance = inputs.T @ inputs / len(inputs)
+                direction = train.GroupOptimizer.condition(gradient, covariance, 0.01)
+                for _ in range(4):
+                    parameter.grad = gradient.clone()
+                    optimizer.record_input(parameter, inputs)
+                    before = parameter.detach().clone()
+                    optimizer.step()
+                    torch.testing.assert_close(parameter, before - 0.1 * direction)
+                    torch.testing.assert_close(parameter.grad, gradient)
+
+    def test_lion_takes_sign_without_changing_momentum_history(self):
+        for nesterov in (False, True):
+            parameter = torch.nn.Parameter(torch.ones(3, dtype=torch.float64))
+            reference = torch.nn.Parameter(parameter.detach().clone())
+            optimizer = train.GroupOptimizer([dict(
+                name="test", params=[parameter], algorithm="lion", lr=0.1,
+                momentum=0.6, nesterov=nesterov, momentum_version=1,
+            )])
+            sgd = torch.optim.SGD([reference], lr=0.1, momentum=0.6, nesterov=nesterov)
+            for values in ([1.0, -2.0, 0.0], [-0.2, 0.1, 0.0], [-2.0, 3.0, 0.0]):
+                gradient = torch.tensor(values, dtype=torch.float64)
+                parameter.grad = gradient.clone()
+                reference.grad = gradient.clone()
+                before_reference = reference.detach().clone()
+                sgd.step()
+                direction = (before_reference - reference).sign()
+                before = parameter.detach().clone()
+                optimizer.step()
+                torch.testing.assert_close(parameter, before - 0.1 * direction)
+                torch.testing.assert_close(parameter.grad, gradient)
+                torch.testing.assert_close(
+                    optimizer.state[parameter]["momentum_buffer"],
+                    sgd.state[reference]["momentum_buffer"],
+                )
+            optimizer.param_groups[0]["momentum"] = 0
+            before = parameter.detach().clone()
+            optimizer.step()
+            torch.testing.assert_close(parameter, before - 0.1 * gradient.sign())
+            torch.testing.assert_close(optimizer.state[parameter]["momentum_buffer"], gradient)
+            optimizer.param_groups[0]["lr"] = 0
+            before = parameter.detach().clone()
+            optimizer.step()
+            torch.testing.assert_close(parameter, before, rtol=0, atol=0)
+
+    def test_adam_matches_torch_and_restores_checkpoint(self):
+        for beta1, beta2 in ((0.0, 0.0), (0.9, 0.999), (0.6, 0.95)):
+            with self.subTest(beta1=beta1, beta2=beta2):
+                parameter = torch.nn.Parameter(torch.ones(3, dtype=torch.float64))
+                reference = torch.nn.Parameter(parameter.detach().clone())
+                group = dict(
+                    name="test", params=[parameter], algorithm="adam", lr=0.01,
+                    momentum=beta1, beta2=beta2, eps=1e-8, nesterov=False,
+                )
+                optimizer = train.GroupOptimizer([dict(group)])
+                adam = torch.optim.Adam([reference], lr=0.01, betas=(beta1, beta2), eps=1e-8)
+                for t, values in enumerate((
+                    [1.0, -2.0, 0.0], [0.5, 1.5, 0.0], [-3.0, 0.0, 0.0],
+                    [1e-10, 1e-10, 0.0],
+                ), 1):
+                    parameter.grad = reference.grad = None
+                    optimizer.step()
+                    adam.step()
+                    gradient = torch.tensor(values, dtype=torch.float64)
+                    parameter.grad = gradient.clone()
+                    reference.grad = gradient.clone()
+                    # Frozen weights still accumulate first and second moments.
+                    lr = 0.0 if t == 2 else 0.01
+                    optimizer.param_groups[0]["lr"] = adam.param_groups[0]["lr"] = lr
+                    optimizer.step()
+                    adam.step()
+                    torch.testing.assert_close(parameter, reference, rtol=1e-12, atol=1e-12)
+                    torch.testing.assert_close(parameter.grad, gradient)
+                    for key in ("exp_avg", "exp_avg_sq"):
+                        torch.testing.assert_close(
+                            optimizer.state[parameter][key], adam.state[reference][key]
+                        )
+                    self.assertEqual(optimizer.state[parameter]["adam_step"], t)
+                    if t == 2:
+                        checkpoint = copy.deepcopy(optimizer.state_dict())
+                        optimizer = train.GroupOptimizer([dict(group)])
+                        optimizer.load_state_dict(checkpoint)
+
+    def test_adam_beta2_precision_and_half_precision_checkpoint(self):
+        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[2])
+        config["param_groups"]["head"].update(
+            algorithm="adam", momentum=0.9, nesterov=False, beta2=0.999, eps=1e-8,
+        )
+        config = train.normalize_config(config, key=None)
+        self.assertEqual(config["param_groups"]["head"]["beta2"], 0.999)
+        config = train.with_hparam(config, "head.beta2", 0.9999)
+        model = TinyModel(dict(time=0, training=0)).half()
+        optimizer = train.make_optimizer(model, config["param_groups"])
+        schedules = train.configured_hparam_schedules(config["param_groups"], 200)
+        train.apply_hparam_schedules(optimizer, schedules, 0)
+        group = next(g for g in optimizer.param_groups if g["name"] == "head")
+        self.assertEqual(group["beta2"], 0.9999)
+        group["lr"] = 0.01
+        parameter = model.head.weight
+        parameter.grad = torch.full_like(parameter, 1e-4)
+        optimizer.step()
+        self.assertTrue(torch.isfinite(parameter).all())
+        checkpoint = copy.deepcopy(optimizer.state_dict())
+        before = {key: value.clone() for key, value in optimizer.state[parameter].items() if torch.is_tensor(value)}
+        optimizer.load_state_dict(checkpoint)
+        for key in ("exp_avg", "exp_avg_sq"):
+            self.assertEqual(optimizer.state[parameter][key].dtype, torch.float32)
+            torch.testing.assert_close(optimizer.state[parameter][key], before[key], rtol=0, atol=0)
+        optimizer.step()
+        for state in checkpoint["state"].values():
+            if "exp_avg" in state:
+                torch.testing.assert_close(state["exp_avg"], before["exp_avg"], rtol=0, atol=0)
+
+    def test_adam_and_lion_reject_unsupported_options(self):
+        group = dict(
+            name="test", params=[torch.nn.Parameter(torch.ones(2))],
+            algorithm="adam", lr=0.1, momentum=0.9, beta2=0.999, eps=1e-8,
+            nesterov=False,
+        )
+        for changes in (
+            dict(momentum=1), dict(beta2=1), dict(beta2=-0.1), dict(eps=0),
+            dict(nesterov=True), dict(momentum_version=2),
+        ):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                train.GroupOptimizer([dict(group, **changes)])
+        del group["beta2"], group["eps"]
+        group.update(algorithm="lion", momentum_version=2)
+        with self.assertRaisesRegex(ValueError, "lion requires momentum_version=1"):
+            train.GroupOptimizer([group])
+
     def test_momentum_version_validation(self):
         group = dict(
             name="test",
@@ -1341,19 +1573,19 @@ class SearchTests(unittest.TestCase):
             momentum=0.6,
             nesterov=False,
         )
-        for version in (0, 3, True, 1.0, "2"):
+        for version in (0, 4, True, 1.0, "2"):
             with (
                 self.subTest(version=version),
                 self.assertRaisesRegex(ValueError, "momentum_version"),
             ):
                 train.GroupOptimizer([dict(group, momentum_version=version)])
-        for momentum in (1.0, 1.1, 0.999):
+        for version, momentum in product((2, 3), (1.0, 1.1, 0.999)):
             with (
-                self.subTest(momentum=momentum),
-                self.assertRaisesRegex(ValueError, "momentum_version 2"),
+                self.subTest(version=version, momentum=momentum),
+                self.assertRaisesRegex(ValueError, f"momentum_version {version}"),
             ):
                 train.GroupOptimizer([
-                    dict(group, momentum_version=2, momentum=momentum)
+                    dict(group, momentum_version=version, momentum=momentum)
                 ])
 
     def test_muon_zero_momentum_refreshes_buffer_before_momentum_returns(self):
@@ -1441,7 +1673,7 @@ class SearchTests(unittest.TestCase):
 
     def test_muon2_weight_normalization_and_momentum(self):
         for shape in ((3, 2), (3, 2, 2, 2)):
-            for version in (1, 2):
+            for version in (1, 2, 3):
                 for nesterov in (False, True):
                     with self.subTest(shape=shape, version=version, nesterov=nesterov):
                         parameter = torch.nn.Parameter(torch.randn(shape))
@@ -1464,15 +1696,16 @@ class SearchTests(unittest.TestCase):
                             parameter.grad = gradient.clone()
                             optimizer.param_groups[0]["momentum"] = momentum
                             buffer = momentum * buffer + (
-                                (1 - momentum) if version == 2 else 1
+                                (1 - momentum) if version in (2, 3) else 1
                             ) * gradient
                             corrected = (
                                 buffer / (1 - momentum ** step)
-                                if version == 2
+                                if version in (2, 3)
                                 else buffer
                             )
                             direction = (
-                                gradient + momentum * corrected
+                                ((1 - momentum) if version == 3 else 1) * gradient
+                                + momentum * corrected
                                 if nesterov
                                 else corrected
                             )
