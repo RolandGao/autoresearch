@@ -223,10 +223,6 @@ class SearchTests(unittest.TestCase):
         )
 
     def test_head_grid_covers_all_requested_combinations(self):
-        self.assertEqual(
-            [name for name, _ in train.RUNS],
-            ["exp10_head_sgd_v3_grid"],
-        )
         grids = {
             "exp5_head_grid": {100, 170, 280, 470, 780, 1300, 2200, 3600, 6000, 10000, 17000},
             "exp5_head_grid_high_lr": {28000, 46000, 77000, 130000, 210000},
@@ -2686,6 +2682,59 @@ class KFACTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         torch.set_num_threads(2)
+
+    def test_grid_shares_each_candidate_across_every_group(self):
+        self.assertEqual([name for name, _ in train.RUNS], ["all_kfac", "all_kfac-jacobian"])
+        expected = set(product(
+            (train.round_hparam(0.15 * 0.6 ** k) for k in range(-7, 8)),
+            (0.0, 0.5, 0.7, 0.8, 0.9), (0.0, 0.5),
+        ))
+        for algorithm in train.KFAC_ALGORITHMS:
+            config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS[f"all_{algorithm}"])
+            original = copy.deepcopy(config)
+            seen = set()
+
+            def fake_main(run, model, **candidate):
+                points = set()
+                for group in candidate["param_groups"].values():
+                    train.GroupOptimizer.validate_group(group, runtime=False)
+                    self.assertEqual(group["algorithm"], algorithm)
+                    self.assertTrue(group["nesterov"])
+                    points.add((group["lr_scheduler"][0][1], group["momentum"], group["kfac_factor_momentum"]))
+                self.assertEqual(len(points), 1)
+                point = points.pop()
+                seen.add(point)
+                schedules = train.configured_hparam_schedules(candidate["param_groups"], 200)
+                optimizer = SimpleNamespace(param_groups=[
+                    dict(name=name, **group) for name, group in candidate["param_groups"].items()
+                ])
+                train.apply_hparam_schedules(optimizer, schedules, 100)
+                for group in optimizer.param_groups:
+                    self.assertEqual(group["lr"], train.round_hparam(point[0] / 2))
+                    self.assertEqual(group["momentum"], point[1])
+                    self.assertEqual(group["kfac_factor_momentum"], point[2])
+                    self.assertTrue(group["nesterov"])
+                return dict(val_acc=0.5, tta_val_acc=0.5)
+
+            with patch.object(train, "main", side_effect=fake_main), contextlib.redirect_stdout(io.StringIO()):
+                result = train.run_experiment("shared_grid", None, config)
+            self.assertEqual(len(result["trials"]), 150)
+            self.assertEqual(seen, expected)
+            self.assertEqual(config, original)
+
+    def test_shared_search_rejects_ambiguous_or_unsupported_options(self):
+        config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["all_kfac"])
+        config["param_groups"]["head"]["momentum"] = 0.7
+        with self.assertRaisesRegex(ValueError, "must share"):
+            train.tuning_params(config)
+        config["param_groups"]["head"]["momentum"] = 0.9
+        config["hparam_tuning"]["params"]["head.momentum"] = dict(initial=0.9, choices=[0.9])
+        with self.assertRaisesRegex(ValueError, "individual group"):
+            train.tuning_params(config)
+        del config["hparam_tuning"]["params"]["head.momentum"]
+        config["hparam_tuning"]["algorithm"] = "interval"
+        with self.assertRaisesRegex(ValueError, "require grid or coordinate"):
+            train.tuning_params(config)
 
     def optimizer(self, model, algorithm, **options):
         defaults = dict(
