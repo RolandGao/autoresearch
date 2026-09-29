@@ -1,0 +1,3 @@
+N=1 schedule fails. N=M>1 works.
+try on nanogpt
+modified SGD works.

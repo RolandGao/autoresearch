@@ -146,7 +146,14 @@ INPUT_CONDITIONER_FIELDS = {
     "gradient_momentum_before_conditioning",
 }
 KFAC_ALGORITHMS = {"kfac", "kfac-jacobian"}
-KFAC_FIELDS = {"kfac_damping", "kfac_factor_momentum", "kfac_probes"}
+KFAC_FIELDS = {
+    "kfac_damping",
+    "kfac_input_damping",
+    "kfac_factor_momentum",
+    "kfac_probes",
+    "gradient_momentum_before_conditioning",
+}
+BOOLEAN_FIELDS = {"gradient_momentum_before_conditioning"}
 ALGORITHM_FIELDS = {
     "sgd": set(),
     "lion": set(),
@@ -200,7 +207,10 @@ class GroupOptimizer(torch.optim.Optimizer):
     def __init__(self, param_groups):
         for group in param_groups:
             self.validate_group(group, runtime=True)
-        super().__init__(param_groups, defaults={"momentum_version": 1})
+            group.setdefault(
+                "momentum_version", 1 if group["algorithm"] in ("muon", "muon2") else 3
+            )
+        super().__init__(param_groups, defaults={})
         self._input_covariances = {}
         self._kfac_layers = {}
         self._kfac_pending = {}
@@ -240,18 +250,22 @@ class GroupOptimizer(torch.optim.Optimizer):
         required |= {"name", "params", "lr"} if runtime else {"lr_scheduler"}
         required |= {"momentum_version"} & group.keys()
         require_fields(group, required, f"{group['algorithm']} group")
-        version = group.get("momentum_version", 1)
+        version = group.get(
+            "momentum_version", 1 if group["algorithm"] in ("muon", "muon2") else 3
+        )
         if (
             isinstance(version, bool)
             or not isinstance(version, int)
-            or version not in (1, 2, 3)
+            or version not in (1, 3)
         ):
-            raise ValueError("momentum_version must be 1, 2, or 3")
+            raise ValueError("momentum_version must be 1 or 3; version 2 is no longer supported")
+        if group["algorithm"] not in ("muon", "muon2") and version != 3:
+            raise ValueError(f"{group['algorithm']} requires momentum_version=3")
         if not isinstance(group["nesterov"], bool):
             raise ValueError("nesterov must be a boolean")
         fields = ({"lr", "momentum"} if runtime else {"momentum"}) | (
             ALGORITHM_FIELDS[group["algorithm"]]
-            - {"ns_steps", "gradient_momentum_before_conditioning"}
+            - {"ns_steps"} - BOOLEAN_FIELDS
         )
         for field in fields:
             value = group[field]
@@ -262,10 +276,8 @@ class GroupOptimizer(torch.optim.Optimizer):
                 or value < 0
             ):
                 raise ValueError(f"{field} must be a nonnegative finite number")
-        if version in (2, 3) and round_hparam(group["momentum"]) >= 1:
+        if version == 3 and round_hparam(group["momentum"]) >= 1:
             raise ValueError(f"momentum_version {version} requires momentum in [0, 1)")
-        if group["algorithm"] in ("lion", "adam") and version != 1:
-            raise ValueError(f"{group['algorithm']} requires momentum_version=1")
         if group["algorithm"] == "adam":
             if round_hparam(group["momentum"]) >= 1 or group["beta2"] >= 1:
                 raise ValueError("Adam momentum (beta1) and beta2 must be in [0, 1)")
@@ -282,11 +294,14 @@ class GroupOptimizer(torch.optim.Optimizer):
         if group["algorithm"] == "input_conditioned":
             input_conditioner_options(group)
         if group["algorithm"] in KFAC_ALGORITHMS:
-            if round_hparam(group["kfac_factor_momentum"]) >= 1:
-                raise ValueError("kfac_factor_momentum must be in [0, 1)")
+            if group["kfac_factor_momentum"] != 0:
+                raise ValueError("kfac_factor_momentum must be 0; factor EMA is disabled")
             probes = group["kfac_probes"]
             if isinstance(probes, bool) or not isinstance(probes, int) or probes <= 0:
                 raise ValueError("kfac_probes must be a positive integer")
+            for field in BOOLEAN_FIELDS:
+                if not isinstance(group[field], bool):
+                    raise ValueError(f"{field} must be a boolean")
 
     def bind_kfac_layers(self, model):
         """Bind independent weight/bias blocks, including BatchNorm affine blocks.
@@ -343,24 +358,13 @@ class GroupOptimizer(torch.optim.Optimizer):
                 x = (x - mean[None, :, None, None]) * torch.rsqrt(
                     variance[None, :, None, None] + module.eps
                 )
-            # Bound unfolded patch storage, including for the large CIFAR batches.
+            # Bound patch storage, including for the large CIFAR batches.
             sites = output.shape[2] * output.shape[3]
-            chunk_size = max(1, 16384 // sites)
+            chunk_size = max(1, (1 << 26) // (sites * module.weight[0].numel()))
             covariance, count = None, 0
             for chunk in x.split(chunk_size):
                 if isinstance(module, nn.Conv2d):
-                    if module.padding_mode != "zeros" or isinstance(module.padding, str):
-                        chunk = F.pad(
-                            chunk, module._reversed_padding_repeated_twice,
-                            mode="constant" if module.padding_mode == "zeros" else module.padding_mode,
-                        )
-                        padding = 0
-                    else:
-                        padding = module.padding
-                    rows = F.unfold(
-                        chunk, module.kernel_size, dilation=module.dilation,
-                        padding=padding, stride=module.stride,
-                    ).transpose(1, 2).reshape(-1, module.weight[0].numel())
+                    rows = self._conv_patches(module, chunk, output.shape[2:])
                 else:
                     rows = chunk.permute(0, 2, 3, 1).reshape(-1, chunk.shape[1])
                 moment = rows.T @ rows
@@ -369,7 +373,30 @@ class GroupOptimizer(torch.optim.Optimizer):
                 else:
                     covariance.add_(moment)
                 count += len(rows)
+            if isinstance(module, nn.Conv2d):
+                # Patch rows are offset-major; reorder to the weight's (C, kh, kw).
+                c, k = module.in_channels, len(covariance) // module.in_channels
+                covariance = covariance.view(k, c, k, c).permute(1, 0, 3, 2).reshape(c * k, c * k)
             return covariance / count
+
+    @staticmethod
+    def _conv_patches(module, x, output_size):
+        """Rows of [kh * kw * C] input patches, ordered by kernel offset, then channel.
+
+        One strided view per kernel offset avoids F.unfold's per-image kernels;
+        channel-contiguous copies keep the stack fast for channels_last inputs.
+        """
+        x = F.pad(
+            x, module._reversed_padding_repeated_twice,
+            mode="constant" if module.padding_mode == "zeros" else module.padding_mode,
+        ).permute(0, 2, 3, 1)
+        (h, w), (sh, sw), (dh, dw) = output_size, module.stride, module.dilation
+        kh, kw = module.kernel_size
+        views = [
+            x[:, i * dh : i * dh + sh * (h - 1) + 1 : sh, j * dw : j * dw + sw * (w - 1) + 1 : sw]
+            for i in range(kh) for j in range(kw)
+        ]
+        return torch.stack(views, dim=-2).reshape(-1, module.weight[0].numel())
 
     def _capture_kfac(self, module, args, output):
         if not module.training or not torch.is_grad_enabled():
@@ -449,19 +476,26 @@ class GroupOptimizer(torch.optim.Optimizer):
             # Do not keep autograd graphs alive in the optimizer or checkpoints.
             self._kfac_pending.clear()
 
-    def _condition_kfac(self, parameter, gradient, group):
+    def _update_kfac_factors(self, parameter):
+        """Store only the current batch's factors and record the block kind."""
         factors = self._kfac_factors.pop(parameter, None)
         if factors is None:
             raise RuntimeError("K-FAC requires prepare_kfac(logits) before loss.backward() and step()")
         a, g, kind = factors
         state = self.state[parameter]
-        beta = group["kfac_factor_momentum"]
         for key, factor in (("kfac_input_covariance", a), ("kfac_output_covariance", g)):
             if factor is not None:
-                if key not in state:
-                    state[key] = factor.clone()
-                else:
-                    state[key].lerp_(factor, 1 - beta)
+                state[key] = factor.clone()
+        state["kfac_kind"] = kind
+
+    def _condition_kfac(self, parameter, gradient, group):
+        """Precondition with the current batch's factors, damping A and G separately.
+
+        kfac_input_damping applies to the input factor A of weight blocks;
+        kfac_damping applies to G and to the bias and BatchNorm scale blocks.
+        """
+        state = self.state[parameter]
+        kind = state["kfac_kind"]
         g = state["kfac_output_covariance"]
         damping = group["kfac_damping"]
         gradient = gradient.to(g.dtype)
@@ -471,7 +505,7 @@ class GroupOptimizer(torch.optim.Optimizer):
         if kind == "scale":
             return self.condition(gradient[None, :], a * g, damping).reshape_as(parameter)
         matrix = gradient.reshape(len(gradient), -1)
-        matrix = self.condition(matrix, a, damping)
+        matrix = self.condition(matrix, a, group["kfac_input_damping"])
         return self.condition(matrix.T, g, damping).T.reshape_as(parameter)
 
     @torch.no_grad()
@@ -574,7 +608,9 @@ class GroupOptimizer(torch.optim.Optimizer):
             if damping > 0:
                 damped = covariance.clone()
                 damped.diagonal().add_(damping)
-                return torch.linalg.solve(damped, g.to(covariance.dtype).T).T.to(
+                # Positive damping makes the PSD covariance positive definite.
+                factor = torch.linalg.cholesky_ex(damped).L
+                return torch.cholesky_solve(g.to(covariance.dtype).T, factor).T.to(
                     g.dtype
                 )
             # Zero inputs give zero covariance and zero pseudoinverse.
@@ -585,21 +621,26 @@ class GroupOptimizer(torch.optim.Optimizer):
         for group in self.param_groups:
             lr = group["lr"] = round_hparam(group["lr"])
             momentum = group["momentum"]
-            momentum_version = group.get("momentum_version", 1)
+            momentum_version = group.get(
+                "momentum_version", 1 if group["algorithm"] in ("muon", "muon2") else 3
+            )
             conditioned = group["algorithm"] == "input_conditioned"
             if conditioned:
                 group.update(input_conditioner_options(group))
             # Momentum before conditioning accumulates raw gradients and conditions
             # the momentum output; otherwise momentum accumulates conditioned gradients.
+            kfac = group["algorithm"] in KFAC_ALGORITHMS
             momentum_first = (
-                conditioned and group["gradient_momentum_before_conditioning"]
-            )
+                conditioned or kfac
+            ) and group["gradient_momentum_before_conditioning"]
             for p in group["params"]:
                 g = p.grad
                 if g is None:
                     continue
-                if group["algorithm"] in KFAC_ALGORITHMS:
-                    g = self._condition_kfac(p, g, group)
+                if kfac:
+                    self._update_kfac_factors(p)
+                    if not momentum_first:
+                        g = self._condition_kfac(p, g, group)
                 if group["algorithm"] == "adam":
                     state = self.state[p]
                     dtype = torch.float64 if p.dtype == torch.float64 else torch.float32
@@ -642,12 +683,12 @@ class GroupOptimizer(torch.optim.Optimizer):
                             g, covariance, group["svd_mean_percentage_damping"]
                         )
                 if (
-                    momentum_version in (2, 3)
+                    momentum_version == 3
                     or momentum
                     or group["algorithm"] in ("muon", "muon2", "sgdh", "lion")
                 ):
                     state = self.state[p]
-                    if momentum_version in (2, 3):
+                    if momentum_version == 3:
                         if "momentum_buffer" not in state:
                             state["momentum_buffer"] = torch.zeros_like(g)
                             state["momentum_step"] = 0
@@ -711,6 +752,9 @@ class GroupOptimizer(torch.optim.Optimizer):
                             group["normalization_eps"]
                         )
                     )
+                elif kfac:
+                    if momentum_first:
+                        g = self._condition_kfac(p, g, group)
                 elif momentum_first:
                     g = self.condition(
                         g, covariance, group["svd_mean_percentage_damping"]
@@ -1593,18 +1637,23 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # Muon2 uses 12 NS steps and Gram normalization with eps=1e-7; it takes neither
 # ns_steps nor ns_eps. Select it with algorithm="muon2" in a parameter group.
 # Conditioner settings can be searched using explicit choices in hparam_tuning.params.
-# Each parameter group accepts momentum_version: 1 (default) keeps the original
-# momentum; 2 uses a zero-initialized EMA with bias correction by 1 - momentum**t.
-# Version 3 uses the same corrected EMA, with Nesterov direction
-# (1 - momentum) * g + momentum * corrected_buffer. Without Nesterov, 2 and 3 match.
-# Lion here takes the sign of the existing momentum/Nesterov direction and uses
-# momentum_version=1. Adam uses momentum as beta1, plus explicit beta2 and eps
-# (e.g. 0.9, 0.999, 1e-8); it requires nesterov=False and momentum_version=1,
+# Muon/Muon2 accept momentum_version=1 (their default) or 3. Every other
+# algorithm requires version 3 (also its default); version 2 is unsupported.
+# Version 3 uses a zero-initialized EMA corrected by 1 - momentum**t, with
+# Nesterov direction (1 - momentum) * g + momentum * corrected_buffer.
+# Without Nesterov it uses the corrected buffer directly.
+# Lion here takes the sign of this version 3 momentum/Nesterov direction.
+# Adam uses momentum as beta1, plus explicit beta2 and eps
+# (e.g. 0.9, 0.999, 1e-8); it requires nesterov=False and momentum_version=3,
 # and always applies its own first/second-moment bias correction.
 # kfac and kfac-jacobian support every CIFAR group, including normalization and
 # biases. kfac_damping is a fraction of each factor's mean eigenvalue (0 uses
-# pseudoinverses); kfac_factor_momentum is its EMA beta; kfac_probes is the number
-# of random logits VJPs per step. Momentum is applied after preconditioning.
+# pseudoinverses) for the output factor G and for bias/BatchNorm-scale blocks;
+# kfac_input_damping is the same fraction for the input factor A of weight blocks.
+# kfac_factor_momentum must be 0: factors use only the current batch, without EMA.
+# kfac_probes is the number of random
+# logits VJPs per step. gradient_momentum_before_conditioning=True preconditions the
+# momentum/Nesterov direction of raw gradients; False applies momentum afterwards.
 # kfac-jacobian replaces the CE Fisher's logits Hessian with identity.
 run_type = "global_neighbour"  # "baseline", "interval", "global_neighbour", or "grid"
 # Log per-step singular values of the final (post-search) run of each config to
@@ -1652,35 +1701,35 @@ BASE_RUN_CONFIGS = [
                 algorithm="sgd",
                 lr_scheduler=[(3200, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             norm_weight=dict(
                 algorithm="sgd",
                 lr_scheduler=[(3200, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             whiten_bias=dict(
                 algorithm="sgd",
                 lr_scheduler=[(1200, 6.5, 0.0), (2000, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             norm_bias=dict(
                 algorithm="sgd",
                 lr_scheduler=[(3200, 4.6, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             head=dict(
                 algorithm="sgd",
                 lr_scheduler=[(3200, 170, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             conv=dict(
@@ -1731,35 +1780,35 @@ BASE_RUN_CONFIGS = [
                 algorithm="sgd",
                 lr_scheduler=[(800, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             norm_weight=dict(
                 algorithm="sgd",
                 lr_scheduler=[(800, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             whiten_bias=dict(
                 algorithm="sgd",
                 lr_scheduler=[(300, 26, 0.0), (500, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             norm_bias=dict(
                 algorithm="sgd",
                 lr_scheduler=[(800, 21, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             head=dict(
                 algorithm="sgd",
                 lr_scheduler=[(800, 280, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             conv=dict(
@@ -1810,35 +1859,35 @@ BASE_RUN_CONFIGS = [
                 algorithm="sgd",
                 lr_scheduler=[(200, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             norm_weight=dict(
                 algorithm="sgd",
                 lr_scheduler=[(200, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             whiten_bias=dict(
                 algorithm="sgd",
                 lr_scheduler=[(75, 100, 0.0), (125, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             norm_bias=dict(
                 algorithm="sgd",
                 lr_scheduler=[(200, 99, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             head=dict(
                 algorithm="sgd",
                 lr_scheduler=[(200, 1300, 0.0)],
                 momentum=0.85,
-                momentum_version=1,
+                momentum_version=3,
                 nesterov=True,
             ),
             conv=dict(
@@ -1939,7 +1988,7 @@ EXPERIMENT_RUN_CONFIGS = {}
 #         algorithm="input_conditioned",
 #         lr_scheduler=lr_decay_schedule(200, 1300, decay),
 #         momentum=0.85,
-#         momentum_version=1,
+#         momentum_version=3,
 #         nesterov=True,
 #         svd_mean_percentage_damping=0.01,
 #         input_conditioner_momentum=0.0,
@@ -1986,7 +2035,7 @@ for decay, momentum_first in product(LR_DECAYS, (True, False)):
         algorithm="input_conditioned",
         lr_scheduler=lr_decay_schedule(200, 1300, decay),
         momentum=0.85,
-        momentum_version=2,
+        momentum_version=3,
         nesterov=True,
         svd_mean_percentage_damping=0.01,
         input_conditioner_momentum=0.0,
@@ -2010,7 +2059,7 @@ for decay, momentum_first in product(LR_DECAYS, (True, False)):
     order = "before" if momentum_first else "after"
     EXPERIMENT_RUN_CONFIGS[f"exp4_{decay}_momentum_{order}_conditioning"] = config
 
-# exp5: exhaustively compare head LR, gradient momentum, decay, and momentum version.
+# exp5: exhaustively compare head LR, gradient momentum, and decay with version 3.
 # Use Muon2 for conv; keep its LR/momentum and the other groups at baseline values.
 HEAD_GRID_LR = BASELINE_RUN_CONFIGS[2]["param_groups"]["head"]["lr_scheduler"][0][1]
 HEAD_GRID_LR_CHOICES = sorted(
@@ -2024,7 +2073,7 @@ config["param_groups"]["head"] = dict(
     algorithm="input_conditioned",
     lr_scheduler=lr_decay_schedule(200, HEAD_GRID_LR, "linear_decay"),
     momentum=0.0,
-    momentum_version=1,
+    momentum_version=3,
     nesterov=True,  # At momentum=0 the optimizer uses the conditioned gradient directly.
     svd_mean_percentage_damping=0.01,
     input_conditioner_momentum=0.0,
@@ -2037,7 +2086,7 @@ config["hparam_tuning"] = dict(
         "head.initial_lr": dict(initial=HEAD_GRID_LR, choices=HEAD_GRID_LR_CHOICES),
         "head.momentum": dict(initial=0.0, choices=[0.0, 0.5, 0.7, 0.8, 0.9]),
         "head.decay": dict(initial="linear_decay", choices=list(LR_DECAYS)),
-        "head.momentum_version": dict(initial=1, choices=[1, 2]),
+        "head.momentum_version": dict(initial=3, choices=[3]),
     },
 )
 EXPERIMENT_RUN_CONFIGS["exp5_head_grid"] = config
@@ -2083,7 +2132,7 @@ config["hparam_tuning"]["params"]["head.decay"] = dict(
 )
 EXPERIMENT_RUN_CONFIGS["exp9_head_lion_grid"] = config
 
-# Compare head optimizers using version 3 momentum and both Nesterov settings.
+# Extend the head grids to both Nesterov settings with version 3 momentum.
 HEAD_V3_LR_CHOICES = sorted(round_hparam(6000 * 0.6 ** k) for k in range(-8, 4))
 for source, name in (
     ("exp6_head_sgd_grid", "exp10_head_sgd_v3_grid"),
@@ -2108,8 +2157,8 @@ EXPERIMENT_RUN_CONFIGS["exp10_head_sgd_v3_grid"]["hparam_tuning"]["params"][
 ]["choices"] = sorted(round_hparam(6000 * 0.6 ** k) for k in range(4, 9))
 
 # All groups use K-FAC, preserving the baseline's frozen weight groups.
-# Each neighbour candidate shares LR across active groups and momentum/factor EMA
-# across all groups, including biases.
+# Each neighbour candidate shares LR across active groups and gradient momentum
+# across all groups, including biases. Factor EMA stays disabled.
 KFAC_LR_CHOICES = sorted(round_hparam(0.15 * 0.6 ** k) for k in range(-7, 8))
 for algorithm in ("kfac", "kfac-jacobian"):
     config = copy.deepcopy(BASELINE_RUN_CONFIGS[2])
@@ -2125,8 +2174,10 @@ for algorithm in ("kfac", "kfac-jacobian"):
             momentum_version=3,
             nesterov=True,
             kfac_damping=0.03,
+            kfac_input_damping=0.03,
             kfac_factor_momentum=0.0,
             kfac_probes=1,
+            gradient_momentum_before_conditioning=False,
         )
         for name, group in config["param_groups"].items()
     }
@@ -2135,12 +2186,81 @@ for algorithm in ("kfac", "kfac-jacobian"):
         params={
             "all.initial_lr": dict(initial=0.15, choices=list(KFAC_LR_CHOICES)),
             "all.momentum": dict(initial=0.9, choices=[0.0, 0.5, 0.7, 0.8, 0.9]),
-            "all.kfac_factor_momentum": dict(initial=0.0, choices=[0.0, 0.5]),
         },
     )
     EXPERIMENT_RUN_CONFIGS[f"all_{algorithm}"] = config
 
-experiments_to_run = ["all_kfac", "all_kfac-jacobian"]
+# Retain the tuned K-FAC configurations for later runs. Their active learning
+# rates decay linearly from step zero; whitening bias stops at step 75.
+# Factor EMA and filter normalization are disabled.
+TUNED_KFAC_CONV = dict(
+    conv_lr=0.2, conv_momentum=0.6, input_damping=3.0,
+    conv_output_damping=1.0,
+)
+TUNED_KFAC = {
+    "kfac": dict(head_lr=0.08, bias_lr=0.04, **TUNED_KFAC_CONV),
+    "kfac-jacobian": dict(head_lr=1.3, bias_lr=0.64, **TUNED_KFAC_CONV),
+}
+
+
+def tuned_kfac_config(
+    algorithm, head_lr, bias_lr, conv_lr, conv_momentum,
+    input_damping, conv_output_damping,
+):
+    def group(lr_scheduler, **options):
+        values = dict(
+            algorithm=algorithm, lr_scheduler=lr_scheduler, momentum=0.9,
+            momentum_version=3, nesterov=True, kfac_damping=0.3,
+            kfac_input_damping=0.3, kfac_factor_momentum=0.0, kfac_probes=1,
+            gradient_momentum_before_conditioning=True,
+        )
+        values.update(options)
+        return values
+
+    def linear_decay(lr, steps):
+        return lr_decay_schedule(steps, lr, "linear_decay")
+
+    config = copy.deepcopy(BASELINE_RUN_CONFIGS[2])
+    config["param_groups"] = dict(
+        whiten_weight=group([(200, 0.0)]),
+        norm_weight=group([(200, 0.0)]),
+        whiten_bias=group(linear_decay(bias_lr, steps=75) + [(125, 0.0)]),
+        norm_bias=group(linear_decay(bias_lr, steps=200)),
+        head=group(linear_decay(head_lr, steps=200)),
+        conv=group(
+            linear_decay(conv_lr, steps=200), momentum=conv_momentum,
+            kfac_damping=conv_output_damping, kfac_input_damping=input_damping,
+        ),
+    )
+    return config
+
+
+for algorithm, values in TUNED_KFAC.items():
+    EXPERIMENT_RUN_CONFIGS[f"tuned_{algorithm}"] = tuned_kfac_config(algorithm, **values)
+
+# BS 2000: use version 3 in every active group, including Muon convolutions,
+# and jointly tune their learning rates and momenta over the full 200-step run.
+# Scaling initial_lr preserves each schedule, including whitening bias's stop
+# after 75 steps. Frozen groups are excluded from the search.
+config = copy.deepcopy(BASELINE_RUN_CONFIGS[2])
+params = {}
+for name, group in config["param_groups"].items():
+    if is_zero_lr_schedule(group["lr_scheduler"]):
+        continue
+    group["momentum_version"] = 3
+    params[f"{name}.initial_lr"] = dict(
+        initial=group["lr_scheduler"][0][1], choices=None, mult=0.6,
+    )
+    params[f"{name}.momentum"] = dict(
+        initial=group["momentum"], choices=list(MOMENTUM_CHOICES),
+    )
+config["hparam_tuning"] = dict(
+    algorithm="global_neighbour", metric="tta_val_acc", max_side_steps=20,
+    params=params,
+)
+EXPERIMENT_RUN_CONFIGS["exp12_bs2000_all_active_v3"] = config
+
+experiments_to_run = ["exp12_bs2000_all_active_v3"]
 RUNS = (
     [(name, EXPERIMENT_RUN_CONFIGS[name]) for name in experiments_to_run]
     if run_type in ("global_neighbour", "grid")
@@ -3128,7 +3248,7 @@ if __name__ == "__main__":
 
 # Run output
 
-base_config run=all_kfac
+base_config run=exp12_bs2000_all_active_v3
 {
   "batch_size": 2000,
   "num_epochs": 8,
@@ -3137,155 +3257,17 @@ base_config run=all_kfac
     "algorithm": "global_neighbour",
     "metric": "tta_val_acc",
     "max_side_steps": 20,
-    "params": {"all.initial_lr": {"initial": 0.15, "choices": [0.0042, 0.007, 0.012, 0.019, 0.032, 0.054, 0.09, 0.15, 0.25, 0.42, 0.69, 1.2, 1.9, 3.2, 5.4]}, "all.momentum": {"initial": 0.9, "choices": [0.0, 0.5, 0.7, 0.8, 0.9]}, "all.kfac_factor_momentum": {"initial": 0.0, "choices": [0.0, 0.5]}},
+    "params": {"whiten_bias.initial_lr": {"initial": 100, "choices": null, "mult": 0.6}, "whiten_bias.momentum": {"initial": 0.85, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "norm_bias.initial_lr": {"initial": 99, "choices": null, "mult": 0.6}, "norm_bias.momentum": {"initial": 0.85, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "head.initial_lr": {"initial": 1300, "choices": null, "mult": 0.6}, "head.momentum": {"initial": 0.85, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "conv.initial_lr": {"initial": 0.22, "choices": null, "mult": 0.6}, "conv.momentum": {"initial": 0.7, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}},
     "interval_steps": 200,
     "cooldown_steps": 0
   },
   "param_groups": {
-    "whiten_weight": {"algorithm": "kfac", "lr_scheduler": [[200, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
-    "norm_weight": {"algorithm": "kfac", "lr_scheduler": [[200, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
-    "whiten_bias": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
-    "norm_bias": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
-    "head": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
-    "conv": {"algorithm": "kfac", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1}
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 3, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "momentum_version": 3, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[75, 100, 0.0], [125, 0.0]], "momentum": 0.85, "momentum_version": 3, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[200, 99, 0.0]], "momentum": 0.85, "momentum_version": 3, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": [[200, 1300, 0.0]], "momentum": 0.85, "momentum_version": 3, "nesterov": true},
+    "conv": {"algorithm": "muon", "ns_steps": 3, "ns_eps": 0.0, "lr_scheduler": [[200, 0.22, 0.0]], "momentum": 0.7, "momentum_version": 3, "nesterov": true}
   }
 }
-search run=all_kfac interval=0 phase=main metric=tta_val_acc
-main hparams: all.initial_lr=0.15 all.momentum=0.9 all.kfac_factor_momentum=0 main=0.8195
-main hparams: all.initial_lr=0.09 all.momentum=0.9 all.kfac_factor_momentum=0 main=0.8278
-main hparams: all.initial_lr=0.054 all.momentum=0.9 all.kfac_factor_momentum=0 main=0.8443
-main hparams: all.initial_lr=0.032 all.momentum=0.9 all.kfac_factor_momentum=0 main=0.8686
-main hparams: all.initial_lr=0.019 all.momentum=0.9 all.kfac_factor_momentum=0 main=0.8808
-main hparams: all.initial_lr=0.012 all.momentum=0.9 all.kfac_factor_momentum=0 main=0.8817
-main hparams: all.initial_lr=0.007 all.momentum=0.9 all.kfac_factor_momentum=0 main=0.8761
-main hparams: all.initial_lr=0.012 all.momentum=0.8 all.kfac_factor_momentum=0 main=0.8762
-main hparams: all.initial_lr=0.012 all.momentum=0.9 all.kfac_factor_momentum=0.5 main=0.8886
-main hparams: all.initial_lr=0.007 all.momentum=0.9 all.kfac_factor_momentum=0.5 main=0.8835
-main hparams: all.initial_lr=0.019 all.momentum=0.9 all.kfac_factor_momentum=0.5 main=0.8907
-main hparams: all.initial_lr=0.032 all.momentum=0.9 all.kfac_factor_momentum=0.5 main=0.8846
-main hparams: all.initial_lr=0.019 all.momentum=0.8 all.kfac_factor_momentum=0.5 main=0.8934
-main hparams: all.initial_lr=0.019 all.momentum=0.7 all.kfac_factor_momentum=0.5 main=0.884
-main hparams: all.initial_lr=0.019 all.momentum=0.8 all.kfac_factor_momentum=0 main=0.8788
-main hparams: all.initial_lr=0.012 all.momentum=0.8 all.kfac_factor_momentum=0.5 main=0.8924
-main hparams: all.initial_lr=0.032 all.momentum=0.8 all.kfac_factor_momentum=0.5 main=0.884
-search_path step=0 all.initial_lr=0.15 all.momentum=0.9 all.kfac_factor_momentum=0 tta_val_acc=0.8195
-search_path step=1 all.initial_lr=0.012 all.momentum=0.9 all.kfac_factor_momentum=0 tta_val_acc=0.8817
-search_path step=2 all.initial_lr=0.012 all.momentum=0.9 all.kfac_factor_momentum=0.5 tta_val_acc=0.8886
-search_path step=3 all.initial_lr=0.019 all.momentum=0.9 all.kfac_factor_momentum=0.5 tta_val_acc=0.8907
-search_path step=4 all.initial_lr=0.019 all.momentum=0.8 all.kfac_factor_momentum=0.5 tta_val_acc=0.8934
-train_hparams run=all_kfac interval=0 start_step=0 completed_steps=200 total_steps=200 all.initial_lr=0.019 all.momentum=0.8 all.kfac_factor_momentum=0.5
-train_schedules run=all_kfac interval=0
-  whiten_weight.initial_lr: [[200, 0.0]]
-  whiten_weight.momentum: [[200, 0.8]]
-  whiten_weight.nesterov: [[200, true]]
-  whiten_weight.kfac_damping: [[200, 0.03]]
-  whiten_weight.kfac_factor_momentum: [[200, 0.5]]
-  whiten_weight.kfac_probes: [[200, 1]]
-  norm_weight.initial_lr: [[200, 0.0]]
-  norm_weight.momentum: [[200, 0.8]]
-  norm_weight.nesterov: [[200, true]]
-  norm_weight.kfac_damping: [[200, 0.03]]
-  norm_weight.kfac_factor_momentum: [[200, 0.5]]
-  norm_weight.kfac_probes: [[200, 1]]
-  whiten_bias.initial_lr: [[200, 0.019, 0.0]]
-  whiten_bias.momentum: [[200, 0.8]]
-  whiten_bias.nesterov: [[200, true]]
-  whiten_bias.kfac_damping: [[200, 0.03]]
-  whiten_bias.kfac_factor_momentum: [[200, 0.5]]
-  whiten_bias.kfac_probes: [[200, 1]]
-  norm_bias.initial_lr: [[200, 0.019, 0.0]]
-  norm_bias.momentum: [[200, 0.8]]
-  norm_bias.nesterov: [[200, true]]
-  norm_bias.kfac_damping: [[200, 0.03]]
-  norm_bias.kfac_factor_momentum: [[200, 0.5]]
-  norm_bias.kfac_probes: [[200, 1]]
-  head.initial_lr: [[200, 0.019, 0.0]]
-  head.momentum: [[200, 0.8]]
-  head.nesterov: [[200, true]]
-  head.kfac_damping: [[200, 0.03]]
-  head.kfac_factor_momentum: [[200, 0.5]]
-  head.kfac_probes: [[200, 1]]
-  conv.initial_lr: [[200, 0.019, 0.0]]
-  conv.momentum: [[200, 0.8]]
-  conv.nesterov: [[200, true]]
-  conv.kfac_damping: [[200, 0.03]]
-  conv.kfac_factor_momentum: [[200, 0.5]]
-  conv.kfac_probes: [[200, 1]]
-interval_boundary_eval run=all_kfac interval=0 step=200 total_steps=200 tta_val_acc=0.8934
-val_acc=0.8727 tta_val_acc=0.8934 seconds=1025.8539
-debug_spectra run=all_kfac steps=200 data=untracked_logs/cifar_baseline_20260929_055423_743256Z_164935.log/cifar_spectra_20260929_061132_247305Z_164935_all_kfac.npz video=untracked_logs/cifar_baseline_20260929_055423_743256Z_164935.log/cifar_spectra_20260929_061132_247305Z_164935_all_kfac.mp4
-base_config run=all_kfac-jacobian
-{
-  "batch_size": 2000,
-  "num_epochs": 8,
-  "overfit": false,
-  "hparam_tuning": {
-    "algorithm": "global_neighbour",
-    "metric": "tta_val_acc",
-    "max_side_steps": 20,
-    "params": {"all.initial_lr": {"initial": 0.15, "choices": [0.0042, 0.007, 0.012, 0.019, 0.032, 0.054, 0.09, 0.15, 0.25, 0.42, 0.69, 1.2, 1.9, 3.2, 5.4]}, "all.momentum": {"initial": 0.9, "choices": [0.0, 0.5, 0.7, 0.8, 0.9]}, "all.kfac_factor_momentum": {"initial": 0.0, "choices": [0.0, 0.5]}},
-    "interval_steps": 200,
-    "cooldown_steps": 0
-  },
-  "param_groups": {
-    "whiten_weight": {"algorithm": "kfac-jacobian", "lr_scheduler": [[200, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
-    "norm_weight": {"algorithm": "kfac-jacobian", "lr_scheduler": [[200, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
-    "whiten_bias": {"algorithm": "kfac-jacobian", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
-    "norm_bias": {"algorithm": "kfac-jacobian", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
-    "head": {"algorithm": "kfac-jacobian", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1},
-    "conv": {"algorithm": "kfac-jacobian", "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.9, "momentum_version": 3, "nesterov": true, "kfac_damping": 0.03, "kfac_factor_momentum": 0.0, "kfac_probes": 1}
-  }
-}
-search run=all_kfac-jacobian interval=0 phase=main metric=tta_val_acc
-main hparams: all.initial_lr=0.15 all.momentum=0.9 all.kfac_factor_momentum=0 main=0.8838
-main hparams: all.initial_lr=0.09 all.momentum=0.9 all.kfac_factor_momentum=0 main=0.8859
-main hparams: all.initial_lr=0.054 all.momentum=0.9 all.kfac_factor_momentum=0 main=0.8827
-main hparams: all.initial_lr=0.09 all.momentum=0.8 all.kfac_factor_momentum=0 main=0.8895
-main hparams: all.initial_lr=0.09 all.momentum=0.7 all.kfac_factor_momentum=0 main=0.8887
-main hparams: all.initial_lr=0.09 all.momentum=0.8 all.kfac_factor_momentum=0.5 main=0.889
-main hparams: all.initial_lr=0.054 all.momentum=0.8 all.kfac_factor_momentum=0 main=0.8894
-main hparams: all.initial_lr=0.15 all.momentum=0.8 all.kfac_factor_momentum=0 main=0.8865
-search_path step=0 all.initial_lr=0.15 all.momentum=0.9 all.kfac_factor_momentum=0 tta_val_acc=0.8838
-search_path step=1 all.initial_lr=0.09 all.momentum=0.9 all.kfac_factor_momentum=0 tta_val_acc=0.8859
-search_path step=2 all.initial_lr=0.09 all.momentum=0.8 all.kfac_factor_momentum=0 tta_val_acc=0.8895
-train_hparams run=all_kfac-jacobian interval=0 start_step=0 completed_steps=200 total_steps=200 all.initial_lr=0.09 all.momentum=0.8 all.kfac_factor_momentum=0
-train_schedules run=all_kfac-jacobian interval=0
-  whiten_weight.initial_lr: [[200, 0.0]]
-  whiten_weight.momentum: [[200, 0.8]]
-  whiten_weight.nesterov: [[200, true]]
-  whiten_weight.kfac_damping: [[200, 0.03]]
-  whiten_weight.kfac_factor_momentum: [[200, 0.0]]
-  whiten_weight.kfac_probes: [[200, 1]]
-  norm_weight.initial_lr: [[200, 0.0]]
-  norm_weight.momentum: [[200, 0.8]]
-  norm_weight.nesterov: [[200, true]]
-  norm_weight.kfac_damping: [[200, 0.03]]
-  norm_weight.kfac_factor_momentum: [[200, 0.0]]
-  norm_weight.kfac_probes: [[200, 1]]
-  whiten_bias.initial_lr: [[200, 0.09, 0.0]]
-  whiten_bias.momentum: [[200, 0.8]]
-  whiten_bias.nesterov: [[200, true]]
-  whiten_bias.kfac_damping: [[200, 0.03]]
-  whiten_bias.kfac_factor_momentum: [[200, 0.0]]
-  whiten_bias.kfac_probes: [[200, 1]]
-  norm_bias.initial_lr: [[200, 0.09, 0.0]]
-  norm_bias.momentum: [[200, 0.8]]
-  norm_bias.nesterov: [[200, true]]
-  norm_bias.kfac_damping: [[200, 0.03]]
-  norm_bias.kfac_factor_momentum: [[200, 0.0]]
-  norm_bias.kfac_probes: [[200, 1]]
-  head.initial_lr: [[200, 0.09, 0.0]]
-  head.momentum: [[200, 0.8]]
-  head.nesterov: [[200, true]]
-  head.kfac_damping: [[200, 0.03]]
-  head.kfac_factor_momentum: [[200, 0.0]]
-  head.kfac_probes: [[200, 1]]
-  conv.initial_lr: [[200, 0.09, 0.0]]
-  conv.momentum: [[200, 0.8]]
-  conv.nesterov: [[200, true]]
-  conv.kfac_damping: [[200, 0.03]]
-  conv.kfac_factor_momentum: [[200, 0.0]]
-  conv.kfac_probes: [[200, 1]]
-interval_boundary_eval run=all_kfac-jacobian interval=0 step=200 total_steps=200 tta_val_acc=0.8895
-val_acc=0.8675 tta_val_acc=0.8895 seconds=529.2398
-debug_spectra run=all_kfac-jacobian steps=200 data=untracked_logs/cifar_baseline_20260929_055423_743256Z_164935.log/cifar_spectra_20260929_062025_311585Z_164935_all_kfac-jacobian.npz video=untracked_logs/cifar_baseline_20260929_055423_743256Z_164935.log/cifar_spectra_20260929_062025_311585Z_164935_all_kfac-jacobian.mp4
+search run=exp12_bs2000_all_active_v3 interval=0 phase=main metric=tta_val_acc

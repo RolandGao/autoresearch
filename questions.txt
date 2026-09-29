@@ -1,0 +1,12 @@
+what's the chunking
+why sum over spatial for G instead of averaging.
+is the muon baseline muon or muon2?
+i dont want lr warmup
+factor EMA's initial behaviour seems wrong. ideally no factor EMA.
+https://jimmylba.github.io/papers/nsync.pdf 
+normalize_filters func is not kfac.
+in prepare_kfac, "The approximations also discard cross-layer and cross-spatial terms." what does this mean
+why is the mean covariance eigenvalue equla to the mean of the diagonal of the covariance?
+momentum version should use 3 for head. 
+momentum version either 1 or 3. only muon and muon2 can use version 1. the other ones should use version 3.
+double check version 3. 

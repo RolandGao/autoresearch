@@ -203,7 +203,7 @@ class SearchTests(unittest.TestCase):
         for name in exp4_names:
             head = runs[name]["param_groups"]["head"]
             self.assertEqual(head["algorithm"], "input_conditioned")
-            self.assertEqual(head["momentum_version"], 2)
+            self.assertEqual(head["momentum_version"], 3)
             self.assertEqual(
                 head["gradient_momentum_before_conditioning"], "_before_" in name
             )
@@ -246,7 +246,7 @@ class SearchTests(unittest.TestCase):
             is_lion = name in (
                 "exp7_head_lion_grid", "exp8_head_lion_zero_momentum_grid", "exp9_head_lion_grid"
             )
-            versions = (3,) if name in v3_grids else (1,) if is_lion else (1, 2)
+            versions = (3,)
             nesterov_choices = (True, False) if name in v3_grids else (True,)
             momenta = (0,) if name == "exp8_head_lion_zero_momentum_grid" else (0, 0.5, 0.7, 0.8, 0.9)
             decays = ("linear_decay",) if name in (*v3_grids, "exp9_head_lion_grid") else ("constant", "linear_decay")
@@ -308,7 +308,7 @@ class SearchTests(unittest.TestCase):
             self.assertEqual(len(result["trials"]), len(expected))
 
     def test_input_conditioned_zero_momentum_uses_current_gradient(self):
-        for version in (1, 2, 3):
+        for version in (3,):
             config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["exp5_head_grid"])
             head = config["param_groups"]["head"]
             head["momentum_version"] = version
@@ -1374,7 +1374,7 @@ class SearchTests(unittest.TestCase):
                 train.interval_search_space(config)
 
     def test_bias_corrected_momentum_versions_and_checkpoint(self):
-        for version, momentum, nesterov in product((2, 3), (0.0, 0.6), (False, True)):
+        for version, momentum, nesterov in product((3,), (0.0, 0.6), (False, True)):
             with self.subTest(version=version, momentum=momentum, nesterov=nesterov):
                 parameter = torch.nn.Parameter(torch.ones(2, dtype=torch.float64))
                 group = dict(
@@ -1448,9 +1448,12 @@ class SearchTests(unittest.TestCase):
             reference = torch.nn.Parameter(parameter.detach().clone())
             optimizer = train.GroupOptimizer([dict(
                 name="test", params=[parameter], algorithm="lion", lr=0.1,
-                momentum=0.6, nesterov=nesterov, momentum_version=1,
+                momentum=0.6, nesterov=nesterov, momentum_version=3,
             )])
-            sgd = torch.optim.SGD([reference], lr=0.1, momentum=0.6, nesterov=nesterov)
+            sgd = train.GroupOptimizer([dict(
+                name="reference", params=[reference], algorithm="sgd", lr=0.1,
+                momentum=0.6, nesterov=nesterov, momentum_version=3,
+            )])
             for values in ([1.0, -2.0, 0.0], [-0.2, 0.1, 0.0], [-2.0, 3.0, 0.0]):
                 gradient = torch.tensor(values, dtype=torch.float64)
                 parameter.grad = gradient.clone()
@@ -1557,9 +1560,86 @@ class SearchTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 train.GroupOptimizer([dict(group, **changes)])
         del group["beta2"], group["eps"]
-        group.update(algorithm="lion", momentum_version=2)
-        with self.assertRaisesRegex(ValueError, "lion requires momentum_version=1"):
+        group.update(algorithm="lion", momentum_version=1)
+        with self.assertRaisesRegex(ValueError, "lion requires momentum_version=3"):
             train.GroupOptimizer([group])
+
+    def test_momentum_versions_follow_algorithm_policy(self):
+        options = {
+            "muon": dict(ns_steps=3, ns_eps=0.0),
+            "sgdh": dict(normalization_eps=1e-6),
+            "adam": dict(beta2=0.999, eps=1e-8),
+            "input_conditioned": dict(
+                svd_mean_percentage_damping=0.01, input_conditioner_momentum=0.0,
+                gradient_momentum_before_conditioning=False,
+            ),
+        }
+        for algorithm in train.KFAC_ALGORITHMS:
+            options[algorithm] = dict(
+                kfac_damping=0.03, kfac_input_damping=0.03,
+                kfac_factor_momentum=0.0, kfac_probes=1,
+                gradient_momentum_before_conditioning=False,
+            )
+        for algorithm in train.ALGORITHM_FIELDS:
+            group = dict(
+                name="test", params=[torch.nn.Parameter(torch.ones(2, 2))],
+                algorithm=algorithm, lr=0.1, momentum=0.6, nesterov=False,
+                **options.get(algorithm, {}),
+            )
+            allowed = (1, 3) if algorithm in ("muon", "muon2") else (3,)
+            optimizer = train.GroupOptimizer([dict(group)])
+            self.assertEqual(optimizer.param_groups[0]["momentum_version"], allowed[0])
+            for version in (1, 2, 3):
+                with self.subTest(algorithm=algorithm, version=version):
+                    candidate = dict(group, momentum_version=version)
+                    config_group = {k: v for k, v in candidate.items() if k not in ("name", "params", "lr")}
+                    config_group["lr_scheduler"] = [(2, 0.1)]
+                    if version in allowed:
+                        train.GroupOptimizer.validate_group(config_group, runtime=False)
+                        train.GroupOptimizer([candidate])
+                    else:
+                        with self.assertRaisesRegex(ValueError, "momentum_version"):
+                            train.GroupOptimizer.validate_group(config_group, runtime=False)
+                        with self.assertRaisesRegex(ValueError, "momentum_version"):
+                            train.GroupOptimizer([candidate])
+                        checkpoint = copy.deepcopy(optimizer.state_dict())
+                        checkpoint["param_groups"][0]["momentum_version"] = version
+                        with self.assertRaisesRegex(ValueError, "momentum_version"):
+                            optimizer.load_state_dict(checkpoint)
+
+    def test_bs2000_all_active_v3_search_preserves_schedules(self):
+        config = train.EXPERIMENT_RUN_CONFIGS["exp12_bs2000_all_active_v3"]
+        self.assertEqual(train.experiments_to_run, ["exp12_bs2000_all_active_v3"])
+        self.assertEqual(config["batch_size"], 2000)
+        self.assertEqual(config["num_epochs"], 8)
+        self.assertEqual(config["hparam_tuning"]["algorithm"], "global_neighbour")
+        self.assertEqual(config["hparam_tuning"]["metric"], "tta_val_acc")
+        active = {"whiten_bias", "norm_bias", "head", "conv"}
+        self.assertEqual(
+            set(config["hparam_tuning"]["params"]),
+            {f"{name}.{field}" for name in active for field in ("initial_lr", "momentum")},
+        )
+        baseline = train.BASELINE_RUN_CONFIGS[2]
+        self.assertEqual(baseline["param_groups"]["head"]["momentum_version"], 3)
+        self.assertEqual(baseline["param_groups"]["conv"]["momentum_version"], 1)
+        for name, group in config["param_groups"].items():
+            self.assertEqual(group["momentum_version"], 3)
+            self.assertEqual(group["lr_scheduler"], baseline["param_groups"][name]["lr_scheduler"])
+        choices, initial = train.interval_search_space(config)
+        schedules = train.configured_hparam_schedules(config["param_groups"], 200)
+        schedules = train.segment_hparam_schedules(schedules, initial, 0, 200, True)
+        for name in active:
+            self.assertEqual(choices[f"{name}.momentum"], train.MOMENTUM_CHOICES)
+            self.assertGreater(train.hparam_at_step(schedules[f"{name}.initial_lr"], 0), 0)
+        for step in range(75, 200):
+            self.assertEqual(train.hparam_at_step(schedules["whiten_bias.initial_lr"], step), 0)
+        for name in ("whiten_weight", "norm_weight"):
+            self.assertTrue(train.is_zero_lr_schedule(schedules[f"{name}.initial_lr"]))
+        for original in (*train.BASE_RUN_CONFIGS, *train.BASELINE_RUN_CONFIGS,
+                         *train.INTERVAL_RUN_CONFIGS, *train.GLOBAL_NEIGHBOUR_RUN_CONFIGS,
+                         *train.EXPERIMENT_RUN_CONFIGS.values()):
+            for group in original["param_groups"].values():
+                train.GroupOptimizer.validate_group(group, runtime=False)
 
     def test_momentum_version_validation(self):
         group = dict(
@@ -1570,13 +1650,13 @@ class SearchTests(unittest.TestCase):
             momentum=0.6,
             nesterov=False,
         )
-        for version in (0, 4, True, 1.0, "2"):
+        for version in (0, 1, 2, 4, True, 1.0, "2"):
             with (
                 self.subTest(version=version),
                 self.assertRaisesRegex(ValueError, "momentum_version"),
             ):
                 train.GroupOptimizer([dict(group, momentum_version=version)])
-        for version, momentum in product((2, 3), (1.0, 1.1, 0.999)):
+        for version, momentum in product((3,), (1.0, 1.1, 0.999)):
             with (
                 self.subTest(version=version, momentum=momentum),
                 self.assertRaisesRegex(ValueError, f"momentum_version {version}"),
@@ -1670,7 +1750,7 @@ class SearchTests(unittest.TestCase):
 
     def test_muon2_weight_normalization_and_momentum(self):
         for shape in ((3, 2), (3, 2, 2, 2)):
-            for version in (1, 2, 3):
+            for version in (1, 3):
                 for nesterov in (False, True):
                     with self.subTest(shape=shape, version=version, nesterov=nesterov):
                         parameter = torch.nn.Parameter(torch.randn(shape))
@@ -1693,11 +1773,11 @@ class SearchTests(unittest.TestCase):
                             parameter.grad = gradient.clone()
                             optimizer.param_groups[0]["momentum"] = momentum
                             buffer = momentum * buffer + (
-                                (1 - momentum) if version in (2, 3) else 1
+                                (1 - momentum) if version == 3 else 1
                             ) * gradient
                             corrected = (
                                 buffer / (1 - momentum ** step)
-                                if version in (2, 3)
+                                if version == 3
                                 else buffer
                             )
                             direction = (
@@ -1765,18 +1845,20 @@ class SearchTests(unittest.TestCase):
                         ]
                     )
                     buffer = torch.zeros_like(parameter)
-                    for momentum, grad in (
+                    for step, (momentum, grad) in enumerate((
                         (0.6, [[0.0, 2.0], [3.0, 4.0]]),
                         (0.0, [[4.0, 0.0], [0.0, 5.0]]),
                         (0.6, [[2.0, 2.0], [1.0, 0.0]]),
-                    ):
+                    ), 1):
                         optimizer.param_groups[0]["momentum"] = momentum
                         gradient = torch.tensor(grad).reshape(shape)
                         parameter.grad = gradient.clone()
                         before = parameter.detach().clone().reshape(2, 2)
-                        buffer = momentum * buffer + gradient
+                        buffer = momentum * buffer + (1 - momentum) * gradient
+                        corrected = buffer / (1 - momentum ** step)
                         update = (
-                            gradient + momentum * buffer if nesterov else buffer
+                            (1 - momentum) * gradient + momentum * corrected
+                            if nesterov else corrected
                         ).reshape(2, 2)
                         expected = before / before.norm(
                             dim=1, keepdim=True
@@ -1906,7 +1988,10 @@ class SearchTests(unittest.TestCase):
                     )
                 ]
             )
-            sgd = torch.optim.SGD([reference], lr=0.1, momentum=0.6, nesterov=nesterov)
+            sgd = train.GroupOptimizer([dict(
+                name="reference", params=[reference], algorithm="sgd", lr=0.1,
+                momentum=0.6, nesterov=nesterov, momentum_version=3,
+            )])
             for step, momentum in enumerate(
                 (0.6, 0.3, 0.7) if nesterov else (0.6, 0.0, 0.7)
             ):
@@ -1966,9 +2051,10 @@ class SearchTests(unittest.TestCase):
                         )
                     ]
                 )
-                sgd = torch.optim.SGD(
-                    [reference], lr=0.1, momentum=0.6, nesterov=nesterov
-                )
+                sgd = train.GroupOptimizer([dict(
+                    name="reference", params=[reference], algorithm="sgd", lr=0.1,
+                    momentum=0.6, nesterov=nesterov, momentum_version=3,
+                )])
                 for step, inputs in enumerate(batches):
                     gradient = (
                         torch.tensor(
@@ -2486,11 +2572,12 @@ class SearchTests(unittest.TestCase):
                             )
                             for index, state in checkpoint["state"].items():
                                 for field, buffer in state.items():
-                                    self.assertNotIn(
-                                        buffer.data_ptr(),
-                                        live_buffers,
-                                        f"Saved {field} aliases a live optimizer buffer",
-                                    )
+                                    if torch.is_tensor(buffer):
+                                        self.assertNotIn(
+                                            buffer.data_ptr(),
+                                            live_buffers,
+                                            f"Saved {field} aliases a live optimizer buffer",
+                                        )
                                     torch.testing.assert_close(
                                         buffer,
                                         baseline["state"][index][field],
@@ -2683,20 +2770,50 @@ class KFACTests(unittest.TestCase):
     def setUpClass(cls):
         torch.set_num_threads(2)
 
+    @staticmethod
+    def config(algorithm):
+        """Small K-FAC fixture, independent of the runnable experiment registry."""
+        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[2])
+        config["param_groups"] = {
+            name: dict(
+                algorithm=algorithm,
+                lr_scheduler=(
+                    [(200, 0.0)] if train.is_zero_lr_schedule(group["lr_scheduler"])
+                    else [(200, 0.15, 0.0)]
+                ),
+                momentum=0.9, momentum_version=3, nesterov=True,
+                kfac_damping=0.0, kfac_input_damping=0.03,
+                kfac_factor_momentum=0.0, kfac_probes=1,
+                gradient_momentum_before_conditioning=False,
+            )
+            for name, group in config["param_groups"].items()
+        }
+        config["hparam_tuning"] = dict(
+            algorithm="global_neighbour", metric="tta_val_acc", max_side_steps=20,
+            params={
+                "all.initial_lr": dict(
+                    initial=0.15,
+                    choices=sorted(train.round_hparam(0.15 * 0.6 ** k) for k in range(-7, 8)),
+                ),
+                "all.momentum": dict(initial=0.9, choices=[0.0, 0.5, 0.7, 0.8, 0.9]),
+                "all.kfac_damping": dict(initial=0.0, choices=[0.0, 0.5]),
+            },
+        )
+        return config
+
     def test_grid_shares_each_candidate_across_every_group(self):
-        self.assertEqual([name for name, _ in train.RUNS], ["all_kfac", "all_kfac-jacobian"])
         expected = set(product(
             (train.round_hparam(0.15 * 0.6 ** k) for k in range(-7, 8)),
             (0.0, 0.5, 0.7, 0.8, 0.9), (0.0, 0.5),
         ))
         for algorithm in train.KFAC_ALGORITHMS:
-            config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS[f"all_{algorithm}"])
+            config = self.config(algorithm)
             self.assertEqual(config["hparam_tuning"]["algorithm"], "global_neighbour")
             choices, initial = train.interval_search_space(config)
             self.assertEqual(set(product(*choices.values())), expected)
             self.assertEqual(initial, {
                 "all.initial_lr": 0.15, "all.momentum": 0.9,
-                "all.kfac_factor_momentum": 0.0,
+                "all.kfac_damping": 0.0,
             })
             config["hparam_tuning"]["algorithm"] = "grid"
             del config["hparam_tuning"]["max_side_steps"]
@@ -2712,7 +2829,7 @@ class KFACTests(unittest.TestCase):
                     if name in ("whiten_weight", "norm_weight"):
                         self.assertEqual(group["lr_scheduler"], [(200, 0.0)])
                         continue
-                    points.add((group["lr_scheduler"][0][1], group["momentum"], group["kfac_factor_momentum"]))
+                    points.add((group["lr_scheduler"][0][1], group["momentum"], group["kfac_damping"]))
                 self.assertEqual(len(points), 1)
                 point = points.pop()
                 seen.add(point)
@@ -2725,7 +2842,7 @@ class KFACTests(unittest.TestCase):
                     expected_lr = 0.0 if group["name"] in ("whiten_weight", "norm_weight") else train.round_hparam(point[0] / 2)
                     self.assertEqual(group["lr"], expected_lr)
                     self.assertEqual(group["momentum"], point[1])
-                    self.assertEqual(group["kfac_factor_momentum"], point[2])
+                    self.assertEqual(group["kfac_damping"], point[2])
                     self.assertTrue(group["nesterov"])
                 return dict(val_acc=0.5, tta_val_acc=0.5)
 
@@ -2736,7 +2853,7 @@ class KFACTests(unittest.TestCase):
             self.assertEqual(config, original)
 
     def test_shared_search_rejects_ambiguous_or_unsupported_options(self):
-        config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["all_kfac"])
+        config = self.config("kfac")
         config["param_groups"]["head"]["momentum"] = 0.7
         with self.assertRaisesRegex(ValueError, "must share"):
             train.tuning_params(config)
@@ -2751,7 +2868,7 @@ class KFACTests(unittest.TestCase):
 
     def test_global_neighbour_applies_shared_values_to_every_training_step(self):
         for algorithm in train.KFAC_ALGORITHMS:
-            config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS[f"all_{algorithm}"])
+            config = self.config(algorithm)
             config.update(batch_size=2, num_epochs=2, overfit=True)
             for name, group in config["param_groups"].items():
                 lines = [(2, 0.0)] if name in ("whiten_weight", "norm_weight") else [(2, 0.001, 0.0)]
@@ -2759,7 +2876,7 @@ class KFACTests(unittest.TestCase):
             config["hparam_tuning"]["params"] = {
                 "all.initial_lr": dict(initial=0.001, choices=[0.001, 0.002]),
                 "all.momentum": dict(initial=0.0, choices=[0.0, 0.5]),
-                "all.kfac_factor_momentum": dict(initial=0.0, choices=[0.0, 0.5]),
+                "all.kfac_damping": dict(initial=0.0, choices=[0.0, 0.5]),
             }
             original = copy.deepcopy(config)
             model = TinyModel(dict(time=0, training=0))
@@ -2773,7 +2890,7 @@ class KFACTests(unittest.TestCase):
 
             def checked_step(optimizer):
                 settings = {
-                    (g["lr"], g["momentum"], g["kfac_factor_momentum"], g["nesterov"])
+                    (g["lr"], g["momentum"], g["kfac_damping"], g["nesterov"])
                     for g in optimizer.param_groups
                     if g["name"] not in ("whiten_weight", "norm_weight")
                 }
@@ -2794,7 +2911,7 @@ class KFACTests(unittest.TestCase):
 
             def score(*args, **kwargs):
                 group = optimizers[0].param_groups[0]
-                return group["lr"] + 0.2 * (group["momentum"] + group["kfac_factor_momentum"])
+                return group["lr"] + 0.2 * (group["momentum"] + group["kfac_damping"])
 
             with (
                 patch.object(train, "CifarLoader", TinyLoader),
@@ -2810,17 +2927,17 @@ class KFACTests(unittest.TestCase):
             self.assertEqual(interval["cooldown_steps"], 0)
             self.assertEqual(interval["main_hparams"], {
                 "all.initial_lr": 0.002, "all.momentum": 0.5,
-                "all.kfac_factor_momentum": 0.5,
+                "all.kfac_damping": 0.5,
             })
             self.assertEqual(applied[-2:], [(0.002, 0.5, 0.5, True), (0.001, 0.5, 0.5, True)])
             for name in config["param_groups"]:
                 expected_lr = [(2, 0.0)] if name in ("whiten_weight", "norm_weight") else [(2, 0.002, 0.0)]
                 self.assertEqual(result["hparam_schedules"][f"{name}.initial_lr"], expected_lr)
-                self.assertEqual(result["hparam_schedules"][f"{name}.kfac_factor_momentum"], [(2, 0.5)])
+                self.assertEqual(result["hparam_schedules"][f"{name}.kfac_damping"], [(2, 0.5)])
             self.assertEqual(config, original)
 
     def test_shared_lr_and_decay_preserve_frozen_schedules(self):
-        config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["all_kfac"])
+        config = self.config("kfac")
         self.assertEqual(train.get_hparam(config, "all.initial_lr"), 0.15)
         changed = train.with_hparam(config, "all.initial_lr", 5.4)
         changed = train.with_hparam(changed, "all.decay", "constant")
@@ -2838,8 +2955,10 @@ class KFACTests(unittest.TestCase):
         defaults = dict(
             algorithm=algorithm, lr=0.02, momentum=0.0, nesterov=False,
             kfac_damping=0.0, kfac_factor_momentum=0.0, kfac_probes=1,
+            gradient_momentum_before_conditioning=False,
         )
         defaults.update(options)
+        defaults.setdefault("kfac_input_damping", defaults["kfac_damping"])
         optimizer = train.GroupOptimizer([
             dict(name=name, params=[p], **defaults) for name, p in model.named_parameters()
             if p.requires_grad
@@ -2973,7 +3092,7 @@ class KFACTests(unittest.TestCase):
 
     def test_all_group_configs_hooks_and_checkpoint(self):
         for algorithm in train.KFAC_ALGORITHMS:
-            config = train.normalize_config(train.EXPERIMENT_RUN_CONFIGS[f"all_{algorithm}"], None)
+            config = train.normalize_config(self.config(algorithm), None)
             train.validate_tuning_config(config["hparam_tuning"])
             train.tuning_params(config)
             train.configured_hparam_schedules(config["param_groups"], 200)
@@ -3022,8 +3141,10 @@ class KFACTests(unittest.TestCase):
         for algorithm in train.KFAC_ALGORITHMS:
             model = torch.nn.Linear(2, 2)
             for options in (
-                {"kfac_damping": -1}, {"kfac_factor_momentum": 1},
+                {"kfac_damping": -1}, {"kfac_input_damping": -1},
+                {"kfac_factor_momentum": 1}, {"kfac_factor_momentum": 0.5},
                 {"kfac_probes": 0}, {"kfac_probes": 1.5}, {"kfac_probes": True},
+                {"gradient_momentum_before_conditioning": 1}, {"kfac_filter_normalization": 0},
             ):
                 with self.assertRaises(ValueError):
                     self.optimizer(model, algorithm, **options)
@@ -3035,19 +3156,29 @@ class KFACTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "current training forward"):
                 optimizer.prepare_kfac(torch.ones(1, 2, requires_grad=True))
 
-    def test_factor_ema_and_half_precision_checkpoint_replay(self):
+    def test_current_batch_factors_and_half_precision_checkpoint_replay(self):
         model = torch.nn.Linear(2, 2).half()
         optimizer = self.optimizer(
             model, "kfac-jacobian", kfac_damping=0.1,
-            kfac_factor_momentum=0.5, momentum=0.9, momentum_version=3,
+            kfac_factor_momentum=0.0, momentum=0.9, momentum_version=3,
         )
         x = torch.tensor([[1., 2.], [3., -1.]], dtype=torch.float16)
 
         def step(inputs):
             logits = model(inputs)
             optimizer.prepare_kfac(logits)
+            factors = {
+                parameter: (a.clone() if a is not None else None, g.clone())
+                for parameter, (a, g, _) in optimizer._kfac_factors.items()
+            }
             torch.nn.functional.cross_entropy(logits.float(), torch.tensor([0, 1])).backward()
             optimizer.step()
+            for parameter, (a, g) in factors.items():
+                # Both factors must match this batch, including after a checkpoint restore.
+                state = optimizer.state[parameter]
+                if a is not None:
+                    torch.testing.assert_close(state["kfac_input_covariance"], a, rtol=0, atol=0)
+                torch.testing.assert_close(state["kfac_output_covariance"], g, rtol=0, atol=0)
             optimizer.zero_grad(set_to_none=True)
 
         step(x)
@@ -3055,7 +3186,7 @@ class KFACTests(unittest.TestCase):
         weights = copy.deepcopy(model.state_dict())
         rng = torch.get_rng_state()
         initial_a = optimizer.state[model.weight]["kfac_input_covariance"].clone()
-        expected_a = 2.5 * initial_a  # EMA of X'X and (2X)'(2X).
+        expected_a = 4 * initial_a  # Only (2X)'(2X), with no contribution from X'X.
         results = []
         for _ in range(2):
             model.load_state_dict(weights)
@@ -3083,10 +3214,86 @@ class KFACTests(unittest.TestCase):
             optimizer.prepare_kfac(logits)
             self.assertEqual(probe.call_count, 2)
 
+    def test_input_damping_applies_only_to_the_input_factor(self):
+        torch.manual_seed(0)
+        model = torch.nn.Linear(3, 2, bias=False).double()
+        optimizer = self.optimizer(model, "kfac-jacobian", kfac_damping=0.1, kfac_input_damping=2.0)
+        x = torch.randn(5, 3, dtype=torch.float64)
+        logits = model(x)
+        self.prepare_exact(optimizer, logits, "kfac-jacobian")
+        a, g, _ = optimizer._kfac_factors[model.weight]
+        torch.nn.functional.cross_entropy(logits, torch.tensor([0, 1, 0, 1, 1])).backward()
+        gradient = model.weight.grad.clone()
+        before = model.weight.detach().clone()
+        optimizer.step()
+
+        def damped(matrix, alpha):
+            return matrix + alpha * matrix.diagonal().mean() * torch.eye(len(matrix), dtype=matrix.dtype)
+
+        expected = torch.linalg.solve(damped(g, 0.1), gradient) @ torch.linalg.inv(damped(a, 2.0))
+        torch.testing.assert_close(before - model.weight, 0.02 * expected)
+
+    def test_momentum_before_conditioning_without_filter_normalization(self):
+        torch.manual_seed(0)
+        model = torch.nn.Linear(3, 4, bias=False).double()
+        optimizer = self.optimizer(
+            model, "kfac-jacobian", lr=0.1, kfac_damping=0.5, momentum=0.5, momentum_version=3,
+            nesterov=True, gradient_momentum_before_conditioning=True,
+        )
+        raw, buffer = [], torch.zeros_like(model.weight)
+        for step in range(2):
+            x = torch.randn(6, 3, dtype=torch.float64)
+            logits = model(x)
+            self.prepare_exact(optimizer, logits, "kfac-jacobian")
+            a, g, _ = optimizer._kfac_factors[model.weight]
+            torch.nn.functional.cross_entropy(logits, torch.arange(6) % 4).backward()
+            raw.append(model.weight.grad.clone())
+            before = model.weight.detach().clone()
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            # Nesterov direction of the bias-corrected EMA of raw gradients, then K-FAC.
+            buffer = 0.5 * buffer + 0.5 * raw[-1]
+            direction = 0.5 * raw[-1] + 0.5 * buffer / (1 - 0.5 ** (step + 1))
+            # Factor momentum 0 uses the current step's factors.
+            eye = torch.eye(len(a), dtype=torch.float64)
+            update = torch.linalg.solve(
+                g + 0.5 * g.diagonal().mean() * torch.eye(len(g), dtype=torch.float64), direction
+            ) @ torch.linalg.inv(a + 0.5 * a.diagonal().mean() * eye)
+            torch.testing.assert_close(before - model.weight, 0.1 * update)
+
+    def test_removed_filter_normalization_option_is_rejected(self):
+        model = torch.nn.Linear(2, 2)
+        with self.assertRaisesRegex(ValueError, "kfac_filter_normalization"):
+            self.optimizer(model, "kfac", kfac_filter_normalization=True)
+
+    def test_kfac_experiments_are_retained_but_not_selected(self):
+        for algorithm, prefix in product(train.KFAC_ALGORITHMS, ("all", "tuned")):
+            name = f"{prefix}_{algorithm}"
+            config = train.EXPERIMENT_RUN_CONFIGS[name]
+            self.assertNotIn(name, train.experiments_to_run)
+            self.assertNotIn(name, [run for run, _ in train.RUNS])
+            for group in config["param_groups"].values():
+                train.GroupOptimizer.validate_group(group, runtime=False)
+                self.assertEqual(group["algorithm"], algorithm)
+                self.assertEqual(group["kfac_factor_momentum"], 0)
+                self.assertNotIn("kfac_filter_normalization", group)
+                for segment in group["lr_scheduler"]:
+                    if len(segment) == 3:
+                        self.assertGreaterEqual(segment[1], segment[2])
+                if not train.is_zero_lr_schedule(group["lr_scheduler"]):
+                    self.assertGreater(group["lr_scheduler"][0][1], 0)
+            if prefix == "all":
+                train.interval_search_space(config)
+                self.assertNotIn("all.kfac_factor_momentum", config["hparam_tuning"]["params"])
+            else:
+                self.assertIsNone(config["hparam_tuning"])
+                self.assertEqual(config["param_groups"]["whiten_bias"]["lr_scheduler"][-1], (125, 0.0))
+        self.assertFalse(hasattr(train.GroupOptimizer, "normalize_filters"))
+
     def test_both_training_paths_with_all_kfac_groups(self):
         for algorithm, search in product(train.KFAC_ALGORITHMS, ("grid", "global_neighbour")):
             with self.subTest(algorithm=algorithm, search=search):
-                config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS[f"all_{algorithm}"])
+                config = self.config(algorithm)
                 config.update(batch_size=2, num_epochs=2, overfit=True)
                 for group in config["param_groups"].values():
                     group["lr_scheduler"] = [(2, 0.001)]
