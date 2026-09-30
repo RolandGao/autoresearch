@@ -152,8 +152,9 @@ KFAC_FIELDS = {
     "kfac_factor_momentum",
     "kfac_probes",
     "gradient_momentum_before_conditioning",
+    "kfac_matrix_normalization",
 }
-BOOLEAN_FIELDS = {"gradient_momentum_before_conditioning"}
+BOOLEAN_FIELDS = {"gradient_momentum_before_conditioning", "kfac_matrix_normalization"}
 ALGORITHM_FIELDS = {
     "sgd": set(),
     "lion": set(),
@@ -239,6 +240,14 @@ class GroupOptimizer(torch.optim.Optimizer):
                 )
             if group["algorithm"] == "input_conditioned":
                 group.update(input_conditioner_options(group))
+            if (
+                group["algorithm"] in KFAC_ALGORITHMS
+                and group["kfac_matrix_normalization"]
+                and any(p.ndim < 2 for p in group["params"])
+            ):
+                raise ValueError(
+                    f"{name}: kfac_matrix_normalization requires parameters with at least 2 dimensions"
+                )
 
     @staticmethod
     def validate_group(group, runtime):
@@ -755,6 +764,12 @@ class GroupOptimizer(torch.optim.Optimizer):
                 elif kfac:
                     if momentum_first:
                         g = self._condition_kfac(p, g, group)
+                    if group["kfac_matrix_normalization"]:
+                        # Muon's scale convention for BatchNorm-followed weights: whole
+                        # matrices, never rows, have Frobenius norm sqrt(outputs).
+                        scale = len(p) ** 0.5
+                        p.mul_(scale / p.norm())
+                        g = g * (scale / g.norm().clamp_min(torch.finfo(g.dtype).tiny))
                 elif momentum_first:
                     g = self.condition(
                         g, covariance, group["svd_mean_percentage_damping"]
@@ -1655,6 +1670,9 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # logits VJPs per step. gradient_momentum_before_conditioning=True preconditions the
 # momentum/Nesterov direction of raw gradients; False applies momentum afterwards.
 # kfac-jacobian replaces the CE Fisher's logits Hessian with identity.
+# kfac_matrix_normalization=True rescales each weight matrix to Frobenius norm
+# sqrt(outputs) and each conditioned update to the same norm (Muon's convention),
+# so lr is the relative step of BatchNorm-followed, scale-invariant weights.
 run_type = "global_neighbour"  # "baseline", "interval", "global_neighbour", or "grid"
 # Log per-step singular values of the final (post-search) run of each config to
 # untracked_logs/<log filename>/, with one .npz and one .mp4 per run.
@@ -2181,6 +2199,7 @@ for algorithm in ("kfac", "kfac-jacobian"):
             kfac_factor_momentum=0.0,
             kfac_probes=1,
             gradient_momentum_before_conditioning=False,
+            kfac_matrix_normalization=False,
         )
         for name, group in config["param_groups"].items()
     }
@@ -2195,9 +2214,10 @@ for algorithm in ("kfac", "kfac-jacobian"):
 
 # Retain the tuned K-FAC configurations for later runs. Their active learning
 # rates decay linearly from step zero; whitening bias stops at step 75.
-# Factor EMA and filter normalization are disabled.
+# Factor EMA is disabled. Convolutions use whole-matrix normalization, so their
+# lr is a relative step (seeds 20-27: kfac-jacobian 93.85%, Muon baseline 93.86%).
 TUNED_KFAC_CONV = dict(
-    conv_lr=0.2, conv_momentum=0.6, input_damping=3.0,
+    conv_lr=0.15, conv_momentum=0.7, input_damping=3.0,
     conv_output_damping=1.0,
 )
 TUNED_KFAC = {
@@ -2215,7 +2235,7 @@ def tuned_kfac_config(
             algorithm=algorithm, lr_scheduler=lr_scheduler, momentum=0.9,
             momentum_version=3, nesterov=True, kfac_damping=0.3,
             kfac_input_damping=0.3, kfac_factor_momentum=0.0, kfac_probes=1,
-            gradient_momentum_before_conditioning=True,
+            gradient_momentum_before_conditioning=True, kfac_matrix_normalization=False,
         )
         values.update(options)
         return values
@@ -2233,6 +2253,7 @@ def tuned_kfac_config(
         conv=group(
             linear_decay(conv_lr, steps=200), momentum=conv_momentum,
             kfac_damping=conv_output_damping, kfac_input_damping=input_damping,
+            kfac_matrix_normalization=True,
         ),
     )
     return config

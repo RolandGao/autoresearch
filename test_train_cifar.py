@@ -1581,7 +1581,7 @@ class SearchTests(unittest.TestCase):
             options[algorithm] = dict(
                 kfac_damping=0.03, kfac_input_damping=0.03,
                 kfac_factor_momentum=0.0, kfac_probes=1,
-                gradient_momentum_before_conditioning=False,
+                gradient_momentum_before_conditioning=False, kfac_matrix_normalization=False,
             )
         for algorithm in train.ALGORITHM_FIELDS:
             group = dict(
@@ -2786,7 +2786,7 @@ class KFACTests(unittest.TestCase):
                 momentum=0.9, momentum_version=3, nesterov=True,
                 kfac_damping=0.0, kfac_input_damping=0.03,
                 kfac_factor_momentum=0.0, kfac_probes=1,
-                gradient_momentum_before_conditioning=False,
+                gradient_momentum_before_conditioning=False, kfac_matrix_normalization=False,
             )
             for name, group in config["param_groups"].items()
         }
@@ -2957,7 +2957,7 @@ class KFACTests(unittest.TestCase):
         defaults = dict(
             algorithm=algorithm, lr=0.02, momentum=0.0, nesterov=False,
             kfac_damping=0.0, kfac_factor_momentum=0.0, kfac_probes=1,
-            gradient_momentum_before_conditioning=False,
+            gradient_momentum_before_conditioning=False, kfac_matrix_normalization=False,
         )
         defaults.update(options)
         defaults.setdefault("kfac_input_damping", defaults["kfac_damping"])
@@ -3147,6 +3147,7 @@ class KFACTests(unittest.TestCase):
                 {"kfac_factor_momentum": 1}, {"kfac_factor_momentum": 0.5},
                 {"kfac_probes": 0}, {"kfac_probes": 1.5}, {"kfac_probes": True},
                 {"gradient_momentum_before_conditioning": 1}, {"kfac_filter_normalization": 0},
+                {"kfac_matrix_normalization": 1},
             ):
                 with self.assertRaises(ValueError):
                     self.optimizer(model, algorithm, **options)
@@ -3263,6 +3264,36 @@ class KFACTests(unittest.TestCase):
             ) @ torch.linalg.inv(a + 0.5 * a.diagonal().mean() * eye)
             torch.testing.assert_close(before - model.weight, 0.1 * update)
 
+    def test_matrix_normalization_uses_whole_matrix_norms(self):
+        torch.manual_seed(0)
+        model = torch.nn.Linear(3, 4, bias=False).double()
+        with torch.no_grad():
+            model.weight.mul_(torch.tensor([[0.2], [1.0], [3.0], [0.5]], dtype=torch.float64))
+        optimizer = self.optimizer(
+            model, "kfac-jacobian", lr=0.1, kfac_damping=0.5, momentum=0.0, momentum_version=3,
+            kfac_matrix_normalization=True,
+        )
+        x = torch.randn(6, 3, dtype=torch.float64)
+        logits = model(x)
+        self.prepare_exact(optimizer, logits, "kfac-jacobian")
+        a, g, _ = optimizer._kfac_factors[model.weight]
+        torch.nn.functional.cross_entropy(logits, torch.arange(6) % 4).backward()
+        gradient = model.weight.grad.clone()
+        before = model.weight.detach().clone()
+        optimizer.step()
+
+        def damped(matrix):
+            return matrix + 0.5 * matrix.diagonal().mean() * torch.eye(len(matrix), dtype=matrix.dtype)
+
+        update = torch.linalg.solve(damped(g), gradient) @ torch.linalg.inv(damped(a))
+        # Rows keep their relative scales; only the whole matrix is rescaled.
+        normalized = before * (2.0 / before.norm())
+        torch.testing.assert_close(model.weight, normalized - 0.1 * update * (2.0 / update.norm()))
+
+    def test_matrix_normalization_requires_weight_matrices(self):
+        with self.assertRaisesRegex(ValueError, "kfac_matrix_normalization requires"):
+            self.optimizer(torch.nn.BatchNorm2d(2), "kfac", kfac_matrix_normalization=True)
+
     def test_removed_filter_normalization_option_is_rejected(self):
         model = torch.nn.Linear(2, 2)
         with self.assertRaisesRegex(ValueError, "kfac_filter_normalization"):
@@ -3277,6 +3308,9 @@ class KFACTests(unittest.TestCase):
                 self.assertEqual(group["algorithm"], algorithm)
                 self.assertEqual(group["kfac_factor_momentum"], 0)
                 self.assertNotIn("kfac_filter_normalization", group)
+                self.assertEqual(
+                    group["kfac_matrix_normalization"], prefix == "tuned" and group is config["param_groups"]["conv"]
+                )
                 for segment in group["lr_scheduler"]:
                     if len(segment) == 3:
                         self.assertGreaterEqual(segment[1], segment[2])
