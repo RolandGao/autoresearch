@@ -144,7 +144,7 @@ class SearchTests(unittest.TestCase):
             for order in ("before", "after")
         ]
         self.assertEqual(
-            [name for name in train.EXPERIMENT_RUN_CONFIGS if name == "exp3" or name.startswith("exp4_")],
+            [name for name in train.RUN_CONFIGS if name == "exp3" or name.startswith("exp4_")],
             ["exp3"] + exp4_names,
         )
         # LR decay is fixed per run instead of searched.
@@ -157,8 +157,8 @@ class SearchTests(unittest.TestCase):
                 "head.input_conditioner_momentum",
             ],
         }
-        baseline = train.BASELINE_RUN_CONFIGS[2]
-        for name, original in train.EXPERIMENT_RUN_CONFIGS.items():
+        baseline = train.RUN_CONFIGS["baseline_bs2000"]
+        for name, original in train.RUN_CONFIGS.items():
             if name != "exp3" and not name.startswith("exp4_"):
                 continue
             experiment = name.split("_")[0]
@@ -194,7 +194,7 @@ class SearchTests(unittest.TestCase):
                 self.assertEqual(initial["head.momentum"], 0.85)
             model = TinyModel(dict(time=0, training=0))
             train.make_optimizer(model, config["param_groups"])
-        runs = train.EXPERIMENT_RUN_CONFIGS
+        runs = train.RUN_CONFIGS
         conv = runs["exp3"]["param_groups"]["conv"]
         self.assertEqual(conv["algorithm"], "muon2")
         self.assertEqual(conv["momentum_version"], 3)
@@ -237,7 +237,7 @@ class SearchTests(unittest.TestCase):
             exponents = range(4, 9) if name == "exp10_head_sgd_v3_grid" else range(-8, 4)
             grids[name] = {train.round_hparam(6000 * 0.6 ** k) for k in exponents}
         for name, expected_lrs in grids.items():
-            config = train.EXPERIMENT_RUN_CONFIGS[name]
+            config = train.RUN_CONFIGS[name]
             self.assertEqual(config["batch_size"], 2000)
             self.assertEqual(config["num_epochs"], 8)
             self.assertFalse(config["overfit"])
@@ -270,7 +270,7 @@ class SearchTests(unittest.TestCase):
                         self.assertTrue(group["nesterov"])
                     elif name != "head":
                         self.assertEqual(
-                            group, train.BASELINE_RUN_CONFIGS[2]["param_groups"][name]
+                            group, train.RUN_CONFIGS["baseline_bs2000"]["param_groups"][name]
                         )
                 self.assertEqual(head["algorithm"], algorithm)
                 if algorithm == "input_conditioned":
@@ -309,7 +309,7 @@ class SearchTests(unittest.TestCase):
 
     def test_input_conditioned_zero_momentum_uses_current_gradient(self):
         for version in (3,):
-            config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["exp5_head_grid"])
+            config = copy.deepcopy(train.RUN_CONFIGS["exp5_head_grid"])
             head = config["param_groups"]["head"]
             head["momentum_version"] = version
             head["lr_scheduler"] = [(2, 0.1)]
@@ -331,7 +331,7 @@ class SearchTests(unittest.TestCase):
     def test_global_decay_candidates_replay_and_preserve_unsearched_schedules(self):
         for preferred_decay in ("constant", "linear_decay"):
             with self.subTest(preferred_decay=preferred_decay):
-                config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["exp3"])
+                config = copy.deepcopy(train.RUN_CONFIGS["exp3"])
                 config.update(batch_size=2, num_epochs=3, overfit=True)
                 for name, group in config["param_groups"].items():
                     group["lr_scheduler"] = [
@@ -504,8 +504,8 @@ class SearchTests(unittest.TestCase):
 
     def test_search_requires_explicit_options_and_rejects_legacy_shorthand(self):
         for original in (
-            train.INTERVAL_RUN_CONFIGS[0],
-            train.GLOBAL_NEIGHBOUR_RUN_CONFIGS[0],
+            train.RUN_CONFIGS["interval_bs125"],
+            train.RUN_CONFIGS["global_neighbour_bs125"],
         ):
             config = copy.deepcopy(original)
             for field in config["hparam_tuning"]:
@@ -550,7 +550,7 @@ class SearchTests(unittest.TestCase):
 
         for algorithm in ("grid", "coordinate"):
             with self.subTest(algorithm=algorithm):
-                config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+                config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
                 config = train.with_hparam(config, "conv.initial_lr", 0.04)
                 config = train.with_hparam(config, "conv.momentum", 0.6)
                 config["hparam_tuning"] = search_config(
@@ -596,9 +596,12 @@ class SearchTests(unittest.TestCase):
                 self.assertNotIn("%", log)
 
     def test_tuning_initial_values_do_not_change_untuned_baseline(self):
-        baseline_lrs = {125: 0.047, 500: 0.078, 2000: 0.22}
-        tuning_starts = {125: 0.047, 500: 0.078, 2000: 0.22}
-        for original in train.INTERVAL_RUN_CONFIGS + train.GLOBAL_NEIGHBOUR_RUN_CONFIGS:
+        baseline_lrs = {125: 0.047, 500: 0.13, 2000: 0.22}
+        tuning_starts = {125: 0.047, 500: 0.13, 2000: 0.22}
+        for original in (
+            config for name, config in train.RUN_CONFIGS.items()
+            if name.startswith(("interval_", "global_neighbour_"))
+        ):
             with self.subTest(
                 batch_size=original["batch_size"],
                 algorithm=original["hparam_tuning"]["algorithm"],
@@ -640,17 +643,22 @@ class SearchTests(unittest.TestCase):
                 choices, _ = train.interval_search_space(config)
                 self.assertNotIn("conv.initial_lr", choices)
                 self.assertEqual(train.get_hparam(config, "conv.initial_lr"), baseline)
-        self.assertEqual(
-            [c["batch_size"] for c in train.BASELINE_RUN_CONFIGS], [125, 500, 2000]
-        )
-        self.assertTrue(
-            all(c["hparam_tuning"] is None for c in train.BASELINE_RUN_CONFIGS)
-        )
+        baselines = {
+            f"baseline_bs{batch_size}": train.RUN_CONFIGS[f"baseline_bs{batch_size}"]
+            for batch_size in (125, 500, 2000)
+        }
+        for name, config in train.RUN_CONFIGS.items():
+            if not name.startswith("baseline_"):
+                continue
+            self.assertIsNone(config["hparam_tuning"])
+        for name, config in baselines.items():
+            self.assertEqual(name, f"baseline_bs{config['batch_size']}")
+            self.assertIsNone(config["hparam_tuning"])
 
     def test_structured_params_work_with_grid_and_coordinate(self):
         for algorithm in ("grid", "coordinate"):
             with self.subTest(algorithm=algorithm):
-                config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+                config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
                 config["hparam_tuning"] = search_config(
                     algorithm=algorithm,
                     params={
@@ -695,7 +703,7 @@ class SearchTests(unittest.TestCase):
                     self.assertEqual(len(calls), 9)
 
     def test_explicit_momentum_start_can_be_between_choices(self):
-        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
         config["hparam_tuning"] = search_config(
             algorithm="global_neighbour",
             params={"head.momentum": dict(initial=0.85, choices=[0.8, 0.9])},
@@ -726,7 +734,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(best["head.momentum"], 0.85)
 
     def test_config_logging_is_readable_and_diffs_only_changed_values(self):
-        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
         config["batch_size"] = 125
         config = train.with_hparam(config, "head.initial_lr", 84)
         config = train.with_hparam(config, "conv.initial_lr", 0.04)
@@ -845,7 +853,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(best["head.initial_lr"], 99)
 
     def test_configured_lr_starts_snap_to_each_parameter_grid(self):
-        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
         for algorithm in ("interval", "global_neighbour"):
             config["hparam_tuning"] = search_config(
                 algorithm=algorithm,
@@ -1001,12 +1009,7 @@ class SearchTests(unittest.TestCase):
                 train.normalize_schedule(
                     [(125, 0.1), (75, 0)], total, name="lr_scheduler"
                 )
-        for config in (
-            train.BASELINE_RUN_CONFIGS
-            + train.INTERVAL_RUN_CONFIGS
-            + train.GLOBAL_NEIGHBOUR_RUN_CONFIGS
-            + train.RUN_CONFIGS
-        ):
+        for config in train.RUN_CONFIGS.values():
             total = config["num_epochs"] * (50000 // config["batch_size"])
             schedules = train.configured_hparam_schedules(config["param_groups"], total)
             for lines in schedules.values():
@@ -1016,7 +1019,7 @@ class SearchTests(unittest.TestCase):
         for algorithm in (None, "grid", "coordinate", "interval", "global_neighbour"):
             for duration in (4, 6):
                 with self.subTest(algorithm=algorithm, duration=duration):
-                    config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+                    config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
                     config.update(
                         batch_size=2,
                         num_epochs=5,
@@ -1054,7 +1057,7 @@ class SearchTests(unittest.TestCase):
                     update.assert_not_called()
 
     def test_initial_lr_tuning_preserves_piecewise_shape_and_unsearched_groups(self):
-        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
         config["param_groups"]["conv"]["lr_scheduler"] = [
             (2, 0.1),
             (3, 0.1, 0.02),
@@ -1095,7 +1098,7 @@ class SearchTests(unittest.TestCase):
         )
 
     def test_global_search_replays_full_configured_decay(self):
-        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
         config.update(
             batch_size=2,
             num_epochs=5,
@@ -1210,7 +1213,7 @@ class SearchTests(unittest.TestCase):
         self.assertNotIn("phase=cooldown", output.getvalue())
 
     def test_per_lr_multipliers_and_validation(self):
-        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
         config["hparam_tuning"] = search_config(
             algorithm="global_neighbour",
             params={
@@ -1260,7 +1263,7 @@ class SearchTests(unittest.TestCase):
     def test_interval_variants_preserve_every_unsearched_update(self):
         for algorithm in ("interval", "global_neighbour"):
             with self.subTest(algorithm=algorithm):
-                config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+                config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
                 config.update(
                     batch_size=2,
                     num_epochs=5,
@@ -1338,7 +1341,7 @@ class SearchTests(unittest.TestCase):
                         self.assertEqual(result["hparam_schedules"][path], lines)
 
     def test_invalid_interval_space_and_nesterov_zero_momentum(self):
-        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
         config["param_groups"]["conv"]["nesterov"] = True
         config["hparam_tuning"] = search_config(
             algorithm="interval",
@@ -1424,7 +1427,7 @@ class SearchTests(unittest.TestCase):
     def test_version_three_preserves_constant_conditioned_gradient_scale(self):
         for nesterov, momentum_first in product((False, True), (False, True)):
             with self.subTest(nesterov=nesterov, momentum_first=momentum_first):
-                config = copy.deepcopy(train.EXPERIMENT_RUN_CONFIGS["exp5_head_grid"])
+                config = copy.deepcopy(train.RUN_CONFIGS["exp5_head_grid"])
                 config["param_groups"]["head"].update(
                     momentum_version=3, momentum=0.9, nesterov=nesterov,
                     gradient_momentum_before_conditioning=momentum_first,
@@ -1521,7 +1524,7 @@ class SearchTests(unittest.TestCase):
                         optimizer.load_state_dict(checkpoint)
 
     def test_adam_beta2_precision_and_half_precision_checkpoint(self):
-        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[2])
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs2000"])
         config["param_groups"]["head"].update(
             algorithm="adam", momentum=0.9, nesterov=False, beta2=0.999, eps=1e-8,
         )
@@ -1611,7 +1614,7 @@ class SearchTests(unittest.TestCase):
                             optimizer.load_state_dict(checkpoint)
 
     def test_bs2000_all_active_v3_search_preserves_schedules(self):
-        config = train.EXPERIMENT_RUN_CONFIGS["exp12_bs2000_all_active_v3"]
+        config = train.RUN_CONFIGS["exp12_bs2000_all_active_v3"]
         self.assertEqual(config["batch_size"], 2000)
         self.assertEqual(config["num_epochs"], 8)
         self.assertEqual(config["hparam_tuning"]["algorithm"], "global_neighbour")
@@ -1621,7 +1624,7 @@ class SearchTests(unittest.TestCase):
             set(config["hparam_tuning"]["params"]),
             {f"{name}.{field}" for name in active for field in ("initial_lr", "momentum")},
         )
-        baseline = train.BASELINE_RUN_CONFIGS[2]
+        baseline = train.RUN_CONFIGS["baseline_bs2000"]
         self.assertEqual(baseline["param_groups"]["head"]["momentum_version"], 3)
         self.assertEqual(baseline["param_groups"]["conv"]["momentum_version"], 3)
         for name, group in config["param_groups"].items():
@@ -1637,9 +1640,7 @@ class SearchTests(unittest.TestCase):
             self.assertEqual(train.hparam_at_step(schedules["whiten_bias.initial_lr"], step), 0)
         for name in ("whiten_weight", "norm_weight"):
             self.assertTrue(train.is_zero_lr_schedule(schedules[f"{name}.initial_lr"]))
-        for original in (*train.BASE_RUN_CONFIGS, *train.BASELINE_RUN_CONFIGS,
-                         *train.INTERVAL_RUN_CONFIGS, *train.GLOBAL_NEIGHBOUR_RUN_CONFIGS,
-                         *train.EXPERIMENT_RUN_CONFIGS.values()):
+        for original in train.RUN_CONFIGS.values():
             for group in original["param_groups"].values():
                 train.GroupOptimizer.validate_group(group, runtime=False)
 
@@ -2226,7 +2227,7 @@ class SearchTests(unittest.TestCase):
             torch.testing.assert_close(saved, reference, rtol=0, atol=0)
 
     def test_input_capture_ignores_evaluation_and_replaces_hooks_between_runs(self):
-        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
         config["param_groups"]["head"].update(
             algorithm="input_conditioned",
             svd_mean_percentage_damping=0.01,
@@ -2287,7 +2288,7 @@ class SearchTests(unittest.TestCase):
                     )
         for algorithm in ("grid", "coordinate", "interval", "global_neighbour"):
             with self.subTest(algorithm=algorithm):
-                config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+                config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
                 config.update(
                     batch_size=2,
                     num_epochs=3,
@@ -2382,7 +2383,7 @@ class SearchTests(unittest.TestCase):
                 self.images = self.images.cuda()
                 self.labels = self.labels.cuda()
 
-        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
         config.update(
             batch_size=2,
             num_epochs=3,
@@ -2477,7 +2478,7 @@ class SearchTests(unittest.TestCase):
                             self.images = self.images.to(device)
                             self.labels = self.labels.to(device)
 
-                    config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+                    config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
                     config.update(
                         batch_size=2,
                         num_epochs=9,
@@ -2612,7 +2613,7 @@ class SearchTests(unittest.TestCase):
                         self.assertGreater(len(populated), 1)
                         self.assertEqual(
                             {g["algorithm"] for g in populated[0]["param_groups"]},
-                            {"sgd", "muon", "input_conditioned"},
+                            {"sgd", "muon2", "input_conditioned"},
                         )
                     else:
                         # Full-run trials all restore the pristine optimizer, with no buffers yet.
@@ -2625,7 +2626,7 @@ class SearchTests(unittest.TestCase):
         # must match a plain run after discarding every probe and cooldown.
         for overfit in (False, True):
             with self.subTest(overfit=overfit):
-                config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[0])
+                config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
                 config.update(
                     batch_size=2,
                     num_epochs=9 if overfit else 3,
@@ -2775,7 +2776,7 @@ class KFACTests(unittest.TestCase):
     @staticmethod
     def config(algorithm):
         """Small K-FAC fixture, independent of the runnable experiment registry."""
-        config = copy.deepcopy(train.BASELINE_RUN_CONFIGS[2])
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs2000"])
         config["param_groups"] = {
             name: dict(
                 algorithm=algorithm,
@@ -3136,7 +3137,7 @@ class KFACTests(unittest.TestCase):
             model(x)
             self.assertFalse(optimizer._kfac_pending)
             self.assertTrue(replacement._kfac_pending)
-            train.make_optimizer(model, train.BASELINE_RUN_CONFIGS[2]["param_groups"])
+            train.make_optimizer(model, train.RUN_CONFIGS["baseline_bs2000"]["param_groups"])
             self.assertEqual(len(model.head._forward_hooks), 0)
 
     def test_kfac_validation_and_missing_capture(self):
@@ -3302,7 +3303,7 @@ class KFACTests(unittest.TestCase):
     def test_kfac_experiment_configs(self):
         for algorithm, prefix in product(train.KFAC_ALGORITHMS, ("all", "tuned")):
             name = f"{prefix}_{algorithm}"
-            config = train.EXPERIMENT_RUN_CONFIGS[name]
+            config = train.RUN_CONFIGS[name]
             for group in config["param_groups"].values():
                 train.GroupOptimizer.validate_group(group, runtime=False)
                 self.assertEqual(group["algorithm"], algorithm)

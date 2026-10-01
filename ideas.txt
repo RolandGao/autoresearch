@@ -1,0 +1,67 @@
+Muon
+bounded change in W. multi-layer is the problem. single layer has no problem
+the sum of singular values should be bounded
+mini batch is still a problem
+two-layer nn is bilinear in weight perturb.
+MLP is probably multilinear
+dz dynamics is important
+
+if batch size too small, singular values are not representative of the actual input distribution
+
+given the output space of relu, maybe the best output of relu is diff. some slanted projection instead of coordinate-wise projection
+
+maybe we want bounded dz
+
+still think dw/w is important. 
+
+input normalization
+
+Simplify batchnorm to just X diagonal decorrelation 
+https://arxiv.org/pdf/1904.03441 
+
+Correlation between x and dh. 
+
+Whitening of nonsquare matrix
+What if one example input is small even if cov is 1? 
+
+human hierarchy is the thing. status games
+
+loss does not tell us which params should change how much.
+Y-softmax(z) does. the magnitude of this is good.
+jacobina is dz/dw. gradient is dL/dw. dL/dw = (Y-softmax(z))*J. 
+Y-softmax(z) is good magnitude. J is opposite magnitude
+Spherical completion instead of bias. 
+https://arxiv.org/html/2510.09378v1?utm_source=chatgpt.com 
+
+Orthogonal regularizatipb
+Avg vs sum. 
+
+backward normalization
+probe with (p-y)^-1
+
+J^tJ
+
+forward isometry seems more important than backward isometry
+
+mao mao collecting favors and building connections. the more you give, the more you receive. 
+
+Forward pass is not linear. Backward pass is linear. 
+https://claude.ai/chat/8337f3e8-142e-475a-a027-1a3c8bcdcd96
+https://github.com/Thrandis/EKFAC-pytorch
+https://jimmylba.github.io/papers/nsync.pdf
+
+Instead of set singular to 1, precondition based on deduplication or decorrelation. An example with small loss should just get small loss, although that’s not a problem if batch size large. Svd direction seems questionabale
+Redefining back propagation
+
+A matrix can only store input_dim many examples. Keep that in mind
+If two examples have the same label, one singular value will be 0, but that’s okay for the last layer. For previous layers, setting singular value 1 probably doesnt hurt. 
+Prevent projection death. 
+If all matrices are orthogonal, what is the point? I think there might not be much point. We need to think about the nonlinearity. 
+
+Muon viz of 1,0 1,1
+
+crelu 
+
+implement a few weight regularization algorithms.
+currently, weight_reg = "none".
+if weight_reg = "orthogonal".

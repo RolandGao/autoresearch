@@ -1,5 +1,2 @@
-
-factor EMA's initial behaviour seems wrong. ideally no factor EMA.
-https://jimmylba.github.io/papers/nsync.pdf 
-normalize_filters func is not kfac.
-if every layer is trying to move the logits, will they clash?
+muon vs kfac in terms of logits completion rate
+lr_scheduler
