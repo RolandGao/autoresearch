@@ -59,7 +59,6 @@ USE_COMPILED_MUON = False
 USE_COMPILED_MODEL = False  # Enable only after an end-to-end sweep timing comparison.
 MODEL_COMPILE_MODE = "default"
 MODEL_WARMUP_STEPS = 3
-MUON_DTYPE = torch.bfloat16
 TRAINING_SEED = 0
 
 
@@ -80,31 +79,6 @@ def round_hparam(value):
 #############################################
 #                Optimizer                  #
 #############################################
-
-
-def zeropower_via_newtonschulz5(G, steps, eps):
-    r"""
-    Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
-    quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
-    of minimizing steps, it turns out to be empirically effective to keep increasing the slope at
-    zero even beyond the point where the iteration no longer converges all the way to one everywhere
-    on the interval. This iteration therefore does not produce UV^T but rather something like US'V^T
-    where S' is diagonal with S_{ii}' \sim Uniform(0.5, 1.5), which turns out not to hurt model
-    performance at all relative to UV^T, where USV^T = G is the SVD.
-    """
-    assert len(G.shape) == 2
-    a, b, c = (3.4445, -4.7750, 2.0315)
-    X = G.to(MUON_DTYPE)
-    X /= X.norm() + eps  # ensure top singular value <= 1
-    if G.size(0) > G.size(1):
-        X = X.T
-    for _ in range(steps):
-        A = X @ X.T
-        B = b * A + c * A @ A
-        X = a * X + B @ X
-    if G.size(0) > G.size(1):
-        X = X.T
-    return X
 
 
 def gram_frobenius_norm_estimate(G, keepdim, eps):
@@ -136,7 +110,6 @@ def zeropower_via_newtonschulz5_muon2(G):
 
 
 if USE_COMPILED_MUON:
-    zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
     zeropower_via_newtonschulz5_muon2 = torch.compile(zeropower_via_newtonschulz5_muon2)
 
 
@@ -159,7 +132,6 @@ ALGORITHM_FIELDS = {
     "sgd": set(),
     "lion": set(),
     "adam": {"beta2", "eps"},
-    "muon": {"ns_steps", "ns_eps"},
     "muon2": set(),
     "sgdh": {"normalization_eps"},
     "input_conditioned": INPUT_CONDITIONER_FIELDS,
@@ -208,9 +180,6 @@ class GroupOptimizer(torch.optim.Optimizer):
     def __init__(self, param_groups):
         for group in param_groups:
             self.validate_group(group, runtime=True)
-            group.setdefault(
-                "momentum_version", 1 if group["algorithm"] in ("muon", "muon2") else 3
-            )
         super().__init__(param_groups, defaults={})
         self._input_covariances = {}
         self._kfac_layers = {}
@@ -226,7 +195,7 @@ class GroupOptimizer(torch.optim.Optimizer):
                 raise ValueError(f"{name}: learning rate must be nonnegative")
             if group["momentum"] < 0:
                 raise ValueError(f"{name}: momentum must be nonnegative")
-            if group["algorithm"] in ("muon", "muon2", "sgdh") and any(
+            if group["algorithm"] in ("muon2", "sgdh") and any(
                 p.ndim < 2 for p in group["params"]
             ):
                 raise ValueError(
@@ -251,30 +220,24 @@ class GroupOptimizer(torch.optim.Optimizer):
 
     @staticmethod
     def validate_group(group, runtime):
+        if group.get("algorithm") == "muon":
+            raise ValueError("muon has been removed; use muon2")
+        if "momentum_version" in group:
+            raise ValueError(
+                "momentum_version has been removed; momentum is always the "
+                "bias-corrected EMA (formerly version 3)"
+            )
         if "algorithm" not in group or group["algorithm"] not in ALGORITHM_FIELDS:
             raise ValueError("Optimizer group requires a known algorithm")
         required = {"algorithm", "momentum", "nesterov"} | ALGORITHM_FIELDS[
             group["algorithm"]
         ]
         required |= {"name", "params", "lr"} if runtime else {"lr_scheduler"}
-        required |= {"momentum_version"} & group.keys()
         require_fields(group, required, f"{group['algorithm']} group")
-        version = group.get(
-            "momentum_version", 1 if group["algorithm"] in ("muon", "muon2") else 3
-        )
-        if (
-            isinstance(version, bool)
-            or not isinstance(version, int)
-            or version not in (1, 3)
-        ):
-            raise ValueError("momentum_version must be 1 or 3; version 2 is no longer supported")
-        if group["algorithm"] not in ("muon", "muon2") and version != 3:
-            raise ValueError(f"{group['algorithm']} requires momentum_version=3")
         if not isinstance(group["nesterov"], bool):
             raise ValueError("nesterov must be a boolean")
         fields = ({"lr", "momentum"} if runtime else {"momentum"}) | (
-            ALGORITHM_FIELDS[group["algorithm"]]
-            - {"ns_steps"} - BOOLEAN_FIELDS
+            ALGORITHM_FIELDS[group["algorithm"]] - BOOLEAN_FIELDS
         )
         for field in fields:
             value = group[field]
@@ -285,8 +248,8 @@ class GroupOptimizer(torch.optim.Optimizer):
                 or value < 0
             ):
                 raise ValueError(f"{field} must be a nonnegative finite number")
-        if version == 3 and round_hparam(group["momentum"]) >= 1:
-            raise ValueError(f"momentum_version {version} requires momentum in [0, 1)")
+        if round_hparam(group["momentum"]) >= 1:
+            raise ValueError("momentum must be in [0, 1)")
         if group["algorithm"] == "adam":
             if round_hparam(group["momentum"]) >= 1 or group["beta2"] >= 1:
                 raise ValueError("Adam momentum (beta1) and beta2 must be in [0, 1)")
@@ -294,10 +257,6 @@ class GroupOptimizer(torch.optim.Optimizer):
                 raise ValueError("Adam eps must be positive")
             if group["nesterov"]:
                 raise ValueError("Adam requires nesterov=False")
-        if group["algorithm"] == "muon":
-            steps = group["ns_steps"]
-            if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
-                raise ValueError("ns_steps must be a positive integer")
         if group["algorithm"] == "sgdh" and group["normalization_eps"] <= 0:
             raise ValueError("normalization_eps must be positive")
         if group["algorithm"] == "input_conditioned":
@@ -630,9 +589,6 @@ class GroupOptimizer(torch.optim.Optimizer):
         for group in self.param_groups:
             lr = group["lr"] = round_hparam(group["lr"])
             momentum = group["momentum"]
-            momentum_version = group.get(
-                "momentum_version", 1 if group["algorithm"] in ("muon", "muon2") else 3
-            )
             conditioned = group["algorithm"] == "input_conditioned"
             if conditioned:
                 group.update(input_conditioner_options(group))
@@ -691,40 +647,18 @@ class GroupOptimizer(torch.optim.Optimizer):
                         g = self.condition(
                             g, covariance, group["svd_mean_percentage_damping"]
                         )
-                if (
-                    momentum_version == 3
-                    or momentum
-                    or group["algorithm"] in ("muon", "muon2", "sgdh", "lion")
-                ):
-                    state = self.state[p]
-                    if momentum_version == 3:
-                        if "momentum_buffer" not in state:
-                            state["momentum_buffer"] = torch.zeros_like(g)
-                            state["momentum_step"] = 0
-                        state["momentum_step"] += 1
-                        state["momentum_buffer"].mul_(momentum).add_(
-                            g, alpha=1 - momentum
-                        )
-                        # Keep the uncorrected EMA for the next iteration.
-                        buf = state["momentum_buffer"] / (
-                            1 - momentum ** state["momentum_step"]
-                        )
-                    elif "momentum_buffer" not in state:
-                        state["momentum_buffer"] = g.clone()
-                    elif momentum == 0:
-                        # Zero momentum uses the raw gradient and clears old history.
-                        state["momentum_buffer"].copy_(g)
-                    else:
-                        state["momentum_buffer"].mul_(momentum).add_(g)
-                    if momentum_version == 1:
-                        buf = state["momentum_buffer"]
-                    if group["nesterov"] and momentum:
-                        if momentum_version == 3:
-                            g = g.mul(1 - momentum).add(buf, alpha=momentum)
-                        else:
-                            g = g.add(buf, alpha=momentum)
-                    else:
-                        g = buf
+                state = self.state[p]
+                if "momentum_buffer" not in state:
+                    state["momentum_buffer"] = torch.zeros_like(g)
+                    state["momentum_step"] = 0
+                state["momentum_step"] += 1
+                state["momentum_buffer"].mul_(momentum).add_(g, alpha=1 - momentum)
+                # Keep the uncorrected EMA for the next iteration.
+                buf = state["momentum_buffer"] / (1 - momentum ** state["momentum_step"])
+                if group["nesterov"] and momentum:
+                    g = g.mul(1 - momentum).add(buf, alpha=momentum)
+                else:
+                    g = buf
 
                 # A zero learning rate must leave weights unchanged for every algorithm.
                 if lr == 0:
@@ -734,22 +668,13 @@ class GroupOptimizer(torch.optim.Optimizer):
                     # Requested Lion variant: sign of the momentum/Nesterov
                     # direction. Zero coordinates stay zero; preserve the buffer.
                     g = g.sign()
-                elif group["algorithm"] in ("muon", "muon2"):
+                elif group["algorithm"] == "muon2":
                     p.mul_(len(p) ** 0.5 / p.norm())  # normalize the weight
                     matrix = g.reshape(len(g), -1)
-                    if group["algorithm"] == "muon2":
-                        g = zeropower_via_newtonschulz5_muon2(matrix).view(g.shape)
-                    else:
-                        g = zeropower_via_newtonschulz5(
-                            matrix,
-                            steps=group["ns_steps"],
-                            eps=group["ns_eps"],
-                        ).view(g.shape)  # whiten the update
+                    g = zeropower_via_newtonschulz5_muon2(matrix).view(g.shape)
                 elif group["algorithm"] == "sgdh":
-                    # Without Nesterov (or at zero momentum), g aliases the buffer.
-                    # Normalize a working copy so future steps retain raw momentum.
-                    if g is self.state[p]["momentum_buffer"]:
-                        g = g.clone()
+                    # g is a fresh tensor (never the momentum buffer), so normalizing
+                    # it in place leaves the raw momentum intact.
                     channel_dims = tuple(range(1, p.ndim))
                     p.div_(
                         p.norm(p=2, dim=channel_dims, keepdim=True).clamp_min_(
@@ -1658,19 +1583,17 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # Change the segment durations when changing the batch size or run length.
 # input_conditioned groups accept svd_mean_percentage_damping (0.01 = 1% damping)
 # and input_conditioner_momentum (covariance EMA beta; 0 = current batch).
-# Both are required. Muon requires ns_steps/ns_eps; SGDH requires normalization_eps.
-# Muon2 uses 12 NS steps and Gram normalization with eps=1e-7; it takes neither
-# ns_steps nor ns_eps. Select it with algorithm="muon2" in a parameter group.
+# Both are required. SGDH requires normalization_eps.
+# Muon2 uses 12 NS steps and Gram normalization with eps=1e-7. The original Muon
+# (algorithm="muon") has been removed and is rejected.
 # Conditioner settings can be searched using explicit choices in hparam_tuning.params.
-# Muon/Muon2 accept momentum_version=1 (their default) or 3; the configs below
-# always use 3. Every other
-# algorithm requires version 3 (also its default); version 2 is unsupported.
-# Version 3 uses a zero-initialized EMA corrected by 1 - momentum**t, with
+# Gradient momentum is always a zero-initialized EMA corrected by 1 - momentum**t
+# (formerly momentum_version=3, now the only option; the field is rejected), with
 # Nesterov direction (1 - momentum) * g + momentum * corrected_buffer.
 # Without Nesterov it uses the corrected buffer directly.
-# Lion here takes the sign of this version 3 momentum/Nesterov direction.
+# Lion here takes the sign of this momentum/Nesterov direction.
 # Adam uses momentum as beta1, plus explicit beta2 and eps
-# (e.g. 0.9, 0.999, 1e-8); it requires nesterov=False and momentum_version=3,
+# (e.g. 0.9, 0.999, 1e-8); it requires nesterov=False,
 # and always applies its own first/second-moment bias correction.
 # kfac and kfac-jacobian support every CIFAR group, including normalization and
 # biases. kfac_damping is a fraction of each factor's mean eigenvalue (0 uses
@@ -1692,7 +1615,6 @@ debug = True
 # Every run config, by name. Select what to run by name in experiments_to_run
 # below, so past runs stay reproducible. New configs should derive from an
 # existing one (usually a baseline) and change only what they study.
-# Every group uses momentum_version=3, and convolutions use Muon2.
 RUN_CONFIGS = {}
 MOMENTUM_CHOICES = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
 LR_DECAYS = ("linear_decay", "constant")
@@ -1709,7 +1631,7 @@ def baseline_config(
     def group(algorithm, lr_scheduler, momentum):
         return dict(
             algorithm=algorithm, lr_scheduler=lr_scheduler, momentum=momentum,
-            momentum_version=3, nesterov=True,
+            nesterov=True,
         )
 
     return dict(
@@ -1783,7 +1705,6 @@ for algorithm, fields in BASELINE_BS2000_HEADS.items():
         algorithm=algorithm,
         lr_scheduler=lr_decay_schedule(200, fields.pop("lr"), "linear_decay"),
         momentum=fields.pop("momentum"),
-        momentum_version=3,
         nesterov=True,
         **fields,
     )
@@ -1856,7 +1777,6 @@ for decay in LR_DECAYS:
         algorithm="sgdh",
         lr_scheduler=lr_decay_schedule(200, 0.22, decay),
         momentum=0.7,
-        momentum_version=3,
         nesterov=True,
         normalization_eps=1e-6,
     )
@@ -1898,7 +1818,6 @@ for decay, momentum_first in product(LR_DECAYS, (True, False)):
         algorithm="input_conditioned",
         lr_scheduler=lr_decay_schedule(200, 1300, decay),
         momentum=0.85,
-        momentum_version=3,
         nesterov=True,
         svd_mean_percentage_damping=0.01,
         input_conditioner_momentum=0.0,
@@ -1933,7 +1852,6 @@ config["param_groups"]["head"] = dict(
     algorithm="input_conditioned",
     lr_scheduler=lr_decay_schedule(200, HEAD_GRID_LR, "linear_decay"),
     momentum=0.0,
-    momentum_version=3,
     nesterov=True,  # At momentum=0 the optimizer uses the conditioned gradient directly.
     svd_mean_percentage_damping=0.01,
     input_conditioner_momentum=0.0,
@@ -1946,7 +1864,6 @@ config["hparam_tuning"] = dict(
         "head.initial_lr": dict(initial=HEAD_GRID_LR, choices=HEAD_GRID_LR_CHOICES),
         "head.momentum": dict(initial=0.0, choices=[0.0, 0.5, 0.7, 0.8, 0.9]),
         "head.decay": dict(initial="linear_decay", choices=list(LR_DECAYS)),
-        "head.momentum_version": dict(initial=3, choices=[3]),
     },
 )
 RUN_CONFIGS["exp5_head_grid"] = config
@@ -1967,8 +1884,6 @@ for algorithm, name in (("sgd", "exp6_head_sgd_grid"), ("lion", "exp7_head_lion_
     head["algorithm"] = algorithm
     for field in INPUT_CONDITIONER_FIELDS:
         del head[field]
-    if algorithm == "lion":
-        del config["hparam_tuning"]["params"]["head.momentum_version"]
     RUN_CONFIGS[name] = config
 
 # Lion without momentum: search learning rates suited to sign updates.
@@ -2005,7 +1920,6 @@ for source, name in (
     config["hparam_tuning"]["params"].update({
         "head.initial_lr": dict(initial=6000, choices=HEAD_V3_LR_CHOICES),
         "head.decay": dict(initial="linear_decay", choices=["linear_decay"]),
-        "head.momentum_version": dict(initial=3, choices=[3]),
         "head.nesterov": dict(initial=True, choices=[True, False]),
     })
     RUN_CONFIGS[name] = config
@@ -2030,7 +1944,6 @@ for algorithm in ("kfac", "kfac-jacobian"):
                 else lr_decay_schedule(200, 0.15, "linear_decay")
             ),
             momentum=0.9,
-            momentum_version=3,
             nesterov=True,
             kfac_damping=0.03,
             kfac_input_damping=0.03,
@@ -2071,7 +1984,7 @@ def tuned_kfac_config(
     def group(lr_scheduler, **options):
         values = dict(
             algorithm=algorithm, lr_scheduler=lr_scheduler, momentum=0.9,
-            momentum_version=3, nesterov=True, kfac_damping=0.3,
+            nesterov=True, kfac_damping=0.3,
             kfac_input_damping=0.3, kfac_factor_momentum=0.0, kfac_probes=1,
             gradient_momentum_before_conditioning=True, kfac_matrix_normalization=False,
         )
@@ -2155,7 +2068,6 @@ def normalize_config(value, key):
         "interval_steps",
         "cooldown_steps",
         "max_side_steps",
-        "ns_steps",
         "kfac_probes",
     ):
         return copy.deepcopy(value)
