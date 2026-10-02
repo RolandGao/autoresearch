@@ -1437,6 +1437,68 @@ class SearchTests(unittest.TestCase):
                     torch.testing.assert_close(parameter, before - 0.1 * direction)
                     torch.testing.assert_close(parameter.grad, gradient)
 
+    def test_h_variants_normalize_rows_or_whole_matrices(self):
+        def rows(x):
+            return x / x.flatten(1).norm(dim=1).view(-1, *[1] * (x.ndim - 1))
+
+        def matrix(x):
+            return x * (len(x) ** 0.5 / x.norm())
+
+        options = dict(sgd={}, lion={}, adam=dict(beta2=0.999, eps=1e-8))
+        variants = [(base, suffix) for base in ("lion", "adam") for suffix in ("h", "h2")]
+        variants += [(base, "h3") for base in ("sgd", "lion", "adam")]
+        for base, suffix in variants:
+            with self.subTest(algorithm=base + suffix):
+                generator = torch.Generator().manual_seed(0)
+                parameter = torch.nn.Parameter(
+                    torch.randn(3, 2, 2, 2, generator=generator, dtype=torch.float64)
+                )
+                reference = torch.nn.Parameter(parameter.detach().clone())
+                group = dict(lr=0.1, momentum=0.6, nesterov=base != "adam", **options[base])
+                optimizer = train.GroupOptimizer([dict(
+                    group, name="test", params=[parameter], algorithm=base + suffix,
+                    normalization_eps=1e-12,
+                )])
+                plain = train.GroupOptimizer([dict(
+                    group, name="reference", params=[reference], algorithm=base,
+                )])
+                for _ in range(3):
+                    gradient = torch.randn(parameter.shape, generator=generator, dtype=torch.float64)
+                    parameter.grad = gradient.clone()
+                    reference.grad = gradient.clone()
+                    # The base update depends only on gradients, not on the weights.
+                    before_reference = reference.detach().clone()
+                    plain.step()
+                    update = (before_reference - reference.detach()) / 0.1
+                    if suffix == "h2":
+                        update = rows(update)
+                    weight = rows if suffix in ("h", "h2") else matrix
+                    if suffix == "h3":
+                        update = matrix(update)
+                    before = parameter.detach().clone()
+                    optimizer.step()
+                    torch.testing.assert_close(parameter, weight(before) - 0.1 * update)
+                    torch.testing.assert_close(parameter.grad, gradient)
+                optimizer.param_groups[0]["lr"] = 0
+                before = parameter.detach().clone()
+                optimizer.step()
+                torch.testing.assert_close(parameter, before, rtol=0, atol=0)
+                with self.assertRaisesRegex(ValueError, "normalization_eps"):
+                    train.GroupOptimizer([dict(
+                        group, name="test", params=[parameter], algorithm=base + suffix,
+                    )])
+                with self.assertRaisesRegex(ValueError, "at least 2 dimensions"):
+                    train.GroupOptimizer([dict(
+                        group, name="test", params=[torch.nn.Parameter(torch.ones(2))],
+                        algorithm=base + suffix, normalization_eps=1e-6,
+                    )])
+                if base == "adam":
+                    with self.assertRaisesRegex(ValueError, "nesterov=False"):
+                        train.GroupOptimizer([dict(
+                            group, name="test", params=[parameter], algorithm=base + suffix,
+                            normalization_eps=1e-6, nesterov=True,
+                        )])
+
     def test_lion_takes_sign_without_changing_momentum_history(self):
         for nesterov in (False, True):
             parameter = torch.nn.Parameter(torch.ones(3, dtype=torch.float64))
@@ -1558,7 +1620,14 @@ class SearchTests(unittest.TestCase):
     def test_removed_muon_and_momentum_version_are_rejected(self):
         options = {
             "sgdh": dict(normalization_eps=1e-6),
+            "lionh": dict(normalization_eps=1e-6),
+            "lionh2": dict(normalization_eps=1e-6),
+            "lionh3": dict(normalization_eps=1e-6),
+            "sgdh3": dict(normalization_eps=1e-6),
             "adam": dict(beta2=0.999, eps=1e-8),
+            "adamh3": dict(beta2=0.999, eps=1e-8, normalization_eps=1e-6),
+            "adamh": dict(beta2=0.999, eps=1e-8, normalization_eps=1e-6),
+            "adamh2": dict(beta2=0.999, eps=1e-8, normalization_eps=1e-6),
             "input_conditioned": dict(
                 svd_mean_percentage_damping=0.01, input_conditioner_momentum=0.0,
                 gradient_momentum_before_conditioning=False,

@@ -1,2 +1,10 @@
 muon vs kfac in terms of logits completion rate
 lr_scheduler
+does a nxn matrix hold n directions or nxn directions?
+per-example gradient is important
+if singular value below a threshold, set it to 0. 
+soap
+learn SVD again
+what if we do SVD or PCA on per-example gradient vecs
+if my batch size is A and my matrix is BxC, what if I flatten the per-example gradient matrix so as to get shape (A,BC) and then i apply muon to this matrix 
+Muon not working on the last layer is proof that there is something better. 
