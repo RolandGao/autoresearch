@@ -3137,3 +3137,954 @@ search run=global_neighbour_bs2000_seed0 interval=0 phase=main metric=tta_val_ac
 main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.9389
 main hparams: conv.initial_lr=0.13 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.9386
 main hparams: conv.initial_lr=0.36 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.9367
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.9388
+main hparams: conv.initial_lr=0.22 conv.momentum=0.8 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.9363
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=770 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.9378
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=2100 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.9389
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.9405
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=5900 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.9386
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=3500 head.momentum=0.8 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.9398
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=3500 head.momentum=0.9 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.94
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.8 main=0.9407
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=36 norm_bias.momentum=0.8 main=0.9395
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.7 main=0.9387
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.9 main=0.9394
+main hparams: conv.initial_lr=0.13 conv.momentum=0.7 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.8 main=0.938
+main hparams: conv.initial_lr=0.36 conv.momentum=0.7 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.8 main=0.9354
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.8 main=0.9421
+main hparams: conv.initial_lr=0.22 conv.momentum=0.5 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.8 main=0.9399
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=2100 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.8 main=0.9397
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=5900 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.8 main=0.9386
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=3500 head.momentum=0.8 norm_bias.initial_lr=60 norm_bias.momentum=0.8 main=0.9375
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=3500 head.momentum=0.9 norm_bias.initial_lr=60 norm_bias.momentum=0.8 main=0.9407
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=36 norm_bias.momentum=0.8 main=0.9413
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 main=0.9417
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.7 main=0.9417
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.9 main=0.9416
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.8 main=0.9349
+main hparams: conv.initial_lr=0.36 conv.momentum=0.6 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.8 main=0.9374
+search_path step=0 conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=1300 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 tta_val_acc=0.9389
+search_path step=1 conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=99 norm_bias.momentum=0.8 tta_val_acc=0.9405
+search_path step=2 conv.initial_lr=0.22 conv.momentum=0.7 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.8 tta_val_acc=0.9407
+search_path step=3 conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.8 tta_val_acc=0.9421
+train_hparams run=global_neighbour_bs2000_seed0 interval=0 start_step=0 completed_steps=200 total_steps=200 conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=3500 head.momentum=0.85 norm_bias.initial_lr=60 norm_bias.momentum=0.8
+train_schedules run=global_neighbour_bs2000_seed0 interval=0
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  whiten_weight.nesterov: [[200, true]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  norm_weight.nesterov: [[200, true]]
+  whiten_bias.initial_lr: [[75, 36, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.8]]
+  whiten_bias.nesterov: [[200, true]]
+  norm_bias.initial_lr: [[200, 60.0, 0.0]]
+  norm_bias.momentum: [[200, 0.8]]
+  norm_bias.nesterov: [[200, true]]
+  head.initial_lr: [[200, 3500.0, 0.0]]
+  head.momentum: [[200, 0.85]]
+  head.nesterov: [[200, true]]
+  conv.initial_lr: [[200, 0.22, 0.0]]
+  conv.momentum: [[200, 0.6]]
+  conv.nesterov: [[200, true]]
+interval_boundary_eval run=global_neighbour_bs2000_seed0 interval=0 step=200 total_steps=200 tta_val_acc=0.9421
+val_acc=0.9325 tta_val_acc=0.9421 seconds=339.2687
+debug_spectra run=global_neighbour_bs2000_seed0 steps=200 data=untracked_logs/cifar_baseline_20261002_022843_241732Z_893023.log/cifar_spectra_20261002_023425_165317Z_893023_global_neighbour_bs2000_seed0.npz video=untracked_logs/cifar_baseline_20261002_022843_241732Z_893023.log/cifar_spectra_20261002_023425_165317Z_893023_global_neighbour_bs2000_seed0.mp4
+seed_summary run=global_neighbour_bs2000 seeds=[0] val_acc_mean=0.9325 val_acc_std=0 tta_val_acc_mean=0.9421 tta_val_acc_std=0
+base_config run=global_neighbour_bs500_seed0
+{
+  "batch_size": 500,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "global_neighbour",
+    "metric": "tta_val_acc",
+    "max_side_steps": 20,
+    "params": {"conv.initial_lr": {"initial": 0.13, "choices": null, "mult": 0.6}, "conv.momentum": {"initial": 0.6, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "head.initial_lr": {"initial": 280, "choices": null, "mult": 0.6}, "head.momentum": {"initial": 0.85, "choices": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "norm_bias.initial_lr": {"initial": 21, "choices": null, "mult": 0.6}, "norm_bias.momentum": {"initial": 0.85, "choices": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}},
+    "interval_steps": 800,
+    "cooldown_steps": 0
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[800, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[800, 0.0]], "momentum": 0.85, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[300, 36, 0.0], [500, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[800, 21, 0.0]], "momentum": 0.85, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": [[800, 280, 0.0]], "momentum": 0.85, "nesterov": true},
+    "conv": {"algorithm": "muon2", "lr_scheduler": [[800, 0.13, 0.0]], "momentum": 0.6, "nesterov": true}
+  }
+}
+search run=global_neighbour_bs500_seed0 interval=0 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9401
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9374
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9372
+main hparams: conv.initial_lr=0.13 conv.momentum=0.5 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9385
+main hparams: conv.initial_lr=0.13 conv.momentum=0.7 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9384
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.939
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=460 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9389
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.8 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9377
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.9 norm_bias.initial_lr=21 norm_bias.momentum=0.85 main=0.9377
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=13 norm_bias.momentum=0.85 main=0.9381
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=36 norm_bias.momentum=0.85 main=0.9386
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.8 main=0.9394
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.9 main=0.9387
+search_path step=0 conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85 tta_val_acc=0.9401
+train_hparams run=global_neighbour_bs500_seed0 interval=0 start_step=0 completed_steps=800 total_steps=800 conv.initial_lr=0.13 conv.momentum=0.6 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=21 norm_bias.momentum=0.85
+train_schedules run=global_neighbour_bs500_seed0 interval=0
+  whiten_weight.initial_lr: [[800, 0.0]]
+  whiten_weight.momentum: [[800, 0.85]]
+  whiten_weight.nesterov: [[800, true]]
+  norm_weight.initial_lr: [[800, 0.0]]
+  norm_weight.momentum: [[800, 0.85]]
+  norm_weight.nesterov: [[800, true]]
+  whiten_bias.initial_lr: [[300, 36, 0.0], [500, 0.0]]
+  whiten_bias.momentum: [[800, 0.85]]
+  whiten_bias.nesterov: [[800, true]]
+  norm_bias.initial_lr: [[800, 21.0, 0.0]]
+  norm_bias.momentum: [[800, 0.85]]
+  norm_bias.nesterov: [[800, true]]
+  head.initial_lr: [[800, 280.0, 0.0]]
+  head.momentum: [[800, 0.85]]
+  head.nesterov: [[800, true]]
+  conv.initial_lr: [[800, 0.13, 0.0]]
+  conv.momentum: [[800, 0.6]]
+  conv.nesterov: [[800, true]]
+interval_boundary_eval run=global_neighbour_bs500_seed0 interval=0 step=800 total_steps=800 tta_val_acc=0.9401
+val_acc=0.9315 tta_val_acc=0.9401 seconds=285.9955
+debug_spectra run=global_neighbour_bs500_seed0 steps=800 data=untracked_logs/cifar_baseline_20261002_022843_241732Z_893023.log/cifar_spectra_20261002_023915_293740Z_893023_global_neighbour_bs500_seed0.npz video=untracked_logs/cifar_baseline_20261002_022843_241732Z_893023.log/cifar_spectra_20261002_023915_293740Z_893023_global_neighbour_bs500_seed0.mp4
+seed_summary run=global_neighbour_bs500 seeds=[0] val_acc_mean=0.9315 val_acc_std=0 tta_val_acc_mean=0.9401 tta_val_acc_std=0
+base_config run=global_neighbour_bs125_seed0
+{
+  "batch_size": 125,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "global_neighbour",
+    "metric": "tta_val_acc",
+    "max_side_steps": 20,
+    "params": {"conv.initial_lr": {"initial": 0.047, "choices": null, "mult": 0.6}, "conv.momentum": {"initial": 0.5, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "head.initial_lr": {"initial": 170, "choices": null, "mult": 0.6}, "head.momentum": {"initial": 0.85, "choices": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}, "norm_bias.initial_lr": {"initial": 4.6, "choices": null, "mult": 0.6}, "norm_bias.momentum": {"initial": 0.85, "choices": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}},
+    "interval_steps": 3200,
+    "cooldown_steps": 0
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[3200, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[3200, 0.0]], "momentum": 0.85, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[1200, 7.7, 0.0], [2000, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[3200, 4.6, 0.0]], "momentum": 0.85, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": [[3200, 170, 0.0]], "momentum": 0.85, "nesterov": true},
+    "conv": {"algorithm": "muon2", "lr_scheduler": [[3200, 0.047, 0.0]], "momentum": 0.5, "nesterov": true}
+  }
+}
+search run=global_neighbour_bs125_seed0 interval=0 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.94
+main hparams: conv.initial_lr=0.028 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9344
+main hparams: conv.initial_lr=0.078 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9389
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9363
+main hparams: conv.initial_lr=0.047 conv.momentum=0.6 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9398
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=99 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9361
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=280 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9379
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.8 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.938
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.9 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 main=0.9381
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=2.8 norm_bias.momentum=0.85 main=0.9386
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 main=0.9388
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.8 main=0.9372
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.9 main=0.938
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 tta_val_acc=0.94
+train_hparams run=global_neighbour_bs125_seed0 interval=0 start_step=0 completed_steps=3200 total_steps=3200 conv.initial_lr=0.047 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85
+train_schedules run=global_neighbour_bs125_seed0 interval=0
+  whiten_weight.initial_lr: [[3200, 0.0]]
+  whiten_weight.momentum: [[3200, 0.85]]
+  whiten_weight.nesterov: [[3200, true]]
+  norm_weight.initial_lr: [[3200, 0.0]]
+  norm_weight.momentum: [[3200, 0.85]]
+  norm_weight.nesterov: [[3200, true]]
+  whiten_bias.initial_lr: [[1200, 7.7, 0.0], [2000, 0.0]]
+  whiten_bias.momentum: [[3200, 0.85]]
+  whiten_bias.nesterov: [[3200, true]]
+  norm_bias.initial_lr: [[3200, 4.6, 0.0]]
+  norm_bias.momentum: [[3200, 0.85]]
+  norm_bias.nesterov: [[3200, true]]
+  head.initial_lr: [[3200, 170.0, 0.0]]
+  head.momentum: [[3200, 0.85]]
+  head.nesterov: [[3200, true]]
+  conv.initial_lr: [[3200, 0.047, 0.0]]
+  conv.momentum: [[3200, 0.5]]
+  conv.nesterov: [[3200, true]]
+interval_boundary_eval run=global_neighbour_bs125_seed0 interval=0 step=3200 total_steps=3200 tta_val_acc=0.94
+val_acc=0.9321 tta_val_acc=0.9400 seconds=900.7630
+debug_spectra run=global_neighbour_bs125_seed0 steps=3200 data=untracked_logs/cifar_baseline_20261002_022843_241732Z_893023.log/cifar_spectra_20261002_025427_338840Z_893023_global_neighbour_bs125_seed0.npz video=untracked_logs/cifar_baseline_20261002_022843_241732Z_893023.log/cifar_spectra_20261002_025427_338840Z_893023_global_neighbour_bs125_seed0.mp4
+seed_summary run=global_neighbour_bs125 seeds=[0] val_acc_mean=0.9321 val_acc_std=0 tta_val_acc_mean=0.94 tta_val_acc_std=0
+base_config run=interval_bs2000_seed0
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "interval",
+    "metric": "tta_val_acc",
+    "max_side_steps": 20,
+    "initial_dropoff_margin": 0.02,
+    "interval_steps": 40,
+    "cooldown_steps": 40,
+    "params": {"conv.initial_lr": {"initial": 0.22, "choices": null, "mult": 0.6}, "conv.momentum": {"initial": 0.7, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}}
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[75, 36, 0.0], [125, 0.0]], "momentum": 0.8, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[200, 99, 0.0]], "momentum": 0.8, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": [[200, 1300, 0.0]], "momentum": 0.85, "nesterov": true},
+    "conv": {"algorithm": "muon2", "lr_scheduler": [[200, 0.22, 0.0]], "momentum": 0.7, "nesterov": true}
+  }
+}
+search run=interval_bs2000_seed0 interval=0 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 main=0.791
+main hparams: conv.initial_lr=0.36 conv.momentum=0.7 main=0.6978
+main hparams: conv.initial_lr=0.13 conv.momentum=0.7 main=0.8405
+main hparams: conv.initial_lr=0.078 conv.momentum=0.7 main=0.8413
+main hparams: conv.initial_lr=0.047 conv.momentum=0.7 main=0.8257
+main hparams: conv.initial_lr=0.028 conv.momentum=0.7 main=0.7894
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 main=0.8364
+main hparams: conv.initial_lr=0.13 conv.momentum=0.8 main=0.8398
+search_path step=0 conv.initial_lr=0.22 conv.momentum=0.7 tta_val_acc=0.791
+search_path step=1 conv.initial_lr=0.13 conv.momentum=0.7 tta_val_acc=0.8405
+search run=interval_bs2000_seed0 interval=0 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.13 conv.momentum=0.7
+conv.initial_lr=0.13 -> tta_val_acc=0.8729
+conv.initial_lr=0.078 -> tta_val_acc=0.8938
+conv.initial_lr=0.047 -> tta_val_acc=0.9105
+conv.initial_lr=0.028 -> tta_val_acc=0.9098
+search_path step=0 conv.initial_lr=0.13 tta_val_acc=0.8729
+search_path step=1 conv.initial_lr=0.047 tta_val_acc=0.9105
+search run=interval_bs2000_seed0 interval=0 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.047
+main hparams: conv.initial_lr=0.13 conv.momentum=0.7 best_cooldown=0.9105
+main hparams: conv.initial_lr=0.078 conv.momentum=0.7 best_cooldown=0.8956
+main hparams: conv.initial_lr=0.22 conv.momentum=0.7 best_cooldown=0.9052
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 best_cooldown=0.9017
+main hparams: conv.initial_lr=0.13 conv.momentum=0.8 best_cooldown=0.9067
+search_path step=0 conv.initial_lr=0.13 conv.momentum=0.7 tta_val_acc=0.9105
+train_hparams run=interval_bs2000_seed0 interval=0 start_step=0 completed_steps=40 total_steps=200 conv.initial_lr=0.13 conv.momentum=0.7
+train_schedules run=interval_bs2000_seed0 interval=0
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  whiten_weight.nesterov: [[200, true]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  norm_weight.nesterov: [[200, true]]
+  whiten_bias.initial_lr: [[75, 36, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.8]]
+  whiten_bias.nesterov: [[200, true]]
+  norm_bias.initial_lr: [[200, 99, 0.0]]
+  norm_bias.momentum: [[200, 0.8]]
+  norm_bias.nesterov: [[200, true]]
+  head.initial_lr: [[200, 1300, 0.0]]
+  head.momentum: [[200, 0.85]]
+  head.nesterov: [[200, true]]
+  conv.initial_lr: [[40, 0.13], [160, 0.17600000000000002, 0.0]]
+  conv.momentum: [[40, 0.7], [160, 0.7]]
+  conv.nesterov: [[200, true]]
+interval_boundary_eval run=interval_bs2000_seed0 interval=0 step=40 total_steps=200 tta_val_acc=0.8405
+search run=interval_bs2000_seed0 interval=1 phase=baseline metric=tta_val_acc
+main hparams: conv.initial_lr=0.13 conv.momentum=0.7 main=0.8729
+search_path step=0 conv.initial_lr=0.13 conv.momentum=0.7 tta_val_acc=0.8729
+search run=interval_bs2000_seed0 interval=1 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.13 conv.momentum=0.7
+conv.initial_lr=0.047 -> tta_val_acc=0.9203
+conv.initial_lr=0.028 -> tta_val_acc=0.9268
+conv.initial_lr=0.017 -> tta_val_acc=0.9244
+search_path step=0 conv.initial_lr=0.047 tta_val_acc=0.9203
+search_path step=1 conv.initial_lr=0.028 tta_val_acc=0.9268
+search run=interval_bs2000_seed0 interval=1 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.028
+main hparams: conv.initial_lr=0.13 conv.momentum=0.7 best_cooldown=0.9268
+main hparams: conv.initial_lr=0.078 conv.momentum=0.7 best_cooldown=0.9276
+main hparams: conv.initial_lr=0.047 conv.momentum=0.7 best_cooldown=0.9233
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 best_cooldown=0.9244
+main hparams: conv.initial_lr=0.078 conv.momentum=0.8 best_cooldown=0.9264
+search_path step=0 conv.initial_lr=0.13 conv.momentum=0.7 tta_val_acc=0.9268
+search_path step=1 conv.initial_lr=0.078 conv.momentum=0.7 tta_val_acc=0.9276
+search run=interval_bs2000_seed0 interval=1 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.078 conv.momentum=0.7
+conv.initial_lr=0.028 -> tta_val_acc=0.9276
+conv.initial_lr=0.017 -> tta_val_acc=0.929
+conv.initial_lr=0.01 -> tta_val_acc=0.9271
+search_path step=0 conv.initial_lr=0.028 tta_val_acc=0.9276
+search_path step=1 conv.initial_lr=0.017 tta_val_acc=0.929
+search run=interval_bs2000_seed0 interval=1 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.017
+main hparams: conv.initial_lr=0.078 conv.momentum=0.7 best_cooldown=0.929
+main hparams: conv.initial_lr=0.047 conv.momentum=0.7 best_cooldown=0.9252
+main hparams: conv.initial_lr=0.13 conv.momentum=0.7 best_cooldown=0.9244
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 best_cooldown=0.9263
+main hparams: conv.initial_lr=0.078 conv.momentum=0.8 best_cooldown=0.9297
+main hparams: conv.initial_lr=0.078 conv.momentum=0.9 best_cooldown=0.9267
+main hparams: conv.initial_lr=0.047 conv.momentum=0.8 best_cooldown=0.9288
+main hparams: conv.initial_lr=0.13 conv.momentum=0.8 best_cooldown=0.9248
+search_path step=0 conv.initial_lr=0.078 conv.momentum=0.7 tta_val_acc=0.929
+search_path step=1 conv.initial_lr=0.078 conv.momentum=0.8 tta_val_acc=0.9297
+search run=interval_bs2000_seed0 interval=1 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.078 conv.momentum=0.8
+conv.initial_lr=0.017 -> tta_val_acc=0.9297
+conv.initial_lr=0.01 -> tta_val_acc=0.9278
+conv.initial_lr=0.028 -> tta_val_acc=0.9264
+search_path step=0 conv.initial_lr=0.017 tta_val_acc=0.9297
+train_hparams run=interval_bs2000_seed0 interval=1 start_step=40 completed_steps=40 total_steps=200 conv.initial_lr=0.078 conv.momentum=0.8
+train_schedules run=interval_bs2000_seed0 interval=1
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  whiten_weight.nesterov: [[200, true]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  norm_weight.nesterov: [[200, true]]
+  whiten_bias.initial_lr: [[75, 36, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.8]]
+  whiten_bias.nesterov: [[200, true]]
+  norm_bias.initial_lr: [[200, 99, 0.0]]
+  norm_bias.momentum: [[200, 0.8]]
+  norm_bias.nesterov: [[200, true]]
+  head.initial_lr: [[200, 1300, 0.0]]
+  head.momentum: [[200, 0.85]]
+  head.nesterov: [[200, true]]
+  conv.initial_lr: [[40, 0.13], [40, 0.078], [120, 0.132, 0.0]]
+  conv.momentum: [[40, 0.7], [40, 0.8], [120, 0.7]]
+  conv.nesterov: [[200, true]]
+interval_boundary_eval run=interval_bs2000_seed0 interval=1 step=80 total_steps=200 tta_val_acc=0.893
+search run=interval_bs2000_seed0 interval=2 phase=baseline metric=tta_val_acc
+main hparams: conv.initial_lr=0.078 conv.momentum=0.8 main=0.8982
+search_path step=0 conv.initial_lr=0.078 conv.momentum=0.8 tta_val_acc=0.8982
+search run=interval_bs2000_seed0 interval=2 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.078 conv.momentum=0.8
+conv.initial_lr=0.017 -> tta_val_acc=0.9333
+conv.initial_lr=0.01 -> tta_val_acc=0.9326
+conv.initial_lr=0.028 -> tta_val_acc=0.9312
+search_path step=0 conv.initial_lr=0.017 tta_val_acc=0.9333
+search run=interval_bs2000_seed0 interval=2 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.017
+main hparams: conv.initial_lr=0.078 conv.momentum=0.8 best_cooldown=0.9333
+main hparams: conv.initial_lr=0.047 conv.momentum=0.8 best_cooldown=0.9331
+main hparams: conv.initial_lr=0.13 conv.momentum=0.8 best_cooldown=0.9257
+main hparams: conv.initial_lr=0.078 conv.momentum=0.7 best_cooldown=0.9321
+main hparams: conv.initial_lr=0.078 conv.momentum=0.9 best_cooldown=0.9289
+search_path step=0 conv.initial_lr=0.078 conv.momentum=0.8 tta_val_acc=0.9333
+train_hparams run=interval_bs2000_seed0 interval=2 start_step=80 completed_steps=40 total_steps=200 conv.initial_lr=0.078 conv.momentum=0.8
+train_schedules run=interval_bs2000_seed0 interval=2
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  whiten_weight.nesterov: [[200, true]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  norm_weight.nesterov: [[200, true]]
+  whiten_bias.initial_lr: [[75, 36, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.8]]
+  whiten_bias.nesterov: [[200, true]]
+  norm_bias.initial_lr: [[200, 99, 0.0]]
+  norm_bias.momentum: [[200, 0.8]]
+  norm_bias.nesterov: [[200, true]]
+  head.initial_lr: [[200, 1300, 0.0]]
+  head.momentum: [[200, 0.85]]
+  head.nesterov: [[200, true]]
+  conv.initial_lr: [[40, 0.13], [40, 0.078], [40, 0.078], [80, 0.08800000000000001, 0.0]]
+  conv.momentum: [[40, 0.7], [40, 0.8], [40, 0.8], [80, 0.7]]
+  conv.nesterov: [[200, true]]
+interval_boundary_eval run=interval_bs2000_seed0 interval=2 step=120 total_steps=200 tta_val_acc=0.8982
+search run=interval_bs2000_seed0 interval=3 phase=baseline metric=tta_val_acc
+main hparams: conv.initial_lr=0.078 conv.momentum=0.8 main=0.9077
+search_path step=0 conv.initial_lr=0.078 conv.momentum=0.8 tta_val_acc=0.9077
+search run=interval_bs2000_seed0 interval=3 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.078 conv.momentum=0.8
+conv.initial_lr=0.017 -> tta_val_acc=0.9377
+conv.initial_lr=0.01 -> tta_val_acc=0.9373
+conv.initial_lr=0.028 -> tta_val_acc=0.9348
+search_path step=0 conv.initial_lr=0.017 tta_val_acc=0.9377
+search run=interval_bs2000_seed0 interval=3 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.017
+main hparams: conv.initial_lr=0.078 conv.momentum=0.8 best_cooldown=0.9377
+main hparams: conv.initial_lr=0.047 conv.momentum=0.8 best_cooldown=0.9399
+main hparams: conv.initial_lr=0.028 conv.momentum=0.8 best_cooldown=0.9376
+main hparams: conv.initial_lr=0.047 conv.momentum=0.7 best_cooldown=0.939
+main hparams: conv.initial_lr=0.047 conv.momentum=0.9 best_cooldown=0.9353
+search_path step=0 conv.initial_lr=0.078 conv.momentum=0.8 tta_val_acc=0.9377
+search_path step=1 conv.initial_lr=0.047 conv.momentum=0.8 tta_val_acc=0.9399
+search run=interval_bs2000_seed0 interval=3 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.8
+conv.initial_lr=0.017 -> tta_val_acc=0.9399
+conv.initial_lr=0.01 -> tta_val_acc=0.94
+conv.initial_lr=0.006 -> tta_val_acc=0.939
+search_path step=0 conv.initial_lr=0.017 tta_val_acc=0.9399
+search_path step=1 conv.initial_lr=0.01 tta_val_acc=0.94
+search run=interval_bs2000_seed0 interval=3 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.01
+main hparams: conv.initial_lr=0.047 conv.momentum=0.8 best_cooldown=0.94
+main hparams: conv.initial_lr=0.028 conv.momentum=0.8 best_cooldown=0.9388
+main hparams: conv.initial_lr=0.078 conv.momentum=0.8 best_cooldown=0.9373
+main hparams: conv.initial_lr=0.047 conv.momentum=0.7 best_cooldown=0.9387
+main hparams: conv.initial_lr=0.047 conv.momentum=0.9 best_cooldown=0.9373
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.8 tta_val_acc=0.94
+train_hparams run=interval_bs2000_seed0 interval=3 start_step=120 completed_steps=40 total_steps=200 conv.initial_lr=0.047 conv.momentum=0.8
+train_schedules run=interval_bs2000_seed0 interval=3
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  whiten_weight.nesterov: [[200, true]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  norm_weight.nesterov: [[200, true]]
+  whiten_bias.initial_lr: [[75, 36, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.8]]
+  whiten_bias.nesterov: [[200, true]]
+  norm_bias.initial_lr: [[200, 99, 0.0]]
+  norm_bias.momentum: [[200, 0.8]]
+  norm_bias.nesterov: [[200, true]]
+  head.initial_lr: [[200, 1300, 0.0]]
+  head.momentum: [[200, 0.85]]
+  head.nesterov: [[200, true]]
+  conv.initial_lr: [[40, 0.13], [40, 0.078], [40, 0.078], [40, 0.047], [40, 0.044000000000000004, 0.0]]
+  conv.momentum: [[40, 0.7], [40, 0.8], [40, 0.8], [40, 0.8], [40, 0.7]]
+  conv.nesterov: [[200, true]]
+interval_boundary_eval run=interval_bs2000_seed0 interval=3 step=160 total_steps=200 tta_val_acc=0.9245
+search run=interval_bs2000_seed0 interval=4 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.8 main=0.9291
+main hparams: conv.initial_lr=0.028 conv.momentum=0.8 main=0.9355
+main hparams: conv.initial_lr=0.017 conv.momentum=0.8 main=0.9399
+main hparams: conv.initial_lr=0.01 conv.momentum=0.8 main=0.94
+main hparams: conv.initial_lr=0.006 conv.momentum=0.8 main=0.939
+main hparams: conv.initial_lr=0.01 conv.momentum=0.7 main=0.9397
+main hparams: conv.initial_lr=0.01 conv.momentum=0.9 main=0.9397
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.8 tta_val_acc=0.9291
+search_path step=1 conv.initial_lr=0.01 conv.momentum=0.8 tta_val_acc=0.94
+train_hparams run=interval_bs2000_seed0 interval=4 start_step=160 completed_steps=40 total_steps=200 conv.initial_lr=0.01 conv.momentum=0.8
+train_schedules run=interval_bs2000_seed0 interval=4
+  whiten_weight.initial_lr: [[200, 0.0]]
+  whiten_weight.momentum: [[200, 0.85]]
+  whiten_weight.nesterov: [[200, true]]
+  norm_weight.initial_lr: [[200, 0.0]]
+  norm_weight.momentum: [[200, 0.85]]
+  norm_weight.nesterov: [[200, true]]
+  whiten_bias.initial_lr: [[75, 36, 0.0], [125, 0.0]]
+  whiten_bias.momentum: [[200, 0.8]]
+  whiten_bias.nesterov: [[200, true]]
+  norm_bias.initial_lr: [[200, 99, 0.0]]
+  norm_bias.momentum: [[200, 0.8]]
+  norm_bias.nesterov: [[200, true]]
+  head.initial_lr: [[200, 1300, 0.0]]
+  head.momentum: [[200, 0.85]]
+  head.nesterov: [[200, true]]
+  conv.initial_lr: [[40, 0.13], [40, 0.078], [40, 0.078], [40, 0.047], [40, 0.01]]
+  conv.momentum: [[40, 0.7], [40, 0.8], [40, 0.8], [40, 0.8], [40, 0.8]]
+  conv.nesterov: [[200, true]]
+interval_boundary_eval run=interval_bs2000_seed0 interval=4 step=200 total_steps=200 tta_val_acc=0.94
+val_acc=0.9309 tta_val_acc=0.9400 seconds=289.5377
+debug_spectra run=interval_bs2000_seed0 steps=200 data=untracked_logs/cifar_baseline_20261002_022843_241732Z_893023.log/cifar_spectra_20261002_025957_941848Z_893023_interval_bs2000_seed0.npz video=untracked_logs/cifar_baseline_20261002_022843_241732Z_893023.log/cifar_spectra_20261002_025957_941848Z_893023_interval_bs2000_seed0.mp4
+seed_summary run=interval_bs2000 seeds=[0] val_acc_mean=0.9309 val_acc_std=0 tta_val_acc_mean=0.94 tta_val_acc_std=0
+base_config run=interval_bs500_seed0
+{
+  "batch_size": 500,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "interval",
+    "metric": "tta_val_acc",
+    "max_side_steps": 20,
+    "initial_dropoff_margin": 0.02,
+    "interval_steps": 160,
+    "cooldown_steps": 160,
+    "params": {"conv.initial_lr": {"initial": 0.13, "choices": null, "mult": 0.6}, "conv.momentum": {"initial": 0.6, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}}
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[800, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[800, 0.0]], "momentum": 0.85, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[300, 36, 0.0], [500, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[800, 21, 0.0]], "momentum": 0.85, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": [[800, 280, 0.0]], "momentum": 0.85, "nesterov": true},
+    "conv": {"algorithm": "muon2", "lr_scheduler": [[800, 0.13, 0.0]], "momentum": 0.6, "nesterov": true}
+  }
+}
+search run=interval_bs500_seed0 interval=0 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.13 conv.momentum=0.6 main=0.8131
+main hparams: conv.initial_lr=0.22 conv.momentum=0.6 main=0.7582
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 main=0.8565
+main hparams: conv.initial_lr=0.047 conv.momentum=0.6 main=0.8693
+main hparams: conv.initial_lr=0.028 conv.momentum=0.6 main=0.8523
+main hparams: conv.initial_lr=0.017 conv.momentum=0.6 main=0.8302
+main hparams: conv.initial_lr=0.078 conv.momentum=0.5 main=0.8569
+main hparams: conv.initial_lr=0.078 conv.momentum=0.4 main=0.8567
+search_path step=0 conv.initial_lr=0.13 conv.momentum=0.6 tta_val_acc=0.8131
+search_path step=1 conv.initial_lr=0.078 conv.momentum=0.6 tta_val_acc=0.8565
+search_path step=2 conv.initial_lr=0.078 conv.momentum=0.5 tta_val_acc=0.8569
+search run=interval_bs500_seed0 interval=0 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.078 conv.momentum=0.5
+conv.initial_lr=0.078 -> tta_val_acc=0.8865
+conv.initial_lr=0.047 -> tta_val_acc=0.9028
+conv.initial_lr=0.028 -> tta_val_acc=0.9132
+conv.initial_lr=0.017 -> tta_val_acc=0.9141
+conv.initial_lr=0.01 -> tta_val_acc=0.9112
+search_path step=0 conv.initial_lr=0.078 tta_val_acc=0.8865
+search_path step=1 conv.initial_lr=0.017 tta_val_acc=0.9141
+search run=interval_bs500_seed0 interval=0 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.017
+main hparams: conv.initial_lr=0.078 conv.momentum=0.5 best_cooldown=0.9141
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 best_cooldown=0.9048
+main hparams: conv.initial_lr=0.13 conv.momentum=0.5 best_cooldown=0.9114
+main hparams: conv.initial_lr=0.078 conv.momentum=0.4 best_cooldown=0.911
+main hparams: conv.initial_lr=0.078 conv.momentum=0.6 best_cooldown=0.9119
+search_path step=0 conv.initial_lr=0.078 conv.momentum=0.5 tta_val_acc=0.9141
+train_hparams run=interval_bs500_seed0 interval=0 start_step=0 completed_steps=160 total_steps=800 conv.initial_lr=0.078 conv.momentum=0.5
+train_schedules run=interval_bs500_seed0 interval=0
+  whiten_weight.initial_lr: [[800, 0.0]]
+  whiten_weight.momentum: [[800, 0.85]]
+  whiten_weight.nesterov: [[800, true]]
+  norm_weight.initial_lr: [[800, 0.0]]
+  norm_weight.momentum: [[800, 0.85]]
+  norm_weight.nesterov: [[800, true]]
+  whiten_bias.initial_lr: [[300, 36, 0.0], [500, 0.0]]
+  whiten_bias.momentum: [[800, 0.85]]
+  whiten_bias.nesterov: [[800, true]]
+  norm_bias.initial_lr: [[800, 21, 0.0]]
+  norm_bias.momentum: [[800, 0.85]]
+  norm_bias.nesterov: [[800, true]]
+  head.initial_lr: [[800, 280, 0.0]]
+  head.momentum: [[800, 0.85]]
+  head.nesterov: [[800, true]]
+  conv.initial_lr: [[160, 0.078], [640, 0.10400000000000001, 0.0]]
+  conv.momentum: [[160, 0.5], [640, 0.6]]
+  conv.nesterov: [[800, true]]
+interval_boundary_eval run=interval_bs500_seed0 interval=0 step=160 total_steps=800 tta_val_acc=0.8569
+search run=interval_bs500_seed0 interval=1 phase=baseline metric=tta_val_acc
+main hparams: conv.initial_lr=0.078 conv.momentum=0.5 main=0.8865
+search_path step=0 conv.initial_lr=0.078 conv.momentum=0.5 tta_val_acc=0.8865
+search run=interval_bs500_seed0 interval=1 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.078 conv.momentum=0.5
+conv.initial_lr=0.017 -> tta_val_acc=0.9249
+conv.initial_lr=0.01 -> tta_val_acc=0.926
+conv.initial_lr=0.006 -> tta_val_acc=0.9242
+search_path step=0 conv.initial_lr=0.017 tta_val_acc=0.9249
+search_path step=1 conv.initial_lr=0.01 tta_val_acc=0.926
+search run=interval_bs500_seed0 interval=1 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.01
+main hparams: conv.initial_lr=0.078 conv.momentum=0.5 best_cooldown=0.926
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 best_cooldown=0.9292
+main hparams: conv.initial_lr=0.028 conv.momentum=0.5 best_cooldown=0.9256
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4 best_cooldown=0.928
+main hparams: conv.initial_lr=0.047 conv.momentum=0.6 best_cooldown=0.9286
+search_path step=0 conv.initial_lr=0.078 conv.momentum=0.5 tta_val_acc=0.926
+search_path step=1 conv.initial_lr=0.047 conv.momentum=0.5 tta_val_acc=0.9292
+search run=interval_bs500_seed0 interval=1 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5
+conv.initial_lr=0.01 -> tta_val_acc=0.9292
+conv.initial_lr=0.006 -> tta_val_acc=0.9282
+conv.initial_lr=0.017 -> tta_val_acc=0.9288
+search_path step=0 conv.initial_lr=0.01 tta_val_acc=0.9292
+train_hparams run=interval_bs500_seed0 interval=1 start_step=160 completed_steps=160 total_steps=800 conv.initial_lr=0.047 conv.momentum=0.5
+train_schedules run=interval_bs500_seed0 interval=1
+  whiten_weight.initial_lr: [[800, 0.0]]
+  whiten_weight.momentum: [[800, 0.85]]
+  whiten_weight.nesterov: [[800, true]]
+  norm_weight.initial_lr: [[800, 0.0]]
+  norm_weight.momentum: [[800, 0.85]]
+  norm_weight.nesterov: [[800, true]]
+  whiten_bias.initial_lr: [[300, 36, 0.0], [500, 0.0]]
+  whiten_bias.momentum: [[800, 0.85]]
+  whiten_bias.nesterov: [[800, true]]
+  norm_bias.initial_lr: [[800, 21, 0.0]]
+  norm_bias.momentum: [[800, 0.85]]
+  norm_bias.nesterov: [[800, true]]
+  head.initial_lr: [[800, 280, 0.0]]
+  head.momentum: [[800, 0.85]]
+  head.nesterov: [[800, true]]
+  conv.initial_lr: [[160, 0.078], [160, 0.047], [480, 0.07800000000000001, 0.0]]
+  conv.momentum: [[160, 0.5], [160, 0.5], [480, 0.6]]
+  conv.nesterov: [[800, true]]
+interval_boundary_eval run=interval_bs500_seed0 interval=1 step=320 total_steps=800 tta_val_acc=0.9028
+search run=interval_bs500_seed0 interval=2 phase=baseline metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 main=0.9113
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.5 tta_val_acc=0.9113
+search run=interval_bs500_seed0 interval=2 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5
+conv.initial_lr=0.01 -> tta_val_acc=0.9332
+conv.initial_lr=0.006 -> tta_val_acc=0.9328
+conv.initial_lr=0.017 -> tta_val_acc=0.9302
+search_path step=0 conv.initial_lr=0.01 tta_val_acc=0.9332
+search run=interval_bs500_seed0 interval=2 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.01
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 best_cooldown=0.9332
+main hparams: conv.initial_lr=0.028 conv.momentum=0.5 best_cooldown=0.9325
+main hparams: conv.initial_lr=0.078 conv.momentum=0.5 best_cooldown=0.9275
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4 best_cooldown=0.9336
+main hparams: conv.initial_lr=0.047 conv.momentum=0.3 best_cooldown=0.9327
+main hparams: conv.initial_lr=0.028 conv.momentum=0.4 best_cooldown=0.9332
+main hparams: conv.initial_lr=0.078 conv.momentum=0.4 best_cooldown=0.9287
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.5 tta_val_acc=0.9332
+search_path step=1 conv.initial_lr=0.047 conv.momentum=0.4 tta_val_acc=0.9336
+search run=interval_bs500_seed0 interval=2 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4
+conv.initial_lr=0.01 -> tta_val_acc=0.9336
+conv.initial_lr=0.006 -> tta_val_acc=0.9332
+conv.initial_lr=0.017 -> tta_val_acc=0.9312
+search_path step=0 conv.initial_lr=0.01 tta_val_acc=0.9336
+train_hparams run=interval_bs500_seed0 interval=2 start_step=320 completed_steps=160 total_steps=800 conv.initial_lr=0.047 conv.momentum=0.4
+train_schedules run=interval_bs500_seed0 interval=2
+  whiten_weight.initial_lr: [[800, 0.0]]
+  whiten_weight.momentum: [[800, 0.85]]
+  whiten_weight.nesterov: [[800, true]]
+  norm_weight.initial_lr: [[800, 0.0]]
+  norm_weight.momentum: [[800, 0.85]]
+  norm_weight.nesterov: [[800, true]]
+  whiten_bias.initial_lr: [[300, 36, 0.0], [500, 0.0]]
+  whiten_bias.momentum: [[800, 0.85]]
+  whiten_bias.nesterov: [[800, true]]
+  norm_bias.initial_lr: [[800, 21, 0.0]]
+  norm_bias.momentum: [[800, 0.85]]
+  norm_bias.nesterov: [[800, true]]
+  head.initial_lr: [[800, 280, 0.0]]
+  head.momentum: [[800, 0.85]]
+  head.nesterov: [[800, true]]
+  conv.initial_lr: [[160, 0.078], [160, 0.047], [160, 0.047], [320, 0.05200000000000001, 0.0]]
+  conv.momentum: [[160, 0.5], [160, 0.5], [160, 0.4], [320, 0.6]]
+  conv.nesterov: [[800, true]]
+interval_boundary_eval run=interval_bs500_seed0 interval=2 step=480 total_steps=800 tta_val_acc=0.9149
+search run=interval_bs500_seed0 interval=3 phase=baseline metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4 main=0.9172
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.4 tta_val_acc=0.9172
+search run=interval_bs500_seed0 interval=3 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4
+conv.initial_lr=0.01 -> tta_val_acc=0.9371
+conv.initial_lr=0.006 -> tta_val_acc=0.9362
+conv.initial_lr=0.017 -> tta_val_acc=0.9352
+search_path step=0 conv.initial_lr=0.01 tta_val_acc=0.9371
+search run=interval_bs500_seed0 interval=3 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.01
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4 best_cooldown=0.9371
+main hparams: conv.initial_lr=0.028 conv.momentum=0.4 best_cooldown=0.9369
+main hparams: conv.initial_lr=0.078 conv.momentum=0.4 best_cooldown=0.9317
+main hparams: conv.initial_lr=0.047 conv.momentum=0.3 best_cooldown=0.936
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 best_cooldown=0.9371
+main hparams: conv.initial_lr=0.047 conv.momentum=0.6 best_cooldown=0.9367
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.4 tta_val_acc=0.9371
+train_hparams run=interval_bs500_seed0 interval=3 start_step=480 completed_steps=160 total_steps=800 conv.initial_lr=0.047 conv.momentum=0.4
+train_schedules run=interval_bs500_seed0 interval=3
+  whiten_weight.initial_lr: [[800, 0.0]]
+  whiten_weight.momentum: [[800, 0.85]]
+  whiten_weight.nesterov: [[800, true]]
+  norm_weight.initial_lr: [[800, 0.0]]
+  norm_weight.momentum: [[800, 0.85]]
+  norm_weight.nesterov: [[800, true]]
+  whiten_bias.initial_lr: [[300, 36, 0.0], [500, 0.0]]
+  whiten_bias.momentum: [[800, 0.85]]
+  whiten_bias.nesterov: [[800, true]]
+  norm_bias.initial_lr: [[800, 21, 0.0]]
+  norm_bias.momentum: [[800, 0.85]]
+  norm_bias.nesterov: [[800, true]]
+  head.initial_lr: [[800, 280, 0.0]]
+  head.momentum: [[800, 0.85]]
+  head.nesterov: [[800, true]]
+  conv.initial_lr: [[160, 0.078], [160, 0.047], [160, 0.047], [160, 0.047], [160, 0.026000000000000006, 0.0]]
+  conv.momentum: [[160, 0.5], [160, 0.5], [160, 0.4], [160, 0.4], [160, 0.6]]
+  conv.nesterov: [[800, true]]
+interval_boundary_eval run=interval_bs500_seed0 interval=3 step=640 total_steps=800 tta_val_acc=0.9172
+search run=interval_bs500_seed0 interval=4 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4 main=0.9197
+main hparams: conv.initial_lr=0.028 conv.momentum=0.4 main=0.9304
+main hparams: conv.initial_lr=0.017 conv.momentum=0.4 main=0.9352
+main hparams: conv.initial_lr=0.01 conv.momentum=0.4 main=0.9371
+main hparams: conv.initial_lr=0.006 conv.momentum=0.4 main=0.9362
+main hparams: conv.initial_lr=0.01 conv.momentum=0.3 main=0.9369
+main hparams: conv.initial_lr=0.01 conv.momentum=0.5 main=0.9371
+main hparams: conv.initial_lr=0.01 conv.momentum=0.6 main=0.9378
+main hparams: conv.initial_lr=0.01 conv.momentum=0.7 main=0.9364
+main hparams: conv.initial_lr=0.006 conv.momentum=0.6 main=0.9364
+main hparams: conv.initial_lr=0.017 conv.momentum=0.6 main=0.9337
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.4 tta_val_acc=0.9197
+search_path step=1 conv.initial_lr=0.01 conv.momentum=0.4 tta_val_acc=0.9371
+search_path step=2 conv.initial_lr=0.01 conv.momentum=0.6 tta_val_acc=0.9378
+train_hparams run=interval_bs500_seed0 interval=4 start_step=640 completed_steps=160 total_steps=800 conv.initial_lr=0.01 conv.momentum=0.6
+train_schedules run=interval_bs500_seed0 interval=4
+  whiten_weight.initial_lr: [[800, 0.0]]
+  whiten_weight.momentum: [[800, 0.85]]
+  whiten_weight.nesterov: [[800, true]]
+  norm_weight.initial_lr: [[800, 0.0]]
+  norm_weight.momentum: [[800, 0.85]]
+  norm_weight.nesterov: [[800, true]]
+  whiten_bias.initial_lr: [[300, 36, 0.0], [500, 0.0]]
+  whiten_bias.momentum: [[800, 0.85]]
+  whiten_bias.nesterov: [[800, true]]
+  norm_bias.initial_lr: [[800, 21, 0.0]]
+  norm_bias.momentum: [[800, 0.85]]
+  norm_bias.nesterov: [[800, true]]
+  head.initial_lr: [[800, 280, 0.0]]
+  head.momentum: [[800, 0.85]]
+  head.nesterov: [[800, true]]
+  conv.initial_lr: [[160, 0.078], [160, 0.047], [160, 0.047], [160, 0.047], [160, 0.01]]
+  conv.momentum: [[160, 0.5], [160, 0.5], [160, 0.4], [160, 0.4], [160, 0.6]]
+  conv.nesterov: [[800, true]]
+interval_boundary_eval run=interval_bs500_seed0 interval=4 step=800 total_steps=800 tta_val_acc=0.9378
+val_acc=0.9285 tta_val_acc=0.9378 seconds=382.4352
+debug_spectra run=interval_bs500_seed0 steps=800 data=untracked_logs/cifar_baseline_20261002_022843_241732Z_893023.log/cifar_spectra_20261002_030623_831653Z_893023_interval_bs500_seed0.npz video=untracked_logs/cifar_baseline_20261002_022843_241732Z_893023.log/cifar_spectra_20261002_030623_831653Z_893023_interval_bs500_seed0.mp4
+seed_summary run=interval_bs500 seeds=[0] val_acc_mean=0.9285 val_acc_std=0 tta_val_acc_mean=0.9378 tta_val_acc_std=0
+base_config run=interval_bs125_seed0
+{
+  "batch_size": 125,
+  "num_epochs": 8,
+  "overfit": false,
+  "hparam_tuning": {
+    "algorithm": "interval",
+    "metric": "tta_val_acc",
+    "max_side_steps": 20,
+    "initial_dropoff_margin": 0.02,
+    "interval_steps": 640,
+    "cooldown_steps": 640,
+    "params": {"conv.initial_lr": {"initial": 0.047, "choices": null, "mult": 0.6}, "conv.momentum": {"initial": 0.5, "choices": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]}}
+  },
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[3200, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[3200, 0.0]], "momentum": 0.85, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[1200, 7.7, 0.0], [2000, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[3200, 4.6, 0.0]], "momentum": 0.85, "nesterov": true},
+    "head": {"algorithm": "sgd", "lr_scheduler": [[3200, 170, 0.0]], "momentum": 0.85, "nesterov": true},
+    "conv": {"algorithm": "muon2", "lr_scheduler": [[3200, 0.047, 0.0]], "momentum": 0.5, "nesterov": true}
+  }
+}
+search run=interval_bs125_seed0 interval=0 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.5 main=0.8579
+main hparams: conv.initial_lr=0.078 conv.momentum=0.5 main=0.8214
+main hparams: conv.initial_lr=0.028 conv.momentum=0.5 main=0.8683
+main hparams: conv.initial_lr=0.017 conv.momentum=0.5 main=0.8622
+main hparams: conv.initial_lr=0.01 conv.momentum=0.5 main=0.8411
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4 main=0.8586
+main hparams: conv.initial_lr=0.047 conv.momentum=0.3 main=0.8602
+main hparams: conv.initial_lr=0.047 conv.momentum=0.2 main=0.8628
+main hparams: conv.initial_lr=0.047 conv.momentum=0.1 main=0.8622
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.5 tta_val_acc=0.8579
+search_path step=1 conv.initial_lr=0.047 conv.momentum=0.2 tta_val_acc=0.8628
+search run=interval_bs125_seed0 interval=0 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.2
+conv.initial_lr=0.047 -> tta_val_acc=0.8844
+conv.initial_lr=0.028 -> tta_val_acc=0.9019
+conv.initial_lr=0.017 -> tta_val_acc=0.9087
+conv.initial_lr=0.01 -> tta_val_acc=0.9101
+conv.initial_lr=0.006 -> tta_val_acc=0.9096
+search_path step=0 conv.initial_lr=0.047 tta_val_acc=0.8844
+search_path step=1 conv.initial_lr=0.01 tta_val_acc=0.9101
+search run=interval_bs125_seed0 interval=0 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.01
+main hparams: conv.initial_lr=0.047 conv.momentum=0.2 best_cooldown=0.9101
+main hparams: conv.initial_lr=0.028 conv.momentum=0.2 best_cooldown=0.9038
+main hparams: conv.initial_lr=0.078 conv.momentum=0.2 best_cooldown=0.9068
+main hparams: conv.initial_lr=0.047 conv.momentum=0.1 best_cooldown=0.907
+main hparams: conv.initial_lr=0.047 conv.momentum=0.3 best_cooldown=0.912
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4 best_cooldown=0.9116
+main hparams: conv.initial_lr=0.028 conv.momentum=0.3 best_cooldown=0.9074
+main hparams: conv.initial_lr=0.078 conv.momentum=0.3 best_cooldown=0.9109
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.2 tta_val_acc=0.9101
+search_path step=1 conv.initial_lr=0.047 conv.momentum=0.3 tta_val_acc=0.912
+search run=interval_bs125_seed0 interval=0 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.3
+conv.initial_lr=0.01 -> tta_val_acc=0.912
+conv.initial_lr=0.006 -> tta_val_acc=0.9088
+conv.initial_lr=0.017 -> tta_val_acc=0.9113
+search_path step=0 conv.initial_lr=0.01 tta_val_acc=0.912
+train_hparams run=interval_bs125_seed0 interval=0 start_step=0 completed_steps=640 total_steps=3200 conv.initial_lr=0.047 conv.momentum=0.3
+train_schedules run=interval_bs125_seed0 interval=0
+  whiten_weight.initial_lr: [[3200, 0.0]]
+  whiten_weight.momentum: [[3200, 0.85]]
+  whiten_weight.nesterov: [[3200, true]]
+  norm_weight.initial_lr: [[3200, 0.0]]
+  norm_weight.momentum: [[3200, 0.85]]
+  norm_weight.nesterov: [[3200, true]]
+  whiten_bias.initial_lr: [[1200, 7.7, 0.0], [2000, 0.0]]
+  whiten_bias.momentum: [[3200, 0.85]]
+  whiten_bias.nesterov: [[3200, true]]
+  norm_bias.initial_lr: [[3200, 4.6, 0.0]]
+  norm_bias.momentum: [[3200, 0.85]]
+  norm_bias.nesterov: [[3200, true]]
+  head.initial_lr: [[3200, 170, 0.0]]
+  head.momentum: [[3200, 0.85]]
+  head.nesterov: [[3200, true]]
+  conv.initial_lr: [[640, 0.047], [2560, 0.0376, 0.0]]
+  conv.momentum: [[640, 0.3], [2560, 0.5]]
+  conv.nesterov: [[3200, true]]
+interval_boundary_eval run=interval_bs125_seed0 interval=0 step=640 total_steps=3200 tta_val_acc=0.8602
+search run=interval_bs125_seed0 interval=1 phase=baseline metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.3 main=0.8832
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.3 tta_val_acc=0.8832
+search run=interval_bs125_seed0 interval=1 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.3
+conv.initial_lr=0.01 -> tta_val_acc=0.9269
+conv.initial_lr=0.006 -> tta_val_acc=0.9251
+conv.initial_lr=0.017 -> tta_val_acc=0.9245
+search_path step=0 conv.initial_lr=0.01 tta_val_acc=0.9269
+search run=interval_bs125_seed0 interval=1 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.01
+main hparams: conv.initial_lr=0.047 conv.momentum=0.3 best_cooldown=0.9269
+main hparams: conv.initial_lr=0.028 conv.momentum=0.3 best_cooldown=0.9252
+main hparams: conv.initial_lr=0.078 conv.momentum=0.3 best_cooldown=0.9194
+main hparams: conv.initial_lr=0.047 conv.momentum=0.2 best_cooldown=0.9258
+main hparams: conv.initial_lr=0.047 conv.momentum=0.4 best_cooldown=0.9231
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.3 tta_val_acc=0.9269
+train_hparams run=interval_bs125_seed0 interval=1 start_step=640 completed_steps=640 total_steps=3200 conv.initial_lr=0.047 conv.momentum=0.3
+train_schedules run=interval_bs125_seed0 interval=1
+  whiten_weight.initial_lr: [[3200, 0.0]]
+  whiten_weight.momentum: [[3200, 0.85]]
+  whiten_weight.nesterov: [[3200, true]]
+  norm_weight.initial_lr: [[3200, 0.0]]
+  norm_weight.momentum: [[3200, 0.85]]
+  norm_weight.nesterov: [[3200, true]]
+  whiten_bias.initial_lr: [[1200, 7.7, 0.0], [2000, 0.0]]
+  whiten_bias.momentum: [[3200, 0.85]]
+  whiten_bias.nesterov: [[3200, true]]
+  norm_bias.initial_lr: [[3200, 4.6, 0.0]]
+  norm_bias.momentum: [[3200, 0.85]]
+  norm_bias.nesterov: [[3200, true]]
+  head.initial_lr: [[3200, 170, 0.0]]
+  head.momentum: [[3200, 0.85]]
+  head.nesterov: [[3200, true]]
+  conv.initial_lr: [[640, 0.047], [640, 0.047], [1920, 0.028200000000000003, 0.0]]
+  conv.momentum: [[640, 0.3], [640, 0.3], [1920, 0.5]]
+  conv.nesterov: [[3200, true]]
+interval_boundary_eval run=interval_bs125_seed0 interval=1 step=1280 total_steps=3200 tta_val_acc=0.8832
+search run=interval_bs125_seed0 interval=2 phase=baseline metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.3 main=0.892
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.3 tta_val_acc=0.892
+search run=interval_bs125_seed0 interval=2 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.047 conv.momentum=0.3
+conv.initial_lr=0.01 -> tta_val_acc=0.9259
+conv.initial_lr=0.006 -> tta_val_acc=0.9254
+conv.initial_lr=0.017 -> tta_val_acc=0.9232
+search_path step=0 conv.initial_lr=0.01 tta_val_acc=0.9259
+search run=interval_bs125_seed0 interval=2 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.01
+main hparams: conv.initial_lr=0.047 conv.momentum=0.3 best_cooldown=0.9259
+main hparams: conv.initial_lr=0.028 conv.momentum=0.3 best_cooldown=0.9284
+main hparams: conv.initial_lr=0.017 conv.momentum=0.3 best_cooldown=0.9281
+main hparams: conv.initial_lr=0.028 conv.momentum=0.2 best_cooldown=0.9289
+main hparams: conv.initial_lr=0.028 conv.momentum=0.1 best_cooldown=0.9292
+main hparams: conv.initial_lr=0.028 conv.momentum=0 best_cooldown=0.9292
+main hparams: conv.initial_lr=0.017 conv.momentum=0.1 best_cooldown=0.9283
+main hparams: conv.initial_lr=0.047 conv.momentum=0.1 best_cooldown=0.9248
+search_path step=0 conv.initial_lr=0.047 conv.momentum=0.3 tta_val_acc=0.9259
+search_path step=1 conv.initial_lr=0.028 conv.momentum=0.3 tta_val_acc=0.9284
+search_path step=2 conv.initial_lr=0.028 conv.momentum=0.1 tta_val_acc=0.9292
+search run=interval_bs125_seed0 interval=2 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.028 conv.momentum=0.1
+conv.initial_lr=0.01 -> tta_val_acc=0.9292
+conv.initial_lr=0.006 -> tta_val_acc=0.931
+conv.initial_lr=0.0036 -> tta_val_acc=0.9306
+search_path step=0 conv.initial_lr=0.01 tta_val_acc=0.9292
+search_path step=1 conv.initial_lr=0.006 tta_val_acc=0.931
+search run=interval_bs125_seed0 interval=2 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.006
+main hparams: conv.initial_lr=0.028 conv.momentum=0.1 best_cooldown=0.931
+main hparams: conv.initial_lr=0.017 conv.momentum=0.1 best_cooldown=0.931
+main hparams: conv.initial_lr=0.01 conv.momentum=0.1 best_cooldown=0.9293
+main hparams: conv.initial_lr=0.047 conv.momentum=0.1 best_cooldown=0.9257
+main hparams: conv.initial_lr=0.028 conv.momentum=0 best_cooldown=0.9303
+main hparams: conv.initial_lr=0.028 conv.momentum=0.2 best_cooldown=0.9307
+search_path step=0 conv.initial_lr=0.028 conv.momentum=0.1 tta_val_acc=0.931
+train_hparams run=interval_bs125_seed0 interval=2 start_step=1280 completed_steps=640 total_steps=3200 conv.initial_lr=0.028 conv.momentum=0.1
+train_schedules run=interval_bs125_seed0 interval=2
+  whiten_weight.initial_lr: [[3200, 0.0]]
+  whiten_weight.momentum: [[3200, 0.85]]
+  whiten_weight.nesterov: [[3200, true]]
+  norm_weight.initial_lr: [[3200, 0.0]]
+  norm_weight.momentum: [[3200, 0.85]]
+  norm_weight.nesterov: [[3200, true]]
+  whiten_bias.initial_lr: [[1200, 7.7, 0.0], [2000, 0.0]]
+  whiten_bias.momentum: [[3200, 0.85]]
+  whiten_bias.nesterov: [[3200, true]]
+  norm_bias.initial_lr: [[3200, 4.6, 0.0]]
+  norm_bias.momentum: [[3200, 0.85]]
+  norm_bias.nesterov: [[3200, true]]
+  head.initial_lr: [[3200, 170, 0.0]]
+  head.momentum: [[3200, 0.85]]
+  head.nesterov: [[3200, true]]
+  conv.initial_lr: [[640, 0.047], [640, 0.047], [640, 0.028], [1280, 0.018800000000000004, 0.0]]
+  conv.momentum: [[640, 0.3], [640, 0.3], [640, 0.1], [1280, 0.5]]
+  conv.nesterov: [[3200, true]]
+interval_boundary_eval run=interval_bs125_seed0 interval=2 step=1920 total_steps=3200 tta_val_acc=0.9137
+search run=interval_bs125_seed0 interval=3 phase=baseline metric=tta_val_acc
+main hparams: conv.initial_lr=0.028 conv.momentum=0.1 main=0.917
+search_path step=0 conv.initial_lr=0.028 conv.momentum=0.1 tta_val_acc=0.917
+search run=interval_bs125_seed0 interval=3 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.028 conv.momentum=0.1
+conv.initial_lr=0.006 -> tta_val_acc=0.9338
+conv.initial_lr=0.0036 -> tta_val_acc=0.9337
+conv.initial_lr=0.01 -> tta_val_acc=0.9335
+search_path step=0 conv.initial_lr=0.006 tta_val_acc=0.9338
+search run=interval_bs125_seed0 interval=3 phase=main metric=tta_val_acc
+cooldown hparams: conv.initial_lr=0.006
+main hparams: conv.initial_lr=0.028 conv.momentum=0.1 best_cooldown=0.9338
+main hparams: conv.initial_lr=0.017 conv.momentum=0.1 best_cooldown=0.9355
+main hparams: conv.initial_lr=0.01 conv.momentum=0.1 best_cooldown=0.9359
+main hparams: conv.initial_lr=0.006 conv.momentum=0.1 best_cooldown=0.9349
+main hparams: conv.initial_lr=0.01 conv.momentum=0 best_cooldown=0.9362
+main hparams: conv.initial_lr=0.006 conv.momentum=0 best_cooldown=0.9352
+main hparams: conv.initial_lr=0.017 conv.momentum=0 best_cooldown=0.937
+main hparams: conv.initial_lr=0.028 conv.momentum=0 best_cooldown=0.9348
+search_path step=0 conv.initial_lr=0.028 conv.momentum=0.1 tta_val_acc=0.9338
+search_path step=1 conv.initial_lr=0.01 conv.momentum=0.1 tta_val_acc=0.9359
+search_path step=2 conv.initial_lr=0.01 conv.momentum=0 tta_val_acc=0.9362
+search_path step=3 conv.initial_lr=0.017 conv.momentum=0 tta_val_acc=0.937
+search run=interval_bs125_seed0 interval=3 phase=cooldown metric=tta_val_acc
+main hparams: conv.initial_lr=0.017 conv.momentum=0
+conv.initial_lr=0.006 -> tta_val_acc=0.937
+conv.initial_lr=0.0036 -> tta_val_acc=0.9361
+conv.initial_lr=0.01 -> tta_val_acc=0.9334
+search_path step=0 conv.initial_lr=0.006 tta_val_acc=0.937
+train_hparams run=interval_bs125_seed0 interval=3 start_step=1920 completed_steps=640 total_steps=3200 conv.initial_lr=0.017 conv.momentum=0
+train_schedules run=interval_bs125_seed0 interval=3
+  whiten_weight.initial_lr: [[3200, 0.0]]
+  whiten_weight.momentum: [[3200, 0.85]]
+  whiten_weight.nesterov: [[3200, true]]
+  norm_weight.initial_lr: [[3200, 0.0]]
+  norm_weight.momentum: [[3200, 0.85]]
+  norm_weight.nesterov: [[3200, true]]
+  whiten_bias.initial_lr: [[1200, 7.7, 0.0], [2000, 0.0]]
+  whiten_bias.momentum: [[3200, 0.85]]
+  whiten_bias.nesterov: [[3200, true]]
+  norm_bias.initial_lr: [[3200, 4.6, 0.0]]
+  norm_bias.momentum: [[3200, 0.85]]
+  norm_bias.nesterov: [[3200, true]]
+  head.initial_lr: [[3200, 170, 0.0]]
+  head.momentum: [[3200, 0.85]]
+  head.nesterov: [[3200, true]]
+  conv.initial_lr: [[640, 0.047], [640, 0.047], [640, 0.028], [640, 0.017], [640, 0.009400000000000002, 0.0]]
+  conv.momentum: [[640, 0.3], [640, 0.3], [640, 0.1], [640, 0.0], [640, 0.5]]
+  conv.nesterov: [[3200, true]]
+interval_boundary_eval run=interval_bs125_seed0 interval=3 step=2560 total_steps=3200 tta_val_acc=0.9239
+search run=interval_bs125_seed0 interval=4 phase=main metric=tta_val_acc
+main hparams: conv.initial_lr=0.017 conv.momentum=0 main=0.9284
+main hparams: conv.initial_lr=0.01 conv.momentum=0 main=0.9334
+main hparams: conv.initial_lr=0.006 conv.momentum=0 main=0.937
+main hparams: conv.initial_lr=0.0036 conv.momentum=0 main=0.9361
+main hparams: conv.initial_lr=0.006 conv.momentum=0.1 main=0.9371
+main hparams: conv.initial_lr=0.006 conv.momentum=0.2 main=0.9372
+main hparams: conv.initial_lr=0.006 conv.momentum=0.3 main=0.9372
+main hparams: conv.initial_lr=0.006 conv.momentum=0.4 main=0.9374
+main hparams: conv.initial_lr=0.006 conv.momentum=0.5 main=0.936
+main hparams: conv.initial_lr=0.0036 conv.momentum=0.4 main=0.9369
+main hparams: conv.initial_lr=0.01 conv.momentum=0.4 main=0.9335
+search_path step=0 conv.initial_lr=0.017 conv.momentum=0 tta_val_acc=0.9284
+search_path step=1 conv.initial_lr=0.006 conv.momentum=0 tta_val_acc=0.937
+search_path step=2 conv.initial_lr=0.006 conv.momentum=0.4 tta_val_acc=0.9374
+train_hparams run=interval_bs125_seed0 interval=4 start_step=2560 completed_steps=640 total_steps=3200 conv.initial_lr=0.006 conv.momentum=0.4
+train_schedules run=interval_bs125_seed0 interval=4
+  whiten_weight.initial_lr: [[3200, 0.0]]
+  whiten_weight.momentum: [[3200, 0.85]]
+  whiten_weight.nesterov: [[3200, true]]
+  norm_weight.initial_lr: [[3200, 0.0]]
+  norm_weight.momentum: [[3200, 0.85]]
+  norm_weight.nesterov: [[3200, true]]
+  whiten_bias.initial_lr: [[1200, 7.7, 0.0], [2000, 0.0]]
+  whiten_bias.momentum: [[3200, 0.85]]
+  whiten_bias.nesterov: [[3200, true]]
+  norm_bias.initial_lr: [[3200, 4.6, 0.0]]
+  norm_bias.momentum: [[3200, 0.85]]
+  norm_bias.nesterov: [[3200, true]]
+  head.initial_lr: [[3200, 170, 0.0]]
+  head.momentum: [[3200, 0.85]]
+  head.nesterov: [[3200, true]]
+  conv.initial_lr: [[640, 0.047], [640, 0.047], [640, 0.028], [640, 0.017], [640, 0.006]]
+  conv.momentum: [[640, 0.3], [640, 0.3], [640, 0.1], [640, 0.0], [640, 0.4]]
+  conv.nesterov: [[3200, true]]
+interval_boundary_eval run=interval_bs125_seed0 interval=4 step=3200 total_steps=3200 tta_val_acc=0.9374
+val_acc=0.9264 tta_val_acc=0.9374 seconds=1503.9958
+debug_spectra run=interval_bs125_seed0 steps=3200 data=untracked_logs/cifar_baseline_20261002_022843_241732Z_893023.log/cifar_spectra_20261002_033138_492997Z_893023_interval_bs125_seed0.npz video=untracked_logs/cifar_baseline_20261002_022843_241732Z_893023.log/cifar_spectra_20261002_033138_492997Z_893023_interval_bs125_seed0.mp4
+seed_summary run=interval_bs125 seeds=[0] val_acc_mean=0.9264 val_acc_std=0 tta_val_acc_mean=0.9374 tta_val_acc_std=0

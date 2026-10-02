@@ -1,4 +1,5 @@
-muon vs kfac in terms of logits completion rate
+muon vs kfac in terms of logits completion rate and also loss reduction.
+soap as a proxy for ggn
 lr_scheduler
 does a nxn matrix hold n directions or nxn directions?
 per-example gradient is important
