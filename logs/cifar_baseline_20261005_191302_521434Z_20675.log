@@ -1,0 +1,3290 @@
+"""
+airbench94_muon.py
+Runs in 2.59 seconds on a 400W NVIDIA A100 using torch==2.4.1
+Attains 94.01 mean accuracy (n=200 trials)
+Descends from https://github.com/tysam-code/hlb-CIFAR10/blob/main/main.py
+"""
+
+#############################################
+#                  Setup                    #
+#############################################
+
+import copy
+import json
+import os
+import subprocess
+import sys
+import time
+from bisect import bisect_left, bisect_right
+from datetime import datetime, timezone
+from itertools import product
+from math import ceil, isfinite, log
+from types import SimpleNamespace
+
+timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%fZ")
+log_path = os.path.join("logs", f"cifar_baseline_{timestamp}_{os.getpid()}.log")
+
+if __name__ == "__main__":
+    os.makedirs("logs", exist_ok=True)
+    log_file = open(log_path, "x", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stderr = log_file
+    with open(__file__, encoding="utf-8") as source_file:
+        print(source_file.read(), end="")
+    print("\n\n# Run output\n", flush=True)
+
+import numpy as np
+import torch
+from torch import nn
+import torch.nn.functional as F
+import torchvision
+import torchvision.transforms as T
+
+
+def _cuda_capability():
+    if not torch.cuda.is_available():
+        return (0, 0)
+    return torch.cuda.get_device_capability(0)
+
+
+CUDA_CAPABILITY = _cuda_capability()
+IS_AMPERE_OR_NEWER = CUDA_CAPABILITY[0] >= 8
+USE_CUDNN_BENCHMARK = False
+USE_TF32 = IS_AMPERE_OR_NEWER
+
+torch.backends.cudnn.benchmark = USE_CUDNN_BENCHMARK
+torch.backends.cudnn.allow_tf32 = USE_TF32
+torch.backends.cuda.matmul.allow_tf32 = USE_TF32
+
+USE_COMPILED_MUON = False
+USE_COMPILED_MODEL = False  # Enable only after an end-to-end sweep timing comparison.
+MODEL_COMPILE_MODE = "default"
+MODEL_WARMUP_STEPS = 3
+TRAINING_SEED = 0
+
+
+def set_training_seed():
+    torch.manual_seed(TRAINING_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(TRAINING_SEED)
+
+
+def round_hparam(value):
+    """Round numeric hyperparameters to two significant figures, preserving types."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    rounded = float(f"{value:.2g}")
+    return int(rounded) if isinstance(value, int) else rounded
+
+
+#############################################
+#                Optimizer                  #
+#############################################
+
+
+def gram_frobenius_norm_estimate(G, keepdim, eps):
+    X = G.float()
+    gram = X.mT @ X if X.size(-2) > X.size(-1) else X @ X.mT
+    return gram.norm(dim=(-2, -1), keepdim=keepdim).sqrt().clamp_min(eps)
+
+
+def _ns_inner(X):
+    a, b, c = 2, -1.5, 0.5
+    for _ in range(12):
+        A = X @ X.mT
+        B = b * A + c * A @ A
+        X = a * X + B @ X
+    return X
+
+
+def zeropower_via_newtonschulz5_muon2(G):
+    """Muon2 orthogonalization with Gram normalization and 12 fixed NS steps."""
+    assert G.ndim >= 2
+    X = G.bfloat16()
+    if G.size(-2) > G.size(-1):
+        X = X.mT
+    X = X / gram_frobenius_norm_estimate(X, keepdim=True, eps=1e-7).to(X.dtype)
+    X = _ns_inner(X)
+    if G.size(-2) > G.size(-1):
+        X = X.mT
+    return X
+
+
+if USE_COMPILED_MUON:
+    zeropower_via_newtonschulz5_muon2 = torch.compile(zeropower_via_newtonschulz5_muon2)
+
+
+INPUT_CONDITIONER_FIELDS = {
+    "svd_mean_percentage_damping",
+    "input_conditioner_momentum",
+    "gradient_momentum_before_conditioning",
+}
+KFAC_ALGORITHMS = {"kfac", "kfac-jacobian"}
+KFAC_FIELDS = {
+    "kfac_damping",
+    "kfac_input_damping",
+    "kfac_factor_momentum",
+    "kfac_probes",
+    "gradient_momentum_before_conditioning",
+    "kfac_matrix_normalization",
+}
+BOOLEAN_FIELDS = {"gradient_momentum_before_conditioning", "kfac_matrix_normalization"}
+# -h algorithms normalize each weight's output channels (rows) to unit norm
+# before every update, as SGDH does. -h2 also normalizes each output channel of
+# the update; SGDH always does both. Lion and Adam already normalize their
+# updates elementwise, so their row-normalized updates are the separate -h2.
+# -h3 normalizes whole matrices instead of rows: the weight and the update each
+# get Frobenius norm sqrt(outputs) (Muon's convention, the same total norm as
+# unit rows).
+WEIGHT_NORMALIZED_ALGORITHMS = {"sgdh", "lionh", "lionh2", "adamh", "adamh2"}
+UPDATE_NORMALIZED_ALGORITHMS = {"sgdh", "lionh2", "adamh2"}
+MATRIX_NORMALIZED_ALGORITHMS = {"sgdh3", "lionh3", "adamh3"}
+LION_ALGORITHMS = {"lion", "lionh", "lionh2", "lionh3"}
+ADAM_ALGORITHMS = {"adam", "adamh", "adamh2", "adamh3"}
+ALGORITHM_FIELDS = {
+    "sgd": set(),
+    "lion": set(),
+    "lionh": {"normalization_eps"},
+    "lionh2": {"normalization_eps"},
+    "lionh3": {"normalization_eps"},
+    "adam": {"beta2", "eps"},
+    "adamh": {"beta2", "eps", "normalization_eps"},
+    "adamh2": {"beta2", "eps", "normalization_eps"},
+    "adamh3": {"beta2", "eps", "normalization_eps"},
+    "muon2": set(),
+    "muon_head": set(),
+    "sgdh": {"normalization_eps"},
+    "sgdh3": {"normalization_eps"},
+    "input_conditioned": INPUT_CONDITIONER_FIELDS,
+    "kfac": KFAC_FIELDS,
+    "kfac-jacobian": KFAC_FIELDS,
+}
+
+
+def require_fields(values, required, label):
+    missing, extra = required - values.keys(), values.keys() - required
+    if missing or extra:
+        raise ValueError(
+            f"{label}: missing fields {sorted(missing)}; unexpected fields {sorted(extra)}"
+        )
+
+
+def input_conditioner_options(group):
+    options = {}
+    for name in INPUT_CONDITIONER_FIELDS:
+        if name not in group:
+            raise ValueError(f"input_conditioned: missing required field {name}")
+        value = group[name]
+        if name == "gradient_momentum_before_conditioning":
+            if not isinstance(value, bool):
+                raise ValueError(f"{name} must be a boolean")
+            options[name] = value
+            continue
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not isfinite(value)
+        ):
+            raise ValueError(f"{name} must be a finite number")
+        value = round_hparam(value)
+        if name == "input_conditioner_momentum" and not 0 <= value < 1:
+            raise ValueError("input_conditioner_momentum must be in [0, 1)")
+        if value < 0:
+            raise ValueError(f"{name} must be nonnegative")
+        options[name] = value
+    return options
+
+
+def normalize_rows_(x, eps):
+    """Scale each output channel (first-dimension slice) of x to unit L2 norm in place."""
+    channel_dims = tuple(range(1, x.ndim))
+    return x.div_(x.norm(p=2, dim=channel_dims, keepdim=True).clamp_min_(eps))
+
+
+def normalize_matrix_(x, eps):
+    """Scale x in place to Frobenius norm sqrt(outputs), i.e. unit norm per row on average."""
+    return x.mul_(len(x) ** 0.5 / x.norm().clamp_min(eps))
+
+
+class GroupOptimizer(torch.optim.Optimizer):
+    """Apply a configured optimizer independently to each parameter group."""
+
+    def __init__(self, param_groups):
+        for group in param_groups:
+            self.validate_group(group, runtime=True)
+        super().__init__(param_groups, defaults={})
+        self._input_covariances = {}
+        self._kfac_layers = {}
+        self._kfac_pending = {}
+        self._kfac_factors = {}
+        for group in self.param_groups:
+            group["lr"] = round_hparam(group["lr"])
+            group["momentum"] = round_hparam(group["momentum"])
+            name = group["name"]
+            if group["algorithm"] not in ALGORITHM_FIELDS:
+                raise ValueError(f"{name}: unknown algorithm {group['algorithm']!r}")
+            if group["lr"] < 0:
+                raise ValueError(f"{name}: learning rate must be nonnegative")
+            if group["momentum"] < 0:
+                raise ValueError(f"{name}: momentum must be nonnegative")
+            if group["algorithm"] in (
+                {"muon2", "muon_head"} | WEIGHT_NORMALIZED_ALGORITHMS | MATRIX_NORMALIZED_ALGORITHMS
+            ) and any(
+                p.ndim < 2 for p in group["params"]
+            ):
+                raise ValueError(
+                    f"{name}: {group['algorithm']} requires parameters with at least 2 dimensions"
+                )
+            if group["algorithm"] == "input_conditioned" and any(
+                p.ndim != 2 for p in group["params"]
+            ):
+                raise ValueError(
+                    f"{name}: input_conditioned currently supports linear weight matrices"
+                )
+            if group["algorithm"] == "input_conditioned":
+                group.update(input_conditioner_options(group))
+            if (
+                group["algorithm"] in KFAC_ALGORITHMS
+                and group["kfac_matrix_normalization"]
+                and any(p.ndim < 2 for p in group["params"])
+            ):
+                raise ValueError(
+                    f"{name}: kfac_matrix_normalization requires parameters with at least 2 dimensions"
+                )
+
+    @staticmethod
+    def validate_group(group, runtime):
+        if group.get("algorithm") == "muon":
+            raise ValueError("muon has been removed; use muon2")
+        if "momentum_version" in group:
+            raise ValueError(
+                "momentum_version has been removed; momentum is always the "
+                "bias-corrected EMA (formerly version 3)"
+            )
+        if "algorithm" not in group or group["algorithm"] not in ALGORITHM_FIELDS:
+            raise ValueError("Optimizer group requires a known algorithm")
+        required = {"algorithm", "momentum", "nesterov"} | ALGORITHM_FIELDS[
+            group["algorithm"]
+        ]
+        required |= {"name", "params", "lr"} if runtime else {"lr_scheduler"}
+        require_fields(group, required, f"{group['algorithm']} group")
+        if not isinstance(group["nesterov"], bool):
+            raise ValueError("nesterov must be a boolean")
+        fields = ({"lr", "momentum"} if runtime else {"momentum"}) | (
+            ALGORITHM_FIELDS[group["algorithm"]] - BOOLEAN_FIELDS
+        )
+        for field in fields:
+            value = group[field]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or value < 0
+            ):
+                raise ValueError(f"{field} must be a nonnegative finite number")
+        if round_hparam(group["momentum"]) >= 1:
+            raise ValueError("momentum must be in [0, 1)")
+        if group["algorithm"] in ADAM_ALGORITHMS:
+            if round_hparam(group["momentum"]) >= 1 or group["beta2"] >= 1:
+                raise ValueError("Adam momentum (beta1) and beta2 must be in [0, 1)")
+            if group["eps"] <= 0:
+                raise ValueError("Adam eps must be positive")
+            if group["nesterov"]:
+                raise ValueError("Adam requires nesterov=False")
+        if "normalization_eps" in group and group["normalization_eps"] <= 0:
+            raise ValueError("normalization_eps must be positive")
+        if group["algorithm"] == "input_conditioned":
+            input_conditioner_options(group)
+        if group["algorithm"] in KFAC_ALGORITHMS:
+            if group["kfac_factor_momentum"] != 0:
+                raise ValueError("kfac_factor_momentum must be 0; factor EMA is disabled")
+            probes = group["kfac_probes"]
+            if isinstance(probes, bool) or not isinstance(probes, int) or probes <= 0:
+                raise ValueError("kfac_probes must be a positive integer")
+            for field in BOOLEAN_FIELDS:
+                if not isinstance(group[field], bool):
+                    raise ValueError(f"{field} must be a boolean")
+
+    def bind_kfac_layers(self, model):
+        """Bind independent weight/bias blocks, including BatchNorm affine blocks.
+
+        Conv2d uses the spatially uncorrelated KFC approximation: A averages
+        input patches and G sums spatial derivative moments, averaging examples.
+        BatchNorm scale is the diagonal restriction of an affine weight matrix,
+        so its block is A * G (Hadamard product); its bias block is G.
+        Weight/bias cross terms are omitted to keep parameter groups independent.
+        """
+        for handle in getattr(model, "_kfac_hooks", []):
+            handle.remove()
+        model._kfac_hooks = []
+        self._kfac_layers.clear()
+        self._kfac_pending.clear()
+        self._kfac_factors.clear()
+        selected = {
+            p: group for group in self.param_groups
+            if group["algorithm"] in KFAC_ALGORITHMS for p in group["params"]
+        }
+        found = set()
+        for module in model.modules():
+            params = [p for p in module.parameters(recurse=False) if p in selected]
+            if not params:
+                continue
+            if not isinstance(module, (nn.Linear, nn.Conv2d, nn.BatchNorm2d)):
+                raise ValueError("K-FAC supports Linear, Conv2d, and BatchNorm2d parameters")
+            if isinstance(module, nn.Conv2d) and module.groups != 1:
+                raise ValueError("K-FAC does not support grouped convolutions")
+            if any(p is not module.weight and p is not module.bias for p in params):
+                raise ValueError("K-FAC requires module weight or bias parameters")
+            if found.intersection(params):
+                raise ValueError("K-FAC does not support shared parameters")
+            found.update(params)
+            self._kfac_layers[module] = [(p, selected[p]) for p in params]
+            model._kfac_hooks.append(module.register_forward_hook(self._capture_kfac))
+        if found != set(selected):
+            raise ValueError("Some K-FAC parameters have no supported owning layer")
+
+    @torch.no_grad()
+    def _kfac_input_factor(self, module, inputs, output):
+        dtype = torch.float64 if inputs.dtype == torch.float64 else torch.float32
+        with torch.autocast(device_type=inputs.device.type, enabled=False):
+            x = inputs.detach().to(dtype)
+            if isinstance(module, nn.Linear):
+                if x.ndim != 2:
+                    raise ValueError("K-FAC Linear inputs must have shape [batch, features]")
+                return x.T @ x / len(x)
+            if isinstance(module, nn.BatchNorm2d):
+                if module.training or not module.track_running_stats:
+                    variance, mean = torch.var_mean(x, dim=(0, 2, 3), correction=0)
+                else:
+                    mean, variance = module.running_mean.to(dtype), module.running_var.to(dtype)
+                x = (x - mean[None, :, None, None]) * torch.rsqrt(
+                    variance[None, :, None, None] + module.eps
+                )
+            # Bound patch storage, including for the large CIFAR batches.
+            sites = output.shape[2] * output.shape[3]
+            chunk_size = max(1, (1 << 26) // (sites * module.weight[0].numel()))
+            covariance, count = None, 0
+            for chunk in x.split(chunk_size):
+                if isinstance(module, nn.Conv2d):
+                    rows = self._conv_patches(module, chunk, output.shape[2:])
+                else:
+                    rows = chunk.permute(0, 2, 3, 1).reshape(-1, chunk.shape[1])
+                moment = rows.T @ rows
+                if covariance is None:
+                    covariance = moment
+                else:
+                    covariance.add_(moment)
+                count += len(rows)
+            if isinstance(module, nn.Conv2d):
+                # Patch rows are offset-major; reorder to the weight's (C, kh, kw).
+                c, k = module.in_channels, len(covariance) // module.in_channels
+                covariance = covariance.view(k, c, k, c).permute(1, 0, 3, 2).reshape(c * k, c * k)
+            return covariance / count
+
+    @staticmethod
+    def _conv_patches(module, x, output_size):
+        """Rows of [kh * kw * C] input patches, ordered by kernel offset, then channel.
+
+        One strided view per kernel offset avoids F.unfold's per-image kernels;
+        channel-contiguous copies keep the stack fast for channels_last inputs.
+        """
+        x = F.pad(
+            x, module._reversed_padding_repeated_twice,
+            mode="constant" if module.padding_mode == "zeros" else module.padding_mode,
+        ).permute(0, 2, 3, 1)
+        (h, w), (sh, sw), (dh, dw) = output_size, module.stride, module.dilation
+        kh, kw = module.kernel_size
+        views = [
+            x[:, i * dh : i * dh + sh * (h - 1) + 1 : sh, j * dw : j * dw + sw * (w - 1) + 1 : sw]
+            for i in range(kh) for j in range(kw)
+        ]
+        return torch.stack(views, dim=-2).reshape(-1, module.weight[0].numel())
+
+    def _capture_kfac(self, module, args, output):
+        if not module.training or not torch.is_grad_enabled():
+            return
+        if module in self._kfac_pending:
+            raise RuntimeError("K-FAC requires one call per layer per training forward")
+        if not output.requires_grad:
+            return
+        need_input = any(p is module.weight for p, _ in self._kfac_layers[module])
+        factor = self._kfac_input_factor(module, args[0], output) if need_input else None
+        self._kfac_pending[module] = (output, factor)
+
+    @staticmethod
+    def _kfac_probe(logits, algorithm):
+        """Unscaled random VJP seed with covariance H_CE or I per example."""
+        dtype = torch.float64 if logits.dtype == torch.float64 else torch.float32
+        noise = torch.empty_like(logits, dtype=dtype).bernoulli_(0.5).mul_(2).sub_(1)
+        if algorithm == "kfac":
+            probabilities = logits.detach().to(dtype).softmax(-1)
+            weighted = probabilities.sqrt() * noise
+            noise = weighted - probabilities * weighted.sum(-1, keepdim=True)
+        return noise.to(logits.dtype)
+
+    def prepare_kfac(self, logits):
+        """Estimate factors before loss.backward(), without touching parameter grads.
+
+        kfac uses E[J.T (diag(p) - p p.T) J]; kfac-jacobian uses E[J.T J].
+        Applying the latter inverse to the usual CE gradient approximates
+        J^+ grad_logits(loss), with no CE Hessian. Random probes have independent
+        signs for every example and logit; kfac_probes controls their average.
+        Neither label smoothing nor the loss's batch reduction scales the probes.
+        The approximations also discard cross-layer and cross-spatial terms.
+        """
+        if not self._kfac_layers:
+            return
+        if logits.ndim != 2 or not logits.requires_grad or len(logits) == 0:
+            raise ValueError("K-FAC requires differentiable [batch, classes] logits")
+        if self._kfac_factors:
+            raise RuntimeError("K-FAC factors were already prepared for this step")
+        buckets = {}
+        for module, parameters in self._kfac_layers.items():
+            if module not in self._kfac_pending:
+                raise RuntimeError("K-FAC needs outputs from the current training forward")
+            for p, group in parameters:
+                key = (group["algorithm"], group["kfac_probes"])
+                buckets.setdefault(key, {}).setdefault(module, []).append(p)
+        try:
+            for (algorithm, probes), modules in buckets.items():
+                outputs = [self._kfac_pending[m][0] for m in modules]
+                moments = {}
+                for _ in range(probes):
+                    derivatives = torch.autograd.grad(
+                        logits, outputs, grad_outputs=self._kfac_probe(logits, algorithm),
+                        retain_graph=True,
+                    )
+                    with torch.no_grad(), torch.autocast(device_type=logits.device.type, enabled=False):
+                        for module, derivative in zip(modules, derivatives):
+                            dtype = torch.float64 if derivative.dtype == torch.float64 else torch.float32
+                            rows = derivative.detach().to(dtype)
+                            if rows.ndim == 4:
+                                rows = rows.permute(0, 2, 3, 1).reshape(-1, rows.shape[1])
+                            moment = rows.T @ rows / (len(logits) * probes)
+                            if module not in moments:
+                                moments[module] = moment
+                            else:
+                                moments[module].add_(moment)
+                for module, parameters in modules.items():
+                    for p in parameters:
+                        kind = "bias" if p is module.bias else (
+                            "scale" if isinstance(module, nn.BatchNorm2d) else "weight"
+                        )
+                        self._kfac_factors[p] = (
+                            self._kfac_pending[module][1] if kind != "bias" else None,
+                            moments[module], kind,
+                        )
+        finally:
+            # Do not keep autograd graphs alive in the optimizer or checkpoints.
+            self._kfac_pending.clear()
+
+    def _update_kfac_factors(self, parameter):
+        """Store only the current batch's factors and record the block kind."""
+        factors = self._kfac_factors.pop(parameter, None)
+        if factors is None:
+            raise RuntimeError("K-FAC requires prepare_kfac(logits) before loss.backward() and step()")
+        a, g, kind = factors
+        state = self.state[parameter]
+        for key, factor in (("kfac_input_covariance", a), ("kfac_output_covariance", g)):
+            if factor is not None:
+                state[key] = factor.clone()
+        state["kfac_kind"] = kind
+
+    def _condition_kfac(self, parameter, gradient, group):
+        """Precondition with the current batch's factors, damping A and G separately.
+
+        kfac_input_damping applies to the input factor A of weight blocks;
+        kfac_damping applies to G and to the bias and BatchNorm scale blocks.
+        """
+        state = self.state[parameter]
+        kind = state["kfac_kind"]
+        g = state["kfac_output_covariance"]
+        damping = group["kfac_damping"]
+        gradient = gradient.to(g.dtype)
+        if kind == "bias":
+            return self.condition(gradient[None, :], g, damping).reshape_as(parameter)
+        a = state["kfac_input_covariance"]
+        if kind == "scale":
+            return self.condition(gradient[None, :], a * g, damping).reshape_as(parameter)
+        matrix = gradient.reshape(len(gradient), -1)
+        matrix = self.condition(matrix, a, group["kfac_input_damping"])
+        return self.condition(matrix.T, g, damping).T.reshape_as(parameter)
+
+    @torch.no_grad()
+    def record_input(self, parameter, inputs):
+        """Record X.T @ X / N for a weight matrix stored as [outputs, inputs]."""
+        if (
+            inputs.ndim != 2
+            or inputs.shape[0] == 0
+            or inputs.shape[1] != parameter.shape[1]
+        ):
+            raise ValueError(
+                "input_conditioned expects a nonempty N x D input matching the weight's input dimension"
+            )
+        dtype = torch.float64 if inputs.dtype == torch.float64 else torch.float32
+        with torch.autocast(device_type=inputs.device.type, enabled=False):
+            x = inputs.detach().to(dtype)
+            self._input_covariances[parameter] = (x.T @ x) / len(x)
+
+    def bind_input_layers(self, model):
+        """Attach input capture to selected Linear weights; replace hooks from earlier runs."""
+        for handle in getattr(model, "_input_conditioned_hooks", []):
+            handle.remove()
+        model._input_conditioned_hooks = []
+        modules = {
+            module.weight: module
+            for module in model.modules()
+            if isinstance(module, nn.Linear)
+        }
+        selected = [
+            p
+            for group in self.param_groups
+            if group["algorithm"] == "input_conditioned"
+            for p in group["params"]
+        ]
+        if any(p not in modules for p in selected):
+            raise ValueError(
+                "input_conditioned input capture currently supports nn.Linear weights only"
+            )
+
+        def capture(module, args):
+            # Validation also uses model.train(), so check autograd as well.
+            if module.training and torch.is_grad_enabled():
+                self.record_input(module.weight, args[0])
+
+        for parameter in selected:
+            model._input_conditioned_hooks.append(
+                modules[parameter].register_forward_pre_hook(capture)
+            )
+
+    def zero_grad(self, set_to_none):
+        super().zero_grad(set_to_none=set_to_none)
+        self._input_covariances.clear()
+        self._kfac_pending.clear()
+        self._kfac_factors.clear()
+
+    def load_state_dict(self, state_dict):
+        for group in state_dict["param_groups"]:
+            self.validate_group(group, runtime=True)
+        result = super().load_state_dict(state_dict)
+        # Optimizer loading casts floating state to the parameter dtype. Restore
+        # the covariance and Adam EMAs separately to preserve FP32 with FP16
+        # weights, using independent storage so updates cannot modify the checkpoint.
+        for group, saved_group in zip(self.param_groups, state_dict["param_groups"]):
+            for parameter, index in zip(group["params"], saved_group["params"]):
+                saved_state = state_dict["state"].get(index, {})
+                precise_keys = ["input_covariance", "exp_avg", "exp_avg_sq",
+                                "kfac_input_covariance", "kfac_output_covariance"]
+                if group["algorithm"] in KFAC_ALGORITHMS:
+                    precise_keys.append("momentum_buffer")
+                for key in precise_keys:
+                    if key in saved_state:
+                        self.state[parameter][key] = saved_state[key].to(
+                            parameter.device
+                        ).clone()
+        # PyTorch replaces group dictionaries when loading. Hooks must use the
+        # restored groups so later probe-count searches act on the live options.
+        groups = {p: group for group in self.param_groups for p in group["params"]}
+        for module, parameters in self._kfac_layers.items():
+            self._kfac_layers[module] = [(p, groups[p]) for p, _ in parameters]
+        # The current batch's covariance is transient; only its EMA is checkpointed.
+        self._input_covariances.clear()
+        self._kfac_pending.clear()
+        self._kfac_factors.clear()
+        return result
+
+    @staticmethod
+    def condition(g, covariance, alpha):
+        """Right-multiply by the damped inverse input covariance.
+
+        alpha is a fraction of the mean covariance eigenvalue.
+        """
+        with torch.autocast(device_type=g.device.type, enabled=False):
+            if alpha == 0:
+                # Explicitly disabling damping retains the pseudoinverse.
+                return (
+                    g.to(covariance.dtype)
+                    @ torch.linalg.pinv(covariance, hermitian=True)
+                ).to(g.dtype)
+            damping = alpha * covariance.diagonal().mean()
+            if damping > 0:
+                damped = covariance.clone()
+                damped.diagonal().add_(damping)
+                # Positive damping makes the PSD covariance positive definite.
+                factor = torch.linalg.cholesky_ex(damped).L
+                return torch.cholesky_solve(g.to(covariance.dtype).T, factor).T.to(
+                    g.dtype
+                )
+            # Zero inputs give zero covariance and zero pseudoinverse.
+            return torch.zeros_like(g)
+
+    @torch.no_grad()
+    def step(self):
+        for group in self.param_groups:
+            lr = group["lr"] = round_hparam(group["lr"])
+            momentum = group["momentum"]
+            conditioned = group["algorithm"] == "input_conditioned"
+            if conditioned:
+                group.update(input_conditioner_options(group))
+            # Momentum before conditioning accumulates raw gradients and conditions
+            # the momentum output; otherwise momentum accumulates conditioned gradients.
+            kfac = group["algorithm"] in KFAC_ALGORITHMS
+            momentum_first = (
+                conditioned or kfac
+            ) and group["gradient_momentum_before_conditioning"]
+            for p in group["params"]:
+                g = p.grad
+                if g is None:
+                    continue
+                if kfac:
+                    self._update_kfac_factors(p)
+                    if not momentum_first:
+                        g = self._condition_kfac(p, g, group)
+                if group["algorithm"] in ADAM_ALGORITHMS:
+                    state = self.state[p]
+                    dtype = torch.float64 if p.dtype == torch.float64 else torch.float32
+                    gradient = g.to(dtype)
+                    if "exp_avg" not in state:
+                        state["exp_avg"] = torch.zeros_like(gradient)
+                        state["exp_avg_sq"] = torch.zeros_like(gradient)
+                        state["adam_step"] = 0
+                    state["adam_step"] += 1
+                    t, beta2 = state["adam_step"], group["beta2"]
+                    state["exp_avg"].mul_(momentum).add_(gradient, alpha=1 - momentum)
+                    state["exp_avg_sq"].mul_(beta2).addcmul_(
+                        gradient, gradient, value=1 - beta2
+                    )
+                    if lr != 0:
+                        mean = state["exp_avg"] / (1 - momentum ** t)
+                        denominator = (state["exp_avg_sq"] / (1 - beta2 ** t)).sqrt()
+                        denominator.add_(group["eps"])
+                        update = mean / denominator
+                        if group["algorithm"] in WEIGHT_NORMALIZED_ALGORITHMS:
+                            normalize_rows_(p, group["normalization_eps"])
+                        if group["algorithm"] in UPDATE_NORMALIZED_ALGORITHMS:
+                            normalize_rows_(update, group["normalization_eps"])
+                        if group["algorithm"] in MATRIX_NORMALIZED_ALGORITHMS:
+                            normalize_matrix_(p, group["normalization_eps"])
+                            normalize_matrix_(update, group["normalization_eps"])
+                        p.add_(update, alpha=-lr)
+                    continue
+                covariance = None
+                if conditioned:
+                    covariance = self._input_covariances.pop(p, None)
+                    if (lr != 0 or not momentum_first) and covariance is None:
+                        raise RuntimeError(
+                            "input_conditioned needs inputs from the current training forward"
+                        )
+                    if covariance is not None:
+                        state = self.state[p]
+                        if "input_covariance" not in state:
+                            state["input_covariance"] = covariance.clone()
+                        else:
+                            beta = group["input_conditioner_momentum"]
+                            state["input_covariance"].mul_(beta).add_(
+                                covariance, alpha=1 - beta
+                            )
+                        covariance = state["input_covariance"]
+                    if not momentum_first:
+                        g = self.condition(
+                            g, covariance, group["svd_mean_percentage_damping"]
+                        )
+                state = self.state[p]
+                if "momentum_buffer" not in state:
+                    state["momentum_buffer"] = torch.zeros_like(g)
+                    state["momentum_step"] = 0
+                state["momentum_step"] += 1
+                state["momentum_buffer"].mul_(momentum).add_(g, alpha=1 - momentum)
+                # Keep the uncorrected EMA for the next iteration.
+                buf = state["momentum_buffer"] / (1 - momentum ** state["momentum_step"])
+                if group["nesterov"] and momentum:
+                    g = g.mul(1 - momentum).add(buf, alpha=momentum)
+                else:
+                    g = buf
+
+                # A zero learning rate must leave weights unchanged for every algorithm.
+                if lr == 0:
+                    self._input_covariances.pop(p, None)
+                    continue
+                if group["algorithm"] in LION_ALGORITHMS:
+                    # Requested Lion variant: sign of the momentum/Nesterov
+                    # direction. Zero coordinates stay zero; preserve the buffer.
+                    g = g.sign()
+                if group["algorithm"] in WEIGHT_NORMALIZED_ALGORITHMS:
+                    normalize_rows_(p, group["normalization_eps"])
+                if group["algorithm"] in UPDATE_NORMALIZED_ALGORITHMS:
+                    # g is a fresh tensor (never the momentum buffer), so normalizing
+                    # it in place leaves the raw momentum intact.
+                    normalize_rows_(g, group["normalization_eps"])
+                if group["algorithm"] in MATRIX_NORMALIZED_ALGORITHMS:
+                    normalize_matrix_(p, group["normalization_eps"])
+                    normalize_matrix_(g, group["normalization_eps"])
+                if group["algorithm"] in ("muon2", "muon_head"):
+                    if group["algorithm"] == "muon2":
+                        p.mul_(len(p) ** 0.5 / p.norm())  # normalize the weight
+                    matrix = g.reshape(len(g), -1)
+                    g = zeropower_via_newtonschulz5_muon2(matrix).view(g.shape)
+                elif kfac:
+                    if momentum_first:
+                        g = self._condition_kfac(p, g, group)
+                    if group["kfac_matrix_normalization"]:
+                        # Muon's scale convention for BatchNorm-followed weights: whole
+                        # matrices, never rows, have Frobenius norm sqrt(outputs).
+                        scale = len(p) ** 0.5
+                        p.mul_(scale / p.norm())
+                        g = g * (scale / g.norm().clamp_min(torch.finfo(g.dtype).tiny))
+                elif momentum_first:
+                    g = self.condition(
+                        g, covariance, group["svd_mean_percentage_damping"]
+                    )
+                p.add_(g, alpha=-lr)
+
+
+#############################################
+#                DataLoader                 #
+#############################################
+
+CIFAR_MEAN = torch.tensor((0.4914, 0.4822, 0.4465))
+CIFAR_STD = torch.tensor((0.2470, 0.2435, 0.2616))
+
+
+def batch_flip_lr(inputs):
+    flip_mask = (torch.rand(len(inputs), device=inputs.device) < 0.5).view(-1, 1, 1, 1)
+    return torch.where(flip_mask, inputs.flip(-1), inputs)
+
+
+def batch_crop(images, crop_size):
+    r = (images.size(-1) - crop_size) // 2
+    shifts = torch.randint(-r, r + 1, size=(len(images), 2), device=images.device)
+    y = torch.arange(crop_size, device=images.device).view(1, crop_size, 1)
+    x = torch.arange(crop_size, device=images.device).view(1, 1, crop_size)
+    y_idx = y + (r + shifts[:, 0]).view(-1, 1, 1)
+    x_idx = x + (r + shifts[:, 1]).view(-1, 1, 1)
+    gathered_rows = images.gather(
+        2, y_idx[:, None, :, :].expand(-1, images.size(1), -1, images.size(-1))
+    )
+    return gathered_rows.gather(
+        3, x_idx[:, None, :, :].expand(-1, images.size(1), crop_size, crop_size)
+    )
+
+
+class CifarLoader:
+    def __init__(self, path, train, batch_size, aug):
+        data_path = os.path.join(path, "train.pt" if train else "test.pt")
+        if not os.path.exists(data_path):
+            dset = torchvision.datasets.CIFAR10(path, download=True, train=train)
+            images = torch.tensor(dset.data)
+            labels = torch.tensor(dset.targets)
+            torch.save(
+                {"images": images, "labels": labels, "classes": dset.classes}, data_path
+            )
+
+        data = torch.load(data_path, map_location=torch.device("cuda"))
+        self.images, self.labels, self.classes = (
+            data["images"],
+            data["labels"],
+            data["classes"],
+        )
+        # It's faster to load+process uint8 data than to load preprocessed data
+        self.images = (
+            (self.images.float() / 255)
+            .permute(0, 3, 1, 2)
+            .to(memory_format=torch.channels_last)
+        )
+
+        self.normalize = T.Normalize(CIFAR_MEAN, CIFAR_STD)
+        self.proc_images = {}  # Saved results of image processing to be done on the first epoch
+        self.epoch = 0
+
+        require_fields(aug, {"flip", "translate"}, "augmentation")
+        self.aug = aug
+
+        self.batch_size = batch_size
+        self.drop_last = train
+        self.shuffle = train
+
+    def _ensure_proc_images(self):
+        if "norm" in self.proc_images:
+            return
+        images = self.proc_images["norm"] = self.normalize(self.images)
+        if self.aug["flip"]:
+            images = self.proc_images["flip"] = batch_flip_lr(images)
+        pad = self.aug["translate"]
+        if pad > 0:
+            self.proc_images["pad"] = F.pad(images, (pad,) * 4, "reflect")
+
+    def normalized_images(self):
+        self._ensure_proc_images()
+        return self.proc_images["norm"]
+
+    def __len__(self):
+        return (
+            len(self.images) // self.batch_size
+            if self.drop_last
+            else ceil(len(self.images) / self.batch_size)
+        )
+
+    def prepare_epoch(self):
+        if self.epoch == 0:
+            self._ensure_proc_images()
+
+        if self.aug["translate"] > 0:
+            images = batch_crop(self.proc_images["pad"], self.images.shape[-2])
+        elif self.aug["flip"]:
+            images = self.proc_images["flip"]
+        else:
+            images = self.proc_images["norm"]
+        # Flip all images together every other epoch. This increases diversity relative to random flipping
+        if self.aug["flip"]:
+            if self.epoch % 2 == 1:
+                images = images.flip(-1)
+
+        self.epoch += 1
+
+        return images
+
+    def epoch_indices(self, images):
+        return (torch.randperm if self.shuffle else torch.arange)(
+            len(images), device=images.device
+        )
+
+    def __iter__(self):
+        images = self.prepare_epoch()
+        indices = self.epoch_indices(images)
+        for i in range(len(self)):
+            idxs = indices[i * self.batch_size : (i + 1) * self.batch_size]
+            yield (images[idxs], self.labels[idxs])
+
+
+class TrainingBatchStream:
+    """A replayable batch cursor; epoch tensors are immutable and shared by snapshots."""
+
+    def __init__(self, loader, fixed_batch):
+        self.loader = loader
+        self.fixed_batch = fixed_batch
+        self.images = self.indices = None
+        self.batch_index = 0
+
+    def next_batch(self):
+        if self.fixed_batch is not None:
+            return self.fixed_batch
+        if self.images is None or self.batch_index == len(self.loader):
+            self.images = self.loader.prepare_epoch()
+            self.indices = self.loader.epoch_indices(self.images)
+            self.batch_index = 0
+        start = self.batch_index * self.loader.batch_size
+        indices = self.indices[start : start + self.loader.batch_size]
+        self.batch_index += 1
+        return self.images[indices], self.loader.labels[indices]
+
+    def state_dict(self):
+        return self.images, self.indices, self.batch_index, self.loader.epoch
+
+    def load_state_dict(self, state):
+        self.images, self.indices, self.batch_index, self.loader.epoch = state
+
+
+#############################################
+#            Network Definition             #
+#############################################
+
+
+# note the use of low BatchNorm stats momentum
+class BatchNorm(nn.BatchNorm2d):
+    def __init__(self, num_features, momentum, eps):
+        super().__init__(num_features, eps=eps, momentum=1 - momentum)
+        # Note that PyTorch already initializes the weights to one and bias to zero
+
+
+class Conv(nn.Conv2d):
+    def __init__(self, in_channels, out_channels):
+        super().__init__(
+            in_channels, out_channels, kernel_size=3, padding="same", bias=False
+        )
+
+    def reset_parameters(self):
+        super().reset_parameters()
+        w = self.weight.data
+        torch.nn.init.dirac_(w[: w.size(1)])
+
+
+class ConvGroup(nn.Module):
+    def __init__(self, channels_in, channels_out):
+        super().__init__()
+        self.conv1 = Conv(channels_in, channels_out)
+        self.pool = nn.MaxPool2d(2)
+        self.norm1 = BatchNorm(channels_out, momentum=0.6, eps=1e-12)
+        self.conv2 = Conv(channels_out, channels_out)
+        self.norm2 = BatchNorm(channels_out, momentum=0.6, eps=1e-12)
+        self.activ = nn.GELU()
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.pool(x)
+        x = self.norm1(x)
+        x = self.activ(x)
+        x = self.conv2(x)
+        x = self.norm2(x)
+        x = self.activ(x)
+        return x
+
+
+class CifarNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        widths = dict(block1=64, block2=256, block3=256)
+        whiten_kernel_size = 2
+        whiten_width = 2 * 3 * whiten_kernel_size**2
+        self.whiten = nn.Conv2d(
+            3, whiten_width, whiten_kernel_size, padding=0, bias=True
+        )
+        self.layers = nn.Sequential(
+            nn.GELU(),
+            ConvGroup(whiten_width, widths["block1"]),
+            ConvGroup(widths["block1"], widths["block2"]),
+            ConvGroup(widths["block2"], widths["block3"]),
+            nn.MaxPool2d(3),
+        )
+        self.head = nn.Linear(widths["block3"], 10, bias=False)
+        for mod in self.modules():
+            mod.float()
+
+    def reset(self):
+        for m in self.modules():
+            if type(m) in (nn.Conv2d, Conv, BatchNorm, nn.Linear):
+                m.reset_parameters()
+        w = self.head.weight.data
+        w *= 1 / w.std()
+
+    def init_whiten(self, train_images, eps):
+        c, (h, w) = train_images.shape[1], self.whiten.weight.shape[2:]
+        patches = (
+            train_images.unfold(2, h, 1)
+            .unfold(3, w, 1)
+            .transpose(1, 3)
+            .reshape(-1, c, h, w)
+            .float()
+        )
+        patches_flat = patches.view(len(patches), -1)
+        est_patch_covariance = (patches_flat.T @ patches_flat) / len(patches_flat)
+        eigenvalues, eigenvectors = torch.linalg.eigh(est_patch_covariance, UPLO="U")
+        eigenvectors_scaled = eigenvectors.T.reshape(-1, c, h, w) / torch.sqrt(
+            eigenvalues.view(-1, 1, 1, 1) + eps
+        )
+        self.whiten.weight.data[:] = torch.cat(
+            (eigenvectors_scaled, -eigenvectors_scaled)
+        )
+
+    def forward(self, x):
+        x = self.whiten(x)
+        x = self.layers(x)
+        x = x.view(len(x), -1)
+        return self.head(x) / x.size(-1)
+
+
+############################################
+#                 Logging                  #
+############################################
+
+
+def log_config(run, config, label):
+    def compact_json(value):
+        return json.dumps(value)
+
+    entries = []
+    for name, value in config.items():
+        if (
+            name in ("param_groups", "hparam_tuning")
+            and isinstance(value, dict)
+            and value
+        ):
+            rows = [
+                f"    {json.dumps(key)}: {compact_json(item)}"
+                for key, item in value.items()
+            ]
+            formatted = "{\n" + ",\n".join(rows) + "\n  }"
+        else:
+            formatted = compact_json(value)
+        entries.append(f"  {json.dumps(name)}: {formatted}")
+    print(f"{label} run={run}", flush=True)
+    print("{\n" + ",\n".join(entries) + "\n}", flush=True)
+
+
+def format_log_value(value):
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    if isinstance(value, (dict, list, tuple, bool)) or value is None:
+        return json.dumps(value)
+    return str(value)
+
+
+def log_event(event, **fields):
+    print(
+        " ".join(
+            [
+                event,
+                *(f"{key}={format_log_value(value)}" for key, value in fields.items()),
+            ]
+        ),
+        flush=True,
+    )
+
+
+def hparam_text(values):
+    return " ".join(
+        f"{name}={format_log_value(value)}" for name, value in values.items()
+    )
+
+
+def flatten_config(config):
+    """Readable group paths, with complete segment lists for scheduler changes."""
+    plain = json.loads(json.dumps(config))
+    values = {}
+
+    def visit(value, path):
+        if isinstance(value, dict) and value:
+            for name, item in value.items():
+                visit(item, f"{path}.{name}" if path else name)
+        else:
+            name = path.removeprefix("param_groups.").replace(".lr_scheduler.", ".")
+            values[name] = value
+
+    visit(plain, "")
+    return values
+
+
+def log_changes(label, base, current):
+    changes = {
+        name: (base.get(name, "<unset>"), value)
+        for name, value in current.items()
+        if base.get(name, "<unset>") != value
+    }
+    print(f"  {label}:" if changes else f"  {label}: (none)", flush=True)
+    for name, (old, new) in changes.items():
+        print(
+            f"    {name}: {format_log_value(old)} -> {format_log_value(new)}",
+            flush=True,
+        )
+
+
+def log_config_diff(run, base_run, base, config):
+    log_event("config_diff", run=run, base_run=base_run)
+    log_changes("changes", flatten_config(base), flatten_config(config))
+
+
+def log_final_eval(val_acc, tta_val_acc, seconds):
+    print(
+        f"val_acc={val_acc:.4f} tta_val_acc={tta_val_acc:.4f} seconds={seconds:.4f}",
+        flush=True,
+    )
+
+
+def log_seed_summary(run, seeds, results):
+    """Mean and sample standard deviation of each accuracy over seeds."""
+    summary = {}
+    for metric in ("val_acc", "tta_val_acc"):
+        values = np.array([result[metric] for result in results])
+        summary[f"{metric}_mean"] = values.mean()
+        summary[f"{metric}_std"] = values.std(ddof=1) if len(values) > 1 else 0.0
+    log_event("seed_summary", run=run, seeds=seeds, **summary)
+
+
+############################################
+#              Debug spectra               #
+############################################
+
+DEBUG_LOG_DIR = os.path.join("untracked_logs", os.path.basename(log_path))
+SPECTRUM_LAYERS = ("first_conv", "last_conv", "head")
+SPECTRUM_KINDS = ("weight", "update", "input")
+# K-FAC factors as (name, optimizer state key, damping field).
+SPECTRUM_KFAC_FACTORS = (
+    ("A", "kfac_input_covariance", "kfac_input_damping"),
+    ("G", "kfac_output_covariance", "kfac_damping"),
+)
+SPECTRUM_CHUNK_SIZE = 100  # Images per unfold chunk for input Gram matrices.
+
+
+@torch.no_grad()
+def singular_values(matrix):
+    """Descending singular values of a 2D matrix, computed in float64."""
+    return torch.linalg.svdvals(matrix.double()).sort(descending=True).values
+
+
+@torch.no_grad()
+def input_singular_values(module, inputs):
+    """Singular values of the matrix a layer multiplies by its weight.
+
+    Conv inputs are unfolded into [N * H * W, C * kh * kw] patches, matching the
+    weight's [out, in * kh * kw] reshape. Singular values come from the smaller
+    float64 Gram matrix; accumulating X.T @ X in chunks bounds memory and avoids
+    TF32 matmuls.
+    """
+    if isinstance(module, nn.Conv2d):
+        padding = (
+            [k // 2 for k in module.kernel_size]
+            if module.padding == "same"
+            else module.padding
+        )
+
+        def rows(x):
+            patches = F.unfold(x.double(), module.kernel_size, padding=padding)
+            return patches.transpose(1, 2).reshape(-1, patches.shape[1])
+
+    else:
+
+        def rows(x):
+            return x.double().reshape(-1, x.shape[-1])
+
+    first = rows(inputs[:1])
+    if len(first) * len(inputs) < first.shape[1]:
+        x = rows(inputs)
+        gram = x @ x.T
+    else:
+        gram = sum(x.T @ x for x in map(rows, inputs.split(SPECTRUM_CHUNK_SIZE)))
+    return torch.linalg.eigvalsh(gram).clamp_min(0).sqrt().flip(0)
+
+
+class SpectrumRecorder:
+    """Per-step singular values of the first Conv, last Conv and head for debug runs.
+
+    For each layer it records the weight w_t, the update w_{t+1} - w_t (learning
+    rate and Muon's weight normalization included) and the input at step t.
+    With kfac_factors, layers whose group uses K-FAC also record the eigenvalues
+    (= singular values) of step t's factors A and G before and after damping,
+    and the damping added to each (fraction * mean eigenvalue; 0 = pseudoinverse).
+    """
+
+    def __init__(self, run, model, kfac_factors):
+        convs = [m for m in model.modules() if isinstance(m, Conv)]
+        self.run = run
+        self.kfac_factors = kfac_factors
+        self.layers = dict(first_conv=convs[0], last_conv=convs[-1], head=model.head)
+        self.values = {
+            f"{layer}.{kind}": [] for layer in SPECTRUM_LAYERS for kind in SPECTRUM_KINDS
+        }
+        self.steps, self.inputs, self.weights = [], {}, {}
+        self.capturing = False
+        self.handles = [
+            module.register_forward_pre_hook(self._capture(name))
+            for name, module in self.layers.items()
+        ]
+
+    def _capture(self, name):
+        def hook(module, args):
+            if self.capturing:
+                self.inputs[name] = args[0].detach()
+
+        return hook
+
+    def before_step(self):
+        """Call right before the training forward pass."""
+        self.weights = {
+            name: module.weight.detach().clone()
+            for name, module in self.layers.items()
+        }
+        self.inputs.clear()
+        self.capturing = True
+
+    @torch.no_grad()
+    def after_step(self, step, optimizer):
+        """Call right after optimizer.step()."""
+        self.capturing = False
+        if self.kfac_factors:
+            self._record_kfac_factors(optimizer)
+        for name, module in self.layers.items():
+            previous = self.weights[name]
+            spectra = dict(
+                weight=singular_values(previous.reshape(len(previous), -1)),
+                update=singular_values(
+                    (module.weight - previous).reshape(len(previous), -1)
+                ),
+                input=input_singular_values(module, self.inputs.pop(name)),
+            )
+            for kind, values in spectra.items():
+                self.values[f"{name}.{kind}"].append(values.float().cpu().numpy())
+        self.steps.append(step)
+
+    def _record_kfac_factors(self, optimizer):
+        groups = {p: group for group in optimizer.param_groups for p in group["params"]}
+        for name, module in self.layers.items():
+            state = optimizer.state.get(module.weight, {})
+            if state.get("kfac_kind") != "weight":
+                continue
+            for factor, state_key, damping_field in SPECTRUM_KFAC_FACTORS:
+                covariance = state[state_key].double()
+                # Matches GroupOptimizer.condition: a fraction of the mean eigenvalue.
+                damping = groups[module.weight][damping_field] * covariance.diagonal().mean()
+                eigenvalues = torch.linalg.eigvalsh(covariance).flip(0)
+                for key, values in (
+                    (factor, eigenvalues),
+                    (f"{factor}_damped", eigenvalues + damping),
+                    (f"{factor}_damping", damping),
+                ):
+                    self.values.setdefault(f"{name}.{key}", []).append(
+                        values.float().cpu().numpy()
+                    )
+
+    def finish(self):
+        """Save one .npz per run plus a video of the spectra over training."""
+        for handle in self.handles:
+            handle.remove()
+        os.makedirs(DEBUG_LOG_DIR, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%fZ")
+        stem = os.path.join(
+            DEBUG_LOG_DIR, f"cifar_spectra_{timestamp}_{os.getpid()}_{self.run}"
+        )
+        steps = np.array(self.steps)
+        spectra = {key: np.stack(values) for key, values in self.values.items()}
+        np.savez_compressed(f"{stem}.npz", step=steps, **spectra)
+        render_spectrum_video(self.run, steps, spectra, f"{stem}.mp4")
+        log_event(
+            "debug_spectra",
+            run=self.run,
+            steps=len(steps),
+            data=f"{stem}.npz",
+            video=f"{stem}.mp4",
+        )
+
+
+def render_spectrum_video(run, steps, spectra, path):
+    """Animate sorted singular values per step; the grey curve is the first step.
+
+    K-FAC factor panels, when recorded, show the eigenvalues before (blue) and
+    after (orange) damping, with the damping as a dashed red line.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    factors = [
+        factor for factor, _, _ in SPECTRUM_KFAC_FACTORS
+        if any(f"{layer}.{factor}" in spectra for layer in SPECTRUM_LAYERS)
+    ]
+    # 5 x 11/3 inches per panel at 80 dpi keeps both frame dimensions even for yuv420p.
+    fig, axes = plt.subplots(
+        len(SPECTRUM_LAYERS),
+        len(SPECTRUM_KINDS) + len(factors),
+        figsize=(5 * (len(SPECTRUM_KINDS) + len(factors)), 11),
+        dpi=80,
+        squeeze=False,
+    )
+    lines = {}
+    for row, layer in enumerate(SPECTRUM_LAYERS):
+        for col, factor in enumerate(factors, len(SPECTRUM_KINDS)):
+            key = f"{layer}.{factor}"
+            ax = axes[row][col]
+            ax.set_title(key)
+            if key not in spectra:
+                ax.text(0.5, 0.5, "not K-FAC", ha="center", va="center", transform=ax.transAxes)
+                ax.set_axis_off()
+                continue
+            raw, damped = spectra[key], spectra[f"{key}_damped"]
+            damping = spectra[f"{key}_damping"]
+            index = np.arange(1, raw.shape[1] + 1)
+            marker = "." if raw.shape[1] <= 32 else None
+            ax.plot(index, raw[0], color="0.75", lw=1, marker=marker)
+            for name, values, color in ((key, raw, "C0"), (f"{key}_damped", damped, "C1")):
+                lines[name] = ax.plot(
+                    index, values[0], color=color, lw=1.5, marker=marker, animated=True,
+                    label="damped" if color == "C1" else "raw",
+                )[0]
+            lines[f"{key}_damping"] = ax.axhline(
+                damping[0], color="C3", ls="--", lw=1, animated=True, label="damping"
+            )
+            everything = np.concatenate([raw.ravel(), damped.ravel(), damping.ravel()])
+            positive = everything[np.isfinite(everything) & (everything > 0)]
+            if positive.size:
+                top = positive.max()
+                ax.set_yscale("log", nonpositive="mask")
+                ax.set_ylim(max(positive.min(), top * 1e-12) / 1.5, top * 1.5)
+            ax.set_xlabel("index (sorted descending)")
+            ax.set_ylabel("eigenvalue")
+            ax.legend(loc="lower left", fontsize=8)
+            ax.grid(True, alpha=0.3)
+        for col, kind in enumerate(SPECTRUM_KINDS):
+            key = f"{layer}.{kind}"
+            values = spectra[key]
+            index = np.arange(1, values.shape[1] + 1)
+            marker = "." if values.shape[1] <= 32 else None
+            ax = axes[row][col]
+            ax.plot(index, values[0], color="0.75", lw=1, marker=marker)
+            lines[key] = ax.plot(
+                index, values[0], color="C0", lw=1.5, marker=marker, animated=True
+            )[0]
+            positive = values[np.isfinite(values) & (values > 0)]
+            if positive.size:
+                # Values more than 1e8 below the peak are numerical noise.
+                top = positive.max()
+                ax.set_yscale("log", nonpositive="mask")
+                ax.set_ylim(max(positive.min(), top * 1e-8) / 1.5, top * 1.5)
+            ax.set_title(key)
+            ax.set_xlabel("index (sorted descending)")
+            ax.set_ylabel("singular value")
+            ax.grid(True, alpha=0.3)
+    title = fig.suptitle("", animated=True)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+
+    # Draw the static figure once, then blit the animated artists per frame.
+    canvas = fig.canvas
+    canvas.draw()
+    background = canvas.copy_from_bbox(fig.bbox)
+    width, height = canvas.get_width_height()
+    fps = min(60, max(10, round(len(steps) / 30)))
+    ffmpeg = subprocess.Popen(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{width}x{height}",
+            "-r", str(fps), "-i", "-",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", path,
+        ],
+        stdin=subprocess.PIPE,
+    )
+    for i, step in enumerate(steps):
+        canvas.restore_region(background)
+        for key, line in lines.items():
+            if key.endswith("_damping"):
+                line.set_ydata([spectra[key][i]] * 2)
+            else:
+                line.set_ydata(spectra[key][i])
+            line.axes.draw_artist(line)
+        title.set_text(f"run {run}: step {step} ({i + 1}/{len(steps)})")
+        fig.draw_artist(title)
+        ffmpeg.stdin.write(canvas.buffer_rgba())
+    ffmpeg.stdin.close()
+    plt.close(fig)
+    if ffmpeg.wait():
+        raise RuntimeError(f"ffmpeg failed to write {path}")
+
+
+############################################
+#               Evaluation                 #
+############################################
+
+
+def infer(model, loader, tta_level):
+
+    # Test-time augmentation strategy (for tta_level=2):
+    # 1. Flip/mirror the image left-to-right (50% of the time).
+    # 2. Translate the image by one pixel either up-and-left or down-and-right (50% of the time,
+    #    i.e. both happen 25% of the time).
+    #
+    # This creates 6 views per image (left/right times the two translations and no-translation),
+    # which we evaluate and then weight according to the given probabilities.
+
+    def infer_basic(inputs, net):
+        return net(inputs).clone()
+
+    def infer_mirror(inputs, net):
+        return 0.5 * net(inputs) + 0.5 * net(inputs.flip(-1))
+
+    def infer_mirror_translate(inputs, net):
+        logits = infer_mirror(inputs, net)
+        pad = 1
+        padded_inputs = F.pad(inputs, (pad,) * 4, "reflect")
+        inputs_translate_list = [
+            padded_inputs[:, :, 0:32, 0:32],
+            padded_inputs[:, :, 2:34, 2:34],
+        ]
+        logits_translate_list = [
+            infer_mirror(inputs_translate, net)
+            for inputs_translate in inputs_translate_list
+        ]
+        logits_translate = torch.stack(logits_translate_list).mean(0)
+        return 0.5 * logits + 0.5 * logits_translate
+
+    model.train()
+    test_images = loader.normalized_images()
+    infer_fn = [infer_basic, infer_mirror, infer_mirror_translate][tta_level]
+    with torch.inference_mode():
+        return torch.cat(
+            [infer_fn(inputs, model) for inputs in test_images.split(2000)]
+        )
+
+
+def evaluate(model, loader, tta_level):
+    logits = infer(model, loader, tta_level)
+    return (logits.argmax(1) == loader.labels).float().mean().item()
+
+
+def compile_and_warmup_model(model, configs):
+    """Compile once and warm training/TTA graphs before any experiment is timed."""
+    # Conditioning and spectrum hooks are attached after warmup. Without guards,
+    # compiled graphs can silently ignore hooks added after the first forward.
+    torch._dynamo.config.skip_nnmodule_hook_guards = False
+    started = time.perf_counter()
+    batch_sizes = {config["batch_size"] for config in configs}
+    for config in configs:
+        tuning = config["hparam_tuning"]
+        if tuning is not None and "batch_size" in tuning["params"]:
+            batch_sizes.update(tuning["params"]["batch_size"]["choices"])
+    log_event("compile_warmup_start", mode=MODEL_COMPILE_MODE, batch_sizes=sorted(batch_sizes))
+    parameter = next(model.parameters())
+    device, dtype = parameter.device, parameter.dtype
+    devices = [device.index] if device.type == "cuda" else []
+    saved_state = copy.deepcopy(model.state_dict())
+    saved_modes = {module: module.training for module in model.modules()}
+    saved_grads = {p: p.grad for p in model.parameters()}
+    model.compile(mode=MODEL_COMPILE_MODE)
+    try:
+        with torch.random.fork_rng(devices=devices):
+            model.train()
+            model.zero_grad(set_to_none=True)
+            for batch_size in sorted(batch_sizes):
+                inputs = torch.randn(
+                    batch_size, 3, 32, 32, device=device, dtype=dtype
+                ).to(memory_format=torch.channels_last)
+                labels = torch.arange(batch_size, device=device) % model.head.out_features
+                for _ in range(MODEL_WARMUP_STEPS):
+                    outputs = model(inputs)
+                    loss = F.cross_entropy(
+                        outputs, labels, label_smoothing=0.2, reduction="mean"
+                    )
+                    loss.backward()
+                    model.zero_grad(set_to_none=True)
+                    del outputs, loss
+                del inputs, labels
+
+            # infer() uses model.train() with inference_mode(), and translated
+            # views have different strides. Warm the actual evaluation paths.
+            images = torch.randn(2000, 3, 32, 32, device=device, dtype=dtype).to(
+                memory_format=torch.channels_last
+            )
+            loader = SimpleNamespace(normalized_images=lambda: images)
+            for _ in range(MODEL_WARMUP_STEPS):
+                infer(model, loader, tta_level=0)
+                infer(model, loader, tta_level=2)
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+    finally:
+        model.load_state_dict(saved_state)
+        for p, gradient in saved_grads.items():
+            p.grad = gradient
+        for module, training in saved_modes.items():
+            module.training = training
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    log_event("compile_warmup_complete", seconds=time.perf_counter() - started)
+
+
+############################################
+#                Training                  #
+############################################
+
+
+def normalize_schedule(lines, total_steps, name):
+    """Validate durations without rounding them; round only segment values."""
+    if not isinstance(lines, (list, tuple)) or not lines:
+        raise ValueError(f"{name}: expected a nonempty list of segments")
+    result = []
+    for line in lines:
+        if not isinstance(line, (list, tuple)) or len(line) not in (2, 3):
+            raise ValueError(
+                f"{name}: segments must be (num_steps, value) or (num_steps, start, end)"
+            )
+        steps, *values = line
+        if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
+            raise ValueError(f"{name}: num_steps must be a positive integer")
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not isfinite(value)
+            or value < 0
+            for value in values
+        ):
+            raise ValueError(
+                f"{name}: segment values must be nonnegative finite numbers"
+            )
+        result.append((steps, *(round_hparam(value) for value in values)))
+    duration = sum(line[0] for line in result)
+    if total_steps is not None and duration != total_steps:
+        raise ValueError(
+            f"{name}: segment num_steps sum to {duration}, expected total_steps={total_steps}"
+        )
+    return result
+
+
+def schedule_value_at_step(lines, step):
+    """Interpolate with an exclusive end value, preserving numeric precision."""
+    for line in lines:
+        steps, start = line[:2]
+        if 0 <= step < steps:
+            if len(line) == 2:
+                return start
+            # The end value is reached one update after this segment finishes.
+            fraction = step / steps
+            return start * (1 - fraction) + line[2] * fraction
+        step -= steps
+    raise ValueError("Step is outside the hyperparameter schedule")
+
+
+def hparam_at_step(lines, step):
+    """Interpolate a schedule and round the applied value."""
+    return round_hparam(schedule_value_at_step(lines, step))
+
+
+def configured_hparam_schedules(param_groups, total_steps):
+    """Every LR and momentum schedule covers the complete run."""
+    schedules = {}
+    for name, group in param_groups.items():
+        schedules[f"{name}.initial_lr"] = normalize_schedule(
+            group["lr_scheduler"], total_steps, f"{name}.lr_scheduler"
+        )
+        for field in (
+            "momentum",
+            "nesterov",
+            *sorted(ALGORITHM_FIELDS[group["algorithm"]]),
+        ):
+            schedules[f"{name}.{field}"] = [(total_steps, group[field])]
+    return schedules
+
+
+def slice_schedule(lines, start_step, end_step):
+    """Copy a window as duration-based segments; end_step is exclusive."""
+    result = []
+    offset = 0
+    for line in lines:
+        steps = line[0]
+        start, end = max(start_step, offset), min(end_step, offset + steps)
+        if start < end:
+            if len(line) == 2:
+                result.append((end - start, line[1]))
+            else:
+                start_fraction = (start - offset) / steps
+                end_fraction = (end - offset) / steps
+                # Preserve the slope and exclusive endpoint. Round only when
+                # applying the schedule, so slicing does not change its values.
+                result.append(
+                    (
+                        end - start,
+                        line[1] * (1 - start_fraction) + line[2] * start_fraction,
+                        line[1] * (1 - end_fraction) + line[2] * end_fraction,
+                    )
+                )
+        offset += steps
+    return result
+
+
+def is_zero_lr_schedule(lines):
+    """Whether a group is frozen for its entire configured run."""
+    return all(value == 0 for line in lines for value in line[1:])
+
+
+def scale_lr_schedule(lines, initial):
+    """Change the LR amplitude while retaining the explicitly configured shape."""
+    previous = lines[0][1]
+    if previous:
+        return [
+            (line[0], *(round_hparam(v * initial / previous) for v in line[1:]))
+            for line in lines
+        ]
+    result = copy.deepcopy(lines)
+    result[0] = (result[0][0], initial, *result[0][2:])
+    return result
+
+
+def lr_decay_schedule(steps, initial, decay):
+    if decay == "constant":
+        return [(steps, initial)]
+    if decay == "linear_decay":
+        return [(steps, initial, 0.0)]
+    raise ValueError(f"Unknown LR decay: {decay!r}")
+
+
+def segment_hparam_schedules(base_schedules, values, start_step, steps, global_search):
+    """Expand search parameters into complete schedules, preserving unsearched fields."""
+    values = dict(values)
+    group_names = {path.split(".", 1)[0] for path in base_schedules}
+    for path, value in list(values.items()):
+        if not path.startswith("all."):
+            continue
+        field = path.split(".", 1)[1]
+        for name in group_names:
+            if field in ("initial_lr", "decay") and is_zero_lr_schedule(
+                base_schedules[f"{name}.initial_lr"]
+            ):
+                continue
+            target = f"{name}.{field}"
+            schedule_path = f"{name}.initial_lr" if field == "decay" else target
+            if schedule_path not in base_schedules:
+                raise ValueError(f"{path}: missing schedule for {name}")
+            if target in values:
+                raise ValueError(f"{path}: cannot also set {target}")
+            values[target] = value
+        del values[path]
+    schedules = copy.deepcopy(base_schedules)
+    for path, lines in schedules.items():
+        decay_path = path.removesuffix("initial_lr") + "decay"
+        if (
+            global_search
+            and path.endswith(".initial_lr")
+            and (path in values or decay_path in values)
+        ):
+            if start_step != 0 or steps != sum(line[0] for line in lines):
+                raise ValueError("global_neighbour requires one full-run interval")
+            initial = values[path] if path in values else lines[0][1]
+            schedules[path] = (
+                lr_decay_schedule(steps, initial, values[decay_path])
+                if decay_path in values
+                else scale_lr_schedule(lines, initial)
+            )
+            continue
+        if path in values:
+            total_steps = sum(line[0] for line in lines)
+            if start_step < 0 or steps <= 0 or start_step + steps > total_steps:
+                raise ValueError("Search interval is outside the configured schedule")
+            value = normalize_config(values[path], path.rsplit(".", 1)[-1])
+            line = (steps, value)
+            schedules[path] = (
+                slice_schedule(lines, 0, start_step)
+                + [line]
+                + slice_schedule(lines, start_step + steps, total_steps)
+            )
+    return schedules
+
+
+def apply_hparam_schedules(optimizer, schedules, step):
+    for group in optimizer.param_groups:
+        name = group["name"]
+        group["lr"] = hparam_at_step(schedules[f"{name}.initial_lr"], step)
+        for field in (
+            "momentum",
+            "nesterov",
+            *sorted(ALGORITHM_FIELDS[group["algorithm"]]),
+        ):
+            group[field] = normalize_config(
+                schedule_value_at_step(schedules[f"{name}.{field}"], step), field
+            )
+
+
+# Set hparam_tuning to, for example:
+# dict(algorithm="grid", metric="tta_val_acc", params={
+#     "conv.initial_lr": dict(initial=0.04, choices=[0.04, 0.06, 0.08]),
+#     "conv.momentum": dict(initial=0.6, choices=[0.6, 0.7, 0.8]),
+# })
+# In grid/coordinate/global_neighbour searches, all.<field> applies one value to every
+# parameter group (e.g. all.initial_lr). Shared LR/decay leaves all-zero LR
+# schedules frozen. Other groups must start with a shared value.
+# Use algorithm="coordinate" to tune parameters in order, revisiting them
+# whenever another parameter changes. Specify the selection metric explicitly.
+# None runs the config once without tuning. Batch sizes are kept exact.
+# For online search, use:
+# dict(algorithm="interval", metric="tta_val_acc", max_side_steps=20,
+#      initial_dropoff_margin=0.02, interval_steps=40, cooldown_steps=40, params={
+#     "conv.initial_lr": dict(initial=1.0, choices=None, mult=0.8),
+#     "conv.momentum": dict(initial=0.6, choices=[0.0, 0.1, 0.3, 0.6, 0.9, 0.95, 0.99]),
+# })
+# Each params entry contains a tuning-only initial value and its choices.
+# Every entry must specify initial and choices. Grid evaluates choices exhaustively;
+# Coordinate searches start at initial, even when it is not a listed choice.
+# Multiplicative LR entries must specify mult; grids use round2(mult**k).
+# Multiplicative LR starts snap to k = round(log(initial) / log(mult)).
+# Explicit choice lists do not take mult. The legacy parameters shorthand is rejected.
+# Interval search holds searched LRs constant within each segment; unsearched
+# groups keep their configured schedules. Explicit lists also work for LR choices.
+# Use algorithm="global_neighbour" with the same params mapping for one
+# full-run interval. LR exposes initial_lr and decay (constant or linear_decay).
+# Scalar hyperparameters stay constant throughout the run.
+# Unsearched parameters always retain their configured schedules in every algorithm.
+# It takes no interval_steps/cooldown_steps and skips the initial LR margin search.
+# All schedulers use [(num_steps, value), (num_steps, start, end), ...].
+# Linear segments include the start; the end is reached one update after the
+# segment finishes. A one-step line uses its start.
+# Durations must sum to num_epochs * (50000 // batch_size), or num_epochs in overfit mode.
+# Change the segment durations when changing the batch size or run length.
+# input_conditioned groups accept svd_mean_percentage_damping (0.01 = 1% damping)
+# and input_conditioner_momentum (covariance EMA beta; 0 = current batch).
+# Both are required. SGDH requires normalization_eps.
+# Muon2 uses 12 NS steps and Gram normalization with eps=1e-7. The original Muon
+# (algorithm="muon") has been removed and is rejected. muon_head is Muon2 without
+# the weight normalization: only the NS-orthogonalized update, for layers (like
+# the head) that no BatchNorm follows.
+# Conditioner settings can be searched using explicit choices in hparam_tuning.params.
+# Gradient momentum is always a zero-initialized EMA corrected by 1 - momentum**t
+# (formerly momentum_version=3, now the only option; the field is rejected), with
+# Nesterov direction (1 - momentum) * g + momentum * corrected_buffer.
+# Without Nesterov it uses the corrected buffer directly.
+# Lion here takes the sign of this momentum/Nesterov direction.
+# Adam uses momentum as beta1, plus explicit beta2 and eps
+# (e.g. 0.9, 0.999, 1e-8); it requires nesterov=False,
+# and always applies its own first/second-moment bias correction.
+# lionh/adamh normalize each weight output channel (row) to unit norm before
+# every update, like SGDH; lionh2/adamh2 also normalize each update row, as
+# SGDH does for its gradient. sgdh3/lionh3/adamh3 instead normalize the whole
+# weight and the whole update to Frobenius norm sqrt(outputs). All require
+# normalization_eps; the Adam variants take Adam's options too.
+# kfac and kfac-jacobian support every CIFAR group, including normalization and
+# biases. kfac_damping is a fraction of each factor's mean eigenvalue (0 uses
+# pseudoinverses) for the output factor G and for bias/BatchNorm-scale blocks;
+# kfac_input_damping is the same fraction for the input factor A of weight blocks.
+# kfac_factor_momentum must be 0: factors use only the current batch, without EMA.
+# kfac_probes is the number of random
+# logits VJPs per step. gradient_momentum_before_conditioning=True preconditions the
+# momentum/Nesterov direction of raw gradients; False applies momentum afterwards.
+# kfac-jacobian replaces the CE Fisher's logits Hessian with identity.
+# kfac_matrix_normalization=True rescales each weight matrix to Frobenius norm
+# sqrt(outputs) and each conditioned update to the same norm (Muon's convention),
+# so lr is the relative step of BatchNorm-followed, scale-invariant weights.
+# Log per-step singular values of the final (post-search) run of each config to
+# untracked_logs/<log filename>/, with one .npz and one .mp4 per run.
+# Search trials are not logged.
+debug = True
+# With debug, also record and plot the eigenvalues of the K-FAC factors A and G
+# (before and after damping, with the damping as a line) of the first conv, last
+# conv and head, for whichever of them use kfac or kfac-jacobian.
+debug_kfac_factors = True
+
+# Every run config, by name. Select what to run by name in experiments_to_run
+# below, so past runs stay reproducible. New configs should derive from an
+# existing one (usually a baseline) and change only what they study.
+RUN_CONFIGS = {}
+MOMENTUM_CHOICES = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
+LR_DECAYS = ("linear_decay", "constant")
+
+
+def baseline_config(
+    batch_size, whiten_bias_lr, norm_bias_lr, bias_momentum, head_lr, conv_lr,
+    conv_momentum,
+):
+    """Untuned 8-epoch run; whitening bias trains for the first 3/8 of it."""
+    steps = 8 * (50000 // batch_size)
+    bias_steps = 3 * steps // 8
+
+    def group(algorithm, lr_scheduler, momentum):
+        return dict(
+            algorithm=algorithm, lr_scheduler=lr_scheduler, momentum=momentum,
+            nesterov=True,
+        )
+
+    return dict(
+        batch_size=batch_size,
+        num_epochs=8,
+        overfit=False,
+        hparam_tuning=None,
+        param_groups=dict(
+            whiten_weight=group("sgd", [(steps, 0.0)], 0.85),
+            norm_weight=group("sgd", [(steps, 0.0)], 0.85),
+            whiten_bias=group(
+                "sgd",
+                [(bias_steps, whiten_bias_lr, 0.0), (steps - bias_steps, 0.0)],
+                bias_momentum,
+            ),
+            norm_bias=group("sgd", [(steps, norm_bias_lr, 0.0)], bias_momentum),
+            head=group("sgd", [(steps, head_lr, 0.0)], 0.85),
+            conv=group("muon2", [(steps, conv_lr, 0.0)], conv_momentum),
+        ),
+    )
+
+
+# Starting points: the best TTA candidates of the conv interval searches in
+# logs/cifar_baseline_20260925_062517_263845Z_68746.log (BS 125 and 500), which
+# used Muon convolutions. exp14 starts from these.
+for batch_size, whiten_bias_lr, norm_bias_lr, bias_momentum, head_lr, conv_lr, conv_momentum in (
+    (125, 6.5, 4.6, 0.85, 170, 0.047, 0.5),
+    (500, 26, 21, 0.85, 280, 0.078, 0.6),
+):
+    RUN_CONFIGS[f"baseline_bs{batch_size}_from_interval_search"] = baseline_config(
+        batch_size, whiten_bias_lr, norm_bias_lr, bias_momentum, head_lr, conv_lr,
+        conv_momentum,
+    )
+
+# Baselines: the best TTA run of each all-active search. BS 2000 comes from exp12
+# (TTA 0.9413, logs/cifar_baseline_20260929_192907_944004Z_300062.log, Muon
+# convolutions). BS 125 and 500 come from exp14 with Muon2 convolutions
+# (TTA 0.9400, logs/cifar_baseline_20260930_213907_841629Z_566125.log;
+# TTA 0.9401, logs/cifar_baseline_20260930_213912_848424Z_566236.log).
+for batch_size, whiten_bias_lr, norm_bias_lr, bias_momentum, head_lr, conv_lr, conv_momentum in (
+    (125, 7.7, 4.6, 0.85, 170, 0.047, 0.5),
+    (500, 36, 21, 0.85, 280, 0.13, 0.6),
+    (2000, 36, 99, 0.8, 1300, 0.22, 0.7),
+):
+    RUN_CONFIGS[f"baseline_bs{batch_size}"] = baseline_config(
+        batch_size, whiten_bias_lr, norm_bias_lr, bias_momentum, head_lr, conv_lr,
+        conv_momentum,
+    )
+
+# BS 2000 head baselines, one per head optimizer; other groups match
+# baseline_bs2000. Candidates came from the head grids (exp5-exp11, single seed)
+# and the tuned K-FAC head; the best mean TTA over seeds 100-103 is kept.
+# The K-FAC head uses current-batch factors only.
+BASELINE_BS2000_HEADS = dict(
+    sgd=dict(lr=1300, momentum=0.85),
+    input_conditioned=dict(
+        lr=10000, momentum=0.8, svd_mean_percentage_damping=0.01,
+        input_conditioner_momentum=0.0, gradient_momentum_before_conditioning=False,
+    ),
+    lion=dict(lr=0.22, momentum=0.9),
+    kfac=dict(
+        lr=0.03, momentum=0.9, kfac_damping=0.3, kfac_input_damping=0.3,
+        kfac_factor_momentum=0.0, kfac_probes=1,
+        gradient_momentum_before_conditioning=True, kfac_matrix_normalization=False,
+    ),
+)
+for algorithm, fields in BASELINE_BS2000_HEADS.items():
+    fields = dict(fields)
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    config["param_groups"]["head"] = dict(
+        algorithm=algorithm,
+        lr_scheduler=lr_decay_schedule(200, fields.pop("lr"), "linear_decay"),
+        momentum=fields.pop("momentum"),
+        nesterov=True,
+        **fields,
+    )
+    RUN_CONFIGS[f"baseline_bs2000_head_{algorithm}"] = config
+
+# BS 2000 conv baselines, one per conv optimizer, each one step from the root
+# (baseline_bs2000: Muon2 conv, SGD head); other groups match the root. Conv
+# LR and momentum were swept coarsely (seeds 100-101) and refined around the
+# best (seeds 100-103); the best mean TTA is kept. SGD and Lion have no weight
+# normalization. K-FAC keeps the tuned K-FAC conv damping and whole-matrix
+# normalization, with current-batch factors only.
+BASELINE_BS2000_CONVS = dict(
+    sgd=dict(lr=14, momentum=0.8),
+    lion=dict(lr=0.0018, momentum=0.8),
+    sgdh=dict(lr=0.078, momentum=0.9, normalization_eps=1e-6),
+    # -h variants: same coarse/refine procedure (adam: beta2 0.99, eps 1e-8, no Nesterov).
+    lionh=dict(lr=0.0024, momentum=0.9, normalization_eps=1e-6),
+    lionh2=dict(lr=0.058, momentum=0.9, normalization_eps=1e-6),
+    adamh=dict(lr=0.0042, momentum=0.7, normalization_eps=1e-6, beta2=0.99, eps=1e-8),
+    adamh2=dict(lr=0.078, momentum=0.8, normalization_eps=1e-6, beta2=0.99, eps=1e-8),
+    sgdh3=dict(lr=0.058, momentum=0.9, normalization_eps=1e-6),
+    lionh3=dict(lr=0.078, momentum=0.9, normalization_eps=1e-6),
+    adamh3=dict(lr=0.078, momentum=0.8, normalization_eps=1e-6, beta2=0.99, eps=1e-8),
+    kfac=dict(
+        lr=0.22, momentum=0.6, kfac_damping=1.0, kfac_input_damping=3.0,
+        kfac_factor_momentum=0.0, kfac_probes=1,
+        gradient_momentum_before_conditioning=True, kfac_matrix_normalization=True,
+    ),
+)
+# kfac-jacobian reuses the K-FAC conv hyperparameters untuned.
+BASELINE_BS2000_CONVS["kfac-jacobian"] = dict(BASELINE_BS2000_CONVS["kfac"])
+for algorithm, fields in BASELINE_BS2000_CONVS.items():
+    fields = dict(fields)
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    config["param_groups"]["conv"] = dict(
+        algorithm=algorithm,
+        lr_scheduler=lr_decay_schedule(200, fields.pop("lr"), "linear_decay"),
+        momentum=fields.pop("momentum"),
+        nesterov=algorithm not in ADAM_ALGORITHMS,  # Adam requires nesterov=False.
+        **fields,
+    )
+    RUN_CONFIGS[f"baseline_bs2000_conv_{algorithm}"] = config
+
+# Online interval search of conv LR and momentum, with intervals and cooldowns
+# of one fifth of the run. For BS 125 and 500, also try shorter cooldowns
+# (divisor 1, 4) and shorter intervals (divisor 4, 4).
+for batch_size in (125, 500, 2000):
+    config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
+    conv = config["param_groups"]["conv"]
+    interval_steps = conv["lr_scheduler"][0][0] // 5
+    config["hparam_tuning"] = dict(
+        algorithm="interval",
+        metric="tta_val_acc",
+        max_side_steps=20,
+        initial_dropoff_margin=0.02,
+        interval_steps=interval_steps,
+        cooldown_steps=interval_steps,
+        params={
+            "conv.initial_lr": dict(
+                initial=conv["lr_scheduler"][0][1], choices=None, mult=0.6
+            ),
+            "conv.momentum": dict(initial=conv["momentum"], choices=list(MOMENTUM_CHOICES)),
+        },
+    )
+    RUN_CONFIGS[f"interval_bs{batch_size}"] = config
+    if batch_size == 2000:
+        continue
+    for interval_divisor, cooldown_divisor in ((1, 4), (4, 4)):
+        variant = copy.deepcopy(config)
+        variant["hparam_tuning"]["interval_steps"] //= interval_divisor
+        variant["hparam_tuning"]["cooldown_steps"] //= cooldown_divisor
+        RUN_CONFIGS[
+            f"interval_bs{batch_size}_interval{variant['hparam_tuning']['interval_steps']}"
+            f"_cooldown{variant['hparam_tuning']['cooldown_steps']}"
+        ] = variant
+
+# Full-run search of conv, head, and norm bias LRs and momenta.
+for batch_size in (125, 500, 2000):
+    config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
+    groups = config["param_groups"]
+    config["hparam_tuning"] = dict(
+        algorithm="global_neighbour",
+        metric="tta_val_acc",
+        max_side_steps=20,
+        params={
+            **copy.deepcopy(RUN_CONFIGS[f"interval_bs{batch_size}"]["hparam_tuning"]["params"]),
+            "head.initial_lr": dict(
+                initial=groups["head"]["lr_scheduler"][0][1], choices=None, mult=0.6
+            ),
+            "head.momentum": dict(
+                initial=groups["head"]["momentum"], choices=list(MOMENTUM_CHOICES[1:])
+            ),
+            "norm_bias.initial_lr": dict(
+                initial=groups["norm_bias"]["lr_scheduler"][0][1], choices=None, mult=0.6
+            ),
+            "norm_bias.momentum": dict(
+                initial=groups["norm_bias"]["momentum"], choices=list(MOMENTUM_CHOICES[1:])
+            ),
+        },
+    )
+    RUN_CONFIGS[f"global_neighbour_bs{batch_size}"] = config
+
+# Experiments start from the bs=2000 baseline. Nesterov stays fixed.
+# exp1: replace conv Muon2 with SGDH.
+for decay in LR_DECAYS:
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    config["param_groups"]["conv"] = dict(
+        algorithm="sgdh",
+        lr_scheduler=lr_decay_schedule(200, 0.22, decay),
+        momentum=0.7,
+        nesterov=True,
+        normalization_eps=1e-6,
+    )
+    config["param_groups"]["head"]["lr_scheduler"] = lr_decay_schedule(
+        200, 1300, decay
+    )
+    config["hparam_tuning"] = dict(
+        algorithm="global_neighbour",
+        metric="tta_val_acc",
+        max_side_steps=20,
+        params={
+            "conv.initial_lr": dict(initial=0.22, choices=None, mult=0.6),
+            "conv.momentum": dict(initial=0.7, choices=list(MOMENTUM_CHOICES)),
+            "head.initial_lr": dict(initial=1300, choices=None, mult=0.6),
+            "head.momentum": dict(initial=0.85, choices=list(MOMENTUM_CHOICES)),
+        },
+    )
+    RUN_CONFIGS[f"exp1_{decay}"] = config
+
+# exp2 (input-conditioned head with momentum version 1) is exp4 under version 3.
+
+# exp3: search only the conv LR and momentum.
+config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+config["hparam_tuning"] = dict(
+    algorithm="global_neighbour",
+    metric="tta_val_acc",
+    max_side_steps=20,
+    params={
+        "conv.initial_lr": dict(initial=0.22, choices=None, mult=0.6),
+        "conv.momentum": dict(initial=0.7, choices=list(MOMENTUM_CHOICES)),
+    },
+)
+RUN_CONFIGS["exp3"] = config
+
+# exp4: input-conditioned head, conditioning before or after gradient momentum.
+for decay, momentum_first in product(LR_DECAYS, (True, False)):
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    config["param_groups"]["head"] = dict(
+        algorithm="input_conditioned",
+        lr_scheduler=lr_decay_schedule(200, 1300, decay),
+        momentum=0.85,
+        nesterov=True,
+        svd_mean_percentage_damping=0.01,
+        input_conditioner_momentum=0.0,
+        gradient_momentum_before_conditioning=momentum_first,
+    )
+    config["hparam_tuning"] = dict(
+        algorithm="global_neighbour",
+        metric="tta_val_acc",
+        max_side_steps=20,
+        params={
+            "head.initial_lr": dict(initial=1300, choices=None, mult=0.6),
+            "head.momentum": dict(initial=0.85, choices=list(MOMENTUM_CHOICES)),
+            "head.svd_mean_percentage_damping": dict(
+                initial=0.01, choices=[0, 0.001, 0.01, 0.1, 1]
+            ),
+            "head.input_conditioner_momentum": dict(
+                initial=0.0, choices=list(MOMENTUM_CHOICES)
+            ),
+        },
+    )
+    order = "before" if momentum_first else "after"
+    RUN_CONFIGS[f"exp4_{decay}_momentum_{order}_conditioning"] = config
+
+# exp5: exhaustively compare head LR, gradient momentum, and decay.
+# Conv and the other groups keep their baseline values.
+HEAD_GRID_LR = RUN_CONFIGS["baseline_bs2000"]["param_groups"]["head"]["lr_scheduler"][0][1]
+HEAD_GRID_LR_CHOICES = sorted(
+    round_hparam(HEAD_GRID_LR * 0.6 ** k) for k in range(-5, 6)
+)
+config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+config["param_groups"]["head"] = dict(
+    algorithm="input_conditioned",
+    lr_scheduler=lr_decay_schedule(200, HEAD_GRID_LR, "linear_decay"),
+    momentum=0.0,
+    nesterov=True,  # At momentum=0 the optimizer uses the conditioned gradient directly.
+    svd_mean_percentage_damping=0.01,
+    input_conditioner_momentum=0.0,
+    gradient_momentum_before_conditioning=False,
+)
+config["hparam_tuning"] = dict(
+    algorithm="grid",
+    metric="tta_val_acc",
+    params={
+        "head.initial_lr": dict(initial=HEAD_GRID_LR, choices=HEAD_GRID_LR_CHOICES),
+        "head.momentum": dict(initial=0.0, choices=[0.0, 0.5, 0.7, 0.8, 0.9]),
+        "head.decay": dict(initial="linear_decay", choices=list(LR_DECAYS)),
+    },
+)
+RUN_CONFIGS["exp5_head_grid"] = config
+
+# Continue the same LR grid above its previous maximum (k=-5), without reruns.
+HEAD_GRID_HIGH_LR_CHOICES = sorted(
+    round_hparam(HEAD_GRID_LR * 0.6 ** k) for k in range(-10, -5)
+)
+config = copy.deepcopy(RUN_CONFIGS["exp5_head_grid"])
+config["hparam_tuning"]["params"]["head.initial_lr"]["choices"] = HEAD_GRID_HIGH_LR_CHOICES
+RUN_CONFIGS["exp5_head_grid_high_lr"] = config
+
+# Compare plain SGD and sign updates on the original 11-LR head grid.
+# These heads do not use input conditioning.
+for algorithm, name in (("sgd", "exp6_head_sgd_grid"), ("lion", "exp7_head_lion_grid")):
+    config = copy.deepcopy(RUN_CONFIGS["exp5_head_grid"])
+    head = config["param_groups"]["head"]
+    head["algorithm"] = algorithm
+    for field in INPUT_CONDITIONER_FIELDS:
+        del head[field]
+    RUN_CONFIGS[name] = config
+
+# Lion without momentum: search learning rates suited to sign updates.
+config = copy.deepcopy(RUN_CONFIGS["exp7_head_lion_grid"])
+config["param_groups"]["head"]["momentum"] = 0.0
+config["param_groups"]["head"]["lr_scheduler"] = lr_decay_schedule(200, 1.0, "linear_decay")
+config["hparam_tuning"]["params"]["head.initial_lr"] = dict(
+    initial=1.0, choices=[10.0 ** k for k in range(-5, 3)],
+)
+config["hparam_tuning"]["params"]["head.momentum"] = dict(initial=0.0, choices=[0.0])
+RUN_CONFIGS["exp8_head_lion_zero_momentum_grid"] = config
+
+# Lion: sweep LR and momentum with linear decay only.
+config = copy.deepcopy(RUN_CONFIGS["exp7_head_lion_grid"])
+config["param_groups"]["head"]["lr_scheduler"] = lr_decay_schedule(200, 1.0, "linear_decay")
+config["hparam_tuning"]["params"]["head.initial_lr"] = dict(
+    initial=1.0, choices=sorted(round_hparam(0.6 ** k) for k in range(-10, 6)),
+)
+config["hparam_tuning"]["params"]["head.decay"] = dict(
+    initial="linear_decay", choices=["linear_decay"],
+)
+RUN_CONFIGS["exp9_head_lion_grid"] = config
+
+# Extend the head grids to both Nesterov settings.
+HEAD_V3_LR_CHOICES = sorted(round_hparam(6000 * 0.6 ** k) for k in range(-8, 4))
+for source, name in (
+    ("exp6_head_sgd_grid", "exp10_head_sgd_v3_grid"),
+    ("exp5_head_grid", "exp11_head_input_conditioned_v3_grid"),
+):
+    config = copy.deepcopy(RUN_CONFIGS[source])
+    config["param_groups"]["head"].update(
+        lr_scheduler=lr_decay_schedule(200, 6000, "linear_decay"),
+    )
+    config["hparam_tuning"]["params"].update({
+        "head.initial_lr": dict(initial=6000, choices=HEAD_V3_LR_CHOICES),
+        "head.decay": dict(initial="linear_decay", choices=["linear_decay"]),
+        "head.nesterov": dict(initial=True, choices=[True, False]),
+    })
+    RUN_CONFIGS[name] = config
+
+# Run only the previously untested lower learning rates for SGD.
+RUN_CONFIGS["exp10_head_sgd_v3_grid"]["hparam_tuning"]["params"][
+    "head.initial_lr"
+]["choices"] = sorted(round_hparam(6000 * 0.6 ** k) for k in range(4, 9))
+
+# All groups use K-FAC, preserving the baseline's frozen weight groups.
+# Each neighbour candidate shares LR across active groups and gradient momentum
+# across all groups, including biases. Factor EMA stays disabled.
+KFAC_LR_CHOICES = sorted(round_hparam(0.15 * 0.6 ** k) for k in range(-7, 8))
+for algorithm in ("kfac", "kfac-jacobian"):
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    config["param_groups"] = {
+        name: dict(
+            algorithm=algorithm,
+            lr_scheduler=(
+                copy.deepcopy(group["lr_scheduler"])
+                if is_zero_lr_schedule(group["lr_scheduler"])
+                else lr_decay_schedule(200, 0.15, "linear_decay")
+            ),
+            momentum=0.9,
+            nesterov=True,
+            kfac_damping=0.03,
+            kfac_input_damping=0.03,
+            kfac_factor_momentum=0.0,
+            kfac_probes=1,
+            gradient_momentum_before_conditioning=False,
+            kfac_matrix_normalization=False,
+        )
+        for name, group in config["param_groups"].items()
+    }
+    config["hparam_tuning"] = dict(
+        algorithm="global_neighbour", metric="tta_val_acc", max_side_steps=20,
+        params={
+            "all.initial_lr": dict(initial=0.15, choices=list(KFAC_LR_CHOICES)),
+            "all.momentum": dict(initial=0.9, choices=[0.0, 0.5, 0.7, 0.8, 0.9]),
+        },
+    )
+    RUN_CONFIGS[f"all_{algorithm}"] = config
+
+# Retain the tuned K-FAC configurations for later runs. Their active learning
+# rates decay linearly from step zero; whitening bias stops at step 75.
+# Factor EMA is disabled. Convolutions use whole-matrix normalization, so their
+# lr is a relative step (seeds 20-27: kfac-jacobian 93.85%, Muon baseline 93.86%).
+TUNED_KFAC_CONV = dict(
+    conv_lr=0.15, conv_momentum=0.7, input_damping=3.0,
+    conv_output_damping=1.0,
+)
+TUNED_KFAC = {
+    "kfac": dict(head_lr=0.08, bias_lr=0.04, **TUNED_KFAC_CONV),
+    "kfac-jacobian": dict(head_lr=1.3, bias_lr=0.64, **TUNED_KFAC_CONV),
+}
+
+
+def tuned_kfac_config(
+    algorithm, head_lr, bias_lr, conv_lr, conv_momentum,
+    input_damping, conv_output_damping,
+):
+    def group(lr_scheduler, **options):
+        values = dict(
+            algorithm=algorithm, lr_scheduler=lr_scheduler, momentum=0.9,
+            nesterov=True, kfac_damping=0.3,
+            kfac_input_damping=0.3, kfac_factor_momentum=0.0, kfac_probes=1,
+            gradient_momentum_before_conditioning=True, kfac_matrix_normalization=False,
+        )
+        values.update(options)
+        return values
+
+    def linear_decay(lr, steps):
+        return lr_decay_schedule(steps, lr, "linear_decay")
+
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    config["param_groups"] = dict(
+        whiten_weight=group([(200, 0.0)]),
+        norm_weight=group([(200, 0.0)]),
+        whiten_bias=group(linear_decay(bias_lr, steps=75) + [(125, 0.0)]),
+        norm_bias=group(linear_decay(bias_lr, steps=200)),
+        head=group(linear_decay(head_lr, steps=200)),
+        conv=group(
+            linear_decay(conv_lr, steps=200), momentum=conv_momentum,
+            kfac_damping=conv_output_damping, kfac_input_damping=input_damping,
+            kfac_matrix_normalization=True,
+        ),
+    )
+    return config
+
+
+for algorithm, values in TUNED_KFAC.items():
+    RUN_CONFIGS[f"tuned_{algorithm}"] = tuned_kfac_config(algorithm, **values)
+
+# Jointly tune the learning rates and momenta of every active group over the
+# full run: exp12 for BS 2000 (source of baseline_bs2000), exp14 for BS 125 and
+# 500 with Muon2 convolutions. Scaling initial_lr preserves each schedule,
+# including whitening bias's stop after 3/8 of the run. Frozen groups are excluded.
+for batch_size, name in (
+    (2000, "exp12_bs2000_all_active_v3"),
+    (125, "exp14_bs125_all_active"),
+    (500, "exp14_bs500_all_active"),
+):
+    source = "baseline_bs2000" if batch_size == 2000 else f"baseline_bs{batch_size}_from_interval_search"
+    config = copy.deepcopy(RUN_CONFIGS[source])
+    params = {}
+    for group_name, group in config["param_groups"].items():
+        if is_zero_lr_schedule(group["lr_scheduler"]):
+            continue
+        params[f"{group_name}.initial_lr"] = dict(
+            initial=group["lr_scheduler"][0][1], choices=None, mult=0.6,
+        )
+        params[f"{group_name}.momentum"] = dict(
+            initial=group["momentum"], choices=list(MOMENTUM_CHOICES),
+        )
+    config["hparam_tuning"] = dict(
+        algorithm="global_neighbour", metric="tta_val_acc", max_side_steps=20,
+        params=params,
+    )
+    RUN_CONFIGS[name] = config
+
+# exp13 (Muon vs Muon2 at the BS 2000 baseline) is now baseline_bs2000 itself.
+
+# exp15-17: alternative heads on baseline_bs2000, each tuned by a full-run
+# search of the head alone. Other groups keep their baseline values.
+HEAD_DAMPING_CHOICES = [0, 0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1, 3]
+
+
+def head_search_config(head, params):
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    config["param_groups"]["head"] = dict(
+        lr_scheduler=lr_decay_schedule(200, head.pop("lr"), "linear_decay"),
+        nesterov=True, **head,
+    )
+    config["hparam_tuning"] = dict(
+        algorithm="global_neighbour", metric="tta_val_acc", max_side_steps=20,
+        params={
+            "head.initial_lr": dict(
+                initial=config["param_groups"]["head"]["lr_scheduler"][0][1],
+                choices=None, mult=0.6,
+            ),
+            "head.momentum": dict(
+                initial=config["param_groups"]["head"]["momentum"],
+                choices=list(MOMENTUM_CHOICES),
+            ),
+            **params,
+        },
+    )
+    return config
+
+
+# exp15: Muon head without weight normalization, with the SGD head momentum.
+# The orthogonalized update has Frobenius norm ~sqrt(10) while the initial head
+# weight has ~sqrt(2560), so lr 3.5 gives conv Muon2's relative step of 0.22.
+RUN_CONFIGS["exp15_head_muon_head"] = head_search_config(
+    dict(algorithm="muon_head", lr=3.5, momentum=0.85), {},
+)
+
+# exp16-17: K-FAC Jacobian and K-FAC heads initialized from the input-conditioned
+# head (A damping 0.01, momentum 0.8, conditioning after momentum), with no G
+# damping (pseudoinverse). For K-FAC Jacobian the head's G is I / 256**2 (logits
+# are divided by the width 256), so lr = 10000 / 256**2 ~ 0.15 matches the
+# input-conditioned update size. K-FAC shares every value, including the LR.
+for algorithm, name in (
+    ("kfac-jacobian", "exp16_head_kfac-jacobian"),
+    ("kfac", "exp17_head_kfac_input_conditioned_init"),
+):
+    RUN_CONFIGS[name] = head_search_config(
+        dict(
+            algorithm=algorithm, lr=0.15, momentum=0.8, kfac_damping=0.0,
+            kfac_input_damping=0.01, kfac_factor_momentum=0.0, kfac_probes=1,
+            gradient_momentum_before_conditioning=False,
+            kfac_matrix_normalization=False,
+        ),
+        {
+            "head.kfac_input_damping": dict(
+                initial=0.01, choices=list(HEAD_DAMPING_CHOICES)
+            ),
+        },
+    )
+
+# exp18: K-FAC Jacobian conv and head together, each at its best known values;
+# biases keep the baseline SGD. Conv: TUNED_KFAC_CONV (whole-matrix
+# normalization). Head: the exp16 search optimum (its starting point, TTA 0.9396
+# on seed 0, logs/cifar_baseline_20261005_185102_568275Z_15279.log).
+config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+kfac_jacobian = dict(
+    algorithm="kfac-jacobian", nesterov=True, kfac_factor_momentum=0.0, kfac_probes=1,
+)
+config["param_groups"]["conv"] = dict(
+    kfac_jacobian,
+    lr_scheduler=lr_decay_schedule(200, TUNED_KFAC_CONV["conv_lr"], "linear_decay"),
+    momentum=TUNED_KFAC_CONV["conv_momentum"],
+    kfac_damping=TUNED_KFAC_CONV["conv_output_damping"],
+    kfac_input_damping=TUNED_KFAC_CONV["input_damping"],
+    gradient_momentum_before_conditioning=True, kfac_matrix_normalization=True,
+)
+config["param_groups"]["head"] = dict(
+    kfac_jacobian,
+    lr_scheduler=lr_decay_schedule(200, 0.13, "linear_decay"),
+    momentum=0.8, kfac_damping=0.0, kfac_input_damping=0.01,
+    gradient_momentum_before_conditioning=False, kfac_matrix_normalization=False,
+)
+RUN_CONFIGS["exp18_kfac-jacobian_conv_head"] = config
+
+# Runs to execute, in order, by name in RUN_CONFIGS. Each runs once per seed
+# (seeds 0, 1, ..., num_seeds - 1); set num_seeds = 8 for a seed-averaged comparison.
+experiments_to_run = [
+    # K-FAC Jacobian conv and head at their best known values (debug spectra).
+    "exp18_kfac-jacobian_conv_head",
+]
+num_seeds = 1
+SEEDS = list(range(num_seeds))
+RUNS = [(name, RUN_CONFIGS[name]) for name in experiments_to_run]
+
+
+def normalize_config(value, key):
+    """Round hyperparameters, preserving step counts, batch sizes, and Adam beta2."""
+    # Adam beta2=0.999 must not round to 1, including in tuning specifications.
+    if key == "beta2" or (isinstance(key, str) and key.endswith(".beta2")):
+        return copy.deepcopy(value)
+    if key in (
+        "batch_size",
+        "num_epochs",
+        "interval_steps",
+        "cooldown_steps",
+        "max_side_steps",
+        "kfac_probes",
+    ):
+        return copy.deepcopy(value)
+    if key == "lr_scheduler":
+        return normalize_schedule(value, total_steps=None, name="lr_scheduler")
+    if isinstance(value, dict):
+        return {name: normalize_config(item, name) for name, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [normalize_config(item, key=None) for item in value]
+    return round_hparam(value)
+
+
+def make_optimizer(model, param_groups):
+    for group in param_groups.values():
+        GroupOptimizer.validate_group(group, runtime=False)
+    parameters = dict(
+        whiten_bias=[model.whiten.bias],
+        norm_bias=[m.bias for m in model.modules() if isinstance(m, BatchNorm)],
+        head=[model.head.weight],
+        whiten_weight=[model.whiten.weight],
+        norm_weight=[m.weight for m in model.modules() if isinstance(m, BatchNorm)],
+        conv=[
+            p
+            for p in model.parameters()
+            if p.ndim == 4 and p.requires_grad and p is not model.whiten.weight
+        ],
+    )
+    require_fields(param_groups, set(parameters), "param_groups")
+    optimizer = GroupOptimizer(
+        [
+            dict(
+                name=name,
+                params=params,
+                lr=hparam_at_step(param_groups[name]["lr_scheduler"], 0),
+                **{
+                    key: value
+                    for key, value in param_groups[name].items()
+                    if key != "lr_scheduler"
+                },
+            )
+            for name, params in parameters.items()
+        ]
+    )
+    optimizer.bind_input_layers(model)
+    optimizer.bind_kfac_layers(model)
+    return optimizer
+
+
+def get_hparam(config, path):
+    """Read shared options, excluding frozen groups for all.initial_lr/decay."""
+    if path in ("batch_size", "num_epochs", "overfit"):
+        return config[path]
+    parts = path.split(".")
+    if len(parts) == 2 and parts[0] == "all":
+        field = parts[1]
+        values = [
+            get_hparam(config, f"{name}.{field}")
+            for name, group in config["param_groups"].items()
+            if field not in ("initial_lr", "decay") or not is_zero_lr_schedule(group["lr_scheduler"])
+        ]
+        if not values and config["param_groups"] and field in ("initial_lr", "decay"):
+            return 0.0 if field == "initial_lr" else "constant"
+        if not values or any(value != values[0] for value in values[1:]):
+            raise ValueError(f"{path}: all parameter groups must share the same value")
+        return values[0]
+    if len(parts) == 2 and parts[0] in config["param_groups"]:
+        group = config["param_groups"][parts[0]]
+        field = parts[1]
+        if field in group and field != "lr_scheduler":
+            return group[field]
+        if field == "initial_lr":
+            return group["lr_scheduler"][0][1]
+        if field == "decay":
+            lines = group["lr_scheduler"]
+            if all(len(line) == 2 and line[1] == lines[0][1] for line in lines):
+                return "constant"
+            if len(lines) == 1 and len(lines[0]) == 3 and lines[0][2] == 0:
+                return "linear_decay"
+            raise ValueError(
+                f"{path}: decay search requires a constant or single linear-to-zero schedule"
+            )
+    raise ValueError(f"Unknown hyperparameter: {path!r}")
+
+
+def with_hparam(config, path, value):
+    get_hparam(config, path)  # Validate the path before modifying anything.
+    updated = copy.deepcopy(config)
+    value = normalize_config(value, path.rsplit(".", 1)[-1])
+    if "." not in path:
+        updated[path] = value
+    else:
+        name, field = path.split(".")
+        names = list(updated["param_groups"]) if name == "all" else [name]
+        for group_name in names:
+            group = updated["param_groups"][group_name]
+            if name == "all" and field in ("initial_lr", "decay") and is_zero_lr_schedule(group["lr_scheduler"]):
+                continue
+            if field in group:
+                group[field] = value
+            elif field == "decay":
+                lines = group["lr_scheduler"]
+                group["lr_scheduler"] = lr_decay_schedule(
+                    sum(line[0] for line in lines), lines[0][1], value
+                )
+            else:
+                group["lr_scheduler"] = scale_lr_schedule(group["lr_scheduler"], value)
+    return updated
+
+
+def validate_tuning_config(tuning):
+    if "algorithm" not in tuning or tuning["algorithm"] not in (
+        "grid",
+        "coordinate",
+        "interval",
+        "global_neighbour",
+    ):
+        raise ValueError("hparam_tuning requires a known algorithm")
+    required = {"algorithm", "metric", "params"}
+    if tuning["algorithm"] in ("interval", "global_neighbour"):
+        required.add("max_side_steps")
+    if tuning["algorithm"] == "interval":
+        required |= {"interval_steps", "cooldown_steps", "initial_dropoff_margin"}
+    require_fields(tuning, required, "hparam_tuning")
+
+
+def tuning_params(config):
+    """Read explicit search specs without changing the baseline parameter groups."""
+    tuning = config["hparam_tuning"]
+    if "params" not in tuning or "parameters" in tuning:
+        raise ValueError(
+            "hparam_tuning requires params with explicit initial/choices entries"
+        )
+    parameters = tuning["params"]
+    if not isinstance(parameters, dict) or not parameters:
+        raise ValueError("hparam_tuning.params must be a nonempty mapping")
+    specs = {}
+    for path, spec in parameters.items():
+        if path.startswith("all."):
+            if tuning["algorithm"] not in ("grid", "coordinate", "global_neighbour"):
+                raise ValueError("Shared all.<field> searches require grid, coordinate, or global_neighbour")
+            field = path.split(".", 1)[1]
+            if any(f"{name}.{field}" in parameters for name in config["param_groups"]):
+                raise ValueError(f"{path}: cannot also search this field for an individual group")
+        get_hparam(config, path)
+        if not isinstance(spec, dict):
+            raise ValueError(f"{path}: specify initial and choices explicitly")
+        required = {"initial", "choices"}
+        if (
+            path.endswith(".initial_lr")
+            and "choices" in spec
+            and spec["choices"] is None
+        ):
+            required.add("mult")
+        require_fields(spec, required, path)
+        if "mult" in spec:
+            mult = spec["mult"]
+            if (
+                isinstance(mult, bool)
+                or not isinstance(mult, (int, float))
+                or not isfinite(mult)
+                or not 0 < mult < 1
+            ):
+                raise ValueError(
+                    f"{path}: mult must be a finite number between 0 and 1"
+                )
+        specs[path] = dict(spec)
+    return specs
+
+
+def lr_grid_index(value, mult):
+    """Choose the nearest integer exponent in logarithmic LR space."""
+    return round(log(value) / log(mult))
+
+
+def snap_lr_to_grid(value, mult):
+    return round_hparam(mult ** lr_grid_index(value, mult))
+
+
+def interval_search_space(config):
+    """Validate searchable fields and snap multiplicative LR starts to their grids."""
+    choices, initial = {}, {}
+    for path, spec in tuning_params(config).items():
+        value = normalize_config(spec["initial"], path.rsplit(".", 1)[-1])
+        values = spec["choices"]
+        parts = path.split(".")
+        if len(parts) != 2:
+            raise ValueError(f"Unsupported interval search parameter: {path}")
+        name, field = parts
+        groups = (
+            list(config["param_groups"].values()) if name == "all"
+            else [config["param_groups"][name]]
+        )
+        if field == "decay":
+            if config["hparam_tuning"]["algorithm"] != "global_neighbour":
+                raise ValueError("decay search requires global_neighbour")
+            allowed = ("constant", "linear_decay")
+            if (
+                not isinstance(values, list)
+                or not values
+                or any(v not in allowed for v in values)
+                or value not in values
+            ):
+                raise ValueError(
+                    f"{path}: initial and choices must specify constant or linear_decay"
+                )
+            choices[path], initial[path] = list(dict.fromkeys(values)), value
+            continue
+        if any(
+            field
+            not in {"initial_lr", "momentum"} | ALGORITHM_FIELDS[group["algorithm"]]
+            for group in groups
+        ):
+            raise ValueError(f"Unsupported interval search parameter: {path}")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not isfinite(value)
+            or value < 0
+        ):
+            raise ValueError(f"{path}: initial must be a nonnegative finite number")
+        if values is None:
+            if field != "initial_lr" or value <= 0:
+                raise ValueError(
+                    f"{path}: multiplicative search needs a positive initial LR"
+                )
+            value = snap_lr_to_grid(value, spec["mult"])
+        else:
+            if (
+                not isinstance(values, list)
+                or not values
+                or any(
+                    isinstance(v, bool)
+                    or not isinstance(v, (int, float))
+                    or not isfinite(v)
+                    or v < 0
+                    for v in values
+                )
+            ):
+                raise ValueError(f"{path}: choices must be nonnegative finite numbers")
+            values = sorted({normalize_config(v, field) for v in values})
+            if field != "initial_lr":
+                for candidate in [value, *values]:
+                    for group in groups:
+                        GroupOptimizer.validate_group(
+                            dict(group, **{field: candidate}), runtime=False
+                        )
+        choices[path], initial[path] = values, value
+    return choices, initial
+
+
+def directional_search(
+    initial,
+    choices,
+    score,
+    *,
+    initial_lr_search,
+    factors,
+    max_side_steps,
+    dropoff_margin,
+    on_event,
+):
+    """Snap LR starts to the fixed, unit-anchored grid and probe adjacent exponents."""
+    cache = {}
+
+    def emit(event, point, **fields):
+        if on_event is not None:
+            on_event(event, dict(point), **fields)
+
+    def evaluate_point(point):
+        key = tuple(point[path] for path in choices)
+        if key not in cache:
+            emit("candidate_start", point)
+            value = score(dict(point))
+            cache[key] = value if isfinite(value) else float("-inf")
+            emit("candidate_result", point, score=cache[key])
+        return cache[key]
+
+    def neighbors(path, center, direction):
+        values = choices[path]
+        seen = {center}
+        if values is None:
+            mult = factors[path]
+
+            def grid_lr(index):
+                return round_hparam(1.0 * mult**index)
+
+            index = lr_grid_index(center, mult)
+        for distance in range(1, max_side_steps + 1):
+            if values is None:
+                value = grid_lr(index - direction * distance)
+                if not isfinite(value) or value <= 0:
+                    break
+            else:
+                # An explicit start (e.g. momentum=0.85) need not be in the choices.
+                if isinstance(center, str):
+                    index = values.index(center) + direction * distance
+                else:
+                    index = (
+                        bisect_left(values, center) - distance
+                        if direction < 0
+                        else bisect_right(values, center) + distance - 1
+                    )
+                if not 0 <= index < len(values):
+                    break
+                value = values[index]
+            if value not in seen:
+                seen.add(value)
+                yield value
+
+    current = dict(initial)
+    for path, values in choices.items():
+        if values is None:
+            current[path] = snap_lr_to_grid(current[path], factors[path])
+    current_score = evaluate_point(current)
+    emit("search_path", current, score=current_score, reason="initial")
+    while True:
+        changed = False
+        for path in choices:
+            is_lr = path.endswith(".initial_lr")
+            if initial_lr_search and is_lr:
+                probes = [(dict(current), current_score)]
+                best_score = current_score
+                for direction in (1, -1):
+                    for value in neighbors(path, current[path], direction):
+                        candidate = dict(current, **{path: value})
+                        candidate_score = evaluate_point(candidate)
+                        probes.append((candidate, candidate_score))
+                        if (
+                            not isfinite(candidate_score)
+                            or candidate_score < best_score - dropoff_margin
+                        ):
+                            break
+                        best_score = max(best_score, candidate_score)
+                acceptable = [
+                    (point, value)
+                    for point, value in probes
+                    if isfinite(value) and value >= best_score - dropoff_margin
+                ]
+                if acceptable:
+                    previous = current
+                    current, current_score = max(
+                        acceptable, key=lambda item: item[0][path]
+                    )
+                    if current != previous:
+                        emit(
+                            "search_path",
+                            current,
+                            score=current_score,
+                            parameter=path,
+                            reason="largest_lr_within_margin",
+                        )
+                continue
+
+            # Smaller values first; stop a direction once it gets worse.
+            for direction in (-1, 1):
+                best, best_score = current, current_score
+                flat_steps = 0
+                for value in neighbors(path, current[path], direction):
+                    candidate = dict(current, **{path: value})
+                    candidate_score = evaluate_point(candidate)
+                    if not isfinite(candidate_score) or candidate_score < best_score:
+                        break
+                    if candidate_score > best_score:
+                        best, best_score, flat_steps = candidate, candidate_score, 0
+                    else:
+                        flat_steps += 1
+                        if is_lr and direction < 0 and flat_steps >= 3:
+                            break
+                if best_score > current_score:
+                    current, current_score = best, best_score
+                    emit(
+                        "search_path",
+                        current,
+                        score=current_score,
+                        parameter=path,
+                        reason="improved",
+                    )
+                    changed = True
+                    break
+        if initial_lr_search or not changed:
+            return current, current_score
+
+
+def run_interval_search(run, model, config, debug):
+    """Choose each committed interval using replayed main/cooldown training probes.
+
+    seconds includes setup, training probes, evaluation, checkpoint copies and logging.
+    Search logs distinguish lookahead scores from committed scores.
+    """
+    run_start = time.perf_counter()
+    config = normalize_config(config, key=None)
+    tuning = config["hparam_tuning"]
+    validate_tuning_config(tuning)
+    if tuning["algorithm"] not in ("interval", "global_neighbour"):
+        raise ValueError(f"Unknown interval algorithm: {tuning['algorithm']!r}")
+    global_search = tuning["algorithm"] == "global_neighbour"
+    choices, current = interval_search_space(config)
+    factors = {
+        path: spec["mult"]
+        for path, spec in tuning_params(config).items()
+        if "mult" in spec
+    }
+    interval_steps = None if global_search else tuning["interval_steps"]
+    cooldown_steps = 0 if global_search else tuning["cooldown_steps"]
+    max_side_steps = tuning["max_side_steps"]
+    margin = None if global_search else tuning["initial_dropoff_margin"]
+    metric = tuning["metric"]
+    counts = [
+        ("max_side_steps", max_side_steps, 1),
+        ("num_epochs", config["num_epochs"], 1),
+    ]
+    if not global_search:
+        counts += [
+            ("interval_steps", interval_steps, 1),
+            ("cooldown_steps", cooldown_steps, 0),
+        ]
+    for name, value, minimum in counts:
+        if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+            raise ValueError(f"{name} must be an integer >= {minimum}")
+    if not global_search and (not isfinite(margin) or margin < 0):
+        raise ValueError("initial_dropoff_margin must be nonnegative and finite")
+    if metric is not None and metric not in ("val_acc", "tta_val_acc"):
+        raise ValueError(f"Unknown tuning metric: {metric!r}")
+    set_training_seed()
+    test_loader = CifarLoader(
+        "cifar10", train=False, batch_size=2000, aug=dict(flip=False, translate=0)
+    )
+    train_loader = CifarLoader(
+        "cifar10",
+        train=True,
+        batch_size=config["batch_size"],
+        aug=dict(flip=True, translate=2),
+    )
+    if len(train_loader) == 0:
+        raise ValueError("batch_size must not exceed the training dataset size")
+    steps_per_epoch = 1 if config["overfit"] else len(train_loader)
+    total_steps = config["num_epochs"] * steps_per_epoch
+    if global_search:
+        interval_steps = total_steps
+    # Log effective settings, including the single full-run interval in global mode.
+    tuning.update(
+        interval_steps=interval_steps,
+        cooldown_steps=cooldown_steps,
+        max_side_steps=max_side_steps,
+        metric=metric,
+    )
+    log_config(run, config, label="base_config")
+    base_schedules = configured_hparam_schedules(config["param_groups"], total_steps)
+    optimizer = make_optimizer(model, config["param_groups"])
+    model.reset()
+    fixed_batch = next(iter(train_loader)) if config["overfit"] else None
+    model.init_whiten(
+        fixed_batch[0]
+        if fixed_batch is not None
+        else train_loader.normalized_images()[:5000],
+        eps=0.0005,
+    )
+    stream = TrainingBatchStream(train_loader, fixed_batch)
+    device = next(model.parameters()).device
+    completed = 0
+    history = []
+    cooldown_values = {}
+    recorder = SpectrumRecorder(run, model, debug_kfac_factors) if debug else None
+
+    def snapshot():
+        return dict(
+            model=copy.deepcopy(model.state_dict()),
+            optimizer=copy.deepcopy(optimizer.state_dict()),
+            stream=stream.state_dict(),
+            rng=torch.random.get_rng_state(),
+            cuda_rng=torch.cuda.get_rng_state_all() if device.type == "cuda" else None,
+        )
+
+    def restore(state):
+        model.load_state_dict(state["model"])
+        # load_state_dict may reuse momentum tensors: each trial needs its own copy
+        # so optimizer.step() cannot mutate the saved main/cooldown checkpoint.
+        optimizer.load_state_dict(copy.deepcopy(state["optimizer"]))
+        optimizer.zero_grad(set_to_none=True)
+        stream.load_state_dict(state["stream"])
+        torch.random.set_rng_state(state["rng"])
+        if state["cuda_rng"] is not None:
+            torch.cuda.set_rng_state_all(state["cuda_rng"])
+
+    def train_segment(values, steps, start_step, commit):
+        nonlocal completed
+        schedules = segment_hparam_schedules(
+            base_schedules, values, start_step, steps, global_search=global_search
+        )
+        valid = True
+        model.train()
+        for local_step in range(steps):
+            apply_hparam_schedules(optimizer, schedules, start_step + local_step)
+            inputs, labels = stream.next_batch()
+            if commit and recorder is not None:
+                recorder.before_step()
+            outputs = model(inputs)
+            loss = F.cross_entropy(
+                outputs, labels, label_smoothing=0.2, reduction="mean"
+            )
+            if not isfinite(loss.item()):
+                valid = False
+                break
+            optimizer.prepare_kfac(outputs)
+            loss.backward()
+            optimizer.step()
+            if commit and recorder is not None:
+                recorder.after_step(start_step + local_step, optimizer)
+            optimizer.zero_grad(set_to_none=True)
+            if commit:
+                completed += 1
+        return valid
+
+    def score():
+        return evaluate(
+            model, test_loader, tta_level=2 if metric == "tta_val_acc" else 0
+        )
+
+    def search(values, space, evaluate_point, phase, initial, main_values, cooldown):
+        log_event("search", run=run, interval=len(history), phase=phase, metric=metric)
+        if main_values is not None:
+            print(f"main hparams: {hparam_text(main_values)}", flush=True)
+        if cooldown is not None:
+            print(f"cooldown hparams: {hparam_text(cooldown)}", flush=True)
+        search_path = []
+
+        def on_event(event, point, **fields):
+            if event == "candidate_result":
+                value = format_log_value(fields["score"])
+                if phase == "cooldown":
+                    print(f"{hparam_text(point)} -> {metric}={value}", flush=True)
+                else:
+                    score_name = "main" if cooldown is None else "best_cooldown"
+                    print(
+                        f"main hparams: {hparam_text(point)} {score_name}={value}",
+                        flush=True,
+                    )
+            elif event == "search_path":
+                search_path.append((point, fields["score"]))
+
+        best, best_score = directional_search(
+            values,
+            space,
+            evaluate_point,
+            initial_lr_search=initial,
+            factors=factors,
+            max_side_steps=max_side_steps,
+            dropoff_margin=margin,
+            on_event=on_event,
+        )
+        for step, (point, value) in enumerate(search_path):
+            print(
+                f"search_path step={step} {hparam_text(point)} "
+                f"{metric}={format_log_value(value)}",
+                flush=True,
+            )
+        return best, best_score
+
+    while completed < total_steps:
+        start_step = completed
+        main_steps = min(interval_steps, total_steps - completed)
+        lookahead_steps = min(cooldown_steps, total_steps - completed - main_steps)
+        start_state = snapshot()
+
+        def main_score(values, cooldown):
+            restore(start_state)
+            if not train_segment(values, main_steps, start_step, commit=False):
+                return float("-inf")
+            if cooldown is not None and lookahead_steps:
+                if not train_segment(
+                    dict(values, **cooldown),
+                    lookahead_steps,
+                    start_step + main_steps,
+                    commit=False,
+                ):
+                    return float("-inf")
+            return score()
+
+        if start_step == 0 or not lookahead_steps:
+            current, selected_score = search(
+                current,
+                choices,
+                lambda values: main_score(values, None),
+                initial=start_step == 0 and not global_search,
+                phase="main",
+                main_values=None,
+                cooldown=None,
+            )
+        else:
+            current, selected_score = search(
+                current,
+                {},
+                lambda values: main_score(values, None),
+                phase="baseline",
+                initial=False,
+                main_values=None,
+                cooldown=None,
+            )
+        selected_cooldown = None
+        while lookahead_steps:
+            restore(start_state)
+            if not train_segment(current, main_steps, start_step, commit=False):
+                break
+            cooldown_start = snapshot()
+            cooldown_choices = {
+                path: values
+                for path, values in choices.items()
+                if path.endswith(".initial_lr")
+            }
+            seed = {
+                path: cooldown_values.get(path, current[path])
+                for path in cooldown_choices
+            }
+
+            def cooldown_score(values):
+                restore(cooldown_start)
+                if not train_segment(
+                    dict(current, **values),
+                    lookahead_steps,
+                    start_step + main_steps,
+                    commit=False,
+                ):
+                    return float("-inf")
+                return score()
+
+            candidate_cooldown, candidate_score = search(
+                seed,
+                cooldown_choices,
+                cooldown_score,
+                phase="cooldown",
+                main_values=current,
+                initial=False,
+                cooldown=None,
+            )
+            if candidate_score <= selected_score:
+                break
+            cooldown_values = selected_cooldown = candidate_cooldown
+            selected_score = candidate_score
+            candidate, candidate_score = search(
+                current,
+                choices,
+                lambda values: main_score(values, selected_cooldown),
+                cooldown=selected_cooldown,
+                phase="main",
+                initial=False,
+                main_values=None,
+            )
+            if candidate_score <= selected_score:
+                break
+            current, selected_score = candidate, candidate_score
+
+        if not isfinite(selected_score):
+            raise RuntimeError(
+                f"No finite candidate found at training step {start_step}"
+            )
+        log_event(
+            "train_hparams",
+            run=run,
+            interval=len(history),
+            start_step=start_step,
+            completed_steps=main_steps,
+            total_steps=total_steps,
+            **current,
+        )
+        selected_schedules = segment_hparam_schedules(
+            base_schedules, current, start_step, main_steps, global_search=global_search
+        )
+        log_event("train_schedules", run=run, interval=len(history))
+        for path, lines in selected_schedules.items():
+            print(f"  {path}: {json.dumps(lines)}", flush=True)
+        restore(start_state)
+        if not train_segment(current, main_steps, start_step, commit=True):
+            raise RuntimeError(
+                f"Selected training interval diverged at step {start_step}"
+            )
+        committed_score = score()
+        log_event(
+            "interval_boundary_eval",
+            run=run,
+            interval=len(history),
+            step=completed,
+            total_steps=total_steps,
+            **{metric: committed_score},
+        )
+        history.append(
+            dict(
+                start_step=start_step,
+                steps=main_steps,
+                main_hparams=dict(current),
+                cooldown_hparams=selected_cooldown,
+                cooldown_steps=lookahead_steps,
+                score=selected_score,
+                hparam_schedules=selected_schedules,
+            )
+        )
+        base_schedules = selected_schedules
+
+    val_acc = evaluate(model, test_loader, tta_level=0)
+    tta_val_acc = evaluate(model, test_loader, tta_level=2)
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    seconds = time.perf_counter() - run_start
+    log_final_eval(val_acc, tta_val_acc, seconds)
+    if recorder is not None:
+        recorder.finish()
+    return dict(
+        val_acc=val_acc,
+        tta_val_acc=tta_val_acc,
+        seconds=seconds,
+        batch_size=config["batch_size"],
+        num_epochs=config["num_epochs"],
+        overfit=config["overfit"],
+        intervals=history,
+        hparam_schedules=base_schedules,
+        **{f"{group['name']}_lr": group["lr"] for group in optimizer.param_groups},
+    )
+
+
+def run_experiment(run, model, config):
+    """Run one config or a search; return its best config, result, and trials.
+
+    With the module-level debug switch, the final run records its spectra.
+    """
+    config = normalize_config(config, key=None)
+    require_fields(
+        config,
+        {"batch_size", "num_epochs", "overfit", "param_groups", "hparam_tuning"},
+        "run config",
+    )
+    for group in config["param_groups"].values():
+        GroupOptimizer.validate_group(group, runtime=False)
+    tuning = config["hparam_tuning"]
+    if tuning is not None:
+        validate_tuning_config(tuning)
+    if tuning is not None and tuning["algorithm"] in ("interval", "global_neighbour"):
+        result = run_interval_search(run, model, config, debug=debug)
+        return dict(
+            best_config=config,
+            best_result=result,
+            trials=[dict(run=run, config=config, result=result)],
+        )
+    trials = []
+    cache = {}
+    metric = None if tuning is None else tuning["metric"]
+    if metric is not None and metric not in ("val_acc", "tta_val_acc"):
+        raise ValueError(f"Unknown tuning metric: {metric!r}")
+
+    def evaluate_config(candidate):
+        key = json.dumps(candidate, sort_keys=True)
+        if key not in cache:
+            trial_run = run if tuning is None else f"{run}.{len(trials)}"
+            if tuning is not None:
+                log_config_diff(trial_run, run, config, candidate)
+            result = main(
+                trial_run,
+                model,
+                **candidate,
+                _log_config=tuning is None,
+                debug=debug and tuning is None,
+            )
+            if metric is not None and not isfinite(result[metric]):
+                raise ValueError(f"Run {trial_run}: {metric} must be finite")
+            trial = dict(run=trial_run, config=candidate, result=result)
+            trials.append(trial)
+            cache[key] = trial
+        return cache[key]
+
+    if tuning is None:
+        best = evaluate_config(config)
+    else:
+        algorithm = tuning["algorithm"]
+        if algorithm not in ("grid", "coordinate"):
+            raise ValueError(f"Unknown tuning algorithm: {algorithm!r}")
+        require_fields(tuning, {"algorithm", "metric", "params"}, "hparam_tuning")
+        parameters = tuning_params(config)
+        choices = {}
+        for path, spec in parameters.items():
+            values = spec["choices"]
+            if not isinstance(values, (list, tuple)) or not values:
+                raise ValueError(f"{path}: choices must be a nonempty list")
+            # Values that coincide after rounding represent the same candidate.
+            choices[path] = list(dict.fromkeys(values))
+
+        log_config(run, config, label="base_config")
+        if algorithm == "grid":
+            best = None
+            for values in product(*choices.values()):
+                candidate = config
+                for path, value in zip(choices, values):
+                    candidate = with_hparam(candidate, path, value)
+                trial = evaluate_config(candidate)
+                if best is None or trial["result"][metric] > best["result"][metric]:
+                    best = trial
+        else:
+            # Start inside the search space, preferring the configured values.
+            current = config
+            for path, values in choices.items():
+                spec = parameters[path]
+                value = spec["initial"]
+                current = with_hparam(current, path, value)
+            best = evaluate_config(current)
+            locked = set()
+            while len(locked) < len(choices):
+                for path, values in choices.items():
+                    if path in locked:
+                        continue
+                    previous_value = get_hparam(best["config"], path)
+                    candidate_best = best
+                    for value in values:
+                        candidate = with_hparam(best["config"], path, value)
+                        trial = evaluate_config(candidate)
+                        # Keeping the incumbent on ties prevents cycling.
+                        if trial["result"][metric] > candidate_best["result"][metric]:
+                            candidate_best = trial
+                    best = candidate_best
+                    if get_hparam(best["config"], path) != previous_value:
+                        locked.clear()
+                    locked.add(path)
+
+        log_event(
+            "search_best",
+            run=run,
+            trial=best["run"],
+            **{metric: best["result"][metric]},
+        )
+        log_changes("changes", flatten_config(config), flatten_config(best["config"]))
+        if debug:
+            # Search trials are not recorded; replay the selected config as the final run.
+            log_event("debug_final_run", run=run, trial=best["run"])
+            main(f"{run}.final", model, **best["config"], _log_config=False, debug=True)
+
+    return dict(best_config=best["config"], best_result=best["result"], trials=trials)
+
+
+def main(
+    run,
+    model,
+    batch_size,
+    param_groups,
+    num_epochs,
+    overfit,
+    hparam_tuning,
+    _log_config,
+    debug,
+):
+    run_start = time.perf_counter()
+    config = normalize_config(
+        dict(
+            batch_size=batch_size,
+            num_epochs=num_epochs,
+            overfit=overfit,
+            param_groups=param_groups,
+            hparam_tuning=hparam_tuning,
+        ),
+        key=None,
+    )
+    batch_size = config["batch_size"]
+    num_epochs = config["num_epochs"]
+    param_groups = config["param_groups"]
+    if not isinstance(num_epochs, int) or num_epochs <= 0:
+        raise ValueError("num_epochs must be a positive integer")
+    if _log_config:
+        log_config(run, config, label="config")
+    set_training_seed()
+
+    test_loader = CifarLoader(
+        "cifar10", train=False, batch_size=2000, aug=dict(flip=False, translate=0)
+    )
+    train_loader = CifarLoader(
+        "cifar10", train=True, batch_size=batch_size, aug=dict(flip=True, translate=2)
+    )
+    steps_per_epoch = 1 if overfit else len(train_loader)
+    total_train_steps = num_epochs * steps_per_epoch
+    schedules = configured_hparam_schedules(param_groups, total_train_steps)
+    initial_lrs = {
+        name: hparam_at_step(config["lr_scheduler"], 0)
+        for name, config in param_groups.items()
+    }
+
+    optimizer = make_optimizer(model, param_groups)
+
+    model.reset()
+    step = 0
+    recorder = SpectrumRecorder(run, model, debug_kfac_factors) if debug else None
+
+    # Initialize the whitening layer using training images
+    if overfit:
+        # Cache the first augmented batch once and reuse exactly these tensors.
+        train_batches = (next(iter(train_loader)),)
+        train_images = train_batches[0][0]
+    else:
+        train_batches = train_loader
+        train_images = train_loader.normalized_images()[:5000]
+    model.init_whiten(train_images, eps=0.0005)
+
+    device = next(model.parameters()).device
+    for epoch in range(num_epochs):
+        ####################
+        #     Training     #
+        ####################
+
+        model.train()
+        for inputs, labels in train_batches:
+            if recorder is not None:
+                recorder.before_step()
+            outputs = model(inputs)
+            loss = F.cross_entropy(
+                outputs, labels, label_smoothing=0.2, reduction="mean"
+            )
+            optimizer.prepare_kfac(outputs)
+            loss.backward()
+            apply_hparam_schedules(optimizer, schedules, step)
+            optimizer.step()
+            if recorder is not None:
+                recorder.after_step(step, optimizer)
+            optimizer.zero_grad(set_to_none=True)
+            step += 1
+            if step >= total_train_steps:
+                break
+
+        ####################
+        #    Evaluation    #
+        ####################
+
+        val_acc = evaluate(model, test_loader, tta_level=0)
+
+    ####################
+    #  TTA Evaluation  #
+    ####################
+
+    tta_val_acc = evaluate(model, test_loader, tta_level=2)
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    seconds = time.perf_counter() - run_start
+    log_final_eval(val_acc, tta_val_acc, seconds)
+    if recorder is not None:
+        recorder.finish()
+
+    return dict(
+        val_acc=val_acc,
+        tta_val_acc=tta_val_acc,
+        seconds=seconds,
+        batch_size=batch_size,
+        num_epochs=num_epochs,
+        overfit=overfit,
+        **{f"{name}_lr": lr for name, lr in initial_lrs.items()},
+    )
+
+
+if __name__ == "__main__":
+    # Reuse the same model and compiled graphs across all candidates.
+    set_training_seed()
+    model = CifarNet().cuda().to(memory_format=torch.channels_last)
+    if USE_COMPILED_MODEL:
+        compile_and_warmup_model(model, [config for _, config in RUNS])
+    for name, config in RUNS:
+        results = []
+        for seed in SEEDS:
+            TRAINING_SEED = seed  # Read by set_training_seed() at the start of each run.
+            results.append(run_experiment(f"{name}_seed{seed}", model, config)["best_result"])
+        log_seed_summary(name, SEEDS, results)
+
+
+# Run output
+
+config run=exp18_kfac-jacobian_conv_head_seed0
+{
+  "batch_size": 2000,
+  "num_epochs": 8,
+  "overfit": false,
+  "param_groups": {
+    "whiten_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "nesterov": true},
+    "norm_weight": {"algorithm": "sgd", "lr_scheduler": [[200, 0.0]], "momentum": 0.85, "nesterov": true},
+    "whiten_bias": {"algorithm": "sgd", "lr_scheduler": [[75, 36, 0.0], [125, 0.0]], "momentum": 0.8, "nesterov": true},
+    "norm_bias": {"algorithm": "sgd", "lr_scheduler": [[200, 99, 0.0]], "momentum": 0.8, "nesterov": true},
+    "head": {"algorithm": "kfac-jacobian", "nesterov": true, "kfac_factor_momentum": 0.0, "kfac_probes": 1, "lr_scheduler": [[200, 0.13, 0.0]], "momentum": 0.8, "kfac_damping": 0.0, "kfac_input_damping": 0.01, "gradient_momentum_before_conditioning": false, "kfac_matrix_normalization": false},
+    "conv": {"algorithm": "kfac-jacobian", "nesterov": true, "kfac_factor_momentum": 0.0, "kfac_probes": 1, "lr_scheduler": [[200, 0.15, 0.0]], "momentum": 0.7, "kfac_damping": 1.0, "kfac_input_damping": 3.0, "gradient_momentum_before_conditioning": true, "kfac_matrix_normalization": true}
+  },
+  "hparam_tuning": null
+}
+val_acc=0.9270 tta_val_acc=0.9363 seconds=69.0110
+debug_spectra run=exp18_kfac-jacobian_conv_head_seed0 steps=200 data=untracked_logs/cifar_baseline_20261005_191302_521434Z_20675.log/cifar_spectra_20261005_191414_326564Z_20675_exp18_kfac-jacobian_conv_head_seed0.npz video=untracked_logs/cifar_baseline_20261005_191302_521434Z_20675.log/cifar_spectra_20261005_191414_326564Z_20675_exp18_kfac-jacobian_conv_head_seed0.mp4
+seed_summary run=exp18_kfac-jacobian_conv_head seeds=[0] val_acc_mean=0.927 val_acc_std=0 tta_val_acc_mean=0.9363 tta_val_acc_std=0

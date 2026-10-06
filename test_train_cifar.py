@@ -6,6 +6,7 @@ import unittest
 import ast
 import inspect
 from itertools import product
+from math import log
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -432,6 +433,7 @@ class SearchTests(unittest.TestCase):
             "lion": {},
             "adam": dict(beta2=0.999, eps=1e-8),
             "muon2": {},
+            "muon_head": {},
             "sgdh": dict(normalization_eps=1e-6),
             "input_conditioned": dict(
                 svd_mean_percentage_damping=0.01,
@@ -782,6 +784,32 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(best, {"a.initial_lr": 3, "b.momentum": 3})
         self.assertEqual(value, 4)
         self.assertEqual(len(calls), len(set(calls)))
+
+    def test_multiplicative_damping_search_is_unbounded(self):
+        config = copy.deepcopy(train.RUN_CONFIGS["exp19_kfac-jacobian_conv_head_conv_search"])
+        choices, initial = train.interval_search_space(config)
+        self.assertIsNone(choices["conv.kfac_input_damping"])
+        self.assertIsNone(choices["conv.kfac_damping"])
+        self.assertEqual(initial["conv.kfac_input_damping"], 2.8)  # 3 snaps to 0.6**-2.
+        self.assertEqual(initial["conv.kfac_damping"], 1.0)
+        # Damping keeps falling far below any explicit grid while the score improves.
+        best, _ = train.directional_search(
+            {"conv.kfac_damping": 1.0},
+            {"conv.kfac_damping": None},
+            lambda point: -abs(log(point["conv.kfac_damping"] / 1e-6)),
+            initial_lr_search=False,
+            factors={"conv.kfac_damping": 0.6},
+            max_side_steps=40,
+            dropoff_margin=0.02,
+            on_event=None,
+        )
+        self.assertEqual(best["conv.kfac_damping"], train.round_hparam(0.6 ** 27))  # ~1e-6
+        for field, value in (("kfac_damping", 0), ("momentum", 0.6)):
+            config["hparam_tuning"]["params"] = {
+                f"conv.{field}": dict(initial=value, choices=None, mult=0.6)
+            }
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                train.interval_search_space(config)
 
     def test_initial_search_chooses_largest_lr_within_margin(self):
         scores = {0.5: 0.81, 1: 0.8, 2: 0.805, 4: 0.6}
@@ -1751,71 +1779,72 @@ class SearchTests(unittest.TestCase):
                 )
 
     def test_muon2_weight_normalization_and_momentum(self):
-        for shape in ((3, 2), (3, 2, 2, 2)):
-            for nesterov in (False, True):
-                with self.subTest(shape=shape, nesterov=nesterov):
-                    parameter = torch.nn.Parameter(torch.randn(shape))
-                    optimizer = train.GroupOptimizer(
-                        [
-                            dict(
-                                name="test",
-                                params=[parameter],
-                                algorithm="muon2",
-                                lr=0.1,
-                                momentum=0.6,
-                                nesterov=nesterov,
-                            )
-                        ]
+        # muon_head is Muon2 without the weight normalization.
+        for algorithm, shape, nesterov in product(
+            ("muon2", "muon_head"), ((3, 2), (3, 2, 2, 2)), (False, True)
+        ):
+            with self.subTest(algorithm=algorithm, shape=shape, nesterov=nesterov):
+                parameter = torch.nn.Parameter(torch.randn(shape))
+                optimizer = train.GroupOptimizer(
+                    [
+                        dict(
+                            name="test",
+                            params=[parameter],
+                            algorithm=algorithm,
+                            lr=0.1,
+                            momentum=0.6,
+                            nesterov=nesterov,
+                        )
+                    ]
+                )
+                buffer = torch.zeros_like(parameter)
+                for step, momentum in enumerate((0.6, 0.0, 0.6), 1):
+                    gradient = torch.randn_like(parameter)
+                    parameter.grad = gradient.clone()
+                    optimizer.param_groups[0]["momentum"] = momentum
+                    buffer = momentum * buffer + (1 - momentum) * gradient
+                    corrected = buffer / (1 - momentum ** step)
+                    direction = (
+                        (1 - momentum) * gradient + momentum * corrected
+                        if nesterov
+                        else corrected
                     )
-                    buffer = torch.zeros_like(parameter)
-                    for step, momentum in enumerate((0.6, 0.0, 0.6), 1):
-                        gradient = torch.randn_like(parameter)
-                        parameter.grad = gradient.clone()
-                        optimizer.param_groups[0]["momentum"] = momentum
-                        buffer = momentum * buffer + (1 - momentum) * gradient
-                        corrected = buffer / (1 - momentum ** step)
-                        direction = (
-                            (1 - momentum) * gradient + momentum * corrected
-                            if nesterov
-                            else corrected
-                        )
-                        before = parameter.detach().clone()
-                        with patch.object(
-                            train,
-                            "zeropower_via_newtonschulz5_muon2",
-                            side_effect=lambda g: g,
-                        ) as transform:
-                            optimizer.step()
-                        torch.testing.assert_close(
-                            transform.call_args.args[0],
-                            direction.reshape(shape[0], -1),
-                        )
-                        torch.testing.assert_close(
-                            parameter,
-                            before * (shape[0] ** 0.5 / before.norm())
-                            - 0.1 * direction,
-                        )
-                        torch.testing.assert_close(
-                            optimizer.state[parameter]["momentum_buffer"], buffer
-                        )
-                        torch.testing.assert_close(parameter.grad, gradient)
-                    optimizer.param_groups[0]["lr"] = 0
                     before = parameter.detach().clone()
-                    optimizer.step()
-                    torch.testing.assert_close(parameter, before, atol=0, rtol=0)
-        with self.assertRaisesRegex(ValueError, "at least 2 dimensions"):
-            train.GroupOptimizer(
-                [
-                    dict(
-                        name="test",
-                        params=[torch.nn.Parameter(torch.ones(2))],
-                        algorithm="muon2",
-                        lr=0.1,
-                        momentum=0.6,
-                        nesterov=False,
+                    with patch.object(
+                        train,
+                        "zeropower_via_newtonschulz5_muon2",
+                        side_effect=lambda g: g,
+                    ) as transform:
+                        optimizer.step()
+                    torch.testing.assert_close(
+                        transform.call_args.args[0],
+                        direction.reshape(shape[0], -1),
                     )
-                ]
-            )
+                    if algorithm == "muon2":
+                        before = before * (shape[0] ** 0.5 / before.norm())
+                    torch.testing.assert_close(parameter, before - 0.1 * direction)
+                    torch.testing.assert_close(
+                        optimizer.state[parameter]["momentum_buffer"], buffer
+                    )
+                    torch.testing.assert_close(parameter.grad, gradient)
+                optimizer.param_groups[0]["lr"] = 0
+                before = parameter.detach().clone()
+                optimizer.step()
+                torch.testing.assert_close(parameter, before, atol=0, rtol=0)
+        for algorithm in ("muon2", "muon_head"):
+            with self.assertRaisesRegex(ValueError, "at least 2 dimensions"):
+                train.GroupOptimizer(
+                    [
+                        dict(
+                            name="test",
+                            params=[torch.nn.Parameter(torch.ones(2))],
+                            algorithm=algorithm,
+                            lr=0.1,
+                            momentum=0.6,
+                            nesterov=False,
+                        )
+                    ]
+                )
 
     def test_sgdh_normalizes_each_output_channel_after_momentum(self):
         for shape in ((2, 2), (2, 1, 1, 2)):
@@ -2856,7 +2885,7 @@ class KFACTests(unittest.TestCase):
             train.tuning_params(config)
         del config["hparam_tuning"]["params"]["head.momentum"]
         config["hparam_tuning"]["algorithm"] = "interval"
-        with self.assertRaisesRegex(ValueError, "require grid, coordinate, or global_neighbour"):
+        with self.assertRaisesRegex(ValueError, "require grid, coordinate, global_neighbour"):
             train.tuning_params(config)
 
     def test_global_neighbour_applies_shared_values_to_every_training_step(self):
@@ -3291,28 +3320,21 @@ class KFACTests(unittest.TestCase):
             self.optimizer(model, "kfac", kfac_filter_normalization=True)
 
     def test_kfac_experiment_configs(self):
-        for algorithm, prefix in product(train.KFAC_ALGORITHMS, ("all", "tuned")):
-            name = f"{prefix}_{algorithm}"
-            config = train.RUN_CONFIGS[name]
+        for algorithm in train.KFAC_ALGORITHMS:
+            config = train.RUN_CONFIGS[f"all_{algorithm}"]
             for group in config["param_groups"].values():
                 train.GroupOptimizer.validate_group(group, runtime=False)
                 self.assertEqual(group["algorithm"], algorithm)
                 self.assertEqual(group["kfac_factor_momentum"], 0)
                 self.assertNotIn("kfac_filter_normalization", group)
-                self.assertEqual(
-                    group["kfac_matrix_normalization"], prefix == "tuned" and group is config["param_groups"]["conv"]
-                )
+                self.assertFalse(group["kfac_matrix_normalization"])
                 for segment in group["lr_scheduler"]:
                     if len(segment) == 3:
                         self.assertGreaterEqual(segment[1], segment[2])
                 if not train.is_zero_lr_schedule(group["lr_scheduler"]):
                     self.assertGreater(group["lr_scheduler"][0][1], 0)
-            if prefix == "all":
-                train.interval_search_space(config)
-                self.assertNotIn("all.kfac_factor_momentum", config["hparam_tuning"]["params"])
-            else:
-                self.assertIsNone(config["hparam_tuning"])
-                self.assertEqual(config["param_groups"]["whiten_bias"]["lr_scheduler"][-1], (125, 0.0))
+            train.interval_search_space(config)
+            self.assertNotIn("all.kfac_factor_momentum", config["hparam_tuning"]["params"])
         self.assertFalse(hasattr(train.GroupOptimizer, "normalize_filters"))
 
     def test_both_training_paths_with_all_kfac_groups(self):
@@ -3334,6 +3356,112 @@ class KFACTests(unittest.TestCase):
                 self.assertTrue(torch.isfinite(torch.tensor(result["best_result"]["val_acc"])))
                 self.assertEqual(model.training_steps.item(), 2)
                 self.assertTrue(all(torch.isfinite(p).all() for p in model.parameters()))
+
+
+
+class SpeedAndSeededSearchTests(unittest.TestCase):
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA graphs need a GPU")
+    def test_graphed_newton_schulz_is_bitwise_eager(self):
+        graphed = train.CUDAGraphedFunction(train.zeropower_via_newtonschulz5_muon2.function
+                                            if isinstance(train.zeropower_via_newtonschulz5_muon2,
+                                                          train.CUDAGraphedFunction)
+                                            else train.zeropower_via_newtonschulz5_muon2)
+        for shape in ((64, 216), (2304, 256)):
+            for scale in (1.0, 1e3):
+                x = torch.randn(shape, device="cuda") * scale
+                self.assertTrue(torch.equal(graphed(x), graphed.function(x)))
+        self.assertEqual(len(graphed.graphs), 2)
+        # CPU inputs bypass the graphs.
+        x = torch.randn(4, 6)
+        self.assertTrue(torch.equal(graphed(x), graphed.function(x)))
+
+    def test_training_forward_falls_back_to_eager(self):
+        model = TinyModel(dict(time=0, training=0))
+        groups = copy.deepcopy(train.RUN_CONFIGS["baseline_bs2000"]["param_groups"])
+        cpu = torch.device("cpu")
+        self.assertIs(train.training_forward(model, 4, groups, False, cpu), model)
+        cuda = torch.device("cuda")
+        self.assertIs(train.training_forward(model, 4, groups, True, cuda), model)
+        hooked = copy.deepcopy(groups)
+        hooked["head"] = dict(
+            algorithm="input_conditioned", lr_scheduler=[(200, 1.0)], momentum=0.0,
+            nesterov=False, svd_mean_percentage_damping=0.01,
+            input_conditioner_momentum=0.0, gradient_momentum_before_conditioning=False,
+        )
+        self.assertIs(train.training_forward(model, 4, hooked, False, cuda), model)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA graphs need a GPU")
+    def test_graphed_training_is_bitwise_eager(self):
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
+
+        def run(graphed):
+            train.TRAINING_SEED = 0
+            train.set_training_seed()
+            # A fresh loader per run: it caches its random flips on first use.
+            loader = train.CifarLoader("cifar10", train=True, batch_size=125,
+                                       aug=dict(flip=True, translate=2))
+            schedules = train.configured_hparam_schedules(
+                config["param_groups"], 8 * len(loader))
+            model = train.CifarNet().cuda().to(memory_format=torch.channels_last)
+            optimizer = train.make_optimizer(model, config["param_groups"])
+            forward = (train.training_forward(model, 125, config["param_groups"], False,
+                                              torch.device("cuda")) if graphed else model)
+            self.assertEqual(forward is model, not graphed)
+            train.set_training_seed()
+            model.reset()
+            model.init_whiten(loader.normalized_images()[:5000], eps=0.0005)
+            batches = iter(loader)
+            for step in range(5):
+                inputs, labels = next(batches)
+                loss = torch.nn.functional.cross_entropy(
+                    forward(inputs), labels, label_smoothing=0.2, reduction="mean")
+                loss.backward()
+                train.apply_hparam_schedules(optimizer, schedules, step)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+            return [p.detach().clone() for p in model.parameters()]
+
+        for eager, graphed in zip(run(False), run(True)):
+            self.assertTrue(torch.equal(eager, graphed))
+
+    def test_seeded_neighbour_search_scores_the_seed_mean(self):
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs2000"])
+        config["hparam_tuning"] = dict(
+            algorithm="global_neighbour_seeds", metric="tta_val_acc", max_side_steps=20,
+            seeds=[3, 5, 9],
+            params={
+                "conv.initial_lr": dict(initial=0.22, choices=None, mult=0.6),
+                "conv.momentum": dict(initial=0.7, choices=[0.5, 0.6, 0.7, 0.8]),
+            },
+        )
+        calls = []
+
+        def fake_main(run, model, batch_size, param_groups, num_epochs, overfit,
+                      hparam_tuning, _log_config, debug):
+            self.assertIsNone(hparam_tuning)
+            conv = param_groups["conv"]
+            lr, momentum, seed = conv["lr_scheduler"][0][1], conv["momentum"], train.TRAINING_SEED
+            calls.append((lr, momentum, seed))
+            # Best at lr 0.078 and momentum 0.6; seeds only shift the score.
+            score = 0.9 - abs(log(lr / 0.078)) / 100 - abs(momentum - 0.6) / 10 + seed / 1000
+            return dict(val_acc=score - 0.01, tta_val_acc=score)
+
+        train.TRAINING_SEED = 42
+        with patch.object(train, "main", side_effect=fake_main), \
+                patch.object(train, "debug", False), contextlib.redirect_stdout(io.StringIO()):
+            result = train.run_experiment("seeded", None, config)
+        self.assertEqual(train.TRAINING_SEED, 42)
+        conv = result["best_config"]["param_groups"]["conv"]
+        self.assertEqual((conv["lr_scheduler"][0][1], conv["momentum"]), (0.078, 0.6))
+        self.assertAlmostEqual(result["best_result"]["tta_val_acc"], 0.9 + (3 + 5 + 9) / 3000)
+        # Every candidate runs exactly once per seed, in seed order.
+        self.assertEqual(len(calls), 3 * len(result["trials"]))
+        self.assertEqual([seed for _, _, seed in calls], [3, 5, 9] * len(result["trials"]))
+        self.assertEqual(len({(lr, m) for lr, m, _ in calls}), len(result["trials"]))
+        for bad in ([], [1, 1], [True]):
+            config["hparam_tuning"]["seeds"] = bad
+            with self.assertRaises(ValueError), contextlib.redirect_stdout(io.StringIO()):
+                train.run_experiment("seeded", None, config)
 
 
 if __name__ == "__main__":

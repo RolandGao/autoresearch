@@ -28,3 +28,32 @@ Your earlier requests are done. The four conv baselines are in `train_cifar.py`,
 - **`dev/chain.sh` overwritten:** I replaced the existing script without reading it first, and the old version is lost. Nothing referenced it. Separately, two process waits matched my own shell's command line, which cost about 20 minutes of idle GPU. `chain.sh` now matches only real runner processes.
 
 **Interval search (your questions 1 and 2):** the BS 2000 grid is running. It's interval sizes {10, 20, 40, 100} × cooldown sizes {0, 20, 40, 80}, searching conv LR and momentum only, 4 seeds each, compared seed by seed with the 8-seed baseline. That's 64 searches, probably 3–4 hours. Once I see which settings come out significantly below the baseline, I'll choose the cells to run at BS 500 and BS 125. Those searches cost 4× and 16× as much per run.
+
+## BS 2000 baselines, TTA acc over 8 seeds (0-7)
+
+Head baselines (Muon2 conv), dev/h03_baselines_8seeds.out:
+
+| Config | Head optimizer (LR / momentum) | TTA acc (mean ± sd) |
+|---|---|---|
+| `baseline_bs2000_head_input_conditioned` | input-conditioned, 10000 / 0.8 | **94.00** ± 0.11 |
+| `baseline_bs2000_head_lion` | Lion, 0.22 / 0.9 | 93.95 ± 0.15 |
+| `baseline_bs2000_head_sgd` (= root `baseline_bs2000`) | SGD, 1300 / 0.85 | 93.92 ± 0.10 |
+| `baseline_bs2000_head_kfac` | K-FAC, 0.03 / 0.9 | 93.92 ± 0.08 |
+
+Conv baselines (SGD head), dev/c04_conv_baselines_8seeds.out, c07_h_8seeds.out, c10_h3_8seeds.out:
+
+| Config | Conv optimizer (LR / momentum) | TTA acc (mean ± sd) |
+|---|---|---|
+| `baseline_bs2000` (root) | Muon2, 0.22 / 0.7 | **93.92** ± 0.10 |
+| `baseline_bs2000_conv_kfac` | K-FAC, 0.22 / 0.6 | 93.72 ± 0.06 |
+| `baseline_bs2000_conv_adamh2` | AdamH2, 0.078 / 0.8 | 92.30 ± 0.12 |
+| `baseline_bs2000_conv_sgdh` | SGDH, 0.078 / 0.9 | 92.19 ± 0.16 |
+| `baseline_bs2000_conv_adamh3` | AdamH3, 0.078 / 0.8 | 92.19 ± 0.20 |
+| `baseline_bs2000_conv_lionh3` | LionH3, 0.078 / 0.9 | 92.11 ± 0.21 |
+| `baseline_bs2000_conv_lionh2` | LionH2, 0.058 / 0.9 | 92.09 ± 0.15 |
+| `baseline_bs2000_conv_lionh` | LionH, 0.0024 / 0.9 | 92.04 ± 0.19 |
+| `baseline_bs2000_conv_sgdh3` | SGDH3, 0.058 / 0.9 | 92.04 ± 0.19 |
+| `baseline_bs2000_conv_adamh` | AdamH, 0.0042 / 0.7 | 91.55 ± 0.19 |
+| `baseline_bs2000_conv_lion` | Lion, 0.0018 / 0.8 | 91.13 ± 0.25 |
+| `baseline_bs2000_conv_sgd` | SGD, 14 / 0.8 | 90.32 ± 0.15 |
+| `baseline_bs2000_conv_kfac-jacobian` | K-FAC Jacobian, 0.22 / 0.6 (K-FAC hparams, untuned) | 93.85 (seed 0 only; logs/cifar_baseline_20261005_181953_862167Z_7998.log) |

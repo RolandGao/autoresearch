@@ -56,6 +56,14 @@ torch.backends.cudnn.allow_tf32 = USE_TF32
 torch.backends.cuda.matmul.allow_tf32 = USE_TF32
 
 USE_COMPILED_MUON = False
+# Replay Muon2's Newton-Schulz iterations as one CUDA graph per matrix shape. The
+# graph runs the same kernels as eager mode (bitwise-identical results) but
+# removes ~100 kernel launches per matrix, which dominate small-batch steps.
+USE_CUDA_GRAPH_MUON = True
+# Replay the training forward+backward as a CUDA graph (one per model and batch
+# size) when no group needs module hooks (K-FAC, input conditioning) and debug is
+# off. Bitwise-identical to eager mode; removes launch overhead at small batches.
+USE_CUDA_GRAPH_TRAINING = True
 USE_COMPILED_MODEL = False  # Enable only after an end-to-end sweep timing comparison.
 MODEL_COMPILE_MODE = "default"
 MODEL_WARMUP_STEPS = 3
@@ -109,8 +117,44 @@ def zeropower_via_newtonschulz5_muon2(G):
     return X
 
 
+class CUDAGraphedFunction:
+    """Replay a fixed-shape, single-tensor function as cached CUDA graphs.
+
+    One graph per (shape, stride, dtype, device); the input is copied into the
+    graph's static buffer and the output is cloned so callers own it. Inputs on
+    the CPU, or captured while another graph is being captured, run eagerly.
+    """
+
+    def __init__(self, function):
+        self.function = function
+        self.graphs = {}
+
+    def __call__(self, x):
+        if x.device.type != "cuda" or torch.cuda.is_current_stream_capturing():
+            return self.function(x)
+        key = (tuple(x.shape), x.stride(), x.dtype, x.device)
+        if key not in self.graphs:
+            static_input = x.clone()
+            stream = torch.cuda.Stream(x.device)
+            stream.wait_stream(torch.cuda.current_stream(x.device))
+            with torch.cuda.stream(stream):
+                for _ in range(2):  # Warm up cuBLAS workspaces before capture.
+                    self.function(static_input)
+            torch.cuda.current_stream(x.device).wait_stream(stream)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                static_output = self.function(static_input)
+            self.graphs[key] = (graph, static_input, static_output)
+        graph, static_input, static_output = self.graphs[key]
+        static_input.copy_(x)
+        graph.replay()
+        return static_output.clone()
+
+
 if USE_COMPILED_MUON:
     zeropower_via_newtonschulz5_muon2 = torch.compile(zeropower_via_newtonschulz5_muon2)
+elif USE_CUDA_GRAPH_MUON:
+    zeropower_via_newtonschulz5_muon2 = CUDAGraphedFunction(zeropower_via_newtonschulz5_muon2)
 
 
 INPUT_CONDITIONER_FIELDS = {
@@ -126,6 +170,11 @@ KFAC_FIELDS = {
     "kfac_probes",
     "gradient_momentum_before_conditioning",
     "kfac_matrix_normalization",
+}
+# Positive scale hyperparameters that may be searched on an unbounded 0.6**k-style
+# grid (choices=None with mult), like initial_lr.
+MULTIPLICATIVE_SEARCH_FIELDS = {
+    "initial_lr", "kfac_damping", "kfac_input_damping", "svd_mean_percentage_damping",
 }
 BOOLEAN_FIELDS = {"gradient_momentum_before_conditioning", "kfac_matrix_normalization"}
 # -h algorithms normalize each weight's output channels (rows) to unit norm
@@ -151,6 +200,7 @@ ALGORITHM_FIELDS = {
     "adamh2": {"beta2", "eps", "normalization_eps"},
     "adamh3": {"beta2", "eps", "normalization_eps"},
     "muon2": set(),
+    "muon_head": set(),
     "sgdh": {"normalization_eps"},
     "sgdh3": {"normalization_eps"},
     "input_conditioned": INPUT_CONDITIONER_FIELDS,
@@ -226,7 +276,7 @@ class GroupOptimizer(torch.optim.Optimizer):
             if group["momentum"] < 0:
                 raise ValueError(f"{name}: momentum must be nonnegative")
             if group["algorithm"] in (
-                {"muon2"} | WEIGHT_NORMALIZED_ALGORITHMS | MATRIX_NORMALIZED_ALGORITHMS
+                {"muon2", "muon_head"} | WEIGHT_NORMALIZED_ALGORITHMS | MATRIX_NORMALIZED_ALGORITHMS
             ) and any(
                 p.ndim < 2 for p in group["params"]
             ):
@@ -717,8 +767,9 @@ class GroupOptimizer(torch.optim.Optimizer):
                 if group["algorithm"] in MATRIX_NORMALIZED_ALGORITHMS:
                     normalize_matrix_(p, group["normalization_eps"])
                     normalize_matrix_(g, group["normalization_eps"])
-                if group["algorithm"] == "muon2":
-                    p.mul_(len(p) ** 0.5 / p.norm())  # normalize the weight
+                if group["algorithm"] in ("muon2", "muon_head"):
+                    if group["algorithm"] == "muon2":
+                        p.mul_(len(p) ** 0.5 / p.norm())  # normalize the weight
                     matrix = g.reshape(len(g), -1)
                     g = zeropower_via_newtonschulz5_muon2(matrix).view(g.shape)
                 elif kfac:
@@ -1093,6 +1144,11 @@ def log_seed_summary(run, seeds, results):
 DEBUG_LOG_DIR = os.path.join("untracked_logs", os.path.basename(log_path))
 SPECTRUM_LAYERS = ("first_conv", "last_conv", "head")
 SPECTRUM_KINDS = ("weight", "update", "input")
+# K-FAC factors as (name, optimizer state key, damping field).
+SPECTRUM_KFAC_FACTORS = (
+    ("A", "kfac_input_covariance", "kfac_input_damping"),
+    ("G", "kfac_output_covariance", "kfac_damping"),
+)
 SPECTRUM_CHUNK_SIZE = 100  # Images per unfold chunk for input Gram matrices.
 
 
@@ -1141,11 +1197,15 @@ class SpectrumRecorder:
 
     For each layer it records the weight w_t, the update w_{t+1} - w_t (learning
     rate and Muon's weight normalization included) and the input at step t.
+    With kfac_factors, layers whose group uses K-FAC also record the eigenvalues
+    (= singular values) of step t's factors A and G before and after damping,
+    and the damping added to each (fraction * mean eigenvalue; 0 = pseudoinverse).
     """
 
-    def __init__(self, run, model):
+    def __init__(self, run, model, kfac_factors):
         convs = [m for m in model.modules() if isinstance(m, Conv)]
         self.run = run
+        self.kfac_factors = kfac_factors
         self.layers = dict(first_conv=convs[0], last_conv=convs[-1], head=model.head)
         self.values = {
             f"{layer}.{kind}": [] for layer in SPECTRUM_LAYERS for kind in SPECTRUM_KINDS
@@ -1174,9 +1234,11 @@ class SpectrumRecorder:
         self.capturing = True
 
     @torch.no_grad()
-    def after_step(self, step):
+    def after_step(self, step, optimizer):
         """Call right after optimizer.step()."""
         self.capturing = False
+        if self.kfac_factors:
+            self._record_kfac_factors(optimizer)
         for name, module in self.layers.items():
             previous = self.weights[name]
             spectra = dict(
@@ -1189,6 +1251,26 @@ class SpectrumRecorder:
             for kind, values in spectra.items():
                 self.values[f"{name}.{kind}"].append(values.float().cpu().numpy())
         self.steps.append(step)
+
+    def _record_kfac_factors(self, optimizer):
+        groups = {p: group for group in optimizer.param_groups for p in group["params"]}
+        for name, module in self.layers.items():
+            state = optimizer.state.get(module.weight, {})
+            if state.get("kfac_kind") != "weight":
+                continue
+            for factor, state_key, damping_field in SPECTRUM_KFAC_FACTORS:
+                covariance = state[state_key].double()
+                # Matches GroupOptimizer.condition: a fraction of the mean eigenvalue.
+                damping = groups[module.weight][damping_field] * covariance.diagonal().mean()
+                eigenvalues = torch.linalg.eigvalsh(covariance).flip(0)
+                for key, values in (
+                    (factor, eigenvalues),
+                    (f"{factor}_damped", eigenvalues + damping),
+                    (f"{factor}_damping", damping),
+                ):
+                    self.values.setdefault(f"{name}.{key}", []).append(
+                        values.float().cpu().numpy()
+                    )
 
     def finish(self):
         """Save one .npz per run plus a video of the spectra over training."""
@@ -1213,22 +1295,61 @@ class SpectrumRecorder:
 
 
 def render_spectrum_video(run, steps, spectra, path):
-    """Animate sorted singular values per step; the grey curve is the first step."""
+    """Animate sorted singular values per step; the grey curve is the first step.
+
+    K-FAC factor panels, when recorded, show the eigenvalues before (blue) and
+    after (orange) damping, with the damping as a dashed red line.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    # 15 x 11 inches at 80 dpi keeps both frame dimensions even for yuv420p.
+    factors = [
+        factor for factor, _, _ in SPECTRUM_KFAC_FACTORS
+        if any(f"{layer}.{factor}" in spectra for layer in SPECTRUM_LAYERS)
+    ]
+    # 5 x 11/3 inches per panel at 80 dpi keeps both frame dimensions even for yuv420p.
     fig, axes = plt.subplots(
         len(SPECTRUM_LAYERS),
-        len(SPECTRUM_KINDS),
-        figsize=(15, 11),
+        len(SPECTRUM_KINDS) + len(factors),
+        figsize=(5 * (len(SPECTRUM_KINDS) + len(factors)), 11),
         dpi=80,
         squeeze=False,
     )
     lines = {}
     for row, layer in enumerate(SPECTRUM_LAYERS):
+        for col, factor in enumerate(factors, len(SPECTRUM_KINDS)):
+            key = f"{layer}.{factor}"
+            ax = axes[row][col]
+            ax.set_title(key)
+            if key not in spectra:
+                ax.text(0.5, 0.5, "not K-FAC", ha="center", va="center", transform=ax.transAxes)
+                ax.set_axis_off()
+                continue
+            raw, damped = spectra[key], spectra[f"{key}_damped"]
+            damping = spectra[f"{key}_damping"]
+            index = np.arange(1, raw.shape[1] + 1)
+            marker = "." if raw.shape[1] <= 32 else None
+            ax.plot(index, raw[0], color="0.75", lw=1, marker=marker)
+            for name, values, color in ((key, raw, "C0"), (f"{key}_damped", damped, "C1")):
+                lines[name] = ax.plot(
+                    index, values[0], color=color, lw=1.5, marker=marker, animated=True,
+                    label="damped" if color == "C1" else "raw",
+                )[0]
+            lines[f"{key}_damping"] = ax.axhline(
+                damping[0], color="C3", ls="--", lw=1, animated=True, label="damping"
+            )
+            everything = np.concatenate([raw.ravel(), damped.ravel(), damping.ravel()])
+            positive = everything[np.isfinite(everything) & (everything > 0)]
+            if positive.size:
+                top = positive.max()
+                ax.set_yscale("log", nonpositive="mask")
+                ax.set_ylim(max(positive.min(), top * 1e-12) / 1.5, top * 1.5)
+            ax.set_xlabel("index (sorted descending)")
+            ax.set_ylabel("eigenvalue")
+            ax.legend(loc="lower left", fontsize=8)
+            ax.grid(True, alpha=0.3)
         for col, kind in enumerate(SPECTRUM_KINDS):
             key = f"{layer}.{kind}"
             values = spectra[key]
@@ -1270,7 +1391,10 @@ def render_spectrum_video(run, steps, spectra, path):
     for i, step in enumerate(steps):
         canvas.restore_region(background)
         for key, line in lines.items():
-            line.set_ydata(spectra[key][i])
+            if key.endswith("_damping"):
+                line.set_ydata([spectra[key][i]] * 2)
+            else:
+                line.set_ydata(spectra[key][i])
             line.axes.draw_artist(line)
         title.set_text(f"run {run}: step {step} ({i + 1}/{len(steps)})")
         fig.draw_artist(title)
@@ -1603,6 +1727,8 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # Coordinate searches start at initial, even when it is not a listed choice.
 # Multiplicative LR entries must specify mult; grids use round2(mult**k).
 # Multiplicative LR starts snap to k = round(log(initial) / log(mult)).
+# Damping fields (MULTIPLICATIVE_SEARCH_FIELDS) accept the same unbounded
+# choices=None grid; their start must be positive (0 = pseudoinverse is not on it).
 # Explicit choice lists do not take mult. The legacy parameters shorthand is rejected.
 # Interval search holds searched LRs constant within each segment; unsearched
 # groups keep their configured schedules. Explicit lists also work for LR choices.
@@ -1620,7 +1746,9 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # and input_conditioner_momentum (covariance EMA beta; 0 = current batch).
 # Both are required. SGDH requires normalization_eps.
 # Muon2 uses 12 NS steps and Gram normalization with eps=1e-7. The original Muon
-# (algorithm="muon") has been removed and is rejected.
+# (algorithm="muon") has been removed and is rejected. muon_head is Muon2 without
+# the weight normalization: only the NS-orthogonalized update, for layers (like
+# the head) that no BatchNorm follows.
 # Conditioner settings can be searched using explicit choices in hparam_tuning.params.
 # Gradient momentum is always a zero-initialized EMA corrected by 1 - momentum**t
 # (formerly momentum_version=3, now the only option; the field is rejected), with
@@ -1650,7 +1778,11 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # Log per-step singular values of the final (post-search) run of each config to
 # untracked_logs/<log filename>/, with one .npz and one .mp4 per run.
 # Search trials are not logged.
-debug = True
+debug = False
+# With debug, also record and plot the eigenvalues of the K-FAC factors A and G
+# (before and after damping, with the damping as a line) of the first conv, last
+# conv and head, for whichever of them use kfac or kfac-jacobian.
+debug_kfac_factors = True
 
 # Every run config, by name. Select what to run by name in experiments_to_run
 # below, so past runs stay reproducible. New configs should derive from an
@@ -1774,6 +1906,8 @@ BASELINE_BS2000_CONVS = dict(
         gradient_momentum_before_conditioning=True, kfac_matrix_normalization=True,
     ),
 )
+# kfac-jacobian reuses the K-FAC conv hyperparameters untuned.
+BASELINE_BS2000_CONVS["kfac-jacobian"] = dict(BASELINE_BS2000_CONVS["kfac"])
 for algorithm, fields in BASELINE_BS2000_CONVS.items():
     fields = dict(fields)
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -1787,8 +1921,8 @@ for algorithm, fields in BASELINE_BS2000_CONVS.items():
     RUN_CONFIGS[f"baseline_bs2000_conv_{algorithm}"] = config
 
 # Online interval search of conv LR and momentum, with intervals and cooldowns
-# of one fifth of the run. For BS 125 and 500, also try shorter cooldowns
-# (divisor 1, 4) and shorter intervals (divisor 4, 4).
+# of one fifth of the run (20%/20%). Also try a shorter cooldown (20%/5%,
+# divisors 1, 4) and shorter intervals (5%/5%, divisors 4, 4).
 for batch_size in (125, 500, 2000):
     config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
     conv = config["param_groups"]["conv"]
@@ -1808,8 +1942,6 @@ for batch_size in (125, 500, 2000):
         },
     )
     RUN_CONFIGS[f"interval_bs{batch_size}"] = config
-    if batch_size == 2000:
-        continue
     for interval_divisor, cooldown_divisor in ((1, 4), (4, 4)):
         variant = copy.deepcopy(config)
         variant["hparam_tuning"]["interval_steps"] //= interval_divisor
@@ -2039,56 +2171,6 @@ for algorithm in ("kfac", "kfac-jacobian"):
     )
     RUN_CONFIGS[f"all_{algorithm}"] = config
 
-# Retain the tuned K-FAC configurations for later runs. Their active learning
-# rates decay linearly from step zero; whitening bias stops at step 75.
-# Factor EMA is disabled. Convolutions use whole-matrix normalization, so their
-# lr is a relative step (seeds 20-27: kfac-jacobian 93.85%, Muon baseline 93.86%).
-TUNED_KFAC_CONV = dict(
-    conv_lr=0.15, conv_momentum=0.7, input_damping=3.0,
-    conv_output_damping=1.0,
-)
-TUNED_KFAC = {
-    "kfac": dict(head_lr=0.08, bias_lr=0.04, **TUNED_KFAC_CONV),
-    "kfac-jacobian": dict(head_lr=1.3, bias_lr=0.64, **TUNED_KFAC_CONV),
-}
-
-
-def tuned_kfac_config(
-    algorithm, head_lr, bias_lr, conv_lr, conv_momentum,
-    input_damping, conv_output_damping,
-):
-    def group(lr_scheduler, **options):
-        values = dict(
-            algorithm=algorithm, lr_scheduler=lr_scheduler, momentum=0.9,
-            nesterov=True, kfac_damping=0.3,
-            kfac_input_damping=0.3, kfac_factor_momentum=0.0, kfac_probes=1,
-            gradient_momentum_before_conditioning=True, kfac_matrix_normalization=False,
-        )
-        values.update(options)
-        return values
-
-    def linear_decay(lr, steps):
-        return lr_decay_schedule(steps, lr, "linear_decay")
-
-    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
-    config["param_groups"] = dict(
-        whiten_weight=group([(200, 0.0)]),
-        norm_weight=group([(200, 0.0)]),
-        whiten_bias=group(linear_decay(bias_lr, steps=75) + [(125, 0.0)]),
-        norm_bias=group(linear_decay(bias_lr, steps=200)),
-        head=group(linear_decay(head_lr, steps=200)),
-        conv=group(
-            linear_decay(conv_lr, steps=200), momentum=conv_momentum,
-            kfac_damping=conv_output_damping, kfac_input_damping=input_damping,
-            kfac_matrix_normalization=True,
-        ),
-    )
-    return config
-
-
-for algorithm, values in TUNED_KFAC.items():
-    RUN_CONFIGS[f"tuned_{algorithm}"] = tuned_kfac_config(algorithm, **values)
-
 # Jointly tune the learning rates and momenta of every active group over the
 # full run: exp12 for BS 2000 (source of baseline_bs2000), exp14 for BS 125 and
 # 500 with Muon2 convolutions. Scaling initial_lr preserves each schedule,
@@ -2118,17 +2200,204 @@ for batch_size, name in (
 
 # exp13 (Muon vs Muon2 at the BS 2000 baseline) is now baseline_bs2000 itself.
 
+# exp15-17: alternative heads on baseline_bs2000, each tuned by a full-run
+# search of the head alone. Other groups keep their baseline values.
+HEAD_DAMPING_CHOICES = [0, 0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1, 3]
+
+
+def head_search_config(head, params):
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    config["param_groups"]["head"] = dict(
+        lr_scheduler=lr_decay_schedule(200, head.pop("lr"), "linear_decay"),
+        nesterov=True, **head,
+    )
+    config["hparam_tuning"] = dict(
+        algorithm="global_neighbour", metric="tta_val_acc", max_side_steps=20,
+        params={
+            "head.initial_lr": dict(
+                initial=config["param_groups"]["head"]["lr_scheduler"][0][1],
+                choices=None, mult=0.6,
+            ),
+            "head.momentum": dict(
+                initial=config["param_groups"]["head"]["momentum"],
+                choices=list(MOMENTUM_CHOICES),
+            ),
+            **params,
+        },
+    )
+    return config
+
+
+# exp15: Muon head without weight normalization, with the SGD head momentum.
+# The orthogonalized update has Frobenius norm ~sqrt(10) while the initial head
+# weight has ~sqrt(2560), so lr 3.5 gives conv Muon2's relative step of 0.22.
+RUN_CONFIGS["exp15_head_muon_head"] = head_search_config(
+    dict(algorithm="muon_head", lr=3.5, momentum=0.85), {},
+)
+
+# exp16-17: K-FAC Jacobian and K-FAC heads initialized from the input-conditioned
+# head (A damping 0.01, momentum 0.8, conditioning after momentum), with no G
+# damping (pseudoinverse). For K-FAC Jacobian the head's G is I / 256**2 (logits
+# are divided by the width 256), so lr = 10000 / 256**2 ~ 0.15 matches the
+# input-conditioned update size. K-FAC shares every value, including the LR.
+for algorithm, name in (
+    ("kfac-jacobian", "exp16_head_kfac-jacobian"),
+    ("kfac", "exp17_head_kfac_input_conditioned_init"),
+):
+    RUN_CONFIGS[name] = head_search_config(
+        dict(
+            algorithm=algorithm, lr=0.15, momentum=0.8, kfac_damping=0.0,
+            kfac_input_damping=0.01, kfac_factor_momentum=0.0, kfac_probes=1,
+            gradient_momentum_before_conditioning=False,
+            kfac_matrix_normalization=False,
+        ),
+        {
+            "head.kfac_input_damping": dict(
+                initial=0.01, choices=list(HEAD_DAMPING_CHOICES)
+            ),
+        },
+    )
+
+# exp18: K-FAC Jacobian conv and head together, each at its best known values;
+# biases keep the baseline SGD. Conv: baseline_bs2000_conv_kfac-jacobian (TTA
+# 0.9385 on seed 0, logs/cifar_baseline_20261005_181953_862167Z_7998.log).
+# Head: the exp16 search optimum (its starting point, TTA 0.9396 on seed 0,
+# logs/cifar_baseline_20261005_185102_568275Z_15279.log).
+config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000_conv_kfac-jacobian"])
+config["param_groups"]["head"] = dict(
+    algorithm="kfac-jacobian",
+    lr_scheduler=lr_decay_schedule(200, 0.13, "linear_decay"),
+    momentum=0.8, nesterov=True, kfac_damping=0.0, kfac_input_damping=0.01,
+    kfac_factor_momentum=0.0, kfac_probes=1,
+    gradient_momentum_before_conditioning=False, kfac_matrix_normalization=False,
+)
+RUN_CONFIGS["exp18_kfac-jacobian_conv_head"] = config
+
+# exp19: exp18 with a full-run search of the K-FAC Jacobian conv LR, momentum
+# and both dampings (A: kfac_input_damping, G: kfac_damping). Dampings use the
+# unbounded LR grid 0.6**k; A's start 3 snaps to 2.8.
+config = copy.deepcopy(RUN_CONFIGS["exp18_kfac-jacobian_conv_head"])
+conv = config["param_groups"]["conv"]
+config["hparam_tuning"] = dict(
+    algorithm="global_neighbour", metric="tta_val_acc", max_side_steps=20,
+    params={
+        "conv.initial_lr": dict(initial=conv["lr_scheduler"][0][1], choices=None, mult=0.6),
+        "conv.momentum": dict(initial=conv["momentum"], choices=list(MOMENTUM_CHOICES)),
+        "conv.kfac_input_damping": dict(
+            initial=conv["kfac_input_damping"], choices=None, mult=0.6
+        ),
+        "conv.kfac_damping": dict(initial=conv["kfac_damping"], choices=None, mult=0.6),
+    },
+)
+RUN_CONFIGS["exp19_kfac-jacobian_conv_head_conv_search"] = config
+
+# exp20: exp18 with weak K-FAC Jacobian conv damping (0.01 for both A and G),
+# searching only conv LR and momentum from exp19's best (lr 0.22, momentum 0.5),
+# once with momentum before conditioning and once with conditioning first.
+for momentum_first, order in ((True, "momentum_first"), (False, "conditioning_first")):
+    config = copy.deepcopy(RUN_CONFIGS["exp18_kfac-jacobian_conv_head"])
+    conv = config["param_groups"]["conv"]
+    conv.update(
+        momentum=0.5, kfac_damping=0.01, kfac_input_damping=0.01,
+        gradient_momentum_before_conditioning=momentum_first,
+    )
+    config["hparam_tuning"] = dict(
+        algorithm="global_neighbour", metric="tta_val_acc", max_side_steps=20,
+        params={
+            "conv.initial_lr": dict(
+                initial=conv["lr_scheduler"][0][1], choices=None, mult=0.6
+            ),
+            "conv.momentum": dict(initial=conv["momentum"], choices=list(MOMENTUM_CHOICES)),
+        },
+    )
+    RUN_CONFIGS[f"exp20_kfac-jacobian_conv_damping0.01_{order}"] = config
+
+# Seed-averaged full-run searches (global_neighbour_seeds) from each baseline: every
+# candidate trains on SEARCH_SEEDS and scores the mean TTA. They search the LR
+# (x0.6 grid) and momentum of conv, head, norm_bias and whiten_bias.
+#   seeds8_bs{BS}: baseline optimizers (Muon2 conv, SGD head and biases).
+#   seeds8_bs{BS}_lion: Lion head and biases.
+#   seeds1_bs{BS}_adam_coarse: Adam head and biases on seed 0 only, also
+#     searching each Adam group's beta2; seeds8_bs{BS}_adam continues from its
+#     result (ADAM_COARSE_BEST) on SEARCH_SEEDS.
+# Lion starts from the BS 2000 values (head: baseline_bs2000_head_lion; biases:
+# the adaptive-grid optimum), scaled by sqrt(BS / 2000). Adam starts from the same
+# LRs with beta1 0.9, beta2 0.99 and eps 1e-8.
+SEARCH_SEEDS = list(range(8))
+SEARCHED_GROUPS = ("conv", "head", "norm_bias", "whiten_bias")
+ELEMENTWISE_GROUPS = ("head", "norm_bias", "whiten_bias")
+LION_BS2000 = dict(
+    head=dict(lr=0.22, momentum=0.9),
+    norm_bias=dict(lr=0.017, momentum=0.9),
+    whiten_bias=dict(lr=0.047, momentum=0.9),
+)
+BETA2_CHOICES = [0.9, 0.95, 0.98, 0.99, 0.995, 0.999]
+# Filled in from the seeds1_bs{BS}_adam_coarse optima: {BS: {path: value}}.
+ADAM_COARSE_BEST = {}
+
+
+def seeded_search(config, seeds, beta2_groups):
+    groups = config["param_groups"]
+    params = {}
+    for name in SEARCHED_GROUPS:
+        params[f"{name}.initial_lr"] = dict(
+            initial=groups[name]["lr_scheduler"][0][1], choices=None, mult=0.6
+        )
+        params[f"{name}.momentum"] = dict(
+            initial=groups[name]["momentum"], choices=list(MOMENTUM_CHOICES)
+        )
+    for name in beta2_groups:
+        params[f"{name}.beta2"] = dict(initial=groups[name]["beta2"], choices=list(BETA2_CHOICES))
+    config["hparam_tuning"] = dict(
+        algorithm="global_neighbour_seeds", metric="tta_val_acc", max_side_steps=20,
+        seeds=list(seeds), params=params,
+    )
+    return config
+
+
+def elementwise_config(batch_size, algorithm):
+    config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
+    for name in ELEMENTWISE_GROUPS:
+        group = config["param_groups"][name]
+        lr = round_hparam(LION_BS2000[name]["lr"] * (batch_size / 2000) ** 0.5)
+        fields = dict(
+            algorithm=algorithm,
+            lr_scheduler=scale_lr_schedule(group["lr_scheduler"], lr),
+            momentum=LION_BS2000[name]["momentum"],
+            nesterov=algorithm != "adam",  # Adam requires nesterov=False.
+        )
+        if algorithm == "adam":
+            fields.update(beta2=0.99, eps=1e-8)
+        config["param_groups"][name] = fields
+    return config
+
+
+for batch_size in (125, 500, 2000):
+    RUN_CONFIGS[f"seeds8_bs{batch_size}"] = seeded_search(
+        copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"]), SEARCH_SEEDS, ()
+    )
+    RUN_CONFIGS[f"seeds8_bs{batch_size}_lion"] = seeded_search(
+        elementwise_config(batch_size, "lion"), SEARCH_SEEDS, ()
+    )
+    RUN_CONFIGS[f"seeds1_bs{batch_size}_adam_coarse"] = seeded_search(
+        elementwise_config(batch_size, "adam"), [0], ELEMENTWISE_GROUPS
+    )
+    if batch_size in ADAM_COARSE_BEST:
+        config = elementwise_config(batch_size, "adam")
+        for path, value in ADAM_COARSE_BEST[batch_size].items():
+            config = with_hparam(config, path, value)
+        RUN_CONFIGS[f"seeds8_bs{batch_size}_adam"] = seeded_search(
+            config, SEARCH_SEEDS, ELEMENTWISE_GROUPS
+        )
+
 # Runs to execute, in order, by name in RUN_CONFIGS. Each runs once per seed
 # (seeds 0, 1, ..., num_seeds - 1); set num_seeds = 8 for a seed-averaged comparison.
 experiments_to_run = [
-    # Full-run search of conv, head, and norm_bias LR and momentum from each baseline.
-    "global_neighbour_bs2000",
-    "global_neighbour_bs500",
-    "global_neighbour_bs125",
-    # Interval search (20%/20% of the run) of conv LR and momentum only.
-    "interval_bs2000",
-    "interval_bs500",
-    "interval_bs125",
+    # Seed-averaged (8 seeds) full-run searches of the four LRs and momenta, with
+    # SGD, Lion and Adam head/biases; Adam first coarse on one seed.
+    *(f"seeds1_bs{bs}_adam_coarse" for bs in (125, 500, 2000)),
+    *(f"seeds8_bs{bs}{suffix}" for suffix in ("", "_lion") for bs in (125, 500, 2000)),
+    *(f"seeds8_bs{bs}_adam" for bs in (125, 500, 2000) if bs in ADAM_COARSE_BEST),
 ]
 num_seeds = 1
 SEEDS = list(range(num_seeds))
@@ -2261,11 +2530,14 @@ def validate_tuning_config(tuning):
         "coordinate",
         "interval",
         "global_neighbour",
+        "global_neighbour_seeds",
     ):
         raise ValueError("hparam_tuning requires a known algorithm")
     required = {"algorithm", "metric", "params"}
-    if tuning["algorithm"] in ("interval", "global_neighbour"):
+    if tuning["algorithm"] in ("interval", "global_neighbour", "global_neighbour_seeds"):
         required.add("max_side_steps")
+    if tuning["algorithm"] == "global_neighbour_seeds":
+        required.add("seeds")
     if tuning["algorithm"] == "interval":
         required |= {"interval_steps", "cooldown_steps", "initial_dropoff_margin"}
     require_fields(tuning, required, "hparam_tuning")
@@ -2284,8 +2556,13 @@ def tuning_params(config):
     specs = {}
     for path, spec in parameters.items():
         if path.startswith("all."):
-            if tuning["algorithm"] not in ("grid", "coordinate", "global_neighbour"):
-                raise ValueError("Shared all.<field> searches require grid, coordinate, or global_neighbour")
+            if tuning["algorithm"] not in (
+                "grid", "coordinate", "global_neighbour", "global_neighbour_seeds"
+            ):
+                raise ValueError(
+                    "Shared all.<field> searches require grid, coordinate, "
+                    "global_neighbour or global_neighbour_seeds"
+                )
             field = path.split(".", 1)[1]
             if any(f"{name}.{field}" in parameters for name in config["param_groups"]):
                 raise ValueError(f"{path}: cannot also search this field for an individual group")
@@ -2293,11 +2570,7 @@ def tuning_params(config):
         if not isinstance(spec, dict):
             raise ValueError(f"{path}: specify initial and choices explicitly")
         required = {"initial", "choices"}
-        if (
-            path.endswith(".initial_lr")
-            and "choices" in spec
-            and spec["choices"] is None
-        ):
+        if "choices" in spec and spec["choices"] is None:
             required.add("mult")
         require_fields(spec, required, path)
         if "mult" in spec:
@@ -2339,8 +2612,10 @@ def interval_search_space(config):
             else [config["param_groups"][name]]
         )
         if field == "decay":
-            if config["hparam_tuning"]["algorithm"] != "global_neighbour":
-                raise ValueError("decay search requires global_neighbour")
+            if config["hparam_tuning"]["algorithm"] not in (
+                "global_neighbour", "global_neighbour_seeds"
+            ):
+                raise ValueError("decay search requires global_neighbour(_seeds)")
             allowed = ("constant", "linear_decay")
             if (
                 not isinstance(values, list)
@@ -2367,9 +2642,9 @@ def interval_search_space(config):
         ):
             raise ValueError(f"{path}: initial must be a nonnegative finite number")
         if values is None:
-            if field != "initial_lr" or value <= 0:
+            if field not in MULTIPLICATIVE_SEARCH_FIELDS or value <= 0:
                 raise ValueError(
-                    f"{path}: multiplicative search needs a positive initial LR"
+                    f"{path}: multiplicative search needs a positive initial LR or damping"
                 )
             value = snap_lr_to_grid(value, spec["mult"])
         else:
@@ -2608,7 +2883,7 @@ def run_interval_search(run, model, config, debug):
     completed = 0
     history = []
     cooldown_values = {}
-    recorder = SpectrumRecorder(run, model) if debug else None
+    recorder = SpectrumRecorder(run, model, debug_kfac_factors) if debug else None
 
     def snapshot():
         return dict(
@@ -2653,7 +2928,7 @@ def run_interval_search(run, model, config, debug):
             loss.backward()
             optimizer.step()
             if commit and recorder is not None:
-                recorder.after_step(start_step + local_step)
+                recorder.after_step(start_step + local_step, optimizer)
             optimizer.zero_grad(set_to_none=True)
             if commit:
                 completed += 1
@@ -2864,6 +3139,100 @@ def run_interval_search(run, model, config, debug):
     )
 
 
+def run_seeded(run, model, config, seed, debug):
+    """One full training run of config with TRAINING_SEED = seed."""
+    global TRAINING_SEED
+    previous, TRAINING_SEED = TRAINING_SEED, seed
+    try:
+        return main(run, model, **config, _log_config=False, debug=debug)
+    finally:
+        TRAINING_SEED = previous
+
+
+def run_seeded_neighbour_search(run, model, config):
+    """global_neighbour scored by the mean metric of full runs over several seeds.
+
+    Every candidate trains once per seed in hparam_tuning.seeds (the same seeds for
+    all candidates) and scores the mean. Neighbour moves, grids and caching follow
+    directional_search, as in the single-seed global_neighbour search.
+    """
+    tuning = config["hparam_tuning"]
+    seeds = tuning["seeds"]
+    if (
+        not isinstance(seeds, list)
+        or not seeds
+        or any(isinstance(s, bool) or not isinstance(s, int) for s in seeds)
+        or len(set(seeds)) != len(seeds)
+    ):
+        raise ValueError("hparam_tuning.seeds must be a nonempty list of distinct integers")
+    max_side_steps = tuning["max_side_steps"]
+    if isinstance(max_side_steps, bool) or not isinstance(max_side_steps, int) or max_side_steps < 1:
+        raise ValueError("max_side_steps must be an integer >= 1")
+    metric = tuning["metric"]
+    if metric not in ("val_acc", "tta_val_acc"):
+        raise ValueError(f"Unknown tuning metric: {metric!r}")
+    choices, initial = interval_search_space(config)
+    factors = {
+        path: spec["mult"] for path, spec in tuning_params(config).items() if "mult" in spec
+    }
+    base = dict(config, hparam_tuning=None)
+    log_config(run, config, label="base_config")
+    trials = []
+
+    def candidate_config(values):
+        candidate = base
+        for path, value in values.items():
+            candidate = with_hparam(candidate, path, value)
+        return candidate
+
+    def score(values):
+        candidate = candidate_config(values)
+        trial_run = f"{run}.{len(trials)}"
+        results = [
+            run_seeded(f"{trial_run}.seed{seed}", model, candidate, seed, debug=False)
+            for seed in seeds
+        ]
+        mean = {
+            key: sum(r[key] for r in results) / len(results)
+            for key in ("val_acc", "tta_val_acc")
+        }
+        spread = (
+            sum((r[metric] - mean[metric]) ** 2 for r in results) / (len(results) - 1)
+        ) ** 0.5 if len(results) > 1 else 0.0
+        log_event(
+            "seeds_result",
+            run=trial_run,
+            **values,
+            **{f"{metric}_mean": mean[metric], f"{metric}_std": spread},
+            per_seed=[r[metric] for r in results],
+        )
+        trials.append(dict(run=trial_run, values=dict(values), config=candidate,
+                           result=mean, per_seed=results))
+        return mean[metric]
+
+    def on_event(event, point, **fields):
+        if event == "search_path":
+            log_event("search_path", run=run, **point, **fields)
+
+    best_values, best_score = directional_search(
+        initial,
+        choices,
+        score,
+        initial_lr_search=False,
+        factors=factors,
+        max_side_steps=max_side_steps,
+        dropoff_margin=None,
+        on_event=on_event,
+    )
+    best = next(t for t in trials if t["values"] == best_values)
+    log_event("search_best", run=run, trial=best["run"], **best_values, **{metric: best_score})
+    log_changes("changes", flatten_config(base), flatten_config(best["config"]))
+    if debug:
+        log_event("debug_final_run", run=run, trial=best["run"], seed=seeds[0])
+        run_seeded(f"{run}.final", model, best["config"], seeds[0], debug=True)
+    return dict(best_config=best["config"], best_result=best["result"], trials=trials)
+
+
 def run_experiment(run, model, config):
     """Run one config or a search; return its best config, result, and trials.
 
@@ -2880,6 +3249,8 @@ def run_experiment(run, model, config):
     tuning = config["hparam_tuning"]
     if tuning is not None:
         validate_tuning_config(tuning)
+    if tuning is not None and tuning["algorithm"] == "global_neighbour_seeds":
+        return run_seeded_neighbour_search(run, model, config)
     if tuning is not None and tuning["algorithm"] in ("interval", "global_neighbour"):
         result = run_interval_search(run, model, config, debug=debug)
         return dict(
@@ -2980,6 +3351,49 @@ def run_experiment(run, model, config):
     return dict(best_config=best["config"], best_result=best["result"], trials=trials)
 
 
+HOOKED_ALGORITHMS = KFAC_ALGORITHMS | {"input_conditioned"}
+
+
+class _TrainingForward(nn.Module):
+    """Wraps the model so graphing replaces this wrapper's forward, not the model's."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, inputs):
+        return self.model(inputs)
+
+
+def training_forward(model, batch_size, param_groups, debug, device):
+    """The model, or a cached CUDA-graphed forward+backward for this batch size.
+
+    Graphs read the parameters' storage in place, so they stay valid across
+    model.reset(), init_whiten() and load_state_dict(). They skip module hooks,
+    so hooked algorithms and debug runs use the eager model.
+    """
+    if (
+        not USE_CUDA_GRAPH_TRAINING
+        or USE_COMPILED_MODEL
+        or debug
+        or device.type != "cuda"
+        or any(group["algorithm"] in HOOKED_ALGORITHMS for group in param_groups.values())
+    ):
+        return model
+    graphs = model.__dict__.setdefault("_graphed_training_forwards", {})
+    if batch_size not in graphs:
+        # Capture runs warmup passes; they only touch BatchNorm running stats, which
+        # training and evaluation (train-mode BatchNorm) never read, and use no RNG.
+        torch.autograd.graph.set_warn_on_accumulate_grad_stream_mismatch(False)
+        sample = torch.zeros(batch_size, 3, 32, 32, device=device).to(
+            memory_format=torch.channels_last
+        )
+        graphs[batch_size] = torch.cuda.make_graphed_callables(
+            _TrainingForward(model), (sample,)
+        )
+    return graphs[batch_size]
+
+
 def main(
     run,
     model,
@@ -3026,10 +3440,13 @@ def main(
     }
 
     optimizer = make_optimizer(model, param_groups)
+    forward = training_forward(
+        model, batch_size, param_groups, debug, next(model.parameters()).device
+    )
 
     model.reset()
     step = 0
-    recorder = SpectrumRecorder(run, model) if debug else None
+    recorder = SpectrumRecorder(run, model, debug_kfac_factors) if debug else None
 
     # Initialize the whitening layer using training images
     if overfit:
@@ -3051,7 +3468,7 @@ def main(
         for inputs, labels in train_batches:
             if recorder is not None:
                 recorder.before_step()
-            outputs = model(inputs)
+            outputs = forward(inputs)
             loss = F.cross_entropy(
                 outputs, labels, label_smoothing=0.2, reduction="mean"
             )
@@ -3060,7 +3477,7 @@ def main(
             apply_hparam_schedules(optimizer, schedules, step)
             optimizer.step()
             if recorder is not None:
-                recorder.after_step(step)
+                recorder.after_step(step, optimizer)
             optimizer.zero_grad(set_to_none=True)
             step += 1
             if step >= total_train_steps:
