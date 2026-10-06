@@ -302,3 +302,63 @@ Final loss, rows interval 1-4 steps, cols cooldown 0-4 steps:
 - Unlike the full-data runs, short intervals don't hurt here: the committed conv LR
   falls only to ~0.017-0.028, and there is no generalization gap for the greedy
   short-horizon choice to miss.
+
+
+## Overfit mode with 10 steps (BS 2000, 2026-10-07)
+
+Same as the 20-step overfit experiment but 10 steps (overfit_bs2000_steps10, whitening
+bias for 3 steps). Seed 0 (dev/o02_overfit_steps10.jsonl, dev/search_logs/o02_*.log).
+Fixed schedule: seed 0 1.2623; 8 seeds 1.2691 ± 0.0137 (sd). Far from the 0.8669
+floor: 10 steps don't fit the batch, so the schedule matters more than at 20 steps.
+Final loss, rows interval 1-4 steps, cols cooldown 0-4 steps:
+| I \ C | 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| 1 | 1.3377 | **1.2206** | 1.2527 | 1.2297 | 1.2215 |
+| 2 | 1.3135 | 1.2433 | 1.2313 | 1.2313 | 1.2425 |
+| 3 | 1.2502 | 1.2263 | 1.2261 | 1.2240 | 1.2360 |
+| 4 | 1.2971 | 1.2455 | 1.2491 | 1.2401 | 1.2401 |
+- Every cell with a cooldown (C >= 1) beats the fixed schedule on the same seed, by
+  0.01-0.04 (about 1-3 seed-sd); 1-step intervals with any cooldown are among the best.
+- No cooldown fails again (3 of 4 cells worse than the fixed schedule, up to +0.075).
+- The searches hold conv LR at 0.13-0.078 for most of the run and end near 0.03-0.05,
+  with momentum ~0.5-0.8 (fixed schedule: 0.22 decaying linearly to 0, momentum 0.7).
+
+
+## Why old overfit runs reached ~0.88 in 10 steps (2026-10-07)
+
+Old: old_stuff/automatic_lr3/cifar_overfit_search_momentum4 (BS 2000, interval 2 /
+cooldown 2, Muon LR+momentum+Nesterov searched): 0.951 after 7 steps, 0.882 after 10.
+Current 10-step overfit: fixed schedule 1.26, best interval search 1.22.
+1. Old result inflated by a bug: the old search restored optimizer state with
+   optimizer.load_state_dict(snapshot), which reuses the snapshot's tensors (verified,
+   torch 2.13), so every candidate (55-102 per interval) added its gradients into the
+   saved momentum buffers and the committed interval trained with that accumulated
+   momentum. Old script, 10 steps (dev/s04, scratch rerun): as is 0.881; with only a
+   deep copy on restore 0.938. (train_cifar.py's interval search copies buffers.)
+2. Head/bias SGD momentum convention: old torch.optim.SGD (sum buffer; with Nesterov
+   0.85 the step grows 1.85x, 2.6x, ... toward 6.7x the gradient) vs current
+   bias-corrected EMA (1x). Same 10-step schedule (dev/s04_overfit_old_vs_new.out,
+   seeds 0-2): old SGD 0.951-0.957, current 1.125-1.129. Old Muon vs Muon2 and the
+   batch (first 2000 un-augmented vs random augmented) don't matter (<= 0.006).
+3. Current 10-step configs decay head/bias LRs to 0 (whiten bias stops after 3
+   steps); constant head/biases (1300/99/99): 1.26 -> 1.06. A x6.7 LR from step 1 is
+   worse (1.63): the old momentum's gradual ramp matters.
+
+
+## Overfit 10 steps: also searching head and bias LRs (2026-10-07)
+
+Interval search of conv LR + momentum plus head, norm_bias and whiten_bias LRs (each
+constant within an interval), BS 2000, 10 steps, seed 0 (dev/o03_overfit_lrs.jsonl,
+dev/search_logs/o03_*.log). Final fixed-batch loss (conv-only search in brackets):
+| I \ C | 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| 1 | 0.9326 (1.338) | 0.9407 (1.221) | 1.0344 (1.253) | 0.9189 (1.230) | **0.9119** (1.222) |
+| 2 | 0.9531 (1.314) | 0.9336 (1.243) | 0.9171 (1.231) | 0.9143 (1.231) | 0.9470 (1.243) |
+| 3 | 0.9483 (1.250) | 0.9222 (1.226) | 0.9215 (1.226) | 0.9196 (1.224) | 0.9236 (1.236) |
+| 4 | 0.9668 (1.297) | 0.9332 (1.246) | 0.9359 (1.249) | 0.9693 (1.240) | 0.9532 (1.240) |
+- Searching head/bias LRs cuts the loss by ~0.3 in every cell (fixed schedule 1.26;
+  old script with the momentum bug fixed 0.938; 8 of 20 cells are below 0.925).
+- Chosen LRs are far above the baseline: head mostly 3500-5900 (up to 16000; baseline
+  1300), norm_bias 460-3500 early (baseline 99), whiten_bias up to 1300 early then
+  small. The paths are jumpy (e.g. head 16000 -> 3500).
+- Without a cooldown it no longer collapses (0.93-0.97), unlike the conv-only search.

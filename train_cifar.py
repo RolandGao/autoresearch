@@ -2695,13 +2695,29 @@ for steps, suffix in ((20, ""), (10, "_steps10")):
             f"overfit_interval_bs2000{suffix}_interval{interval_steps}_cooldown{cooldown_steps}"
         ] = config
 
+# The same 10-step overfit grid, also searching the head and both bias LRs (head,
+# norm_bias, whiten_bias) alongside conv LR and momentum. Searched LRs are constant
+# within each interval, replacing those groups' decaying schedules.
+for interval_steps, cooldown_steps in product(range(1, 5), range(0, 5)):
+    config = copy.deepcopy(
+        RUN_CONFIGS[
+            f"overfit_interval_bs2000_steps10_interval{interval_steps}_cooldown{cooldown_steps}"
+        ]
+    )
+    for name in ("head", "norm_bias", "whiten_bias"):
+        config["hparam_tuning"]["params"][f"{name}.initial_lr"] = dict(
+            initial=config["param_groups"][name]["lr_scheduler"][0][1], choices=None, mult=0.6
+        )
+    RUN_CONFIGS[
+        f"overfit_interval_lrs_bs2000_steps10_interval{interval_steps}_cooldown{cooldown_steps}"
+    ] = config
+
 # Runs to execute, in order, by name in RUN_CONFIGS. Each runs once per seed
 # (seeds 0, 1, ..., num_seeds - 1); set num_seeds = 8 for a seed-averaged comparison.
 experiments_to_run = [
-    # Overfit mode, 10 steps on one batch (scored by its training loss): the fixed
-    # schedule, then interval search with every interval 1-4 x cooldown 0-4.
-    "overfit_bs2000_steps10",
-    *(name for name in RUN_CONFIGS if name.startswith("overfit_interval_bs2000_steps10_")),
+    # Overfit mode, 10 steps: interval search of conv LR/momentum plus head and bias
+    # LRs, every interval 1-4 x cooldown 0-4.
+    *(name for name in RUN_CONFIGS if name.startswith("overfit_interval_lrs_bs2000_steps10_")),
 ]
 num_seeds = 1
 SEEDS = list(range(num_seeds))
