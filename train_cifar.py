@@ -64,6 +64,10 @@ USE_CUDA_GRAPH_MUON = True
 # size) when no group needs module hooks (K-FAC, input conditioning) and debug is
 # off. Bitwise-identical to eager mode; removes launch overhead at small batches.
 USE_CUDA_GRAPH_TRAINING = True
+# The graph's private pool keeps every activation of a training step alive
+# (BS 125: 0.4 GiB, 500: 3.0 GiB, 2000: 11.8 GiB), and large batches gain little
+# (BS 500: 15.9 -> 14.6 ms/step; BS 125: 8.4 -> 5.4). Larger batches run eagerly.
+CUDA_GRAPH_TRAINING_MAX_BATCH = 500
 USE_COMPILED_MODEL = False  # Enable only after an end-to-end sweep timing comparison.
 MODEL_COMPILE_MODE = "default"
 MODEL_WARMUP_STEPS = 3
@@ -1450,6 +1454,32 @@ def infer(model, loader, tta_level):
         )
 
 
+class FixedBatchLoader:
+    """Evaluation view of overfit mode's fixed training batch (the exact tensors
+    trained on), so val_acc / tta_val_acc measure how well that batch is fitted."""
+
+    def __init__(self, images, labels):
+        self.images, self.labels = images, labels
+
+    def normalized_images(self):
+        return self.images
+
+
+def batch_loss(model, loader):
+    """The training loss (label smoothing 0.2, batch mean) on a loader's images,
+    with train-mode BatchNorm as in every evaluation."""
+    model.train()
+    with torch.inference_mode():
+        images, labels = loader.normalized_images(), loader.labels
+        losses = [
+            F.cross_entropy(
+                model(x).float(), y, label_smoothing=0.2, reduction="sum"
+            )
+            for x, y in zip(images.split(2000), labels.split(2000))
+        ]
+    return (sum(losses) / len(labels)).item()
+
+
 def evaluate(model, loader, tta_level):
     logits = infer(model, loader, tta_level)
     return (logits.argmax(1) == loader.labels).float().mean().item()
@@ -1741,6 +1771,9 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # Linear segments include the start; the end is reached one update after the
 # segment finishes. A one-step line uses its start.
 # Durations must sum to num_epochs * (50000 // batch_size), or num_epochs in overfit mode.
+# Overfit mode trains on one fixed (augmented) batch for num_epochs steps and
+# evaluates that same batch (val_acc / tta_val_acc are its accuracy), with
+# BatchNorm in train mode as in every evaluation.
 # Change the segment durations when changing the batch size or run length.
 # input_conditioned groups accept svd_mean_percentage_damping (0.01 = 1% damping)
 # and input_conditioner_momentum (covariance EMA beta; 0 = current batch).
@@ -2332,8 +2365,62 @@ LION_BS2000 = dict(
     whiten_bias=dict(lr=0.047, momentum=0.9),
 )
 BETA2_CHOICES = [0.9, 0.95, 0.98, 0.99, 0.995, 0.999]
-# Filled in from the seeds1_bs{BS}_adam_coarse optima: {BS: {path: value}}.
-ADAM_COARSE_BEST = {}
+# The seeds1_bs{BS}_adam_coarse optima (seed 0; dev/m01_seeded.jsonl, 2026-10-06):
+# seed-0 TTA 125: 93.98 -> 94.09, 500: 93.89 -> 94.19, 2000: 93.98 -> 94.34.
+ADAM_COARSE_BEST = {
+    125: {
+        'conv.initial_lr': 0.047,
+        'conv.momentum': 0.6,
+        'head.initial_lr': 0.078,
+        'head.momentum': 0.9,
+        'norm_bias.initial_lr': 0.0036,
+        'norm_bias.momentum': 0.9,
+        'whiten_bias.initial_lr': 0.01,
+        'whiten_bias.momentum': 0.9,
+        'head.beta2': 0.99,
+        'norm_bias.beta2': 0.99,
+        'whiten_bias.beta2': 0.99,
+    },
+    500: {
+        'conv.initial_lr': 0.13,
+        'conv.momentum': 0.4,
+        'head.initial_lr': 0.13,
+        'head.momentum': 0.9,
+        'norm_bias.initial_lr': 0.01,
+        'norm_bias.momentum': 0.9,
+        'whiten_bias.initial_lr': 0.028,
+        'whiten_bias.momentum': 0.9,
+        'head.beta2': 0.99,
+        'norm_bias.beta2': 0.99,
+        'whiten_bias.beta2': 0.99,
+    },
+    2000: {
+        'conv.initial_lr': 0.22,
+        'conv.momentum': 0.7,
+        'head.initial_lr': 0.22,
+        'head.momentum': 0.9,
+        'norm_bias.initial_lr': 0.047,
+        'norm_bias.momentum': 0.9,
+        'whiten_bias.initial_lr': 0.047,
+        'whiten_bias.momentum': 0.9,
+        'head.beta2': 0.99,
+        'norm_bias.beta2': 0.99,
+        'whiten_bias.beta2': 0.99,
+    },
+}
+
+
+def with_values(config, values):
+    """Apply {group.field: value} search results (initial_lr scales the schedule)."""
+    config = copy.deepcopy(config)
+    for path, value in values.items():
+        name, field = path.split(".")
+        group = config["param_groups"][name]
+        if field == "initial_lr":
+            group["lr_scheduler"] = scale_lr_schedule(group["lr_scheduler"], value)
+        else:
+            group[field] = value
+    return config
 
 
 def seeded_search(config, seeds, beta2_groups):
@@ -2383,21 +2470,238 @@ for batch_size in (125, 500, 2000):
         elementwise_config(batch_size, "adam"), [0], ELEMENTWISE_GROUPS
     )
     if batch_size in ADAM_COARSE_BEST:
-        config = elementwise_config(batch_size, "adam")
-        for path, value in ADAM_COARSE_BEST[batch_size].items():
-            config = with_hparam(config, path, value)
+        config = with_values(elementwise_config(batch_size, "adam"), ADAM_COARSE_BEST[batch_size])
         RUN_CONFIGS[f"seeds8_bs{batch_size}_adam"] = seeded_search(
             config, SEARCH_SEEDS, ELEMENTWISE_GROUPS
         )
 
+
+# Selected configs of the 8-seed searches above (dev/m01_seeded.jsonl, 2026-10-06),
+# as plain runs. TTA: search mean over SEARCH_SEEDS / held-out mean over seeds
+# 100-107; for reference, the search start's held-out mean.
+SEEDED_SEARCH_BEST = {
+    # 94.01 / 93.90 (start 93.79)
+    (125, 'sgd'): {
+        'conv.initial_lr': 0.047,
+        'conv.momentum': 0.7,
+        'head.initial_lr': 99.0,
+        'head.momentum': 0.8,
+        'norm_bias.initial_lr': 7.7,
+        'norm_bias.momentum': 0.85,
+        'whiten_bias.initial_lr': 7.7,
+        'whiten_bias.momentum': 0.8,
+    },
+    # 93.93 / 93.88 (start 93.82)
+    (125, 'lion'): {
+        'conv.initial_lr': 0.047,
+        'conv.momentum': 0.7,
+        'head.initial_lr': 0.047,
+        'head.momentum': 0.9,
+        'norm_bias.initial_lr': 0.0036,
+        'norm_bias.momentum': 0.9,
+        'whiten_bias.initial_lr': 0.01,
+        'whiten_bias.momentum': 0.9,
+    },
+    # 93.97 / 93.98 (start 93.98)
+    (125, 'adam'): {
+        'conv.initial_lr': 0.047,
+        'conv.momentum': 0.6,
+        'head.initial_lr': 0.078,
+        'head.momentum': 0.9,
+        'norm_bias.initial_lr': 0.0036,
+        'norm_bias.momentum': 0.9,
+        'whiten_bias.initial_lr': 0.01,
+        'whiten_bias.momentum': 0.9,
+        'head.beta2': 0.99,
+        'norm_bias.beta2': 0.99,
+        'whiten_bias.beta2': 0.99,
+    },
+    # 94.04 / 94.05 (start 93.89)
+    (500, 'sgd'): {
+        'conv.initial_lr': 0.13,
+        'conv.momentum': 0.6,
+        'head.initial_lr': 770.0,
+        'head.momentum': 0.85,
+        'norm_bias.initial_lr': 60.0,
+        'norm_bias.momentum': 0.8,
+        'whiten_bias.initial_lr': 36.0,
+        'whiten_bias.momentum': 0.85,
+    },
+    # 93.99 / 93.86 (start 93.88)
+    (500, 'lion'): {
+        'conv.initial_lr': 0.13,
+        'conv.momentum': 0.6,
+        'head.initial_lr': 0.047,
+        'head.momentum': 0.9,
+        'norm_bias.initial_lr': 0.01,
+        'norm_bias.momentum': 0.9,
+        'whiten_bias.initial_lr': 0.028,
+        'whiten_bias.momentum': 0.9,
+    },
+    # 94.04 / 93.99 (start 93.96)
+    (500, 'adam'): {
+        'conv.initial_lr': 0.13,
+        'conv.momentum': 0.3,
+        'head.initial_lr': 0.13,
+        'head.momentum': 0.9,
+        'norm_bias.initial_lr': 0.01,
+        'norm_bias.momentum': 0.9,
+        'whiten_bias.initial_lr': 0.028,
+        'whiten_bias.momentum': 0.9,
+        'head.beta2': 0.99,
+        'norm_bias.beta2': 0.99,
+        'whiten_bias.beta2': 0.99,
+    },
+    # 94.04 / 94.00 (start 94.02)
+    (2000, 'sgd'): {
+        'conv.initial_lr': 0.22,
+        'conv.momentum': 0.6,
+        'head.initial_lr': 1300.0,
+        'head.momentum': 0.8,
+        'norm_bias.initial_lr': 99.0,
+        'norm_bias.momentum': 0.8,
+        'whiten_bias.initial_lr': 36.0,
+        'whiten_bias.momentum': 0.8,
+    },
+    # 93.98 / 93.94 (start 93.85)
+    (2000, 'lion'): {
+        'conv.initial_lr': 0.22,
+        'conv.momentum': 0.7,
+        'head.initial_lr': 0.22,
+        'head.momentum': 0.9,
+        'norm_bias.initial_lr': 0.01,
+        'norm_bias.momentum': 0.9,
+        'whiten_bias.initial_lr': 0.047,
+        'whiten_bias.momentum': 0.9,
+    },
+    # 94.12 / 94.00 (start 93.96)
+    (2000, 'adam'): {
+        'conv.initial_lr': 0.22,
+        'conv.momentum': 0.6,
+        'head.initial_lr': 0.36,
+        'head.momentum': 0.9,
+        'norm_bias.initial_lr': 0.047,
+        'norm_bias.momentum': 0.9,
+        'whiten_bias.initial_lr': 0.047,
+        'whiten_bias.momentum': 0.9,
+        'head.beta2': 0.99,
+        'norm_bias.beta2': 0.99,
+        'whiten_bias.beta2': 0.99,
+    },
+}
+for (batch_size, optimizer), values in SEEDED_SEARCH_BEST.items():
+    base = (
+        RUN_CONFIGS[f"baseline_bs{batch_size}"] if optimizer == "sgd"
+        else elementwise_config(batch_size, optimizer)
+    )
+    RUN_CONFIGS[f"seeded_best_bs{batch_size}_{optimizer}"] = dict(
+        with_values(base, values), hparam_tuning=None
+    )
+
+# Input-conditioned head at BS 125 and 500 on the tuned SGD configs: a seed-0
+# global_neighbour_seeds search of the four LRs and momenta plus the head's
+# damping, then 8 runs of its optimum on held-out seeds 100-107. The head starts
+# from baseline_bs2000_head_input_conditioned, its LR scaled by the tuned SGD head
+# LR relative to BS 2000's (1300).
+for batch_size in (125, 500):
+    config = copy.deepcopy(RUN_CONFIGS[f"seeded_best_bs{batch_size}_sgd"])
+    head = config["param_groups"]["head"]
+    head_lr = round_hparam(10000 * head["lr_scheduler"][0][1] / 1300)
+    config["param_groups"]["head"] = dict(
+        algorithm="input_conditioned",
+        lr_scheduler=scale_lr_schedule(head["lr_scheduler"], head_lr),
+        momentum=0.8, nesterov=True, svd_mean_percentage_damping=0.01,
+        input_conditioner_momentum=0.0, gradient_momentum_before_conditioning=False,
+    )
+    config = seeded_search(config, [0], ())
+    config["hparam_tuning"]["params"]["head.svd_mean_percentage_damping"] = dict(
+        initial=0.01, choices=None, mult=0.6
+    )
+    RUN_CONFIGS[f"seeds1_bs{batch_size}_input_conditioned"] = config
+
+# interval2: interval search of conv LR and momentum whose cooldown searches one
+# multiplier applied to every group's LR (searched groups: their main-interval LR;
+# others: their mean LR over the main interval), held constant in the cooldown.
+# Bases: the best held-out configs per BS. interval_best_* reruns the original
+# interval search on the same bases as a control (BS 2000's base is unchanged).
+INTERVAL_BASES = {
+    2000: "baseline_bs2000", 500: "seeded_best_bs500_sgd", 125: "seeded_best_bs125_adam",
+}
+for batch_size, base_name in INTERVAL_BASES.items():
+    for algorithm, prefix in (("interval2", "interval2"), ("interval", "interval_best")):
+        if algorithm == "interval" and batch_size == 2000:
+            continue
+        for interval_fraction, cooldown_fraction in ((5, 5), (5, 20), (20, 20)):
+            config = copy.deepcopy(RUN_CONFIGS[base_name])
+            conv = config["param_groups"]["conv"]
+            total = conv["lr_scheduler"][0][0]
+            interval_steps = total // interval_fraction
+            cooldown_steps = total // cooldown_fraction
+            config["hparam_tuning"] = dict(
+                algorithm=algorithm,
+                metric="tta_val_acc",
+                max_side_steps=20,
+                initial_dropoff_margin=0.02,
+                interval_steps=interval_steps,
+                cooldown_steps=cooldown_steps,
+                params={
+                    "conv.initial_lr": dict(
+                        initial=conv["lr_scheduler"][0][1], choices=None, mult=0.6
+                    ),
+                    "conv.momentum": dict(
+                        initial=conv["momentum"], choices=list(MOMENTUM_CHOICES)
+                    ),
+                },
+            )
+            if algorithm == "interval2":
+                config["hparam_tuning"]["cooldown_lr_mult"] = dict(initial=1.0, mult=0.6)
+            RUN_CONFIGS[
+                f"{prefix}_bs{batch_size}_interval{interval_steps}_cooldown{cooldown_steps}"
+            ] = config
+
+# Overfit mode at BS 2000: 20 or 10 steps on one fixed batch, scored by its
+# training loss (neg_train_loss). overfit_bs2000[_steps10] is baseline_bs2000
+# squeezed into those steps (whitening bias for the first 3/8). The original interval
+# search (conv LR and momentum) runs every interval 1-4 x cooldown 0-4 steps.
+for steps, suffix in ((20, ""), (10, "_steps10")):
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    config.update(num_epochs=steps, overfit=True)
+    for name, group in config["param_groups"].items():
+        lr = group["lr_scheduler"][0][1]
+        group["lr_scheduler"] = [(steps, lr, 0.0)] if lr else [(steps, 0.0)]
+    bias_steps = 3 * steps // 8
+    config["param_groups"]["whiten_bias"]["lr_scheduler"] = [
+        (bias_steps, 36, 0.0), (steps - bias_steps, 0.0)
+    ]
+    RUN_CONFIGS[f"overfit_bs2000{suffix}"] = config
+    for interval_steps, cooldown_steps in product(range(1, 5), range(0, 5)):
+        config = copy.deepcopy(RUN_CONFIGS[f"overfit_bs2000{suffix}"])
+        conv = config["param_groups"]["conv"]
+        config["hparam_tuning"] = dict(
+            algorithm="interval",
+            metric="neg_train_loss",
+            max_side_steps=20,
+            initial_dropoff_margin=0.02,
+            interval_steps=interval_steps,
+            cooldown_steps=cooldown_steps,
+            params={
+                "conv.initial_lr": dict(
+                    initial=conv["lr_scheduler"][0][1], choices=None, mult=0.6
+                ),
+                "conv.momentum": dict(initial=conv["momentum"], choices=list(MOMENTUM_CHOICES)),
+            },
+        )
+        RUN_CONFIGS[
+            f"overfit_interval_bs2000{suffix}_interval{interval_steps}_cooldown{cooldown_steps}"
+        ] = config
+
 # Runs to execute, in order, by name in RUN_CONFIGS. Each runs once per seed
 # (seeds 0, 1, ..., num_seeds - 1); set num_seeds = 8 for a seed-averaged comparison.
 experiments_to_run = [
-    # Seed-averaged (8 seeds) full-run searches of the four LRs and momenta, with
-    # SGD, Lion and Adam head/biases; Adam first coarse on one seed.
-    *(f"seeds1_bs{bs}_adam_coarse" for bs in (125, 500, 2000)),
-    *(f"seeds8_bs{bs}{suffix}" for suffix in ("", "_lion") for bs in (125, 500, 2000)),
-    *(f"seeds8_bs{bs}_adam" for bs in (125, 500, 2000) if bs in ADAM_COARSE_BEST),
+    # Overfit mode, 10 steps on one batch (scored by its training loss): the fixed
+    # schedule, then interval search with every interval 1-4 x cooldown 0-4.
+    "overfit_bs2000_steps10",
+    *(name for name in RUN_CONFIGS if name.startswith("overfit_interval_bs2000_steps10_")),
 ]
 num_seeds = 1
 SEEDS = list(range(num_seeds))
@@ -2531,15 +2835,20 @@ def validate_tuning_config(tuning):
         "interval",
         "global_neighbour",
         "global_neighbour_seeds",
+        "interval2",
     ):
         raise ValueError("hparam_tuning requires a known algorithm")
     required = {"algorithm", "metric", "params"}
-    if tuning["algorithm"] in ("interval", "global_neighbour", "global_neighbour_seeds"):
+    if tuning["algorithm"] in (
+        "interval", "interval2", "global_neighbour", "global_neighbour_seeds"
+    ):
         required.add("max_side_steps")
     if tuning["algorithm"] == "global_neighbour_seeds":
         required.add("seeds")
-    if tuning["algorithm"] == "interval":
+    if tuning["algorithm"] in ("interval", "interval2"):
         required |= {"interval_steps", "cooldown_steps", "initial_dropoff_margin"}
+    if tuning["algorithm"] == "interval2":
+        required.add("cooldown_lr_mult")
     require_fields(tuning, required, "hparam_tuning")
 
 
@@ -2804,6 +3113,29 @@ def directional_search(
             return current, current_score
 
 
+COOLDOWN_LR_MULT = "cooldown.lr_mult"
+
+
+def cooldown_lr_values(base_schedules, main_values, lr_mult, start_step, main_steps):
+    """interval2's cooldown: every group's LR is constant at lr_mult times its LR in
+    the main interval: the searched (constant) value, or for groups not searched
+    there the mean of their scheduled LR over the main interval's steps. Other
+    searched fields keep their main-interval values."""
+    values = dict(main_values)
+    for path, lines in base_schedules.items():
+        if not path.endswith(".initial_lr"):
+            continue
+        if path in main_values:
+            main_lr = main_values[path]
+        else:
+            main_lr = sum(
+                schedule_value_at_step(lines, step)
+                for step in range(start_step, start_step + main_steps)
+            ) / main_steps
+        values[path] = main_lr * lr_mult
+    return values
+
+
 def run_interval_search(run, model, config, debug):
     """Choose each committed interval using replayed main/cooldown training probes.
 
@@ -2814,15 +3146,27 @@ def run_interval_search(run, model, config, debug):
     config = normalize_config(config, key=None)
     tuning = config["hparam_tuning"]
     validate_tuning_config(tuning)
-    if tuning["algorithm"] not in ("interval", "global_neighbour"):
+    if tuning["algorithm"] not in ("interval", "interval2", "global_neighbour"):
         raise ValueError(f"Unknown interval algorithm: {tuning['algorithm']!r}")
     global_search = tuning["algorithm"] == "global_neighbour"
+    # interval2 searches one cooldown multiplier on every group's main-interval LR.
+    shared_cooldown = tuning["algorithm"] == "interval2"
     choices, current = interval_search_space(config)
     factors = {
         path: spec["mult"]
         for path, spec in tuning_params(config).items()
         if "mult" in spec
     }
+    if shared_cooldown:
+        spec = tuning["cooldown_lr_mult"]
+        require_fields(spec, {"initial", "mult"}, "cooldown_lr_mult")
+        for name in ("initial", "mult"):
+            value = spec[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
+                raise ValueError(f"cooldown_lr_mult.{name} must be a finite number")
+        if spec["initial"] <= 0 or not 0 < spec["mult"] < 1:
+            raise ValueError("cooldown_lr_mult needs initial > 0 and 0 < mult < 1")
+        factors[COOLDOWN_LR_MULT] = spec["mult"]
     interval_steps = None if global_search else tuning["interval_steps"]
     cooldown_steps = 0 if global_search else tuning["cooldown_steps"]
     max_side_steps = tuning["max_side_steps"]
@@ -2842,8 +3186,10 @@ def run_interval_search(run, model, config, debug):
             raise ValueError(f"{name} must be an integer >= {minimum}")
     if not global_search and (not isfinite(margin) or margin < 0):
         raise ValueError("initial_dropoff_margin must be nonnegative and finite")
-    if metric is not None and metric not in ("val_acc", "tta_val_acc"):
+    if metric is not None and metric not in ("val_acc", "tta_val_acc", "neg_train_loss"):
         raise ValueError(f"Unknown tuning metric: {metric!r}")
+    if metric == "neg_train_loss" and not config["overfit"]:
+        raise ValueError("neg_train_loss scores the fixed batch and requires overfit=True")
     set_training_seed()
     test_loader = CifarLoader(
         "cifar10", train=False, batch_size=2000, aug=dict(flip=False, translate=0)
@@ -2870,8 +3216,14 @@ def run_interval_search(run, model, config, debug):
     log_config(run, config, label="base_config")
     base_schedules = configured_hparam_schedules(config["param_groups"], total_steps)
     optimizer = make_optimizer(model, config["param_groups"])
+    forward = training_forward(
+        model, config["batch_size"], config["param_groups"], debug,
+        next(model.parameters()).device,
+    )
     model.reset()
     fixed_batch = next(iter(train_loader)) if config["overfit"] else None
+    if fixed_batch is not None:
+        test_loader = FixedBatchLoader(*fixed_batch)  # Overfit mode scores the fixed batch.
     model.init_whiten(
         fixed_batch[0]
         if fixed_batch is not None
@@ -2917,7 +3269,7 @@ def run_interval_search(run, model, config, debug):
             inputs, labels = stream.next_batch()
             if commit and recorder is not None:
                 recorder.before_step()
-            outputs = model(inputs)
+            outputs = forward(inputs)
             loss = F.cross_entropy(
                 outputs, labels, label_smoothing=0.2, reduction="mean"
             )
@@ -2935,6 +3287,9 @@ def run_interval_search(run, model, config, debug):
         return valid
 
     def score():
+        if metric == "neg_train_loss":
+            # The search maximizes, so it scores the negated fixed-batch loss.
+            return -batch_loss(model, test_loader)
         return evaluate(
             model, test_loader, tta_level=2 if metric == "tta_val_acc" else 0
         )
@@ -2985,13 +3340,27 @@ def run_interval_search(run, model, config, debug):
         lookahead_steps = min(cooldown_steps, total_steps - completed - main_steps)
         start_state = snapshot()
 
+        def cooldown_segment(main_values, cooldown):
+            if not shared_cooldown:
+                return dict(main_values, **cooldown)
+            values = cooldown_lr_values(
+                base_schedules, main_values, cooldown[COOLDOWN_LR_MULT], start_step, main_steps
+            )
+            print(
+                "cooldown lrs: " + hparam_text(
+                    {p: round_hparam(v) for p, v in values.items() if p.endswith(".initial_lr")}
+                ),
+                flush=True,
+            )
+            return values
+
         def main_score(values, cooldown):
             restore(start_state)
             if not train_segment(values, main_steps, start_step, commit=False):
                 return float("-inf")
             if cooldown is not None and lookahead_steps:
                 if not train_segment(
-                    dict(values, **cooldown),
+                    cooldown_segment(values, cooldown),
                     lookahead_steps,
                     start_step + main_steps,
                     commit=False,
@@ -3025,20 +3394,28 @@ def run_interval_search(run, model, config, debug):
             if not train_segment(current, main_steps, start_step, commit=False):
                 break
             cooldown_start = snapshot()
-            cooldown_choices = {
-                path: values
-                for path, values in choices.items()
-                if path.endswith(".initial_lr")
-            }
-            seed = {
-                path: cooldown_values.get(path, current[path])
-                for path in cooldown_choices
-            }
+            if shared_cooldown:
+                cooldown_choices = {COOLDOWN_LR_MULT: None}
+                seed = {
+                    COOLDOWN_LR_MULT: cooldown_values.get(
+                        COOLDOWN_LR_MULT, tuning["cooldown_lr_mult"]["initial"]
+                    )
+                }
+            else:
+                cooldown_choices = {
+                    path: values
+                    for path, values in choices.items()
+                    if path.endswith(".initial_lr")
+                }
+                seed = {
+                    path: cooldown_values.get(path, current[path])
+                    for path in cooldown_choices
+                }
 
             def cooldown_score(values):
                 restore(cooldown_start)
                 if not train_segment(
-                    dict(current, **values),
+                    cooldown_segment(current, values),
                     lookahead_steps,
                     start_step + main_steps,
                     commit=False,
@@ -3120,15 +3497,19 @@ def run_interval_search(run, model, config, debug):
 
     val_acc = evaluate(model, test_loader, tta_level=0)
     tta_val_acc = evaluate(model, test_loader, tta_level=2)
+    train_loss = batch_loss(model, test_loader) if config["overfit"] else None
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     seconds = time.perf_counter() - run_start
+    if train_loss is not None:
+        log_event("fixed_batch_loss", run=run, train_loss=train_loss)
     log_final_eval(val_acc, tta_val_acc, seconds)
     if recorder is not None:
         recorder.finish()
     return dict(
         val_acc=val_acc,
         tta_val_acc=tta_val_acc,
+        train_loss=train_loss,
         seconds=seconds,
         batch_size=config["batch_size"],
         num_epochs=config["num_epochs"],
@@ -3251,7 +3632,7 @@ def run_experiment(run, model, config):
         validate_tuning_config(tuning)
     if tuning is not None and tuning["algorithm"] == "global_neighbour_seeds":
         return run_seeded_neighbour_search(run, model, config)
-    if tuning is not None and tuning["algorithm"] in ("interval", "global_neighbour"):
+    if tuning is not None and tuning["algorithm"] in ("interval", "interval2", "global_neighbour"):
         result = run_interval_search(run, model, config, debug=debug)
         return dict(
             best_config=config,
@@ -3374,6 +3755,7 @@ def training_forward(model, batch_size, param_groups, debug, device):
     """
     if (
         not USE_CUDA_GRAPH_TRAINING
+        or batch_size > CUDA_GRAPH_TRAINING_MAX_BATCH
         or USE_COMPILED_MODEL
         or debug
         or device.type != "cuda"
@@ -3450,9 +3832,11 @@ def main(
 
     # Initialize the whitening layer using training images
     if overfit:
-        # Cache the first augmented batch once and reuse exactly these tensors.
+        # Cache the first augmented batch once and reuse exactly these tensors;
+        # evaluation scores this batch instead of the test set.
         train_batches = (next(iter(train_loader)),)
         train_images = train_batches[0][0]
+        test_loader = FixedBatchLoader(*train_batches[0])
     else:
         train_batches = train_loader
         train_images = train_loader.normalized_images()[:5000]
@@ -3494,9 +3878,12 @@ def main(
     ####################
 
     tta_val_acc = evaluate(model, test_loader, tta_level=2)
+    train_loss = batch_loss(model, test_loader) if overfit else None
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     seconds = time.perf_counter() - run_start
+    if train_loss is not None:
+        log_event("fixed_batch_loss", run=run, train_loss=train_loss)
     log_final_eval(val_acc, tta_val_acc, seconds)
     if recorder is not None:
         recorder.finish()
@@ -3504,6 +3891,7 @@ def main(
     return dict(
         val_acc=val_acc,
         tta_val_acc=tta_val_acc,
+        train_loss=train_loss,
         seconds=seconds,
         batch_size=batch_size,
         num_epochs=num_epochs,

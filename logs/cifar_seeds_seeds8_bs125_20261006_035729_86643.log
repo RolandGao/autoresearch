@@ -3565,3 +3565,333 @@ val_acc=0.9258 tta_val_acc=0.9349 seconds=40.0397
 val_acc=0.9271 tta_val_acc=0.9332 seconds=40.0456
 val_acc=0.9262 tta_val_acc=0.9355 seconds=40.0404
 val_acc=0.9259 tta_val_acc=0.9335 seconds=40.0765
+val_acc=0.9250 tta_val_acc=0.9329 seconds=40.0515
+val_acc=0.9252 tta_val_acc=0.9345 seconds=40.0277
+val_acc=0.9235 tta_val_acc=0.9335 seconds=40.0562
+seeds_result run=seeds8_bs125.1 conv.initial_lr=0.028 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.93405 tta_val_acc_std=0.000910256 per_seed=[0.9343999624252319, 0.9348999857902527, 0.9332000017166138, 0.9354999661445618, 0.9334999918937683, 0.9328999519348145, 0.934499979019165, 0.9334999918937683]
+val_acc=0.9320 tta_val_acc=0.9389 seconds=40.0456
+val_acc=0.9334 tta_val_acc=0.9383 seconds=40.7953
+val_acc=0.9286 tta_val_acc=0.9371 seconds=41.5456
+val_acc=0.9298 tta_val_acc=0.9382 seconds=40.4869
+val_acc=0.9323 tta_val_acc=0.9384 seconds=40.5184
+val_acc=0.9294 tta_val_acc=0.9384 seconds=40.5433
+val_acc=0.9294 tta_val_acc=0.9363 seconds=40.5113
+val_acc=0.9287 tta_val_acc=0.9360 seconds=40.5066
+seeds_result run=seeds8_bs125.2 conv.initial_lr=0.078 conv.momentum=0.5 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.9377 tta_val_acc_std=0.00108496 per_seed=[0.9388999938964844, 0.9382999539375305, 0.9370999932289124, 0.9381999969482422, 0.9383999705314636, 0.9383999705314636, 0.9362999796867371, 0.9359999895095825]
+val_acc=0.9260 tta_val_acc=0.9363 seconds=40.4860
+val_acc=0.9273 tta_val_acc=0.9364 seconds=40.4899
+val_acc=0.9297 tta_val_acc=0.9382 seconds=40.5024
+val_acc=0.9335 tta_val_acc=0.9380 seconds=40.5259
+val_acc=0.9312 tta_val_acc=0.9403 seconds=40.5149
+val_acc=0.9246 tta_val_acc=0.9399 seconds=40.4686
+val_acc=0.9272 tta_val_acc=0.9359 seconds=40.4945
+val_acc=0.9291 tta_val_acc=0.9361 seconds=40.5520
+seeds_result run=seeds8_bs125.3 conv.initial_lr=0.047 conv.momentum=0.4 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.937637 tta_val_acc_std=0.00174678 per_seed=[0.9362999796867371, 0.9363999962806702, 0.9381999969482422, 0.937999963760376, 0.9402999877929688, 0.9398999810218811, 0.9358999729156494, 0.9361000061035156]
+val_acc=0.9342 tta_val_acc=0.9398 seconds=40.5185
+val_acc=0.9300 tta_val_acc=0.9371 seconds=40.5015
+val_acc=0.9344 tta_val_acc=0.9392 seconds=40.5125
+val_acc=0.9317 tta_val_acc=0.9379 seconds=40.4992
+val_acc=0.9308 tta_val_acc=0.9363 seconds=40.4826
+val_acc=0.9313 tta_val_acc=0.9390 seconds=40.5378
+val_acc=0.9319 tta_val_acc=0.9403 seconds=40.5382
+val_acc=0.9319 tta_val_acc=0.9393 seconds=40.5024
+seeds_result run=seeds8_bs125.4 conv.initial_lr=0.047 conv.momentum=0.6 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.938612 tta_val_acc_std=0.00138196 per_seed=[0.939799964427948, 0.9370999932289124, 0.9391999840736389, 0.9378999471664429, 0.9362999796867371, 0.9389999508857727, 0.9402999877929688, 0.939300000667572]
+val_acc=0.9310 tta_val_acc=0.9373 seconds=40.5494
+val_acc=0.9308 tta_val_acc=0.9384 seconds=40.5299
+val_acc=0.9337 tta_val_acc=0.9386 seconds=40.4938
+val_acc=0.9333 tta_val_acc=0.9405 seconds=40.5229
+val_acc=0.9332 tta_val_acc=0.9420 seconds=40.5009
+val_acc=0.9319 tta_val_acc=0.9361 seconds=40.4932
+val_acc=0.9301 tta_val_acc=0.9374 seconds=40.5280
+val_acc=0.9334 tta_val_acc=0.9388 seconds=40.5094
+seeds_result run=seeds8_bs125.5 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.938637 tta_val_acc_std=0.00187535 per_seed=[0.9372999668121338, 0.9383999705314636, 0.9386000037193298, 0.9404999613761902, 0.9419999718666077, 0.9361000061035156, 0.9373999834060669, 0.9387999773025513]
+val_acc=0.9301 tta_val_acc=0.9355 seconds=40.5124
+val_acc=0.9326 tta_val_acc=0.9384 seconds=40.4985
+val_acc=0.9319 tta_val_acc=0.9363 seconds=40.5233
+val_acc=0.9320 tta_val_acc=0.9368 seconds=40.5524
+val_acc=0.9327 tta_val_acc=0.9392 seconds=40.5224
+val_acc=0.9333 tta_val_acc=0.9397 seconds=40.5045
+val_acc=0.9312 tta_val_acc=0.9340 seconds=40.4987
+val_acc=0.9282 tta_val_acc=0.9366 seconds=40.4850
+seeds_result run=seeds8_bs125.6 conv.initial_lr=0.047 conv.momentum=0.8 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.937062 tta_val_acc_std=0.0019272 per_seed=[0.9354999661445618, 0.9383999705314636, 0.9362999796867371, 0.9368000030517578, 0.9391999840736389, 0.9396999478340149, 0.9339999556541443, 0.9365999698638916]
+search_path run=seeds8_bs125 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=170 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 score=0.938637 parameter=conv.momentum reason=improved
+val_acc=0.9318 tta_val_acc=0.9386 seconds=40.4582
+val_acc=0.9329 tta_val_acc=0.9412 seconds=40.4818
+val_acc=0.9311 tta_val_acc=0.9371 seconds=40.5299
+val_acc=0.9329 tta_val_acc=0.9394 seconds=40.4737
+val_acc=0.9303 tta_val_acc=0.9405 seconds=40.5004
+val_acc=0.9308 tta_val_acc=0.9378 seconds=40.4912
+val_acc=0.9342 tta_val_acc=0.9407 seconds=40.5227
+val_acc=0.9283 tta_val_acc=0.9366 seconds=40.5370
+seeds_result run=seeds8_bs125.7 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.938987 tta_val_acc_std=0.00173652 per_seed=[0.9386000037193298, 0.9411999583244324, 0.9370999932289124, 0.9393999576568604, 0.9404999613761902, 0.9377999901771545, 0.9406999945640564, 0.9365999698638916]
+val_acc=0.9292 tta_val_acc=0.9400 seconds=40.5168
+val_acc=0.9289 tta_val_acc=0.9389 seconds=40.5037
+val_acc=0.9298 tta_val_acc=0.9364 seconds=40.5214
+val_acc=0.9288 tta_val_acc=0.9363 seconds=40.5120
+val_acc=0.9284 tta_val_acc=0.9377 seconds=40.5082
+val_acc=0.9302 tta_val_acc=0.9391 seconds=40.5333
+val_acc=0.9330 tta_val_acc=0.9405 seconds=40.5392
+val_acc=0.9311 tta_val_acc=0.9388 seconds=40.5014
+seeds_result run=seeds8_bs125.8 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=60 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.938462 tta_val_acc_std=0.00154636 per_seed=[0.9399999976158142, 0.9388999938964844, 0.9363999962806702, 0.9362999796867371, 0.9376999735832214, 0.9390999674797058, 0.9404999613761902, 0.9387999773025513]
+search_path run=seeds8_bs125 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.85 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 score=0.938987 parameter=head.initial_lr reason=improved
+val_acc=0.9322 tta_val_acc=0.9396 seconds=40.5232
+val_acc=0.9295 tta_val_acc=0.9392 seconds=40.5065
+val_acc=0.9319 tta_val_acc=0.9393 seconds=40.4692
+val_acc=0.9324 tta_val_acc=0.9403 seconds=40.5292
+val_acc=0.9317 tta_val_acc=0.9383 seconds=40.5166
+val_acc=0.9309 tta_val_acc=0.9388 seconds=40.5179
+val_acc=0.9328 tta_val_acc=0.9390 seconds=40.5119
+val_acc=0.9326 tta_val_acc=0.9387 seconds=40.4901
+seeds_result run=seeds8_bs125.9 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.93915 tta_val_acc_std=0.000611801 per_seed=[0.9395999908447266, 0.9391999840736389, 0.939300000667572, 0.9402999877929688, 0.9382999539375305, 0.9387999773025513, 0.9389999508857727, 0.9386999607086182]
+val_acc=0.9304 tta_val_acc=0.9394 seconds=40.4918
+val_acc=0.9318 tta_val_acc=0.9384 seconds=40.5314
+val_acc=0.9300 tta_val_acc=0.9382 seconds=40.5087
+val_acc=0.9311 tta_val_acc=0.9392 seconds=40.5224
+val_acc=0.9315 tta_val_acc=0.9372 seconds=40.5001
+val_acc=0.9303 tta_val_acc=0.9387 seconds=40.5067
+val_acc=0.9281 tta_val_acc=0.9363 seconds=40.5270
+val_acc=0.9308 tta_val_acc=0.9389 seconds=40.5198
+seeds_result run=seeds8_bs125.10 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.7 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.938287 tta_val_acc_std=0.00105348 per_seed=[0.9393999576568604, 0.9383999705314636, 0.9381999969482422, 0.9391999840736389, 0.9371999502182007, 0.9386999607086182, 0.9362999796867371, 0.9388999938964844]
+search_path run=seeds8_bs125 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 score=0.93915 parameter=head.momentum reason=improved
+val_acc=0.9300 tta_val_acc=0.9380 seconds=40.5302
+val_acc=0.9329 tta_val_acc=0.9381 seconds=40.4783
+val_acc=0.9296 tta_val_acc=0.9405 seconds=40.5224
+val_acc=0.9318 tta_val_acc=0.9382 seconds=40.5115
+val_acc=0.9314 tta_val_acc=0.9396 seconds=40.5269
+val_acc=0.9307 tta_val_acc=0.9383 seconds=40.5288
+val_acc=0.9303 tta_val_acc=0.9397 seconds=40.5705
+val_acc=0.9336 tta_val_acc=0.9382 seconds=40.6677
+seeds_result run=seeds8_bs125.11 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=2.8 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.938825 tta_val_acc_std=0.000958787 per_seed=[0.937999963760376, 0.9380999803543091, 0.9404999613761902, 0.9381999969482422, 0.9395999908447266, 0.9382999539375305, 0.9396999478340149, 0.9381999969482422]
+val_acc=0.9317 tta_val_acc=0.9391 seconds=40.6142
+val_acc=0.9330 tta_val_acc=0.9410 seconds=40.6661
+val_acc=0.9328 tta_val_acc=0.9406 seconds=40.6385
+val_acc=0.9306 tta_val_acc=0.9392 seconds=40.6187
+val_acc=0.9311 tta_val_acc=0.9407 seconds=40.6457
+val_acc=0.9326 tta_val_acc=0.9382 seconds=40.6425
+val_acc=0.9295 tta_val_acc=0.9377 seconds=40.6588
+val_acc=0.9310 tta_val_acc=0.9411 seconds=40.7005
+seeds_result run=seeds8_bs125.12 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.9397 tta_val_acc_std=0.00132665 per_seed=[0.9390999674797058, 0.9409999847412109, 0.9405999779701233, 0.9391999840736389, 0.9406999945640564, 0.9381999969482422, 0.9376999735832214, 0.941100001335144]
+val_acc=0.9319 tta_val_acc=0.9408 seconds=40.6458
+val_acc=0.9313 tta_val_acc=0.9387 seconds=40.6396
+val_acc=0.9312 tta_val_acc=0.9407 seconds=40.6342
+val_acc=0.9327 tta_val_acc=0.9395 seconds=40.6207
+val_acc=0.9300 tta_val_acc=0.9382 seconds=40.6300
+val_acc=0.9296 tta_val_acc=0.9364 seconds=40.6444
+val_acc=0.9305 tta_val_acc=0.9387 seconds=40.6466
+val_acc=0.9320 tta_val_acc=0.9388 seconds=40.6278
+seeds_result run=seeds8_bs125.13 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=13 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.938975 tta_val_acc_std=0.00141395 per_seed=[0.9407999515533447, 0.9386999607086182, 0.9406999945640564, 0.9394999742507935, 0.9381999969482422, 0.9363999962806702, 0.9386999607086182, 0.9387999773025513]
+search_path run=seeds8_bs125 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 score=0.9397 parameter=norm_bias.initial_lr reason=improved
+val_acc=0.9295 tta_val_acc=0.9374 seconds=40.6514
+val_acc=0.9317 tta_val_acc=0.9370 seconds=40.6465
+val_acc=0.9307 tta_val_acc=0.9381 seconds=40.6701
+val_acc=0.9341 tta_val_acc=0.9389 seconds=40.6472
+val_acc=0.9287 tta_val_acc=0.9384 seconds=40.6727
+val_acc=0.9327 tta_val_acc=0.9387 seconds=40.6775
+val_acc=0.9301 tta_val_acc=0.9377 seconds=40.6637
+val_acc=0.9305 tta_val_acc=0.9383 seconds=40.6488
+seeds_result run=seeds8_bs125.14 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.8 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.938062 tta_val_acc_std=0.00065233 per_seed=[0.9373999834060669, 0.9369999766349792, 0.9380999803543091, 0.9388999938964844, 0.9383999705314636, 0.9386999607086182, 0.9376999735832214, 0.9382999539375305]
+val_acc=0.9297 tta_val_acc=0.9392 seconds=40.6646
+val_acc=0.9311 tta_val_acc=0.9391 seconds=40.6669
+val_acc=0.9323 tta_val_acc=0.9404 seconds=40.6601
+val_acc=0.9314 tta_val_acc=0.9391 seconds=40.6467
+val_acc=0.9319 tta_val_acc=0.9388 seconds=40.6587
+val_acc=0.9303 tta_val_acc=0.9362 seconds=40.6356
+val_acc=0.9310 tta_val_acc=0.9369 seconds=40.6535
+val_acc=0.9336 tta_val_acc=0.9396 seconds=40.6580
+seeds_result run=seeds8_bs125.15 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.9 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.85 tta_val_acc_mean=0.938662 tta_val_acc_std=0.00140199 per_seed=[0.9391999840736389, 0.9390999674797058, 0.9404000043869019, 0.9390999674797058, 0.9387999773025513, 0.936199963092804, 0.9368999600410461, 0.9395999908447266]
+val_acc=0.9292 tta_val_acc=0.9367 seconds=40.6406
+val_acc=0.9298 tta_val_acc=0.9403 seconds=40.6424
+val_acc=0.9324 tta_val_acc=0.9396 seconds=40.6642
+val_acc=0.9321 tta_val_acc=0.9391 seconds=40.6399
+val_acc=0.9322 tta_val_acc=0.9379 seconds=40.6517
+val_acc=0.9309 tta_val_acc=0.9376 seconds=40.6435
+val_acc=0.9323 tta_val_acc=0.9384 seconds=40.6480
+val_acc=0.9296 tta_val_acc=0.9369 seconds=40.6283
+seeds_result run=seeds8_bs125.16 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=4.6 whiten_bias.momentum=0.85 tta_val_acc_mean=0.938312 tta_val_acc_std=0.00128223 per_seed=[0.9366999864578247, 0.9402999877929688, 0.9395999908447266, 0.9390999674797058, 0.9378999471664429, 0.9375999569892883, 0.9383999705314636, 0.9368999600410461]
+val_acc=0.9306 tta_val_acc=0.9377 seconds=40.6392
+val_acc=0.9282 tta_val_acc=0.9416 seconds=40.6211
+val_acc=0.9282 tta_val_acc=0.9384 seconds=40.6453
+val_acc=0.9304 tta_val_acc=0.9396 seconds=40.6282
+val_acc=0.9339 tta_val_acc=0.9396 seconds=40.6139
+val_acc=0.9315 tta_val_acc=0.9399 seconds=40.6308
+val_acc=0.9316 tta_val_acc=0.9387 seconds=40.6507
+val_acc=0.9290 tta_val_acc=0.9380 seconds=40.5988
+seeds_result run=seeds8_bs125.17 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=13 whiten_bias.momentum=0.85 tta_val_acc_mean=0.939187 tta_val_acc_std=0.00126202 per_seed=[0.9376999735832214, 0.94159996509552, 0.9383999705314636, 0.9395999908447266, 0.9395999908447266, 0.9398999810218811, 0.9386999607086182, 0.937999963760376]
+val_acc=0.9327 tta_val_acc=0.9395 seconds=40.6363
+val_acc=0.9304 tta_val_acc=0.9388 seconds=40.6336
+val_acc=0.9344 tta_val_acc=0.9417 seconds=40.6361
+val_acc=0.9336 tta_val_acc=0.9416 seconds=40.6393
+val_acc=0.9315 tta_val_acc=0.9409 seconds=40.6548
+val_acc=0.9308 tta_val_acc=0.9381 seconds=40.6363
+val_acc=0.9345 tta_val_acc=0.9402 seconds=40.6442
+val_acc=0.9337 tta_val_acc=0.9398 seconds=40.6322
+seeds_result run=seeds8_bs125.18 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.940075 tta_val_acc_std=0.00128702 per_seed=[0.9394999742507935, 0.9387999773025513, 0.9416999816894531, 0.94159996509552, 0.9408999681472778, 0.9380999803543091, 0.9401999711990356, 0.939799964427948]
+val_acc=0.9298 tta_val_acc=0.9374 seconds=40.6904
+val_acc=0.9324 tta_val_acc=0.9413 seconds=40.6338
+val_acc=0.9344 tta_val_acc=0.9408 seconds=40.6267
+val_acc=0.9304 tta_val_acc=0.9382 seconds=40.6299
+val_acc=0.9333 tta_val_acc=0.9411 seconds=40.6817
+val_acc=0.9281 tta_val_acc=0.9388 seconds=40.6085
+val_acc=0.9317 tta_val_acc=0.9393 seconds=40.6593
+val_acc=0.9287 tta_val_acc=0.9389 seconds=40.6453
+seeds_result run=seeds8_bs125.19 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.7 tta_val_acc_mean=0.939475 tta_val_acc_std=0.001438 per_seed=[0.9373999834060669, 0.9412999749183655, 0.9407999515533447, 0.9381999969482422, 0.941100001335144, 0.9387999773025513, 0.939300000667572, 0.9388999938964844]
+search_path run=seeds8_bs125 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 score=0.940075 parameter=whiten_bias.momentum reason=improved
+val_acc=0.9312 tta_val_acc=0.9388 seconds=40.6868
+val_acc=0.9256 tta_val_acc=0.9370 seconds=40.6244
+val_acc=0.9294 tta_val_acc=0.9397 seconds=40.6388
+val_acc=0.9285 tta_val_acc=0.9378 seconds=40.6592
+val_acc=0.9276 tta_val_acc=0.9369 seconds=40.6237
+val_acc=0.9303 tta_val_acc=0.9393 seconds=40.6288
+val_acc=0.9288 tta_val_acc=0.9383 seconds=40.6348
+val_acc=0.9296 tta_val_acc=0.9371 seconds=40.6391
+seeds_result run=seeds8_bs125.20 conv.initial_lr=0.028 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.938112 tta_val_acc_std=0.00108685 per_seed=[0.9387999773025513, 0.9369999766349792, 0.9396999478340149, 0.9377999901771545, 0.9368999600410461, 0.939300000667572, 0.9382999539375305, 0.9370999932289124]
+val_acc=0.9294 tta_val_acc=0.9373 seconds=40.6294
+val_acc=0.9286 tta_val_acc=0.9350 seconds=40.6629
+val_acc=0.9280 tta_val_acc=0.9359 seconds=40.6437
+val_acc=0.9291 tta_val_acc=0.9363 seconds=40.6431
+val_acc=0.9319 tta_val_acc=0.9367 seconds=40.6319
+val_acc=0.9285 tta_val_acc=0.9362 seconds=40.6588
+val_acc=0.9281 tta_val_acc=0.9363 seconds=40.6493
+val_acc=0.9277 tta_val_acc=0.9342 seconds=40.6527
+seeds_result run=seeds8_bs125.21 conv.initial_lr=0.078 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.935987 tta_val_acc_std=0.00097458 per_seed=[0.9372999668121338, 0.9350000023841858, 0.9358999729156494, 0.9362999796867371, 0.9366999864578247, 0.936199963092804, 0.9362999796867371, 0.9341999888420105]
+val_acc=0.9323 tta_val_acc=0.9409 seconds=40.6192
+val_acc=0.9300 tta_val_acc=0.9388 seconds=40.6372
+val_acc=0.9293 tta_val_acc=0.9366 seconds=40.6550
+val_acc=0.9303 tta_val_acc=0.9381 seconds=40.6237
+val_acc=0.9317 tta_val_acc=0.9396 seconds=40.6535
+val_acc=0.9295 tta_val_acc=0.9409 seconds=40.6137
+val_acc=0.9314 tta_val_acc=0.9381 seconds=40.6715
+val_acc=0.9291 tta_val_acc=0.9407 seconds=40.6490
+seeds_result run=seeds8_bs125.22 conv.initial_lr=0.047 conv.momentum=0.6 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.939212 tta_val_acc_std=0.00158244 per_seed=[0.9408999681472778, 0.9387999773025513, 0.9365999698638916, 0.9380999803543091, 0.9395999908447266, 0.9408999681472778, 0.9380999803543091, 0.9406999945640564]
+val_acc=0.9309 tta_val_acc=0.9373 seconds=40.6421
+val_acc=0.9327 tta_val_acc=0.9409 seconds=40.6585
+val_acc=0.9317 tta_val_acc=0.9380 seconds=40.6893
+val_acc=0.9318 tta_val_acc=0.9375 seconds=40.6836
+val_acc=0.9354 tta_val_acc=0.9398 seconds=40.6311
+val_acc=0.9273 tta_val_acc=0.9356 seconds=40.6541
+val_acc=0.9340 tta_val_acc=0.9400 seconds=40.6506
+val_acc=0.9299 tta_val_acc=0.9375 seconds=40.6650
+seeds_result run=seeds8_bs125.23 conv.initial_lr=0.047 conv.momentum=0.8 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.938325 tta_val_acc_std=0.00175479 per_seed=[0.9372999668121338, 0.9408999681472778, 0.937999963760376, 0.9375, 0.939799964427948, 0.9355999827384949, 0.9399999976158142, 0.9375]
+val_acc=0.9312 tta_val_acc=0.9386 seconds=40.6631
+val_acc=0.9310 tta_val_acc=0.9371 seconds=40.6661
+val_acc=0.9312 tta_val_acc=0.9388 seconds=40.6490
+val_acc=0.9317 tta_val_acc=0.9381 seconds=40.6420
+val_acc=0.9313 tta_val_acc=0.9390 seconds=40.6421
+val_acc=0.9307 tta_val_acc=0.9380 seconds=40.6382
+val_acc=0.9309 tta_val_acc=0.9405 seconds=40.6601
+val_acc=0.9306 tta_val_acc=0.9403 seconds=40.6412
+seeds_result run=seeds8_bs125.24 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=60 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.9388 tta_val_acc_std=0.00114891 per_seed=[0.9386000037193298, 0.9370999932289124, 0.9387999773025513, 0.9380999803543091, 0.9389999508857727, 0.937999963760376, 0.9404999613761902, 0.9402999877929688]
+val_acc=0.9323 tta_val_acc=0.9398 seconds=40.6560
+val_acc=0.9300 tta_val_acc=0.9383 seconds=40.6417
+val_acc=0.9317 tta_val_acc=0.9382 seconds=40.6342
+val_acc=0.9321 tta_val_acc=0.9381 seconds=40.6354
+val_acc=0.9338 tta_val_acc=0.9396 seconds=40.6473
+val_acc=0.9293 tta_val_acc=0.9379 seconds=40.6451
+val_acc=0.9306 tta_val_acc=0.9388 seconds=40.6486
+val_acc=0.9322 tta_val_acc=0.9380 seconds=40.6209
+seeds_result run=seeds8_bs125.25 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=170 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.938587 tta_val_acc_std=0.000739575 per_seed=[0.939799964427948, 0.9382999539375305, 0.9381999969482422, 0.9380999803543091, 0.9395999908447266, 0.9378999471664429, 0.9387999773025513, 0.937999963760376]
+val_acc=0.9313 tta_val_acc=0.9405 seconds=40.6368
+val_acc=0.9325 tta_val_acc=0.9395 seconds=40.6112
+val_acc=0.9311 tta_val_acc=0.9397 seconds=40.6529
+val_acc=0.9303 tta_val_acc=0.9398 seconds=40.6424
+val_acc=0.9313 tta_val_acc=0.9405 seconds=40.6445
+val_acc=0.9291 tta_val_acc=0.9362 seconds=40.6551
+val_acc=0.9302 tta_val_acc=0.9383 seconds=40.6114
+val_acc=0.9285 tta_val_acc=0.9364 seconds=40.6530
+seeds_result run=seeds8_bs125.26 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.7 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.938862 tta_val_acc_std=0.00172455 per_seed=[0.9404999613761902, 0.9394999742507935, 0.9396999478340149, 0.939799964427948, 0.9404999613761902, 0.936199963092804, 0.9382999539375305, 0.9363999962806702]
+val_acc=0.9291 tta_val_acc=0.9362 seconds=40.6318
+val_acc=0.9292 tta_val_acc=0.9386 seconds=40.6521
+val_acc=0.9300 tta_val_acc=0.9382 seconds=40.8829
+val_acc=0.9325 tta_val_acc=0.9383 seconds=40.8840
+val_acc=0.9297 tta_val_acc=0.9396 seconds=38.6966
+val_acc=0.9309 tta_val_acc=0.9382 seconds=40.8864
+val_acc=0.9307 tta_val_acc=0.9386 seconds=40.8982
+val_acc=0.9292 tta_val_acc=0.9381 seconds=37.4995
+seeds_result run=seeds8_bs125.27 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.9 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.938225 tta_val_acc_std=0.000948316 per_seed=[0.936199963092804, 0.9386000037193298, 0.9381999969482422, 0.9382999539375305, 0.9395999908447266, 0.9381999969482422, 0.9386000037193298, 0.9380999803543091]
+val_acc=0.9345 tta_val_acc=0.9406 seconds=40.8750
+val_acc=0.9292 tta_val_acc=0.9392 seconds=40.8806
+val_acc=0.9302 tta_val_acc=0.9372 seconds=37.3108
+val_acc=0.9343 tta_val_acc=0.9413 seconds=40.9080
+val_acc=0.9318 tta_val_acc=0.9393 seconds=40.9060
+val_acc=0.9315 tta_val_acc=0.9379 seconds=37.3385
+val_acc=0.9312 tta_val_acc=0.9387 seconds=40.8472
+val_acc=0.9298 tta_val_acc=0.9371 seconds=40.8770
+seeds_result run=seeds8_bs125.28 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=4.6 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.938912 tta_val_acc_std=0.00151511 per_seed=[0.9405999779701233, 0.9391999840736389, 0.9371999502182007, 0.9412999749183655, 0.939300000667572, 0.9378999471664429, 0.9386999607086182, 0.9370999932289124]
+val_acc=0.9317 tta_val_acc=0.9399 seconds=37.2992
+val_acc=0.9296 tta_val_acc=0.9398 seconds=40.8512
+val_acc=0.9315 tta_val_acc=0.9415 seconds=40.8998
+val_acc=0.9304 tta_val_acc=0.9400 seconds=37.3380
+val_acc=0.9340 tta_val_acc=0.9405 seconds=40.9068
+val_acc=0.9292 tta_val_acc=0.9402 seconds=40.9144
+val_acc=0.9295 tta_val_acc=0.9378 seconds=37.2876
+val_acc=0.9304 tta_val_acc=0.9403 seconds=40.8884
+seeds_result run=seeds8_bs125.29 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=13 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.94 tta_val_acc_std=0.00103647 per_seed=[0.9398999810218811, 0.939799964427948, 0.9414999485015869, 0.9399999976158142, 0.9404999613761902, 0.9401999711990356, 0.9377999901771545, 0.9402999877929688]
+val_acc=0.9321 tta_val_acc=0.9382 seconds=40.8529
+val_acc=0.9335 tta_val_acc=0.9376 seconds=37.3295
+val_acc=0.9330 tta_val_acc=0.9395 seconds=40.8981
+val_acc=0.9339 tta_val_acc=0.9417 seconds=40.9034
+val_acc=0.9315 tta_val_acc=0.9394 seconds=37.2801
+val_acc=0.9304 tta_val_acc=0.9381 seconds=40.8869
+val_acc=0.9315 tta_val_acc=0.9368 seconds=40.8723
+val_acc=0.9307 tta_val_acc=0.9382 seconds=37.3352
+seeds_result run=seeds8_bs125.30 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.8 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.938687 tta_val_acc_std=0.00150279 per_seed=[0.9381999969482422, 0.9375999569892883, 0.9394999742507935, 0.9416999816894531, 0.9393999576568604, 0.9380999803543091, 0.9368000030517578, 0.9381999969482422]
+val_acc=0.9351 tta_val_acc=0.9418 seconds=40.8894
+val_acc=0.9302 tta_val_acc=0.9408 seconds=40.9237
+val_acc=0.9304 tta_val_acc=0.9387 seconds=37.3366
+val_acc=0.9314 tta_val_acc=0.9396 seconds=40.8875
+val_acc=0.9295 tta_val_acc=0.9393 seconds=40.9105
+val_acc=0.9291 tta_val_acc=0.9363 seconds=37.3109
+val_acc=0.9304 tta_val_acc=0.9389 seconds=40.8775
+val_acc=0.9309 tta_val_acc=0.9386 seconds=40.9004
+seeds_result run=seeds8_bs125.31 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.9 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc_mean=0.93925 tta_val_acc_std=0.0016292 per_seed=[0.9417999982833862, 0.9407999515533447, 0.9386999607086182, 0.9395999908447266, 0.939300000667572, 0.9362999796867371, 0.9388999938964844, 0.9386000037193298]
+val_acc=0.9311 tta_val_acc=0.9394 seconds=37.2803
+val_acc=0.9278 tta_val_acc=0.9378 seconds=40.8702
+val_acc=0.9346 tta_val_acc=0.9429 seconds=40.9239
+val_acc=0.9293 tta_val_acc=0.9403 seconds=37.3109
+val_acc=0.9329 tta_val_acc=0.9414 seconds=40.8819
+val_acc=0.9301 tta_val_acc=0.9386 seconds=40.8908
+val_acc=0.9313 tta_val_acc=0.9374 seconds=37.2598
+val_acc=0.9288 tta_val_acc=0.9398 seconds=40.8692
+seeds_result run=seeds8_bs125.32 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=4.6 whiten_bias.momentum=0.8 tta_val_acc_mean=0.9397 tta_val_acc_std=0.00184003 per_seed=[0.9393999576568604, 0.9377999901771545, 0.9429000020027161, 0.9402999877929688, 0.9413999915122986, 0.9386000037193298, 0.9373999834060669, 0.939799964427948]
+val_acc=0.9306 tta_val_acc=0.9381 seconds=40.8929
+val_acc=0.9341 tta_val_acc=0.9406 seconds=37.3306
+val_acc=0.9289 tta_val_acc=0.9377 seconds=40.8778
+val_acc=0.9307 tta_val_acc=0.9380 seconds=40.8847
+val_acc=0.9337 tta_val_acc=0.9400 seconds=37.3254
+val_acc=0.9312 tta_val_acc=0.9409 seconds=40.8946
+val_acc=0.9315 tta_val_acc=0.9385 seconds=40.8758
+val_acc=0.9308 tta_val_acc=0.9384 seconds=37.3183
+seeds_result run=seeds8_bs125.33 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=13 whiten_bias.momentum=0.8 tta_val_acc_mean=0.939025 tta_val_acc_std=0.00126914 per_seed=[0.9380999803543091, 0.9405999779701233, 0.9376999735832214, 0.937999963760376, 0.9399999976158142, 0.9408999681472778, 0.9384999871253967, 0.9383999705314636]
+val_acc=0.9329 tta_val_acc=0.9396 seconds=40.8587
+val_acc=0.9287 tta_val_acc=0.9381 seconds=40.8803
+val_acc=0.9322 tta_val_acc=0.9404 seconds=37.3319
+val_acc=0.9314 tta_val_acc=0.9397 seconds=40.8555
+val_acc=0.9321 tta_val_acc=0.9400 seconds=40.8871
+val_acc=0.9310 tta_val_acc=0.9357 seconds=37.3023
+val_acc=0.9319 tta_val_acc=0.9402 seconds=40.8644
+val_acc=0.9333 tta_val_acc=0.9411 seconds=40.8904
+seeds_result run=seeds8_bs125.34 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.9 tta_val_acc_mean=0.93935 tta_val_acc_std=0.00170629 per_seed=[0.9395999908447266, 0.9380999803543091, 0.9404000043869019, 0.9396999478340149, 0.9399999976158142, 0.935699999332428, 0.9401999711990356, 0.941100001335144]
+search_best run=seeds8_bs125 trial=seeds8_bs125.18 conv.initial_lr=0.047 conv.momentum=0.7 head.initial_lr=99 head.momentum=0.8 norm_bias.initial_lr=7.7 norm_bias.momentum=0.85 whiten_bias.initial_lr=7.7 whiten_bias.momentum=0.8 tta_val_acc=0.940075
+  changes:
+    whiten_bias.momentum: 0.85 -> 0.8
+    norm_bias.lr_scheduler: [[3200, 4.6, 0.0]] -> [[3200, 7.7, 0.0]]
+    head.lr_scheduler: [[3200, 170, 0.0]] -> [[3200, 99.0, 0.0]]
+    head.momentum: 0.85 -> 0.8
+    conv.momentum: 0.5 -> 0.7
+val_acc=0.9302 tta_val_acc=0.9395 seconds=37.2661
+val_acc=0.9297 tta_val_acc=0.9376 seconds=40.8580
+val_acc=0.9288 tta_val_acc=0.9381 seconds=40.8977
+val_acc=0.9327 tta_val_acc=0.9387 seconds=37.3288
+val_acc=0.9317 tta_val_acc=0.9372 seconds=40.8803
+val_acc=0.9284 tta_val_acc=0.9360 seconds=40.8660
+val_acc=0.9283 tta_val_acc=0.9366 seconds=37.2883
+val_acc=0.9337 tta_val_acc=0.9396 seconds=40.9058
+val_acc=0.9311 tta_val_acc=0.9388 seconds=40.9004
+val_acc=0.9316 tta_val_acc=0.9382 seconds=37.3256
+val_acc=0.9303 tta_val_acc=0.9395 seconds=40.8915
+val_acc=0.9306 tta_val_acc=0.9396 seconds=40.8828
+val_acc=0.9323 tta_val_acc=0.9395 seconds=37.2798
+val_acc=0.9325 tta_val_acc=0.9379 seconds=40.8689
+val_acc=0.9305 tta_val_acc=0.9393 seconds=40.8915
+val_acc=0.9322 tta_val_acc=0.9393 seconds=37.3101
+heldout {"heldout_start": {"mean": 0.9379124715924263, "std": 0.0013097865230431466, "per_seed": [0.9394999742507935, 0.9375999569892883, 0.9380999803543091, 0.9386999607086182, 0.9371999502182007, 0.9359999895095825, 0.9365999698638916, 0.9395999908447266]}, "heldout_best": {"mean": 0.9390124827623367, "std": 0.0006468408903327302, "per_seed": [0.9387999773025513, 0.9381999969482422, 0.9394999742507935, 0.9395999908447266, 0.9394999742507935, 0.9378999471664429, 0.939300000667572, 0.939300000667572]}}

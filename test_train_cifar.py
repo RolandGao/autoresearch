@@ -28,9 +28,9 @@ def search_config(
     initial_dropoff_margin,
 ):
     config = dict(algorithm=algorithm, params=params, metric=metric)
-    if algorithm in ("interval", "global_neighbour"):
+    if algorithm in ("interval", "interval2", "global_neighbour"):
         config["max_side_steps"] = max_side_steps
-    if algorithm == "interval":
+    if algorithm in ("interval", "interval2"):
         config.update(
             interval_steps=interval_steps,
             cooldown_steps=cooldown_steps,
@@ -1028,7 +1028,9 @@ class SearchTests(unittest.TestCase):
                     [(125, 0.1), (75, 0)], total, name="lr_scheduler"
                 )
         for config in train.RUN_CONFIGS.values():
-            total = config["num_epochs"] * (50000 // config["batch_size"])
+            total = config["num_epochs"] * (
+                1 if config["overfit"] else 50000 // config["batch_size"]
+            )
             schedules = train.configured_hparam_schedules(config["param_groups"], total)
             for lines in schedules.values():
                 self.assertEqual(sum(line[0] for line in lines), total)
@@ -2772,7 +2774,10 @@ class SearchTests(unittest.TestCase):
                             self.assertTrue(all(len(line) == 2 for line in schedule))
                     else:
                         self.assertEqual(header, "config run=0")
-                        self.assertEqual(len(lines), 1)
+                        # Overfit runs also log the fixed batch's training loss.
+                        self.assertEqual(len(lines), 2 if overfit else 1)
+                        if overfit:
+                            self.assertTrue(lines[0].startswith("fixed_batch_loss run=0 train_loss="))
                 for name, value in models[0].state_dict().items():
                     torch.testing.assert_close(
                         value, models[1].state_dict()[name], rtol=0, atol=0
@@ -3462,6 +3467,118 @@ class SpeedAndSeededSearchTests(unittest.TestCase):
             config["hparam_tuning"]["seeds"] = bad
             with self.assertRaises(ValueError), contextlib.redirect_stdout(io.StringIO()):
                 train.run_experiment("seeded", None, config)
+
+
+
+class Interval2Tests(unittest.TestCase):
+    def test_cooldown_lrs_scale_every_group_from_the_main_interval(self):
+        base = {
+            "conv.initial_lr": [(10, 0.4)],
+            "conv.momentum": [(10, 0.7)],
+            "head.initial_lr": [(10, 1.0, 0.0)],
+            "frozen.initial_lr": [(10, 0.0)],
+        }
+        values = train.cooldown_lr_values(
+            base, {"conv.initial_lr": 0.5, "conv.momentum": 0.6}, 0.5, 2, 4
+        )
+        # Searched: main value x mult. Unsearched: mean scheduled LR over steps 2-5
+        # (0.8, 0.7, 0.6, 0.5) x mult. Other searched fields are unchanged.
+        self.assertAlmostEqual(values.pop("conv.initial_lr"), 0.25)
+        self.assertAlmostEqual(values.pop("head.initial_lr"), 0.65 * 0.5)
+        self.assertEqual(values, {"conv.momentum": 0.6, "frozen.initial_lr": 0.0})
+
+    def test_interval2_searches_one_shared_cooldown_multiplier(self):
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
+        config.update(batch_size=2, num_epochs=6, overfit=True)
+        for name, group in config["param_groups"].items():
+            group["lr_scheduler"] = [(6, 0 if name.endswith("_weight") else 0.001)]
+        config["param_groups"]["head"]["lr_scheduler"] = [(6, 0.001, 0)]
+        config["hparam_tuning"] = dict(
+            search_config(
+                algorithm="interval2",
+                params={"conv.initial_lr": dict(initial=0.001, mult=0.8, choices=None)},
+                metric="tta_val_acc", max_side_steps=1, interval_steps=2,
+                cooldown_steps=2, initial_dropoff_margin=0.02,
+            ),
+            cooldown_lr_mult=dict(initial=1.0, mult=0.6),
+        )
+        model = TinyModel(dict(time=0, training=0))
+        mults = []
+        original = train.cooldown_lr_values
+
+        def record(base, main_values, lr_mult, start_step, main_steps):
+            mults.append(lr_mult)
+            values = original(base, main_values, lr_mult, start_step, main_steps)
+            # Every group's LR is set for the cooldown, searched or not.
+            self.assertEqual(
+                {p for p in values if p.endswith(".initial_lr")},
+                {p for p in base if p.endswith(".initial_lr")},
+            )
+            return values
+
+        def evaluate(model, loader, tta_level):
+            return model.training_steps.item() / 100
+
+        with (
+            patch.object(train, "CifarLoader", TinyLoader),
+            patch.object(train, "evaluate", side_effect=evaluate),
+            patch.object(train, "cooldown_lr_values", side_effect=record),
+            patch.object(train, "directional_search", wraps=train.directional_search) as search,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            result = train.run_experiment(0, model, config)["best_result"]
+        self.assertTrue(mults)
+        # Multipliers come from the unit-anchored 0.6 grid, starting at 1.
+        for mult in mults:
+            k = round(log(mult) / log(0.6))
+            self.assertAlmostEqual(mult, train.round_hparam(0.6 ** k))
+        cooldown_calls = [c for c in search.call_args_list
+                          if train.COOLDOWN_LR_MULT in c.args[1]]
+        self.assertTrue(cooldown_calls)
+        self.assertEqual(cooldown_calls[0].args[0], {train.COOLDOWN_LR_MULT: 1.0})
+        for call in search.call_args_list:
+            self.assertEqual(call.kwargs["factors"][train.COOLDOWN_LR_MULT], 0.6)
+        for interval in result["intervals"]:
+            if interval["cooldown_hparams"] is not None:
+                self.assertEqual(set(interval["cooldown_hparams"]), {train.COOLDOWN_LR_MULT})
+        for bad in (dict(initial=0, mult=0.6), dict(initial=1.0, mult=1.0), dict(initial=1.0)):
+            config["hparam_tuning"]["cooldown_lr_mult"] = bad
+            with self.assertRaises(ValueError), contextlib.redirect_stdout(io.StringIO()), \
+                    patch.object(train, "CifarLoader", TinyLoader):
+                train.run_experiment(0, TinyModel(dict(time=0, training=0)), config)
+
+
+
+class OverfitEvaluationTests(unittest.TestCase):
+    def test_overfit_mode_evaluates_the_fixed_training_batch(self):
+        config = copy.deepcopy(train.RUN_CONFIGS["baseline_bs125"])
+        config.update(batch_size=2, num_epochs=3, overfit=True)
+        for name, group in config["param_groups"].items():
+            group["lr_scheduler"] = [(3, 0 if name.endswith("_weight") else 0.001)]
+        trained, evaluated = [], []
+        model = TinyModel(dict(time=0, training=0))
+        original_forward = model.forward
+
+        def forward(x):
+            if model.training and torch.is_grad_enabled():
+                trained.append(x)
+            return original_forward(x)
+
+        def evaluate(model, loader, tta_level):
+            evaluated.append(loader)
+            return 0.5
+
+        model.forward = forward
+        with patch.object(train, "CifarLoader", TinyLoader), \
+                patch.object(train, "evaluate", side_effect=evaluate), \
+                contextlib.redirect_stdout(io.StringIO()):
+            train.run_experiment("overfit", model, config)
+        self.assertEqual(len(trained), 3)
+        for loader in evaluated:
+            self.assertIsInstance(loader, train.FixedBatchLoader)
+            self.assertIs(loader.normalized_images(), trained[0])
+            for x in trained:
+                self.assertIs(x, trained[0])
 
 
 if __name__ == "__main__":

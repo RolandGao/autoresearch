@@ -57,3 +57,248 @@ Conv baselines (SGD head), dev/c04_conv_baselines_8seeds.out, c07_h_8seeds.out, 
 | `baseline_bs2000_conv_lion` | Lion, 0.0018 / 0.8 | 91.13 ± 0.25 |
 | `baseline_bs2000_conv_sgd` | SGD, 14 / 0.8 | 90.32 ± 0.15 |
 | `baseline_bs2000_conv_kfac-jacobian` | K-FAC Jacobian, 0.22 / 0.6 (K-FAC hparams, untuned) | 93.85 (seed 0 only; logs/cifar_baseline_20261005_181953_862167Z_7998.log) |
+
+
+## Interval (online) search of conv LR and momentum (2026-10-06)
+
+Interval search with interval / cooldown lengths as fractions of the run, searching
+only conv LR and momentum on top of baseline_bs{BS}; seed 0 only
+(dev/i01_interval_variants.out, logs in dev/search_logs/). The searched conv LR is
+held constant within each interval (the baseline decays it linearly).
+Baselines: seed 0; mean ± sd over seeds 0-7 (dev/h03_baselines_8seeds.out); mean ± sd
+over held-out seeds 100-107 (dev/m01_seeded.jsonl).
+
+| BS | 20% / 20% | 20% / 5% | 5% / 5% | Baseline seed 0 | Baseline seeds 0-7 | Baseline seeds 100-107 |
+|---|---|---|---|---|---|---|
+| 125 | **93.74** | 93.67 | 93.55 | 94.00 | 93.82 ± 0.18 | 93.79 ± 0.13 |
+| 500 | **93.78** | 93.49 | 92.79 | 94.01 | 93.89 ± 0.10 | 93.89 ± 0.14 |
+| 2000 | **94.00** | 93.84 | 92.77 | 93.89 | 93.92 ± 0.10 | 94.02 ± 0.16 |
+
+- Shape: 20%/20% > 20%/5% > 5%/5% at every BS. Short intervals/cooldowns make the
+  greedy lookahead cut the LR every interval (5%/5%: conv LR ~3e-4 by the end),
+  costing ~1.1 at BS 500 and 2000.
+- vs baseline: 20%/20% is within ~1 seed-sd of the baseline mean (-0.08, -0.11,
+  +0.08). Earlier multi-seed checks (2026-10-02) put it slightly below
+  (BS 2000 -0.17 over 8 seeds, BS 500 -0.10 over 4 seeds). Interval search has not
+  beaten a fixed linear-decay schedule.
+- Seed-averaged full-run searches (below) reach 93.90-94.05 held-out at BS 125/500,
+  above any interval-search result.
+
+
+## Seed-averaged full-run searches (2026-10-06)
+
+global_neighbour_seeds: each candidate scored by mean TTA over seeds 0-7; searched the
+LR (x0.6 grid) and momentum of conv, head, norm_bias, whiten_bias (Adam: also beta2,
+after a seed-0 coarse search). Selected configs re-run on held-out seeds 100-107
+(mean ± sd), since the search's own score is optimistic. Configs:
+seeded_best_bs{BS}_{sgd,lion,adam} in train_cifar.py; results dev/m01_seeded.jsonl.
+
+| BS | SGD baseline (start) | SGD tuned | Lion tuned | Adam tuned | Input-conditioned head* |
+|---|---|---|---|---|---|
+| 125 | 93.79 ± 0.13 | 93.90 ± 0.06 | 93.88 ± 0.18 | **93.98 ± 0.08** | 93.81 ± 0.14 |
+| 500 | 93.89 ± 0.14 | **94.05 ± 0.15** | 93.86 ± 0.13 | 93.99 ± 0.14 | 93.85 ± 0.19 |
+| 2000 | 94.02 ± 0.16 | 94.00 ± 0.12 | 93.94 ± 0.08 | 94.00 ± 0.09 | - |
+
+*On the tuned SGD config, from a seed-0 search (dev/m02_input_conditioned.jsonl).
+
+- Only BS 500 SGD (+0.16) and BS 125 SGD (+0.11) gains held up on held-out seeds;
+  other search gains on seeds 0-7 (up to +0.14) vanished (selection bias).
+- SGD tuned vs baseline: BS 125 conv mom .5->.7, head lr 170->99 / mom .85->.8,
+  norm_bias lr 4.6->7.7, whiten_bias mom .85->.8; BS 500 head lr 280->770,
+  norm_bias lr 21->60 / mom .85->.8; BS 2000 conv mom .7->.6, head mom .85->.8.
+- Adam beta2 never left 0.99. Lion/Adam starts (BS 2000 values scaled by
+  sqrt(BS/2000)) were near-optimal.
+- Single-seed searches (input-conditioned: +0.36/+0.44 on seed 0) are noise-dominated.
+
+
+## BS 2000 single-seed runs (seed 0, 2026-10-05)
+
+logs/cifar_baseline_20261005_181953_862167Z_7998.log (debug runs):
+| Config | TTA |
+|---|---|
+| baseline_bs2000 (Muon2 conv, SGD head) | 93.89 |
+| baseline_bs2000_conv_kfac (0.22 / 0.6, A 3, G 1, matrix norm) | 93.76 |
+| baseline_bs2000_conv_kfac-jacobian (same hparams as K-FAC) | 93.85 |
+| baseline_bs2000_head_input_conditioned | 94.16 |
+
+
+## Alternative heads on baseline_bs2000: head-only searches (seed 0, 2026-10-05)
+
+logs/cifar_baseline_20261005_185102_568275Z_15279.log. global_neighbour of head LR and
+momentum (+ dampings for K-FAC); conv stays Muon2.
+| Exp | Head | Best | TTA |
+|---|---|---|---|
+| exp15_head_muon_head | muon_head (Muon2 without weight normalization) | lr 4.6, mom 0.85 | **94.13** |
+| exp16_head_kfac-jacobian | K-FAC Jacobian, init from input-conditioned | start was optimum: lr 0.13, mom 0.8, A damping 0.01, G damping 0 (pinv), conditioning after momentum | 93.96 |
+| exp17_head_kfac_input_conditioned_init | K-FAC, same init as exp16 | lr 0.13 diverged; lr 0.047 | 93.67 |
+- Why the input-conditioned head LR (10000) is ~3e5x the K-FAC head LR (0.03): logits
+  are head(x)/256, so K-FAC's output factor G = H/256^2 (H = CE Hessian, eigenvalues
+  <= ~0.1); G^-1 scales the update by ~256^2 x (8-30). For kfac-jacobian G = I/256^2
+  almost exactly (measured eigenvalues ~1.5e-5, spread 1.2x), so a kfac-jacobian head
+  is input conditioning with LR / 256^2.
+
+
+## K-FAC Jacobian conv + K-FAC Jacobian head (seed 0, 2026-10-05)
+
+Conv kfac-jacobian (matrix normalization, momentum before conditioning) + head
+kfac-jacobian (exp16 optimum); biases SGD as baseline_bs2000.
+| Run | Conv lr / mom / A damping / G damping | TTA |
+|---|---|---|
+| exp18 (first try, old TUNED_KFAC_CONV) | 0.15 / 0.7 / 3 / 1 | 93.63 |
+| exp18 | 0.22 / 0.6 / 3 / 1 | 93.69 |
+| exp19 best of global_neighbour (18 trials, range 93.33-93.81) | 0.22 / 0.5 / 1.7 / 1.7 | 93.81 |
+| exp20 momentum first | 0.22 / 0.5 / 0.01 / 0.01 (lr+mom searched) | 91.73 |
+| exp20 conditioning first | 0.22 / 0.4 / 0.01 / 0.01 (lr+mom searched) | 91.50 |
+- Combining the K-FAC Jacobian conv and head is below either alone (conv alone 93.85,
+  head alone 93.96, both 93.69; single seed).
+- exp19 start (A 2.8) 93.52 vs exp18 (A 3) 93.69: ~0.2 trial noise, same size as the
+  search's gain. Dampings searched on an unbounded 0.6^k grid; optimum near 1.7/1.7.
+- A/G spectra (debug_kfac_factors videos, untracked_logs/...27696.log/): conv A damping
+  (3 x mean eigenvalue) sits above all but the top few (first conv) / top ~100 of 2304
+  (last conv) eigenvalues; conv G damping (1x) cuts mid-spectrum and last-conv G grows
+  ~100x over training; head A damping (0.01x) is below nearly all eigenvalues.
+
+
+## Why weak A damping hurts the K-FAC Jacobian conv but not the head (2026-10-05)
+
+Base: exp19 best (conv lr .22 mom .5 A 1.7 G 1.7, kfac-jacobian head). Seeds 0-1, clean
+train loss / acc from dev/harness.py (dev/g01_damping_ablation.out):
+| Conv A / G damping | TTA (seed 0, 1) | Train loss | Train acc |
+|---|---|---|---|
+| 1.7 / 1.7 | 93.81, 93.31 | 0.270 | 99.1% |
+| 1.7 / 0.01 | 93.71, 93.63 | 0.266 | 99.2% |
+| 0.3 / 0.3 | 93.02, 93.18 | 0.283 | 98.8% |
+| 0.1 / 0.1 | 92.42, 92.43 | 0.305 | 98.4% |
+| 0.01 / 1.7 | 91.68, 91.85 | 0.332 | 97.4% |
+| 0.01 / 0.01 | 91.73, 91.85 | 0.331 | 97.6% |
+| 0.01 / 0.01, 8 probes | 91.76, 91.66 | 0.330 | 97.6% |
+- A damping is everything; G damping and G probe noise don't matter.
+- Weak A damping fits the train set worse: an optimization failure, not overfitting.
+- Not the update's size: normalizing the conv update in output space
+  (||U A^1/2||_F fixed; dev/g03_patch.py) with LR retuned keeps the same order
+  (best per A damping: 0.01 -> 91.48, 0.1 -> 92.71, 0.3 -> 93.08, 1.7 -> 93.57).
+- Mechanism: per-step overfitting of the minibatch. The K-FAC layer update changes the
+  layer output like a ridge regression of the backprop signal onto the input patches
+  (A damping = ridge penalty). Backprop noise is per image, so effective samples ~
+  images (~2000/batch); weak ridge fits ~d dimensions. Diagnostic (dev/g02_diag.py):
+  split each batch in halves; loss decrease per unit output change on the half the
+  update was computed from (in-sample) vs the other half (held-out), steps 5-150:
+  | Layer | Input dims d | ridge dof at A 0.01 | held-out, A 0.01 / A 1.7 | in-sample, 0.01 / 1.7 | output-space reproducibility 0.01 vs 1.7 |
+  |---|---|---|---|---|---|
+  | conv0 | 216 | 169 | x1.03 | x1.29 | 0.42 vs 0.53 |
+  | conv1 | 576 | 532 | x0.89 | x1.36 | 0.27 vs 0.46 |
+  | conv2 | 576 | 521 | x0.83 | x1.46 | 0.17 vs 0.36 |
+  | conv3 | 2304 | 2052 | x0.68 | x1.41 | 0.08 vs 0.25 |
+  | conv4 | 2304 | 1997 | x0.68 | x1.37 | 0.07 vs 0.24 |
+  | conv5 | 2304 | 1986 | x0.60 | x1.44 | 0.05 vs 0.22 |
+  | head | 256 | 208 | x0.96 | x1.87 | 0.29 vs 0.67 |
+  ridge dof = tr(A (A + lambda I)^-1) = sum_i l_i / (l_i + lambda), lambda = alpha x mean
+  eigenvalue of A. Weak damping always looks better in-sample; held-out it degrades
+  with layer width. In conv3-5 it reduces held-out loss less than plain SGD per unit
+  output change.
+- Per-layer ablation, weak A (0.01) only on some convs, others 1.7 (seeds 0-1 mean,
+  dev/g04_layer_damping.out): none 93.56; conv0 93.55 (0.00); conv5 93.35 (-0.21);
+  convs 0-2 93.06 (-0.50); convs 3-5 92.86 (-0.70); all 91.79 (-1.77). Super-additive.
+- The best damping grows over training because the gradient's signal-to-noise falls:
+  half-batch gradient agreement cos(g1, g2) for conv3: 0.79, 0.67, 0.47, 0.25, 0.13 at
+  steps 5, 25, 50, 100, 150; held-out-best A damping conv3: 1, 1, 3, 3, 10;
+  conv4: 1, 1, 3, 10, 10; conv1: 0.3, 0.3, 1, 1.7, 1.7; head stays 0.1-0.3.
+  (Earlier sessions: damping schedules following this did not help.)
+
+
+## Speed (2026-10-06)
+
+Bitwise-identical CUDA graphs in train_cifar.py: USE_CUDA_GRAPH_MUON (Newton-Schulz per
+shape) and USE_CUDA_GRAPH_TRAINING (training forward+backward, when no group uses
+module hooks and debug is off). Full run, one process:
+| BS | Before | After |
+|---|---|---|
+| 125 | ~51 s | 18.6 s |
+| 500 | ~31 s | 12.6 s |
+| 2000 | ~26 s | 10.5 s |
+Seed-0 baselines reproduce exactly. Training is now GPU-bound: two processes give no
+extra throughput; four fill 40 GB. Inside capped-memory worker processes, per-seed
+results are not bitwise equal to standalone runs (means agree; likely cuDNN algorithm
+choice, unverified).
+
+
+## Adam coarse searches (seed 0, 2026-10-06)
+
+seeds1_bs{BS}_adam_coarse: Adam head/biases (start: Lion LRs, beta1 0.9, beta2 0.99,
+eps 1e-8); searched 4 LRs, 4 momenta/beta1, 3 beta2.
+| BS | Start -> best (seed 0) | Candidates | Changes |
+|---|---|---|---|
+| 125 | 93.98 -> 94.09 | 29 | conv mom .5->.6, head lr .047->.078 |
+| 500 | 93.89 -> 94.19 | 26 | conv mom .6->.4 |
+| 2000 | 93.98 -> 94.34 | 54 | norm_bias lr .017->.047 |
+All beta2 stayed 0.99. The 8-seed Adam searches from these points are in the
+seed-averaged table above.
+
+
+## Earlier sessions (summary from my notes, 2026-09-29 to 2026-10-02)
+
+- All-groups K-FAC / K-FAC Jacobian at BS 2000: plateau ~93.85 (8 seeds 20-27) for
+  every principled variant; Muon reference 93.86. Muon conv + K-FAC Jacobian head/bias
+  93.93-94.00; the gap is the conv direction (tuned K-FAC update has cos 0.77-0.89 with
+  Muon's). No gain: weighted A by probe energy, more probes, head weight decay,
+  per-layer lr, function/natural norm, damping schedules and rules, Jacobi damping of G
+  (-0.7), structured shrinkage of A.
+- Without whole-matrix normalization the K-FAC Jacobian conv drops to ~88.2%.
+- -h conv variants (row or matrix weight normalization with SGD/Lion/Adam) all ~92.0-92.3,
+  ~1.6 below Muon2; row vs matrix normalization doesn't matter (table above).
+- Interval search with absolute 40/40-step intervals: BS 500 -0.96, BS 125 -3.06; C=0
+  always fails; interval size must scale with run length.
+- LR ranges giving >= 93% (BS 2000, seed 0): conv Muon2 ~0.08-0.6, head SGD ~3-28000,
+  head Lion ~0.002-8, head input-conditioned ~800-77000.
+
+
+## interval2: cooldown cools every group (2026-10-07)
+
+interval2 = interval search (conv LR + momentum in the main interval) whose cooldown
+searches one multiplier (x0.6 grid, start 1, carried across intervals) applied to
+every group's LR, held constant: searched groups get main-interval LR x mult, others
+their mean scheduled LR over the main interval x mult. Control: the original interval
+search on the same base. Seed 0 (dev/i02_interval2.out, dev/search_logs/).
+| BS (base, held-out mean) | Shape | interval2 | old interval | delta |
+|---|---|---|---|---|
+| 2000 (baseline_bs2000, 94.02) | 20/20 | 93.85 | 94.00 | -0.15 |
+| | 20/5 | 93.58 | 93.84 | -0.26 |
+| | 5/5 | 92.86 | 92.77 | +0.09 |
+| 500 (seeded_best_bs500_sgd, 94.05) | 20/20 | 93.96 | 93.80 | +0.16 |
+| | 20/5 | 93.62 | 93.86 | -0.24 |
+| | 5/5 | 93.22 | 92.87 | +0.35 |
+| 125 (seeded_best_bs125_adam, 93.98) | 20/20 | 93.72 | 93.93 | -0.21 |
+| | 20/5 | 93.31 | 93.41 | -0.10 |
+| | 5/5 | 92.75 | 93.14 | -0.39 |
+- Mean delta -0.08 (3 of 9 positive): no effect beyond single-seed noise.
+- The search wants deep cooldowns (mult ~0.13-0.36), yet the committed conv LR still
+  falls every interval (ends ~0.0008-0.017), so the LR cut isn't caused by uncooled
+  unsearched groups; it looks like short-horizon greedy bias.
+- 20/20 > 20/5 > 5/5 everywhere; no interval search beats its fixed linear-decay base.
+- Infra: the training CUDA graph's pool holds all activations (BS 2000: 11.8 GiB) and
+  OOMed two workers; graphs now only for BS <= 500 (CUDA_GRAPH_TRAINING_MAX_BATCH).
+
+
+## Overfit mode: interval search on one fixed batch (BS 2000, 2026-10-07)
+
+overfit=True: 20 steps on one fixed (augmented) batch of 2000; evaluation on that same
+batch with train-mode BatchNorm; score = training loss (CE, label smoothing 0.2) on
+it, searched as metric neg_train_loss. Accuracy is useless (100% for every run). Loss
+floor with label smoothing 0.2 = entropy of the smoothed target = 0.8669. Base
+overfit_bs2000 = baseline_bs2000 squeezed into 20 steps. Original interval search of
+conv LR + momentum, seed 0 (dev/o01_overfit.jsonl, dev/search_logs/o01_*.log).
+Fixed schedule: seed 0 0.8733; 8 seeds 0.8746 ± 0.0011 (sd).
+Final loss, rows interval 1-4 steps, cols cooldown 0-4 steps:
+| I \ C | 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| 1 | 0.9081 | 0.8723 | 0.8741 | 0.8728 | **0.8721** |
+| 2 | 0.8926 | 0.8725 | 0.8731 | 0.8728 | 0.8723 |
+| 3 | 0.8812 | 0.8728 | 0.8724 | 0.8733 | 0.8730 |
+| 4 | 0.8850 | 0.8731 | 0.8733 | 0.8739 | 0.8746 |
+- No cooldown (C=0) clearly fails, worst with 1-step intervals (+0.035 over the fixed
+  schedule, ~30 seed-sd). Any cooldown >= 1 step fixes it, even for 1-step intervals.
+- With a cooldown, every cell is within ~1 seed-sd of the fixed schedule on the same
+  seed (0.8721-0.8746 vs 0.8733); short intervals with cooldown are at least as good.
+- Unlike the full-data runs, short intervals don't hurt here: the committed conv LR
+  falls only to ~0.017-0.028, and there is no generalization gap for the greedy
+  short-horizon choice to miss.
