@@ -659,16 +659,14 @@ class GroupOptimizer(torch.optim.Optimizer):
                     @ torch.linalg.pinv(covariance, hermitian=True)
                 ).to(g.dtype)
             damping = alpha * covariance.diagonal().mean()
-            if damping > 0:
-                damped = covariance.clone()
-                damped.diagonal().add_(damping)
-                # Positive damping makes the PSD covariance positive definite.
-                factor = torch.linalg.cholesky_ex(damped).L
-                return torch.cholesky_solve(g.to(covariance.dtype).T, factor).T.to(
-                    g.dtype
-                )
-            # Zero inputs give zero covariance and zero pseudoinverse.
-            return torch.zeros_like(g)
+            damped = covariance.clone()
+            damped.diagonal().add_(damping)
+            # Positive damping makes the PSD covariance positive definite.
+            factor = torch.linalg.cholesky_ex(damped).L
+            solved = torch.cholesky_solve(g.to(covariance.dtype).T, factor).T
+            # Zero inputs give zero covariance and zero pseudoinverse. Selecting on the
+            # device avoids a host sync per block (the solve dominates small batches).
+            return torch.where(damping > 0, solved, torch.zeros_like(solved)).to(g.dtype)
 
     @torch.no_grad()
     def step(self):
@@ -2712,12 +2710,65 @@ for interval_steps, cooldown_steps in product(range(1, 5), range(0, 5)):
         f"overfit_interval_lrs_bs2000_steps10_interval{interval_steps}_cooldown{cooldown_steps}"
     ] = config
 
+# K-FAC Jacobian for every trainable group, and the hybrid with Muon2 convs (12-hour
+# study, dev/KJ_NOTES.md). kfacjac_all_bs{BS}: conv (whole-matrix normalization,
+# momentum before conditioning), head (conditioning first, G pseudoinverse) and both
+# biases (momentum first) all kfac-jacobian; every LR decays linearly to 0 (whitening
+# bias over the first 3/8). kfacjac_hybrid_bs{BS}: the same head/biases on the conv of
+# the best config for that BS. Held-out TTA (seeds 100-107): all 93.78 / 93.91 / 93.69,
+# hybrid 93.86 / 93.90 / 93.71 for BS 2000 / 500 / 125 (best non-KJ: 94.02 / 94.05 /
+# 93.98). The conv's input whitening is what costs accuracy; its best A damping grows
+# as the batch shrinks.
+KFACJAC_ALL = {  # BS: (conv lr, conv momentum, conv A damping, head lr, bias lr)
+    2000: (0.22, 0.6, 2.8, 0.13, 0.13),
+    500: (0.13, 0.5, 2.8, 0.078, 0.36),
+    125: (0.047, 0.5, 20.0, 0.0099, 0.0487),
+}
+KFACJAC_HYBRID = {  # BS: (conv source, head lr, bias lr)
+    2000: ("baseline_bs2000", 0.13, 0.16),
+    500: ("seeded_best_bs500_sgd", 0.077, 0.38),
+    125: ("seeded_best_bs125_adam", 0.0099, 0.012),
+}
+
+
+def kfacjac_group(lr_scheduler, momentum, input_damping, damping, first, matrix_norm):
+    return dict(
+        algorithm="kfac-jacobian", lr_scheduler=lr_scheduler, momentum=momentum,
+        nesterov=True, kfac_damping=damping, kfac_input_damping=input_damping,
+        kfac_factor_momentum=0.0, kfac_probes=1,
+        gradient_momentum_before_conditioning=first, kfac_matrix_normalization=matrix_norm,
+    )
+
+
+def kfacjac_head_and_biases(config, head_lr, bias_lr):
+    groups = config["param_groups"]
+    steps = groups["conv"]["lr_scheduler"][0][0]
+    whiten_steps = groups["whiten_bias"]["lr_scheduler"][0][0]
+    groups["head"] = kfacjac_group([(steps, head_lr, 0.0)], 0.8, 0.01, 0.0, False, False)
+    groups["norm_bias"] = kfacjac_group([(steps, bias_lr, 0.0)], 0.9, 0.0, 0.3, True, False)
+    groups["whiten_bias"] = kfacjac_group(
+        [(whiten_steps, bias_lr, 0.0), (steps - whiten_steps, 0.0)], 0.9, 0.0, 0.3, True, False
+    )
+    return config
+
+
+for batch_size, (conv_lr, conv_momentum, conv_a, head_lr, bias_lr) in KFACJAC_ALL.items():
+    config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
+    steps = config["param_groups"]["conv"]["lr_scheduler"][0][0]
+    config["param_groups"]["conv"] = kfacjac_group(
+        [(steps, conv_lr, 0.0)], conv_momentum, conv_a, 1.7, True, True
+    )
+    RUN_CONFIGS[f"kfacjac_all_bs{batch_size}"] = kfacjac_head_and_biases(config, head_lr, bias_lr)
+for batch_size, (source, head_lr, bias_lr) in KFACJAC_HYBRID.items():
+    config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
+    config["param_groups"]["conv"] = copy.deepcopy(RUN_CONFIGS[source]["param_groups"]["conv"])
+    RUN_CONFIGS[f"kfacjac_hybrid_bs{batch_size}"] = kfacjac_head_and_biases(config, head_lr, bias_lr)
+
 # Runs to execute, in order, by name in RUN_CONFIGS. Each runs once per seed
 # (seeds 0, 1, ..., num_seeds - 1); set num_seeds = 8 for a seed-averaged comparison.
 experiments_to_run = [
-    # Overfit mode, 10 steps: interval search of conv LR/momentum plus head and bias
-    # LRs, every interval 1-4 x cooldown 0-4.
-    *(name for name in RUN_CONFIGS if name.startswith("overfit_interval_lrs_bs2000_steps10_")),
+    # K-FAC Jacobian for every trainable group, and the hybrid with Muon2 convs.
+    *(f"kfacjac_{kind}_bs{bs}" for kind in ("all", "hybrid") for bs in (2000, 500, 125)),
 ]
 num_seeds = 1
 SEEDS = list(range(num_seeds))

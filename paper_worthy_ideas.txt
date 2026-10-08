@@ -362,3 +362,55 @@ dev/search_logs/o03_*.log). Final fixed-batch loss (conv-only search in brackets
   1300), norm_bias 460-3500 early (baseline 99), whiten_bias up to 1300 early then
   small. The paths are jumpy (e.g. head 16000 -> 3500).
 - Without a cooldown it no longer collapses (0.93-0.97), unlike the conv-only search.
+
+
+## K-FAC Jacobian for all parameters (12-hour study, 2026-10-07; dev/KJ_NOTES.md)
+
+Goal: kfac-jacobian on conv, head and both biases, >= 94% at BS 2000/500/125.
+Held-out TTA (seeds 100-107, mean of 8):
+| BS | all K-FAC Jacobian | Muon2 conv + KJ head/biases | best non-KJ |
+|---|---|---|---|
+| 2000 | 93.78 | 93.86 | 94.02 (baseline) |
+| 500 | 93.91 | 93.90 | 94.05 (tuned SGD) |
+| 125 | 93.69 | 93.71 | 93.98 (tuned Adam) |
+94% was not reached. Configs: kfacjac_all_bs{BS}, kfacjac_hybrid_bs{BS} in train_cifar.py.
+Simple truths:
+1. dlogits reconstruction (dev/dl01): per step, every rule (SGD, Muon, KJ at any
+   damping, exact joint Gauss-Newton pseudoinverse) recovers the same generalizable
+   part of the desired logit change (~0.3 cos on a held-out half, ~0 by the end); KJ
+   only fits the batch's own dlogits better (in-sample .91 vs .57 for SGD).
+2. Per-layer scales fit on the batch overfit (held-out .19 vs .31 for uniform
+   weights): layers' logit changes are redundant, so "layer coupling" corrections
+   (span fits, joint pseudoinverse) can't be estimated from the same batch.
+3. Conditioning EMA hurts the conv monotonically (beta .5/.8/.95: -.06/-.18/-.32);
+   precondition with the current batch's factors.
+4. The whole deficit is the conv: swapping KJ conv -> Muon2 gains ~.2 at BS 2000;
+   KJ head and biases are ~neutral vs SGD.
+5. Input (A) whitening is what hurts the conv: Muon in K-FAC-whitened coordinates
+   gets better monotonically as whitening fades; A-only whitening .3 damping 92.40,
+   G-only ~neutral. The conv wants its gradient whitened (Muon), not its data.
+6. The best conv A damping grows as the batch shrinks (~2.8 at 2000, 3 at 500, 20 at
+   125): fewer images per step, more gradient noise to ridge away. The head does not
+   follow this (weak damping best even at BS 125).
+7. No gain: EKFAC-style Adam scaling in the K-FAC eigenbasis, KJ only on narrow convs,
+   conv momentum changes, 4-seed searches (their gains vanished on held-out seeds).
+
+
+
+head fisher works.
+In this toy problem, Fisher (Hessian) natural gradient fixes it. Euclidean-metric natural gradient does not: it behaves like plain GD, about 2× faster, and still scales with N. I simulated it: N points each of (0,1)→A and (1,0)→B, one (1,1)→C, a 3×2 head with no bias, and cross-entropy loss. The table shows steps until all three are classified correctly.
+
+| N | GD | Euclid NG | Fisher NG | Adam |
+|---|---|---|---|---|
+| 10 | 130 | 64 | 4 | 82 |
+| 100 | 1.9k | 946 | 6 | 503 |
+| 1000 | 25k | 12.5k | 9 | 2.3k |
+| 10000 | >200k | >20k | 12 | 6.3k |
+
+**Why Euclidean fails.** Pulled back to W, the Euclidean logit metric is (Σ nᵢ hᵢhᵢᵀ) ⊗ I, which just whitens the features. Those features are already nearly isotropic, so the preconditioner is roughly 2·I. The real problem isn't geometry. It's that z(1,1) = z(0,1) + z(1,0) exactly, so the head can't move the minority logit on its own. The step is a weighted least-squares fit of each example's logit residual. The fit weights are nᵢ, so the residual for (1,1) gets weight 1/N and is mostly sacrificed. Progress on C is O(1/N) per step, the same rate as GD.
+
+**Why Fisher works.** The metric becomes Σ nᵢ JᵢᵀAᵢJᵢ with Aᵢ = diag(p) − ppᵀ. Once the majority examples are fit, their softmax saturates and Aᵢ → 0, so they become nearly free in the metric. Effectively, each example is reweighted by its curvature, which is roughly its remaining loss. That cancels the N-fold frequency weighting, and the step count grows only like log N. This is just Newton/IRLS on softmax regression. You need damping or a trust region: the raw step blows up because the minority's own curvature in the C direction is about p_C, which is tiny. I clipped each step so no logit moves more than 2 nats.
+
+**Why Adam "kind of works."** Its per-coordinate normalization rescales C's row of W no matter how small its gradient is, because once A and B are fit, the h₃ term dominates that row. That makes it roughly sign-GD on that row. It helps, but it still degrades with N, since the minority signal has to win inside the second-moment estimate.
+
+**A caveat about bias.** If you add a bias term, the three feature vectors become linearly independent. Then even Euclidean NG solves it in 2 steps, because the head can fit every residual exactly and the weighting stops mattering. The hard case is the one without bias, where the minority feature lies in the span of the majority features. That's the realistic one for an LLM head, where the vocabulary is much larger than d_model and features are in superposition.
