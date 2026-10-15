@@ -2710,6 +2710,34 @@ for interval_steps, cooldown_steps in product(range(1, 5), range(0, 5)):
         f"overfit_interval_lrs_bs2000_steps10_interval{interval_steps}_cooldown{cooldown_steps}"
     ] = config
 
+# LR-only searches at BS 2000 (no momentum): the conv LR alone (*_conv_lr) or all four
+# trained LRs (*_lrs: conv, head, norm_bias, whiten_bias). interval_* uses 20%/20%
+# intervals and cooldowns (40/40 steps), holding searched LRs constant per segment;
+# global_neighbour_* scales each searched group's configured schedule over the full run.
+for algorithm in ("interval", "global_neighbour"):
+    for suffix, names in (("conv_lr", ("conv",)), ("lrs", ("conv", "head", "norm_bias", "whiten_bias"))):
+        config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+        groups = config["param_groups"]
+        config["hparam_tuning"] = dict(
+            algorithm=algorithm,
+            metric="tta_val_acc",
+            max_side_steps=20,
+            params={
+                f"{name}.initial_lr": dict(
+                    initial=groups[name]["lr_scheduler"][0][1], choices=None, mult=0.6
+                )
+                for name in names
+            },
+        )
+        if algorithm == "interval":
+            interval_steps = groups["conv"]["lr_scheduler"][0][0] // 5
+            config["hparam_tuning"].update(
+                initial_dropoff_margin=0.02,
+                interval_steps=interval_steps,
+                cooldown_steps=interval_steps,
+            )
+        RUN_CONFIGS[f"{algorithm}_{suffix}_bs2000"] = config
+
 # K-FAC Jacobian for every trainable group, and the hybrid with Muon2 convs (12-hour
 # study, dev/KJ_NOTES.md). kfacjac_all_bs{BS}: conv (whole-matrix normalization,
 # momentum before conditioning), head (conditioning first, G pseudoinverse) and both
@@ -2767,9 +2795,13 @@ for batch_size, (source, head_lr, bias_lr) in KFACJAC_HYBRID.items():
 # Runs to execute, in order, by name in RUN_CONFIGS. Each runs once per seed
 # (seeds 0, 1, ..., num_seeds - 1); set num_seeds = 8 for a seed-averaged comparison.
 experiments_to_run = [
-    # K-FAC Jacobian for every trainable group, and the hybrid with Muon2 convs.
-    *(f"kfacjac_{kind}_bs{bs}" for kind in ("all", "hybrid") for bs in (2000, 500, 125)),
+    # LR-only interval and global_neighbour searches at BS 2000 (one per GPU).
+    *(f"{algorithm}_{suffix}_bs2000"
+      for algorithm in ("interval", "global_neighbour") for suffix in ("conv_lr", "lrs")),
 ]
+# CIFAR_EXPERIMENTS (comma-separated names) overrides the list, e.g. one run per GPU.
+if os.environ.get("CIFAR_EXPERIMENTS"):
+    experiments_to_run = os.environ["CIFAR_EXPERIMENTS"].split(",")
 num_seeds = 1
 SEEDS = list(range(num_seeds))
 RUNS = [(name, RUN_CONFIGS[name]) for name in experiments_to_run]
