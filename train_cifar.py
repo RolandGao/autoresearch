@@ -2847,6 +2847,7 @@ HELDOUT_SEEDS = list(range(100, 108))
 LR_TRANSFORMS = {
     "ramp": dict(kind="ramp", factor=4.0),
     "wave": dict(kind="wave", factor=2.0, phase=0.0),
+    "rampdown": dict(kind="ramp", factor=0.25),  # The reverse ramp: x4 -> x0.25.
 }
 TRAINED_LR_GROUPS = ("conv", "head", "norm_bias", "whiten_bias")
 
@@ -3256,6 +3257,27 @@ for batch_size in (2000, 500, 125):
         if transform:
             conv["lr_transform"] = copy.deepcopy(LR_TRANSFORMS[transform])
         RUN_CONFIGS[f"auto_a_interval_bs{batch_size}{suffix}"] = config
+# Experiment 3 (user-directed): representation quality of schedule families for conv (other
+# groups on the baseline) under no transform / ramp / reverse ramp / wave, each searched by the
+# generalized global_neighbour search (global_family) from the oracle projected onto the family.
+GLOBAL_FAMILIES = {
+    "intervals5": dict(kind="intervals", n=5),
+    "linear": dict(kind="linear"),
+    "power": dict(kind="power"),
+    "knots2": dict(kind="knots", positions=[0.0, 0.5]),
+    "knots3": dict(kind="knots", positions=[0.0, 1 / 3, 2 / 3]),
+    "knots5": dict(kind="knots", positions=[0.0, 0.2, 0.4, 0.6, 0.8]),
+}
+for transform in (None, "ramp", "rampdown", "wave"):
+    suffix = f"_{transform}" if transform else ""
+    for family_name, family in GLOBAL_FAMILIES.items():
+        config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+        if transform:
+            config["param_groups"]["conv"]["lr_transform"] = copy.deepcopy(LR_TRANSFORMS[transform])
+        config["hparam_tuning"] = dict(
+            algorithm="global_family", metric="tta_val_acc", group="conv",
+            family=copy.deepcopy(family), max_side_steps=20, heldout_seeds=HELDOUT_SEEDS)
+        RUN_CONFIGS[f"auto_gfam_{family_name}_bs2000{suffix}"] = config
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -3521,10 +3543,11 @@ def validate_tuning_config(tuning):
         "interval2",
         "global_interval",
         "auto",
+        "global_family",
     ):
         raise ValueError("hparam_tuning requires a known algorithm")
-    if tuning["algorithm"] == "auto":
-        return  # run_auto_search validates its own (partly optional) fields.
+    if tuning["algorithm"] in ("auto", "global_family"):
+        return  # These searches validate their own fields.
     required = {"algorithm", "metric", "params"}
     if tuning["algorithm"] in (
         "interval", "interval2", "global_neighbour", "global_neighbour_seeds"
@@ -5142,6 +5165,119 @@ def run_auto_search(run, model, config):
     return dict(best_config=final, best_result=result, trials=[dict(run=run, config=final, result=result)])
 
 
+def family_schedule(family, values, total):
+    """One group's lr_scheduler from a parameterized family (see run_global_family_search)."""
+    kind = family["kind"]
+    if kind == "intervals":
+        n = family["n"]
+        bounds = [total * i // n for i in range(n + 1)]
+        return [(b - a, values[f"v{i}"]) for i, (a, b) in enumerate(zip(bounds, bounds[1:]))]
+    if kind == "linear":
+        return [(total, values["lr"], 0.0)]
+    if kind == "power":
+        return [(1, values["lr"] * (1 - step / total) ** values["power"]) for step in range(total)]
+    if kind == "knots":
+        steps = [round(total * x) for x in family["positions"]] + [total]
+        levels = [values[f"k{i}"] for i in range(len(family["positions"]))] + [0.0]
+        return [(b - a, va, vb) for a, b, va, vb in zip(steps, steps[1:], levels, levels[1:])]
+    raise ValueError(f"unknown schedule family {kind!r}")
+
+
+def family_initial(family, group, total):
+    """Start values: the oracle spec (the configured schedule divided by the group's
+    lr_transform, if any) projected onto the family: interval means / knot values on the LR
+    grid; linear and power start at the configured initial LR with power 1."""
+    lines = group["lr_scheduler"]
+    transform = group.get("lr_transform")
+
+    def oracle(step):
+        value = schedule_value_at_step(lines, min(step, total - 1))
+        return value / lr_transform_factor(transform, step, total) if transform else value
+
+    kind = family["kind"]
+    if kind == "intervals":
+        n = family["n"]
+        bounds = [total * i // n for i in range(n + 1)]
+        return {f"v{i}": sum(oracle(t) for t in range(a, b)) / (b - a)
+                for i, (a, b) in enumerate(zip(bounds, bounds[1:]))}
+    if kind in ("linear", "power"):
+        start = {"lr": lines[0][1]}
+        if kind == "power":
+            start["power"] = 1.0
+        return start
+    return {f"k{i}": oracle(round(total * x)) for i, x in enumerate(family["positions"])}
+
+
+def run_global_family_search(run, model, config):
+    """Generalized global_neighbour search over a parameterized schedule family for one group.
+
+    hparam_tuning: group (the searched group), family (kind "intervals" with n equal constant
+    intervals, "linear" decay to 0, "power" lr * (1 - t)^power, or "knots" at fractional
+    positions, linear in between and 0 at the end), metric, max_side_steps, heldout_seeds.
+    Every family parameter is searched on a multiplicative grid (LR values x0.6, power x0.8)
+    by directional_search (coordinate moves while the score improves), each candidate a full
+    training run on the current seed from the same initial state. The start (the oracle
+    projected onto the family, family_initial) and the best schedule are then retrained on the
+    held-out seeds (evaluation only).
+    """
+    run_start = time.perf_counter()
+    tuning = config["hparam_tuning"]
+    require_fields(tuning, {"algorithm", "metric", "group", "family", "max_side_steps",
+                            "heldout_seeds"}, "hparam_tuning")
+    name = tuning["group"]
+    family = tuning["family"]
+    group = config["param_groups"][name]
+    log_config(run, config, label="base_config")
+    trainer = SegmentTrainer(model, config)
+    initial_state = trainer.snapshot()
+    total = trainer.total_steps
+    start = family_initial(family, group, total)
+    factors = {key: (0.8 if key == "power" else 0.6) for key in start}
+    choices = {key: None for key in start}
+    evaluations = 0
+
+    def score(values):
+        nonlocal evaluations
+        trainer.restore(initial_state)
+        sched = dict(trainer.base_schedules)
+        sched[f"{name}.initial_lr"] = family_schedule(family, values, total)
+        ok = trainer.train(sched, total)
+        value = trainer.score(tuning["metric"]) if ok else float("-inf")
+        evaluations += 1
+        print(f"  family_eval {hparam_text(values)} {tuning['metric']}={format_log_value(value)}",
+              flush=True)
+        return value
+
+    snapped = {key: snap_lr_to_grid(v, factors[key]) for key, v in start.items()}
+
+    def on_event(event, point, **fields):
+        if event == "search_path":
+            log_event("search_path", run=run, **point, **fields)
+
+    best, best_score = directional_search(
+        snapped, choices, score, initial_lr_search=False, factors=factors,
+        max_side_steps=tuning["max_side_steps"], dropoff_margin=None, on_event=on_event)
+    seconds = time.perf_counter() - run_start
+    log_event("auto_result", run=run, val_acc=0.0, tta_val_acc=best_score, search_seconds=seconds,
+              evaluations=evaluations, train_steps=trainer.train_steps)
+    for label, values in (("start", snapped), ("final", best)):
+        lines = family_schedule(family, values, total)
+        print(f"  {label} {name}.initial_lr: {json.dumps(values)}", flush=True)
+        candidate = copy.deepcopy(dict(config, hparam_tuning=None))
+        candidate["param_groups"][name]["lr_scheduler"] = [list(line) for line in lines]
+        held_start = time.perf_counter()
+        scores = [run_seeded(f"{run}.{label}{seed}", model, candidate, seed, debug=False)["tta_val_acc"]
+                  for seed in tuning["heldout_seeds"]]
+        mean = sum(scores) / len(scores)
+        sd = (sum((v - mean) ** 2 for v in scores) / (len(scores) - 1)) ** 0.5 if len(scores) > 1 else 0.0
+        log_event("heldout_result" if label == "final" else "start_heldout_result", run=run,
+                  seeds=tuning["heldout_seeds"], tta_val_acc_mean=mean, tta_val_acc_std=sd,
+                  per_seed=scores, seconds=time.perf_counter() - held_start)
+    result = dict(val_acc=0.0, tta_val_acc=best_score, seconds=seconds, evaluations=evaluations,
+                  best=best, start=snapped)
+    return dict(best_config=config, best_result=result, trials=[dict(run=run, config=config, result=result)])
+
+
 def heldout_evaluation(run, model, config, result, seeds):
     """Retrain an interval search's committed LR schedules on held-out seeds. Logs
     search_result (cost) and heldout_result lines in the format of run_auto_search."""
@@ -5187,6 +5323,8 @@ def run_experiment(run, model, config):
         return run_global_interval_search(run, model, config)
     if tuning is not None and tuning["algorithm"] == "auto":
         return run_auto_search(run, model, config)
+    if tuning is not None and tuning["algorithm"] == "global_family":
+        return run_global_family_search(run, model, config)
     if tuning is not None and tuning["algorithm"] in ("interval", "interval2", "global_neighbour"):
         result = run_interval_search(run, model, config, debug=debug)
         if tuning.get("heldout_seeds"):
