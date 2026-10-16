@@ -2880,6 +2880,25 @@ for batch_size in (2000, 500, 125):
             batch_size, "a", None, None, cooldown_searched=searched_mult, cooldown_others=others,
             cooldown_fraction=fraction,
         )
+AUTO_B_COOLDOWNS = {  # name: (cooldown_searched, cooldown_fraction); no other trained groups
+    "s036": (0.36, 5),
+    "ssearch": ("search", 5),
+    "nocool": (0.36, 0),
+}
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for name, (searched_mult, fraction) in AUTO_B_COOLDOWNS.items():
+            RUN_CONFIGS[f"auto_b_{name}_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, "b", transform, None, cooldown_searched=searched_mult,
+                cooldown_fraction=fraction,
+            )
+        if transform:
+            for name, (searched_mult, others, fraction) in AUTO_COOLDOWNS.items():
+                RUN_CONFIGS[f"auto_a_{name}_bs{batch_size}{suffix}"] = auto_config(
+                    batch_size, "a", transform, None, cooldown_searched=searched_mult,
+                    cooldown_others=others, cooldown_fraction=fraction,
+                )
 RUN_CONFIGS["auto_smoke"] = auto_config(2000, "a", None, None, heldout_seeds=[100], interval_fraction=10,
                                         cooldown_fraction=20)
 
