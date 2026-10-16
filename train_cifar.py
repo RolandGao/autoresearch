@@ -3123,6 +3123,22 @@ for batch_size in (2000, 500, 125):
                 batch_size, scenario, transform, None, shape="linear",
                 cooldown_searched="linear", cooldown_fraction=1, passes=2, pass_seeds=3,
                 **extra)
+# Cheaper multi-seed two-pass variants: pass 2 on 2 seeds (v1x2m2); pass 1 with a 20%
+# lookahead (s20x2m3; pass 2 always follows the plan to the end of the run).
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for scenario in ("a", "b"):
+            extra = (dict(coarse_mult=None, coarse_scan=3, scan_lookahead=5)
+                     if scenario == "b" else {})
+            RUN_CONFIGS[f"auto_{scenario}_v1x2m2_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, shape="linear",
+                cooldown_searched="linear", cooldown_fraction=1, passes=2, pass_seeds=2,
+                **extra)
+            RUN_CONFIGS[f"auto_{scenario}_s20x2m3_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, shape="linear",
+                cooldown_searched="linear", cooldown_fraction=5, passes=2, pass_seeds=3,
+                **extra)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -4654,7 +4670,9 @@ def run_auto_search(run, model, config):
         while trainer.step < total:
             start = trainer.step
             main_steps = min(interval_steps, total - start)
-            look = min(cooldown_steps, total - start - main_steps)
+            # Later passes follow the plan to the end of the run (it includes the anneal).
+            look = (min(cooldown_steps, total - start - main_steps) if plan is None
+                    else total - start - main_steps)
             state = trainer.snapshot()
             cache = {}
             if plan is not None:
