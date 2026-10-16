@@ -3164,6 +3164,14 @@ for batch_size in (2000, 500, 125):
                 batch_size, scenario, transform, None, shape="linear",
                 cooldown_searched="linear", cooldown_fraction=1, passes=2, pass_seeds=3,
                 plan_tail=True, **extra)
+# Cheaper scenario B two-pass: pass 2 on 2 seeds, LRs flat in the scan frozen (v1x2m2fasff).
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        RUN_CONFIGS[f"auto_b_v1x2m2fasff_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "b", transform, None, shape="linear", cooldown_searched="linear",
+            cooldown_fraction=1, final_anneal="search", passes=2, pass_seeds=2,
+            coarse_mult=None, coarse_scan=3, scan_lookahead=5, freeze_threshold=0.002)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
