@@ -1,0 +1,1133 @@
+# commit a278d12fc065b9b0b396d56155efc189c8d6a3ec
+# args {"batch_size": 2000, "config": null, "group": "conv", "interval": 0, "seeds": "0,1", "offsets": "-3,-2,-1,0,1,2,3", "searched_mults": "1,0.6,0.36,0.22,0.13,0.047,0,lin0", "other_mults": "cont,lin0,1,0.6,0.36,0.22,0.13,0.047,0", "fraction": 5, "transform": null}
+# worker w7 gpu GPU-71986cb1-2ece-f97a-a920-2c1d33f0af7c
+# source
+# | """Cooldown proxy fidelity (scenario A: one searched group, the rest on the baseline).
+# | 
+# | For main interval k (length L = T/5) and candidate constant LRs c of the searched group:
+# |   truth:  baseline until kL, c for L steps, then the baseline schedule to the end -> final metric.
+# |   proxy:  same prefix and main interval, then a C-step lookahead cooldown -> metric.
+# |   none:   the metric right after the main interval.
+# | Cooldown variants: searched group constant m_s * c (or linear c -> 0, "lin0");
+# | other groups continue the baseline ("cont"), decay linearly from their current value to 0
+# | ("lin0"), or are constant at m_o * their mean LR over the main interval.
+# | A good cooldown ranks the candidates like the truth does.
+# | """
+# | import argparse
+# | import itertools
+# | 
+# | from common import base_config, emit, new_model, open_log, t
+# | 
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--batch-size", type=int, default=2000)
+# | parser.add_argument("--config", default=None)
+# | parser.add_argument("--group", default="conv")
+# | parser.add_argument("--interval", type=int, required=True)
+# | parser.add_argument("--seeds", default="0,1,2,3")
+# | parser.add_argument("--offsets", default="-3,-2,-1,0,1,2,3")
+# | parser.add_argument("--searched-mults", default="1,0.6,0.36,0.22,0.13,0.047,0,lin0")
+# | parser.add_argument("--other-mults", default="cont,lin0,1,0.6,0.36,0.22,0.13,0.047,0")
+# | parser.add_argument("--fraction", type=int, default=5)
+# | parser.add_argument("--transform", default=None, help="json lr_transform for the searched group")
+# | args = parser.parse_args()
+# | log = open_log(f"cooldown_fidelity_bs{args.batch_size}_{args.group}_k{args.interval}", args, __file__)
+# | 
+# | import json  # noqa: E402
+# | 
+# | config = base_config(args.batch_size, args.config)
+# | if args.transform:
+# |     config["param_groups"][args.group]["lr_transform"] = json.loads(args.transform)
+# | 
+# | 
+# | def parse(values):
+# |     return [v if v in ("cont", "lin0") else float(v) for v in values.split(",")]
+# | 
+# | 
+# | searched_mults, other_mults = parse(args.searched_mults), parse(args.other_mults)
+# | model = new_model()
+# | path = f"{args.group}.initial_lr"
+# | candidates = None
+# | for seed in [int(s) for s in args.seeds.split(",")]:
+# |     t.TRAINING_SEED = seed
+# |     trainer = t.SegmentTrainer(model, config)
+# |     base = trainer.base_schedules
+# |     total = trainer.total_steps
+# |     length = total // args.fraction
+# |     start, cool = args.interval * length, length
+# |     if start + length + cool > total:
+# |         raise SystemExit("interval has no room for a cooldown")
+# |     if candidates is None:
+# |         centre = t.lr_grid_index(t.window_mean(base[path], start, length), 0.6)
+# |         candidates = [t.round_hparam(0.6 ** (centre + o)) for o in map(int, args.offsets.split(","))]
+# |         emit(log, kind="setup", total=total, length=length, start=start, candidates=candidates,
+# |              mean_lr=t.window_mean(base[path], start, length))
+# |     trainer.train(base, start)
+# |     prefix = trainer.snapshot()
+# |     for c in candidates:
+# |         trainer.restore(prefix)
+# |         main = dict(base)
+# |         main[path] = t.constant_window(base[path], start, length, c)
+# |         ok = trainer.train(main, length)
+# |         main_state = trainer.snapshot()
+# |         emit(log, kind="none", seed=seed, c=c, score=trainer.score("tta_val_acc") if ok else None)
+# |         if ok:
+# |             ok = trainer.train(main, total - start - length)
+# |         emit(log, kind="truth", seed=seed, c=c, score=trainer.score("tta_val_acc") if ok else None)
+# |         cool_start = start + length
+# |         for ms, mo in itertools.product(searched_mults, other_mults):
+# |             trainer.restore(main_state)
+# |             sched = dict(main)
+# |             sched[path] = (t.linear_window(main[path], cool_start, cool, c, 0.0) if ms == "lin0"
+# |                            else t.constant_window(main[path], cool_start, cool, ms * c))
+# |             for other, lines in base.items():
+# |                 if other == path or not other.endswith(".initial_lr") or mo == "cont":
+# |                     continue
+# |                 if mo == "lin0":
+# |                     first = t.schedule_value_at_step(lines, cool_start)
+# |                     sched[other] = t.linear_window(lines, cool_start, cool, first, 0.0)
+# |                 else:
+# |                     sched[other] = t.constant_window(
+# |                         lines, cool_start, cool, mo * t.window_mean(lines, start, length))
+# |             ok = trainer.train(sched, cool)
+# |             emit(log, kind="proxy", seed=seed, c=c, ms=ms, mo=mo,
+# |                  score=trainer.score("tta_val_acc") if ok else None)
+# | emit(log, kind="done", train_steps=trainer.train_steps)
+
+{"kind": "setup", "total": 200, "length": 40, "start": 0, "candidates": [1.0, 0.6, 0.36, 0.22, 0.13, 0.078, 0.047], "mean_lr": 0.19855, "time": 1792132176.9}
+{"kind": "none", "seed": 0, "c": 1.0, "score": 0.35179999470710754, "time": 1792132179.9}
+{"kind": "truth", "seed": 0, "c": 1.0, "score": 0.9368000030517578, "time": 1792132188.0}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 1.0, "mo": "cont", "score": 0.3554999828338623, "time": 1792132190.2}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 1.0, "mo": "lin0", "score": 0.39089998602867126, "time": 1792132192.4}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 1.0, "mo": 1.0, "score": 0.41359999775886536, "time": 1792132194.7}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 1.0, "mo": 0.6, "score": 0.42229998111724854, "time": 1792132196.9}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 1.0, "mo": 0.36, "score": 0.4136999845504761, "time": 1792132199.2}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 1.0, "mo": 0.22, "score": 0.35040000081062317, "time": 1792132201.4}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 1.0, "mo": 0.13, "score": 0.39329999685287476, "time": 1792132203.7}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 1.0, "mo": 0.047, "score": 0.4274999797344208, "time": 1792132205.9}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 1.0, "mo": 0.0, "score": 0.33899998664855957, "time": 1792132208.2}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.6, "mo": "cont", "score": 0.574999988079071, "time": 1792132210.4}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.6, "mo": "lin0", "score": 0.5224999785423279, "time": 1792132212.6}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.6, "mo": 1.0, "score": 0.538100004196167, "time": 1792132214.9}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.6, "mo": 0.6, "score": 0.529699981212616, "time": 1792132217.1}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.6, "mo": 0.36, "score": 0.5972999930381775, "time": 1792132219.3}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.6, "mo": 0.22, "score": 0.585099995136261, "time": 1792132221.6}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.6, "mo": 0.13, "score": 0.5726999640464783, "time": 1792132223.8}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.6, "mo": 0.047, "score": 0.5475999712944031, "time": 1792132226.1}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.6, "mo": 0.0, "score": 0.5766000151634216, "time": 1792132228.3}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.36, "mo": "cont", "score": 0.698199987411499, "time": 1792132230.5}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.36, "mo": "lin0", "score": 0.7103999853134155, "time": 1792132232.8}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.36, "mo": 1.0, "score": 0.7174999713897705, "time": 1792132235.0}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.36, "mo": 0.6, "score": 0.6753999590873718, "time": 1792132237.3}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.36, "mo": 0.36, "score": 0.7179999947547913, "time": 1792132239.5}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.36, "mo": 0.22, "score": 0.726099967956543, "time": 1792132241.7}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.36, "mo": 0.13, "score": 0.7044000029563904, "time": 1792132244.0}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.36, "mo": 0.047, "score": 0.702299952507019, "time": 1792132246.2}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.36, "mo": 0.0, "score": 0.7037000060081482, "time": 1792132248.5}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.22, "mo": "cont", "score": 0.7919999957084656, "time": 1792132250.7}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.22, "mo": "lin0", "score": 0.785099983215332, "time": 1792132252.9}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.22, "mo": 1.0, "score": 0.8025999665260315, "time": 1792132255.2}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.22, "mo": 0.6, "score": 0.7985999584197998, "time": 1792132257.4}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.22, "mo": 0.36, "score": 0.7996999621391296, "time": 1792132259.7}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.22, "mo": 0.22, "score": 0.7979999780654907, "time": 1792132261.9}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.22, "mo": 0.13, "score": 0.8052999973297119, "time": 1792132264.1}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.22, "mo": 0.047, "score": 0.8007000088691711, "time": 1792132266.4}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.22, "mo": 0.0, "score": 0.7875999808311462, "time": 1792132268.6}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.13, "mo": "cont", "score": 0.8506999611854553, "time": 1792132270.9}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.13, "mo": "lin0", "score": 0.843999981880188, "time": 1792132273.1}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.13, "mo": 1.0, "score": 0.8485999703407288, "time": 1792132275.3}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.13, "mo": 0.6, "score": 0.8486999869346619, "time": 1792132277.6}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.13, "mo": 0.36, "score": 0.8432999849319458, "time": 1792132279.8}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.13, "mo": 0.22, "score": 0.8409000039100647, "time": 1792132282.1}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.13, "mo": 0.13, "score": 0.8385999798774719, "time": 1792132284.3}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.13, "mo": 0.047, "score": 0.8371999859809875, "time": 1792132286.5}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.13, "mo": 0.0, "score": 0.835599958896637, "time": 1792132288.8}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.047, "mo": "cont", "score": 0.8574000000953674, "time": 1792132291.0}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.047, "mo": "lin0", "score": 0.8560999631881714, "time": 1792132293.3}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.047, "mo": 1.0, "score": 0.8580999970436096, "time": 1792132295.5}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.047, "mo": 0.6, "score": 0.8560999631881714, "time": 1792132297.7}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.047, "mo": 0.36, "score": 0.854200005531311, "time": 1792132300.0}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.047, "mo": 0.22, "score": 0.852899968624115, "time": 1792132302.2}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.047, "mo": 0.13, "score": 0.8504999876022339, "time": 1792132304.5}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.047, "mo": 0.047, "score": 0.8468999862670898, "time": 1792132306.7}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.047, "mo": 0.0, "score": 0.8438999652862549, "time": 1792132308.9}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.0, "mo": "cont", "score": 0.5331000089645386, "time": 1792132311.1}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.0, "mo": "lin0", "score": 0.5045999884605408, "time": 1792132313.2}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.0, "mo": 1.0, "score": 0.5503000020980835, "time": 1792132315.4}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.0, "mo": 0.6, "score": 0.5238999724388123, "time": 1792132317.5}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.0, "mo": 0.36, "score": 0.5006999969482422, "time": 1792132319.7}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.0, "mo": 0.22, "score": 0.48339998722076416, "time": 1792132321.8}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.0, "mo": 0.13, "score": 0.45969998836517334, "time": 1792132324.0}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.0, "mo": 0.047, "score": 0.41259998083114624, "time": 1792132326.1}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": 0.0, "mo": 0.0, "score": 0.35179999470710754, "time": 1792132328.3}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": "lin0", "mo": "cont", "score": 0.8438999652862549, "time": 1792132330.5}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": "lin0", "mo": "lin0", "score": 0.840999960899353, "time": 1792132332.8}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": "lin0", "mo": 1.0, "score": 0.8394999504089355, "time": 1792132335.0}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": "lin0", "mo": 0.6, "score": 0.842199981212616, "time": 1792132337.2}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": "lin0", "mo": 0.36, "score": 0.8379999995231628, "time": 1792132339.5}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": "lin0", "mo": 0.22, "score": 0.838699996471405, "time": 1792132341.7}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": "lin0", "mo": 0.13, "score": 0.8385999798774719, "time": 1792132344.0}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": "lin0", "mo": 0.047, "score": 0.8360999822616577, "time": 1792132346.2}
+{"kind": "proxy", "seed": 0, "c": 1.0, "ms": "lin0", "mo": 0.0, "score": 0.8369999527931213, "time": 1792132348.4}
+{"kind": "none", "seed": 0, "c": 0.6, "score": 0.560699999332428, "time": 1792132350.7}
+{"kind": "truth", "seed": 0, "c": 0.6, "score": 0.9384999871253967, "time": 1792132358.7}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 1.0, "mo": "cont", "score": 0.5724999904632568, "time": 1792132361.0}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 1.0, "mo": "lin0", "score": 0.5759999752044678, "time": 1792132363.2}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 1.0, "mo": 1.0, "score": 0.5708999633789062, "time": 1792132365.4}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 1.0, "mo": 0.6, "score": 0.5241999626159668, "time": 1792132367.7}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 1.0, "mo": 0.36, "score": 0.554099977016449, "time": 1792132369.9}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 1.0, "mo": 0.22, "score": 0.5967999696731567, "time": 1792132372.2}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 1.0, "mo": 0.13, "score": 0.5221999883651733, "time": 1792132374.4}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 1.0, "mo": 0.047, "score": 0.5694000124931335, "time": 1792132376.6}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 1.0, "mo": 0.0, "score": 0.5521999597549438, "time": 1792132378.9}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.6, "mo": "cont", "score": 0.7099999785423279, "time": 1792132381.1}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.6, "mo": "lin0", "score": 0.7041999697685242, "time": 1792132383.4}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.6, "mo": 1.0, "score": 0.7071999907493591, "time": 1792132385.6}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.6, "mo": 0.6, "score": 0.7172999978065491, "time": 1792132387.8}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.6, "mo": 0.36, "score": 0.7039999961853027, "time": 1792132390.1}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.6, "mo": 0.22, "score": 0.7080000042915344, "time": 1792132392.3}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.6, "mo": 0.13, "score": 0.6977999806404114, "time": 1792132394.6}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.6, "mo": 0.047, "score": 0.6812999844551086, "time": 1792132396.8}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.6, "mo": 0.0, "score": 0.7325999736785889, "time": 1792132399.0}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.36, "mo": "cont", "score": 0.8091999888420105, "time": 1792132401.3}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.36, "mo": "lin0", "score": 0.8093000054359436, "time": 1792132403.5}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.36, "mo": 1.0, "score": 0.8127999901771545, "time": 1792132405.7}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.36, "mo": 0.6, "score": 0.7982999682426453, "time": 1792132408.0}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.36, "mo": 0.36, "score": 0.7989999651908875, "time": 1792132410.2}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.36, "mo": 0.22, "score": 0.8259999752044678, "time": 1792132412.5}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.36, "mo": 0.13, "score": 0.8120999932289124, "time": 1792132414.7}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.36, "mo": 0.047, "score": 0.8048999905586243, "time": 1792132416.9}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.36, "mo": 0.0, "score": 0.8139999508857727, "time": 1792132419.2}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.22, "mo": "cont", "score": 0.8569999933242798, "time": 1792132421.4}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.22, "mo": "lin0", "score": 0.85999995470047, "time": 1792132423.7}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.22, "mo": 1.0, "score": 0.8575999736785889, "time": 1792132425.9}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.22, "mo": 0.6, "score": 0.8561999797821045, "time": 1792132428.1}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.22, "mo": 0.36, "score": 0.8607999682426453, "time": 1792132430.4}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.22, "mo": 0.22, "score": 0.8593999743461609, "time": 1792132432.6}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.22, "mo": 0.13, "score": 0.8585999608039856, "time": 1792132434.8}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.22, "mo": 0.047, "score": 0.854699969291687, "time": 1792132437.1}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.22, "mo": 0.0, "score": 0.857699990272522, "time": 1792132439.3}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.13, "mo": "cont", "score": 0.8721999526023865, "time": 1792132441.6}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.13, "mo": "lin0", "score": 0.8733999729156494, "time": 1792132443.8}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.13, "mo": 1.0, "score": 0.8751999735832214, "time": 1792132446.0}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.13, "mo": 0.6, "score": 0.8750999569892883, "time": 1792132448.3}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.13, "mo": 0.36, "score": 0.8730999827384949, "time": 1792132450.5}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.13, "mo": 0.22, "score": 0.8697999715805054, "time": 1792132452.7}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.13, "mo": 0.13, "score": 0.8709999918937683, "time": 1792132455.0}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.13, "mo": 0.047, "score": 0.8708999752998352, "time": 1792132457.2}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.13, "mo": 0.0, "score": 0.8680999875068665, "time": 1792132459.5}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.047, "mo": "cont", "score": 0.861299991607666, "time": 1792132461.7}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.047, "mo": "lin0", "score": 0.8615999817848206, "time": 1792132463.9}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.047, "mo": 1.0, "score": 0.8608999848365784, "time": 1792132466.2}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.047, "mo": 0.6, "score": 0.8614999651908875, "time": 1792132468.4}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.047, "mo": 0.36, "score": 0.8608999848365784, "time": 1792132470.7}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.047, "mo": 0.22, "score": 0.8601999878883362, "time": 1792132472.9}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.047, "mo": 0.13, "score": 0.8590999841690063, "time": 1792132475.2}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.047, "mo": 0.047, "score": 0.8585000038146973, "time": 1792132477.4}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.047, "mo": 0.0, "score": 0.8578999638557434, "time": 1792132479.6}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.0, "mo": "cont", "score": 0.661799967288971, "time": 1792132481.8}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.0, "mo": "lin0", "score": 0.6510999798774719, "time": 1792132483.9}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.0, "mo": 1.0, "score": 0.6679999828338623, "time": 1792132486.1}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.0, "mo": 0.6, "score": 0.6592000126838684, "time": 1792132488.2}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.0, "mo": 0.36, "score": 0.6469999551773071, "time": 1792132490.4}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.0, "mo": 0.22, "score": 0.6326000094413757, "time": 1792132492.5}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.0, "mo": 0.13, "score": 0.616599977016449, "time": 1792132494.7}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.0, "mo": 0.047, "score": 0.5943999886512756, "time": 1792132496.8}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.0, "mo": 0.0, "score": 0.560699999332428, "time": 1792132499.0}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": "lin0", "mo": "cont", "score": 0.8737999796867371, "time": 1792132501.2}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": "lin0", "mo": "lin0", "score": 0.8740999698638916, "time": 1792132503.4}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": "lin0", "mo": 1.0, "score": 0.8725000023841858, "time": 1792132505.7}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": "lin0", "mo": 0.6, "score": 0.8736000061035156, "time": 1792132507.9}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": "lin0", "mo": 0.36, "score": 0.8732999563217163, "time": 1792132510.2}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": "lin0", "mo": 0.22, "score": 0.8726999759674072, "time": 1792132512.4}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": "lin0", "mo": 0.13, "score": 0.871999979019165, "time": 1792132514.7}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": "lin0", "mo": 0.047, "score": 0.8712999820709229, "time": 1792132516.9}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": "lin0", "mo": 0.0, "score": 0.8726999759674072, "time": 1792132519.1}
+{"kind": "none", "seed": 0, "c": 0.36, "score": 0.687999963760376, "time": 1792132521.4}
+{"kind": "truth", "seed": 0, "c": 0.36, "score": 0.9386000037193298, "time": 1792132529.4}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 1.0, "mo": "cont", "score": 0.7203999757766724, "time": 1792132531.7}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 1.0, "mo": "lin0", "score": 0.6843999624252319, "time": 1792132533.9}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 1.0, "mo": 1.0, "score": 0.724399983882904, "time": 1792132536.2}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 1.0, "mo": 0.6, "score": 0.6923999786376953, "time": 1792132538.4}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 1.0, "mo": 0.36, "score": 0.7141000032424927, "time": 1792132540.7}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 1.0, "mo": 0.22, "score": 0.7008999586105347, "time": 1792132542.9}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 1.0, "mo": 0.13, "score": 0.7106999754905701, "time": 1792132545.1}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 1.0, "mo": 0.047, "score": 0.7020999789237976, "time": 1792132547.4}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 1.0, "mo": 0.0, "score": 0.717799961566925, "time": 1792132549.6}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.6, "mo": "cont", "score": 0.8165000081062317, "time": 1792132551.9}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.6, "mo": "lin0", "score": 0.8159999847412109, "time": 1792132554.1}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.6, "mo": 1.0, "score": 0.8259999752044678, "time": 1792132556.4}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.6, "mo": 0.6, "score": 0.8222000002861023, "time": 1792132558.6}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.6, "mo": 0.36, "score": 0.8226000070571899, "time": 1792132560.8}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.6, "mo": 0.22, "score": 0.8201999664306641, "time": 1792132563.1}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.6, "mo": 0.13, "score": 0.8086999654769897, "time": 1792132565.3}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.6, "mo": 0.047, "score": 0.8098999857902527, "time": 1792132567.6}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.6, "mo": 0.0, "score": 0.8073999881744385, "time": 1792132569.8}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.36, "mo": "cont", "score": 0.8648999929428101, "time": 1792132572.1}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.36, "mo": "lin0", "score": 0.8675000071525574, "time": 1792132574.3}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.36, "mo": 1.0, "score": 0.8657000064849854, "time": 1792132576.5}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.36, "mo": 0.6, "score": 0.8691999912261963, "time": 1792132578.8}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.36, "mo": 0.36, "score": 0.8721999526023865, "time": 1792132581.0}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.36, "mo": 0.22, "score": 0.870199978351593, "time": 1792132583.3}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.36, "mo": 0.13, "score": 0.871999979019165, "time": 1792132585.5}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.36, "mo": 0.047, "score": 0.8729999661445618, "time": 1792132587.8}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.36, "mo": 0.0, "score": 0.8658999800682068, "time": 1792132590.0}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.22, "mo": "cont", "score": 0.8898999691009521, "time": 1792132592.2}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.22, "mo": "lin0", "score": 0.8901000022888184, "time": 1792132594.5}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.22, "mo": 1.0, "score": 0.8884999752044678, "time": 1792132596.7}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.22, "mo": 0.6, "score": 0.8895999789237976, "time": 1792132599.0}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.22, "mo": 0.36, "score": 0.8903999924659729, "time": 1792132601.2}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.22, "mo": 0.22, "score": 0.8876000046730042, "time": 1792132603.4}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.22, "mo": 0.13, "score": 0.8894000053405762, "time": 1792132605.7}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.22, "mo": 0.047, "score": 0.8892999887466431, "time": 1792132607.9}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.22, "mo": 0.0, "score": 0.8871999979019165, "time": 1792132610.2}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.13, "mo": "cont", "score": 0.8962000012397766, "time": 1792132612.4}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.13, "mo": "lin0", "score": 0.8967999815940857, "time": 1792132614.7}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.13, "mo": 1.0, "score": 0.8962000012397766, "time": 1792132616.9}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.13, "mo": 0.6, "score": 0.8965999484062195, "time": 1792132619.2}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.13, "mo": 0.36, "score": 0.8959999680519104, "time": 1792132621.4}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.13, "mo": 0.22, "score": 0.8964999914169312, "time": 1792132623.6}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.13, "mo": 0.13, "score": 0.8966999650001526, "time": 1792132625.9}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.13, "mo": 0.047, "score": 0.8970999717712402, "time": 1792132628.1}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.13, "mo": 0.0, "score": 0.8967999815940857, "time": 1792132630.3}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.047, "mo": "cont", "score": 0.8763999938964844, "time": 1792132632.6}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.047, "mo": "lin0", "score": 0.875, "time": 1792132634.8}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.047, "mo": 1.0, "score": 0.8765999674797058, "time": 1792132637.1}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.047, "mo": 0.6, "score": 0.8763999938964844, "time": 1792132639.3}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.047, "mo": 0.36, "score": 0.8761000037193298, "time": 1792132641.6}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.047, "mo": 0.22, "score": 0.875, "time": 1792132643.8}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.047, "mo": 0.13, "score": 0.8739999532699585, "time": 1792132646.0}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.047, "mo": 0.047, "score": 0.8733999729156494, "time": 1792132648.3}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.047, "mo": 0.0, "score": 0.8738999962806702, "time": 1792132650.5}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.0, "mo": "cont", "score": 0.7682999968528748, "time": 1792132652.7}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.0, "mo": "lin0", "score": 0.7585999965667725, "time": 1792132654.8}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.0, "mo": 1.0, "score": 0.772599995136261, "time": 1792132657.0}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.0, "mo": 0.6, "score": 0.7649999856948853, "time": 1792132659.1}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.0, "mo": 0.36, "score": 0.7568999528884888, "time": 1792132661.3}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.0, "mo": 0.22, "score": 0.7477999925613403, "time": 1792132663.4}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.0, "mo": 0.13, "score": 0.7384999990463257, "time": 1792132665.6}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.0, "mo": 0.047, "score": 0.7177000045776367, "time": 1792132667.7}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.0, "mo": 0.0, "score": 0.687999963760376, "time": 1792132669.9}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": "lin0", "mo": "cont", "score": 0.8977999687194824, "time": 1792132672.1}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": "lin0", "mo": "lin0", "score": 0.8973999619483948, "time": 1792132674.4}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": "lin0", "mo": 1.0, "score": 0.897599995136261, "time": 1792132676.6}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": "lin0", "mo": 0.6, "score": 0.8955000042915344, "time": 1792132678.9}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": "lin0", "mo": 0.36, "score": 0.8977999687194824, "time": 1792132681.1}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": "lin0", "mo": 0.22, "score": 0.8973999619483948, "time": 1792132683.3}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": "lin0", "mo": 0.13, "score": 0.8980000019073486, "time": 1792132685.6}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": "lin0", "mo": 0.047, "score": 0.8948999643325806, "time": 1792132687.8}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": "lin0", "mo": 0.0, "score": 0.8960999846458435, "time": 1792132690.1}
+{"kind": "none", "seed": 0, "c": 0.22, "score": 0.8044999837875366, "time": 1792132692.3}
+{"kind": "truth", "seed": 0, "c": 0.22, "score": 0.9387999773025513, "time": 1792132700.4}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 1.0, "mo": "cont", "score": 0.7943999767303467, "time": 1792132702.7}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 1.0, "mo": "lin0", "score": 0.8242999911308289, "time": 1792132704.9}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 1.0, "mo": 1.0, "score": 0.811199963092804, "time": 1792132707.1}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 1.0, "mo": 0.6, "score": 0.8245999813079834, "time": 1792132709.4}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 1.0, "mo": 0.36, "score": 0.8251999616622925, "time": 1792132711.6}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 1.0, "mo": 0.22, "score": 0.8240000009536743, "time": 1792132713.9}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 1.0, "mo": 0.13, "score": 0.8190999627113342, "time": 1792132716.1}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 1.0, "mo": 0.047, "score": 0.8140999674797058, "time": 1792132718.4}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 1.0, "mo": 0.0, "score": 0.8131999969482422, "time": 1792132720.6}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.6, "mo": "cont", "score": 0.8718999624252319, "time": 1792132722.9}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.6, "mo": "lin0", "score": 0.8715999722480774, "time": 1792132725.1}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.6, "mo": 1.0, "score": 0.8696999549865723, "time": 1792132727.3}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.6, "mo": 0.6, "score": 0.8695999979972839, "time": 1792132729.6}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.6, "mo": 0.36, "score": 0.8751999735832214, "time": 1792132731.8}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.6, "mo": 0.22, "score": 0.8715999722480774, "time": 1792132734.1}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.6, "mo": 0.13, "score": 0.871399998664856, "time": 1792132736.3}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.6, "mo": 0.047, "score": 0.875, "time": 1792132738.6}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.6, "mo": 0.0, "score": 0.8642999529838562, "time": 1792132740.8}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.36, "mo": "cont", "score": 0.8978999853134155, "time": 1792132743.0}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.36, "mo": "lin0", "score": 0.8984999656677246, "time": 1792132745.3}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.36, "mo": 1.0, "score": 0.896399974822998, "time": 1792132747.5}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.36, "mo": 0.6, "score": 0.8966999650001526, "time": 1792132749.8}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.36, "mo": 0.36, "score": 0.8960999846458435, "time": 1792132752.0}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.36, "mo": 0.22, "score": 0.892799973487854, "time": 1792132754.3}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.36, "mo": 0.13, "score": 0.8939999938011169, "time": 1792132756.5}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.36, "mo": 0.047, "score": 0.8922999501228333, "time": 1792132758.7}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.36, "mo": 0.0, "score": 0.8919999599456787, "time": 1792132761.0}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.22, "mo": "cont", "score": 0.9085999727249146, "time": 1792132763.2}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.22, "mo": "lin0", "score": 0.9093999862670898, "time": 1792132765.5}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.22, "mo": 1.0, "score": 0.9090999960899353, "time": 1792132767.7}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.22, "mo": 0.6, "score": 0.9084999561309814, "time": 1792132770.0}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.22, "mo": 0.36, "score": 0.9085999727249146, "time": 1792132772.2}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.22, "mo": 0.22, "score": 0.9077999591827393, "time": 1792132774.4}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.22, "mo": 0.13, "score": 0.9081999659538269, "time": 1792132776.7}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.22, "mo": 0.047, "score": 0.9059000015258789, "time": 1792132778.9}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.22, "mo": 0.0, "score": 0.9073999524116516, "time": 1792132781.2}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.13, "mo": "cont", "score": 0.906499981880188, "time": 1792132783.4}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.13, "mo": "lin0", "score": 0.9057999849319458, "time": 1792132785.7}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.13, "mo": 1.0, "score": 0.9060999751091003, "time": 1792132787.9}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.13, "mo": 0.6, "score": 0.9059000015258789, "time": 1792132790.1}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.13, "mo": 0.36, "score": 0.905299961566925, "time": 1792132792.4}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.13, "mo": 0.22, "score": 0.9048999547958374, "time": 1792132794.6}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.13, "mo": 0.13, "score": 0.9035999774932861, "time": 1792132796.9}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.13, "mo": 0.047, "score": 0.9035999774932861, "time": 1792132799.1}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.13, "mo": 0.0, "score": 0.902999997138977, "time": 1792132801.4}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.047, "mo": "cont", "score": 0.8866999745368958, "time": 1792132803.6}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.047, "mo": "lin0", "score": 0.8859999775886536, "time": 1792132805.9}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.047, "mo": 1.0, "score": 0.8870999813079834, "time": 1792132808.1}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.047, "mo": 0.6, "score": 0.8866999745368958, "time": 1792132810.3}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.047, "mo": 0.36, "score": 0.8855999708175659, "time": 1792132812.6}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.047, "mo": 0.22, "score": 0.8855999708175659, "time": 1792132814.8}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.047, "mo": 0.13, "score": 0.8851000070571899, "time": 1792132817.1}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.047, "mo": 0.047, "score": 0.8847999572753906, "time": 1792132819.3}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.047, "mo": 0.0, "score": 0.8845999836921692, "time": 1792132821.6}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.0, "mo": "cont", "score": 0.8388999700546265, "time": 1792132823.7}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.0, "mo": "lin0", "score": 0.8356999754905701, "time": 1792132825.9}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.0, "mo": 1.0, "score": 0.8406999707221985, "time": 1792132828.0}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.0, "mo": 0.6, "score": 0.836899995803833, "time": 1792132830.2}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.0, "mo": 0.36, "score": 0.8351999521255493, "time": 1792132832.3}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.0, "mo": 0.22, "score": 0.8315999507904053, "time": 1792132834.5}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.0, "mo": 0.13, "score": 0.8262999653816223, "time": 1792132836.6}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.0, "mo": 0.047, "score": 0.818399965763092, "time": 1792132838.8}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.0, "mo": 0.0, "score": 0.8044999837875366, "time": 1792132840.9}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": "lin0", "mo": "cont", "score": 0.911899983882904, "time": 1792132843.2}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": "lin0", "mo": "lin0", "score": 0.9107999801635742, "time": 1792132845.4}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": "lin0", "mo": 1.0, "score": 0.9120000004768372, "time": 1792132847.7}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": "lin0", "mo": 0.6, "score": 0.9120000004768372, "time": 1792132849.9}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": "lin0", "mo": 0.36, "score": 0.910099983215332, "time": 1792132852.1}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": "lin0", "mo": 0.22, "score": 0.9124999642372131, "time": 1792132854.4}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": "lin0", "mo": 0.13, "score": 0.9115999937057495, "time": 1792132856.6}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": "lin0", "mo": 0.047, "score": 0.9107999801635742, "time": 1792132858.9}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": "lin0", "mo": 0.0, "score": 0.9108999967575073, "time": 1792132861.1}
+{"kind": "none", "seed": 0, "c": 0.13, "score": 0.8312000036239624, "time": 1792132863.3}
+{"kind": "truth", "seed": 0, "c": 0.13, "score": 0.9400999546051025, "time": 1792132871.3}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 1.0, "mo": "cont", "score": 0.8725000023841858, "time": 1792132873.6}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 1.0, "mo": "lin0", "score": 0.8718000054359436, "time": 1792132875.8}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 1.0, "mo": 1.0, "score": 0.8746999502182007, "time": 1792132878.0}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 1.0, "mo": 0.6, "score": 0.8758999705314636, "time": 1792132880.2}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 1.0, "mo": 0.36, "score": 0.875499963760376, "time": 1792132882.5}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 1.0, "mo": 0.22, "score": 0.8697999715805054, "time": 1792132884.7}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 1.0, "mo": 0.13, "score": 0.8723999857902527, "time": 1792132886.9}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 1.0, "mo": 0.047, "score": 0.8718000054359436, "time": 1792132889.1}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 1.0, "mo": 0.0, "score": 0.8691999912261963, "time": 1792132891.3}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.6, "mo": "cont", "score": 0.8937999606132507, "time": 1792132893.6}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.6, "mo": "lin0", "score": 0.8955000042915344, "time": 1792132895.8}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.6, "mo": 1.0, "score": 0.8964999914169312, "time": 1792132898.0}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.6, "mo": 0.6, "score": 0.8955000042915344, "time": 1792132900.2}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.6, "mo": 0.36, "score": 0.8949999809265137, "time": 1792132902.5}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.6, "mo": 0.22, "score": 0.894599974155426, "time": 1792132904.7}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.6, "mo": 0.13, "score": 0.8950999975204468, "time": 1792132906.9}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.6, "mo": 0.047, "score": 0.8915999531745911, "time": 1792132909.1}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.6, "mo": 0.0, "score": 0.8949999809265137, "time": 1792132911.4}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.36, "mo": "cont", "score": 0.9079999923706055, "time": 1792132913.6}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.36, "mo": "lin0", "score": 0.9078999757766724, "time": 1792132915.8}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.36, "mo": 1.0, "score": 0.9078999757766724, "time": 1792132918.0}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.36, "mo": 0.6, "score": 0.9088000059127808, "time": 1792132920.3}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.36, "mo": 0.36, "score": 0.9066999554634094, "time": 1792132922.5}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.36, "mo": 0.22, "score": 0.9088000059127808, "time": 1792132924.7}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.36, "mo": 0.13, "score": 0.9072999954223633, "time": 1792132926.9}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.36, "mo": 0.047, "score": 0.9065999984741211, "time": 1792132929.2}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.36, "mo": 0.0, "score": 0.9070000052452087, "time": 1792132931.4}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.22, "mo": "cont", "score": 0.9091999530792236, "time": 1792132933.6}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.22, "mo": "lin0", "score": 0.9092999696731567, "time": 1792132935.8}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.22, "mo": 1.0, "score": 0.9097999930381775, "time": 1792132938.1}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.22, "mo": 0.6, "score": 0.9097999930381775, "time": 1792132940.3}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.22, "mo": 0.36, "score": 0.9090999960899353, "time": 1792132942.5}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.22, "mo": 0.22, "score": 0.9088999629020691, "time": 1792132944.7}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.22, "mo": 0.13, "score": 0.9093999862670898, "time": 1792132947.0}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.22, "mo": 0.047, "score": 0.9084999561309814, "time": 1792132949.2}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.22, "mo": 0.0, "score": 0.9070999622344971, "time": 1792132951.4}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.13, "mo": "cont", "score": 0.903499960899353, "time": 1792132953.6}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.13, "mo": "lin0", "score": 0.9027000069618225, "time": 1792132955.9}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.13, "mo": 1.0, "score": 0.9045999646186829, "time": 1792132958.1}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.13, "mo": 0.6, "score": 0.9035999774932861, "time": 1792132960.3}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.13, "mo": 0.36, "score": 0.9025999903678894, "time": 1792132962.5}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.13, "mo": 0.22, "score": 0.9017999768257141, "time": 1792132964.8}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.13, "mo": 0.13, "score": 0.9012999534606934, "time": 1792132967.0}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.13, "mo": 0.047, "score": 0.9006999731063843, "time": 1792132969.2}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.13, "mo": 0.0, "score": 0.9010999798774719, "time": 1792132971.4}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.047, "mo": "cont", "score": 0.8873999714851379, "time": 1792132973.7}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.047, "mo": "lin0", "score": 0.887499988079071, "time": 1792132975.9}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.047, "mo": 1.0, "score": 0.8878999948501587, "time": 1792132978.1}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.047, "mo": 0.6, "score": 0.887999951839447, "time": 1792132980.3}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.047, "mo": 0.36, "score": 0.8877999782562256, "time": 1792132982.5}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.047, "mo": 0.22, "score": 0.887999951839447, "time": 1792132984.8}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.047, "mo": 0.13, "score": 0.8871999979019165, "time": 1792132987.0}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.047, "mo": 0.047, "score": 0.8862999677658081, "time": 1792132989.2}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.047, "mo": 0.0, "score": 0.8862999677658081, "time": 1792132991.4}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.0, "mo": "cont", "score": 0.8568999767303467, "time": 1792132993.6}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.0, "mo": "lin0", "score": 0.8550999760627747, "time": 1792132995.7}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.0, "mo": 1.0, "score": 0.8579999804496765, "time": 1792132997.8}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.0, "mo": 0.6, "score": 0.8555999994277954, "time": 1792133000.0}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.0, "mo": 0.36, "score": 0.8537999987602234, "time": 1792133002.1}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.0, "mo": 0.22, "score": 0.8515999913215637, "time": 1792133004.2}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.0, "mo": 0.13, "score": 0.8472999930381775, "time": 1792133006.4}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.0, "mo": 0.047, "score": 0.8411999940872192, "time": 1792133008.5}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.0, "mo": 0.0, "score": 0.8312000036239624, "time": 1792133010.6}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": "lin0", "mo": "cont", "score": 0.9136999845504761, "time": 1792133012.9}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": "lin0", "mo": "lin0", "score": 0.9126999974250793, "time": 1792133015.1}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": "lin0", "mo": 1.0, "score": 0.9128999710083008, "time": 1792133017.3}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": "lin0", "mo": 0.6, "score": 0.9121999740600586, "time": 1792133019.5}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": "lin0", "mo": 0.36, "score": 0.9129999876022339, "time": 1792133021.8}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": "lin0", "mo": 0.22, "score": 0.9120000004768372, "time": 1792133024.0}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": "lin0", "mo": 0.13, "score": 0.911300003528595, "time": 1792133026.2}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": "lin0", "mo": 0.047, "score": 0.9114999771118164, "time": 1792133028.4}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": "lin0", "mo": 0.0, "score": 0.9106000065803528, "time": 1792133030.7}
+{"kind": "none", "seed": 0, "c": 0.078, "score": 0.8334999680519104, "time": 1792133032.9}
+{"kind": "truth", "seed": 0, "c": 0.078, "score": 0.9405999779701233, "time": 1792133040.9}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 1.0, "mo": "cont", "score": 0.8881999850273132, "time": 1792133043.1}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 1.0, "mo": "lin0", "score": 0.8871999979019165, "time": 1792133045.3}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 1.0, "mo": 1.0, "score": 0.8871999979019165, "time": 1792133047.6}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 1.0, "mo": 0.6, "score": 0.8870999813079834, "time": 1792133049.8}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 1.0, "mo": 0.36, "score": 0.886199951171875, "time": 1792133052.0}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 1.0, "mo": 0.22, "score": 0.8853999972343445, "time": 1792133054.2}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 1.0, "mo": 0.13, "score": 0.8851000070571899, "time": 1792133056.5}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 1.0, "mo": 0.047, "score": 0.8835999965667725, "time": 1792133058.7}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 1.0, "mo": 0.0, "score": 0.8833999633789062, "time": 1792133060.9}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.6, "mo": "cont", "score": 0.8948999643325806, "time": 1792133063.1}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.6, "mo": "lin0", "score": 0.8965999484062195, "time": 1792133065.3}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.6, "mo": 1.0, "score": 0.8958999514579773, "time": 1792133067.6}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.6, "mo": 0.6, "score": 0.8937000036239624, "time": 1792133069.8}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.6, "mo": 0.36, "score": 0.8956999778747559, "time": 1792133072.0}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.6, "mo": 0.22, "score": 0.8947999477386475, "time": 1792133074.2}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.6, "mo": 0.13, "score": 0.894599974155426, "time": 1792133076.5}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.6, "mo": 0.047, "score": 0.8938999772071838, "time": 1792133078.7}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.6, "mo": 0.0, "score": 0.8944999575614929, "time": 1792133080.9}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.36, "mo": "cont", "score": 0.8982999920845032, "time": 1792133083.1}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.36, "mo": "lin0", "score": 0.8989999890327454, "time": 1792133085.4}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.36, "mo": 1.0, "score": 0.8978999853134155, "time": 1792133087.6}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.36, "mo": 0.6, "score": 0.898099958896637, "time": 1792133089.8}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.36, "mo": 0.36, "score": 0.8969999551773071, "time": 1792133092.0}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.36, "mo": 0.22, "score": 0.8970999717712402, "time": 1792133094.3}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.36, "mo": 0.13, "score": 0.8959999680519104, "time": 1792133096.5}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.36, "mo": 0.047, "score": 0.8965999484062195, "time": 1792133098.7}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.36, "mo": 0.0, "score": 0.8962999582290649, "time": 1792133100.9}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.22, "mo": "cont", "score": 0.8939999938011169, "time": 1792133103.2}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.22, "mo": "lin0", "score": 0.8946999907493591, "time": 1792133105.4}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.22, "mo": 1.0, "score": 0.8934999704360962, "time": 1792133107.6}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.22, "mo": 0.6, "score": 0.8932999968528748, "time": 1792133109.9}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.22, "mo": 0.36, "score": 0.8937999606132507, "time": 1792133112.1}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.22, "mo": 0.22, "score": 0.8944000005722046, "time": 1792133114.4}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.22, "mo": 0.13, "score": 0.8944999575614929, "time": 1792133116.6}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.22, "mo": 0.047, "score": 0.8941999673843384, "time": 1792133118.9}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.22, "mo": 0.0, "score": 0.8937000036239624, "time": 1792133121.1}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.13, "mo": "cont", "score": 0.8906999826431274, "time": 1792133123.3}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.13, "mo": "lin0", "score": 0.8899999856948853, "time": 1792133125.6}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.13, "mo": 1.0, "score": 0.8907999992370605, "time": 1792133127.8}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.13, "mo": 0.6, "score": 0.8903999924659729, "time": 1792133130.1}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.13, "mo": 0.36, "score": 0.8903999924659729, "time": 1792133132.3}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.13, "mo": 0.22, "score": 0.8903999924659729, "time": 1792133134.5}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.13, "mo": 0.13, "score": 0.8902999758720398, "time": 1792133136.8}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.13, "mo": 0.047, "score": 0.8892999887466431, "time": 1792133139.0}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.13, "mo": 0.0, "score": 0.8889999985694885, "time": 1792133141.3}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.047, "mo": "cont", "score": 0.8809999823570251, "time": 1792133143.5}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.047, "mo": "lin0", "score": 0.8804999589920044, "time": 1792133145.8}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.047, "mo": 1.0, "score": 0.8817999958992004, "time": 1792133148.0}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.047, "mo": 0.6, "score": 0.8807999491691589, "time": 1792133150.2}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.047, "mo": 0.36, "score": 0.8795999884605408, "time": 1792133152.5}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.047, "mo": 0.22, "score": 0.8786999583244324, "time": 1792133154.7}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.047, "mo": 0.13, "score": 0.878600001335144, "time": 1792133157.0}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.047, "mo": 0.047, "score": 0.8779999613761902, "time": 1792133159.2}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.047, "mo": 0.0, "score": 0.8775999546051025, "time": 1792133161.5}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.0, "mo": "cont", "score": 0.854200005531311, "time": 1792133163.6}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.0, "mo": "lin0", "score": 0.8525999784469604, "time": 1792133165.8}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.0, "mo": 1.0, "score": 0.8560999631881714, "time": 1792133167.9}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.0, "mo": 0.6, "score": 0.8534999489784241, "time": 1792133170.1}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.0, "mo": 0.36, "score": 0.8513999581336975, "time": 1792133172.2}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.0, "mo": 0.22, "score": 0.8479999899864197, "time": 1792133174.4}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.0, "mo": 0.13, "score": 0.8467999696731567, "time": 1792133176.5}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.0, "mo": 0.047, "score": 0.8412999510765076, "time": 1792133178.7}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.0, "mo": 0.0, "score": 0.8334999680519104, "time": 1792133180.8}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": "lin0", "mo": "cont", "score": 0.9059000015258789, "time": 1792133183.1}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": "lin0", "mo": "lin0", "score": 0.9062999486923218, "time": 1792133185.3}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": "lin0", "mo": 1.0, "score": 0.9060999751091003, "time": 1792133187.5}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": "lin0", "mo": 0.6, "score": 0.906499981880188, "time": 1792133189.8}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": "lin0", "mo": 0.36, "score": 0.9056999683380127, "time": 1792133192.0}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": "lin0", "mo": 0.22, "score": 0.9053999781608582, "time": 1792133194.3}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": "lin0", "mo": 0.13, "score": 0.9049999713897705, "time": 1792133196.5}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": "lin0", "mo": 0.047, "score": 0.905299961566925, "time": 1792133198.7}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": "lin0", "mo": 0.0, "score": 0.9036999940872192, "time": 1792133201.0}
+{"kind": "none", "seed": 0, "c": 0.047, "score": 0.8156999945640564, "time": 1792133203.2}
+{"kind": "truth", "seed": 0, "c": 0.047, "score": 0.9398999810218811, "time": 1792133211.3}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 1.0, "mo": "cont", "score": 0.8851000070571899, "time": 1792133213.5}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 1.0, "mo": "lin0", "score": 0.8859999775886536, "time": 1792133215.8}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 1.0, "mo": 1.0, "score": 0.8863999843597412, "time": 1792133218.0}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 1.0, "mo": 0.6, "score": 0.8866999745368958, "time": 1792133220.2}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 1.0, "mo": 0.36, "score": 0.883899986743927, "time": 1792133222.5}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 1.0, "mo": 0.22, "score": 0.8831999897956848, "time": 1792133224.7}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 1.0, "mo": 0.13, "score": 0.8826999664306641, "time": 1792133227.0}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 1.0, "mo": 0.047, "score": 0.8847000002861023, "time": 1792133229.2}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 1.0, "mo": 0.0, "score": 0.8822000026702881, "time": 1792133231.5}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.6, "mo": "cont", "score": 0.8858000040054321, "time": 1792133233.7}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.6, "mo": "lin0", "score": 0.885699987411499, "time": 1792133235.9}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.6, "mo": 1.0, "score": 0.8863999843597412, "time": 1792133238.2}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.6, "mo": 0.6, "score": 0.8865000009536743, "time": 1792133240.4}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.6, "mo": 0.36, "score": 0.8848999738693237, "time": 1792133242.7}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.6, "mo": 0.22, "score": 0.8853999972343445, "time": 1792133244.9}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.6, "mo": 0.13, "score": 0.883899986743927, "time": 1792133247.2}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.6, "mo": 0.047, "score": 0.8845999836921692, "time": 1792133249.4}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.6, "mo": 0.0, "score": 0.8834999799728394, "time": 1792133251.6}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.36, "mo": "cont", "score": 0.8810999989509583, "time": 1792133253.9}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.36, "mo": "lin0", "score": 0.8792999982833862, "time": 1792133256.1}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.36, "mo": 1.0, "score": 0.8815999627113342, "time": 1792133258.3}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.36, "mo": 0.6, "score": 0.8804999589920044, "time": 1792133260.5}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.36, "mo": 0.36, "score": 0.8793999552726746, "time": 1792133262.8}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.36, "mo": 0.22, "score": 0.8786999583244324, "time": 1792133265.0}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.36, "mo": 0.13, "score": 0.8787999749183655, "time": 1792133267.2}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.36, "mo": 0.047, "score": 0.8777999877929688, "time": 1792133269.4}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.36, "mo": 0.0, "score": 0.8770999908447266, "time": 1792133271.7}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.22, "mo": "cont", "score": 0.8739999532699585, "time": 1792133273.9}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.22, "mo": "lin0", "score": 0.873699963092804, "time": 1792133276.1}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.22, "mo": 1.0, "score": 0.875, "time": 1792133278.3}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.22, "mo": 0.6, "score": 0.8741999864578247, "time": 1792133280.6}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.22, "mo": 0.36, "score": 0.8734999895095825, "time": 1792133282.8}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.22, "mo": 0.22, "score": 0.8726999759674072, "time": 1792133285.0}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.22, "mo": 0.13, "score": 0.8720999956130981, "time": 1792133287.2}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.22, "mo": 0.047, "score": 0.8718999624252319, "time": 1792133289.5}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.22, "mo": 0.0, "score": 0.871399998664856, "time": 1792133291.7}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.13, "mo": "cont", "score": 0.866599977016449, "time": 1792133293.9}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.13, "mo": "lin0", "score": 0.8664999604225159, "time": 1792133296.1}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.13, "mo": 1.0, "score": 0.8676999807357788, "time": 1792133298.4}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.13, "mo": 0.6, "score": 0.8659999966621399, "time": 1792133300.6}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.13, "mo": 0.36, "score": 0.8655999898910522, "time": 1792133302.8}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.13, "mo": 0.22, "score": 0.8649999499320984, "time": 1792133305.0}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.13, "mo": 0.13, "score": 0.8651999831199646, "time": 1792133307.3}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.13, "mo": 0.047, "score": 0.8639000058174133, "time": 1792133309.5}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.13, "mo": 0.0, "score": 0.8631999492645264, "time": 1792133311.7}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.047, "mo": "cont", "score": 0.8554999828338623, "time": 1792133313.9}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.047, "mo": "lin0", "score": 0.8553999662399292, "time": 1792133316.2}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.047, "mo": 1.0, "score": 0.8562999963760376, "time": 1792133318.4}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.047, "mo": 0.6, "score": 0.8552999496459961, "time": 1792133320.6}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.047, "mo": 0.36, "score": 0.8540999889373779, "time": 1792133322.8}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.047, "mo": 0.22, "score": 0.8531000018119812, "time": 1792133325.1}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.047, "mo": 0.13, "score": 0.852899968624115, "time": 1792133327.3}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.047, "mo": 0.047, "score": 0.8521999716758728, "time": 1792133329.5}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.047, "mo": 0.0, "score": 0.8518999814987183, "time": 1792133331.7}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.0, "mo": "cont", "score": 0.8370999693870544, "time": 1792133333.9}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.0, "mo": "lin0", "score": 0.8359000086784363, "time": 1792133336.0}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.0, "mo": 1.0, "score": 0.8380999565124512, "time": 1792133338.1}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.0, "mo": 0.6, "score": 0.8363999724388123, "time": 1792133340.3}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.0, "mo": 0.36, "score": 0.8339999914169312, "time": 1792133342.4}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.0, "mo": 0.22, "score": 0.8323999643325806, "time": 1792133344.5}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.0, "mo": 0.13, "score": 0.830299973487854, "time": 1792133346.7}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.0, "mo": 0.047, "score": 0.8253999948501587, "time": 1792133348.8}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.0, "mo": 0.0, "score": 0.8156999945640564, "time": 1792133350.9}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": "lin0", "mo": "cont", "score": 0.8903999924659729, "time": 1792133353.2}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": "lin0", "mo": "lin0", "score": 0.8884999752044678, "time": 1792133355.4}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": "lin0", "mo": 1.0, "score": 0.8908999562263489, "time": 1792133357.6}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": "lin0", "mo": 0.6, "score": 0.8901999592781067, "time": 1792133359.8}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": "lin0", "mo": 0.36, "score": 0.8886999487876892, "time": 1792133362.1}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": "lin0", "mo": 0.22, "score": 0.8877999782562256, "time": 1792133364.3}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": "lin0", "mo": 0.13, "score": 0.8871999979019165, "time": 1792133366.5}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": "lin0", "mo": 0.047, "score": 0.8860999941825867, "time": 1792133368.7}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": "lin0", "mo": 0.0, "score": 0.8854999542236328, "time": 1792133371.0}
+{"kind": "none", "seed": 1, "c": 1.0, "score": 0.3562999963760376, "time": 1792133373.4}
+{"kind": "truth", "seed": 1, "c": 1.0, "score": 0.9351999759674072, "time": 1792133381.4}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 1.0, "mo": "cont", "score": 0.3994999825954437, "time": 1792133383.6}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 1.0, "mo": "lin0", "score": 0.3718999922275543, "time": 1792133385.8}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 1.0, "mo": 1.0, "score": 0.4041000008583069, "time": 1792133388.0}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 1.0, "mo": 0.6, "score": 0.376800000667572, "time": 1792133390.3}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 1.0, "mo": 0.36, "score": 0.37599998712539673, "time": 1792133392.5}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 1.0, "mo": 0.22, "score": 0.32729998230934143, "time": 1792133394.7}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 1.0, "mo": 0.13, "score": 0.3912999927997589, "time": 1792133396.9}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 1.0, "mo": 0.047, "score": 0.4754999876022339, "time": 1792133399.2}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 1.0, "mo": 0.0, "score": 0.39489999413490295, "time": 1792133401.4}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.6, "mo": "cont", "score": 0.5412999987602234, "time": 1792133403.6}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.6, "mo": "lin0", "score": 0.5649999976158142, "time": 1792133405.8}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.6, "mo": 1.0, "score": 0.5371999740600586, "time": 1792133408.1}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.6, "mo": 0.6, "score": 0.49300000071525574, "time": 1792133410.3}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.6, "mo": 0.36, "score": 0.6028000116348267, "time": 1792133412.5}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.6, "mo": 0.22, "score": 0.5188999772071838, "time": 1792133414.7}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.6, "mo": 0.13, "score": 0.5397999882698059, "time": 1792133417.0}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.6, "mo": 0.047, "score": 0.5837999582290649, "time": 1792133419.2}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.6, "mo": 0.0, "score": 0.5315999984741211, "time": 1792133421.4}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.36, "mo": "cont", "score": 0.6917999982833862, "time": 1792133423.6}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.36, "mo": "lin0", "score": 0.732699990272522, "time": 1792133425.9}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.36, "mo": 1.0, "score": 0.6827999949455261, "time": 1792133428.1}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.36, "mo": 0.6, "score": 0.7200999855995178, "time": 1792133430.3}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.36, "mo": 0.36, "score": 0.7134000062942505, "time": 1792133432.5}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.36, "mo": 0.22, "score": 0.6996999979019165, "time": 1792133434.8}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.36, "mo": 0.13, "score": 0.6859999895095825, "time": 1792133437.0}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.36, "mo": 0.047, "score": 0.7120999693870544, "time": 1792133439.2}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.36, "mo": 0.0, "score": 0.717199981212616, "time": 1792133441.4}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.22, "mo": "cont", "score": 0.8165000081062317, "time": 1792133443.7}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.22, "mo": "lin0", "score": 0.8037999868392944, "time": 1792133445.9}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.22, "mo": 1.0, "score": 0.7932999730110168, "time": 1792133448.1}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.22, "mo": 0.6, "score": 0.7949000000953674, "time": 1792133450.3}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.22, "mo": 0.36, "score": 0.7914999723434448, "time": 1792133452.6}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.22, "mo": 0.22, "score": 0.7892999649047852, "time": 1792133454.8}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.22, "mo": 0.13, "score": 0.780299961566925, "time": 1792133457.0}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.22, "mo": 0.047, "score": 0.7884999513626099, "time": 1792133459.2}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.22, "mo": 0.0, "score": 0.784500002861023, "time": 1792133461.5}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.13, "mo": "cont", "score": 0.8436999917030334, "time": 1792133463.7}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.13, "mo": "lin0", "score": 0.8417999744415283, "time": 1792133465.9}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.13, "mo": 1.0, "score": 0.8455999493598938, "time": 1792133468.1}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.13, "mo": 0.6, "score": 0.8394999504089355, "time": 1792133470.4}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.13, "mo": 0.36, "score": 0.8330999612808228, "time": 1792133472.6}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.13, "mo": 0.22, "score": 0.8323000073432922, "time": 1792133474.8}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.13, "mo": 0.13, "score": 0.830299973487854, "time": 1792133477.0}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.13, "mo": 0.047, "score": 0.8317999839782715, "time": 1792133479.3}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.13, "mo": 0.0, "score": 0.8285999894142151, "time": 1792133481.5}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.047, "mo": "cont", "score": 0.8544999957084656, "time": 1792133483.7}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.047, "mo": "lin0", "score": 0.854699969291687, "time": 1792133485.9}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.047, "mo": 1.0, "score": 0.8551999926567078, "time": 1792133488.2}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.047, "mo": 0.6, "score": 0.8534999489784241, "time": 1792133490.4}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.047, "mo": 0.36, "score": 0.8517000079154968, "time": 1792133492.6}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.047, "mo": 0.22, "score": 0.8479999899864197, "time": 1792133494.8}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.047, "mo": 0.13, "score": 0.847599983215332, "time": 1792133497.1}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.047, "mo": 0.047, "score": 0.8453999757766724, "time": 1792133499.3}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.047, "mo": 0.0, "score": 0.8453999757766724, "time": 1792133501.5}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.0, "mo": "cont", "score": 0.5493999719619751, "time": 1792133503.7}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.0, "mo": "lin0", "score": 0.5292999744415283, "time": 1792133505.8}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.0, "mo": 1.0, "score": 0.5597000122070312, "time": 1792133507.9}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.0, "mo": 0.6, "score": 0.542199969291687, "time": 1792133510.1}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.0, "mo": 0.36, "score": 0.5216999650001526, "time": 1792133512.2}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.0, "mo": 0.22, "score": 0.5034999847412109, "time": 1792133514.3}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.0, "mo": 0.13, "score": 0.4765999913215637, "time": 1792133516.5}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.0, "mo": 0.047, "score": 0.420199990272522, "time": 1792133518.6}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": 0.0, "mo": 0.0, "score": 0.3562999963760376, "time": 1792133520.7}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": "lin0", "mo": "cont", "score": 0.8388999700546265, "time": 1792133522.9}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": "lin0", "mo": "lin0", "score": 0.8392999768257141, "time": 1792133525.2}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": "lin0", "mo": 1.0, "score": 0.8389999866485596, "time": 1792133527.4}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": "lin0", "mo": 0.6, "score": 0.842199981212616, "time": 1792133529.6}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": "lin0", "mo": 0.36, "score": 0.8337000012397766, "time": 1792133531.8}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": "lin0", "mo": 0.22, "score": 0.839199960231781, "time": 1792133534.1}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": "lin0", "mo": 0.13, "score": 0.8334999680519104, "time": 1792133536.3}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": "lin0", "mo": 0.047, "score": 0.8287999629974365, "time": 1792133538.5}
+{"kind": "proxy", "seed": 1, "c": 1.0, "ms": "lin0", "mo": 0.0, "score": 0.8292999863624573, "time": 1792133540.7}
+{"kind": "none", "seed": 1, "c": 0.6, "score": 0.487199991941452, "time": 1792133543.0}
+{"kind": "truth", "seed": 1, "c": 0.6, "score": 0.9389999508857727, "time": 1792133551.0}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 1.0, "mo": "cont", "score": 0.5442999601364136, "time": 1792133553.2}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 1.0, "mo": "lin0", "score": 0.5979999899864197, "time": 1792133555.4}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 1.0, "mo": 1.0, "score": 0.5444999933242798, "time": 1792133557.6}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 1.0, "mo": 0.6, "score": 0.538599967956543, "time": 1792133559.9}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 1.0, "mo": 0.36, "score": 0.5706999897956848, "time": 1792133562.1}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 1.0, "mo": 0.22, "score": 0.5891000032424927, "time": 1792133564.3}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 1.0, "mo": 0.13, "score": 0.5730999708175659, "time": 1792133566.5}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 1.0, "mo": 0.047, "score": 0.5565999746322632, "time": 1792133568.8}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 1.0, "mo": 0.0, "score": 0.5785999894142151, "time": 1792133571.0}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.6, "mo": "cont", "score": 0.7038999795913696, "time": 1792133573.2}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.6, "mo": "lin0", "score": 0.736799955368042, "time": 1792133575.4}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.6, "mo": 1.0, "score": 0.6985999941825867, "time": 1792133577.7}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.6, "mo": 0.6, "score": 0.7157999873161316, "time": 1792133579.9}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.6, "mo": 0.36, "score": 0.7181999683380127, "time": 1792133582.1}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.6, "mo": 0.22, "score": 0.6970999836921692, "time": 1792133584.3}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.6, "mo": 0.13, "score": 0.698199987411499, "time": 1792133586.6}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.6, "mo": 0.047, "score": 0.7077999711036682, "time": 1792133588.8}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.6, "mo": 0.0, "score": 0.7186999917030334, "time": 1792133591.0}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.36, "mo": "cont", "score": 0.8072999715805054, "time": 1792133593.2}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.36, "mo": "lin0", "score": 0.8091999888420105, "time": 1792133595.5}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.36, "mo": 1.0, "score": 0.8073999881744385, "time": 1792133597.7}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.36, "mo": 0.6, "score": 0.8054999709129333, "time": 1792133599.9}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.36, "mo": 0.36, "score": 0.7949999570846558, "time": 1792133602.1}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.36, "mo": 0.22, "score": 0.7875999808311462, "time": 1792133604.4}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.36, "mo": 0.13, "score": 0.8033999800682068, "time": 1792133606.6}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.36, "mo": 0.047, "score": 0.796999990940094, "time": 1792133608.8}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.36, "mo": 0.0, "score": 0.7870000004768372, "time": 1792133611.0}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.22, "mo": "cont", "score": 0.8519999980926514, "time": 1792133613.3}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.22, "mo": "lin0", "score": 0.8570999503135681, "time": 1792133615.5}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.22, "mo": 1.0, "score": 0.861299991607666, "time": 1792133617.7}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.22, "mo": 0.6, "score": 0.8585999608039856, "time": 1792133619.9}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.22, "mo": 0.36, "score": 0.8562999963760376, "time": 1792133622.2}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.22, "mo": 0.22, "score": 0.8502999544143677, "time": 1792133624.4}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.22, "mo": 0.13, "score": 0.8495999574661255, "time": 1792133626.6}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.22, "mo": 0.047, "score": 0.8556999564170837, "time": 1792133628.8}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.22, "mo": 0.0, "score": 0.8517999649047852, "time": 1792133631.1}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.13, "mo": "cont", "score": 0.8677999973297119, "time": 1792133633.3}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.13, "mo": "lin0", "score": 0.8696999549865723, "time": 1792133635.5}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.13, "mo": 1.0, "score": 0.8745999932289124, "time": 1792133637.7}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.13, "mo": 0.6, "score": 0.8707000017166138, "time": 1792133639.9}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.13, "mo": 0.36, "score": 0.8691999912261963, "time": 1792133642.2}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.13, "mo": 0.22, "score": 0.8678999543190002, "time": 1792133644.4}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.13, "mo": 0.13, "score": 0.865399956703186, "time": 1792133646.6}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.13, "mo": 0.047, "score": 0.8662999868392944, "time": 1792133648.8}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.13, "mo": 0.0, "score": 0.8661999702453613, "time": 1792133651.1}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.047, "mo": "cont", "score": 0.8583999872207642, "time": 1792133653.3}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.047, "mo": "lin0", "score": 0.8572999835014343, "time": 1792133655.5}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.047, "mo": 1.0, "score": 0.858199954032898, "time": 1792133657.7}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.047, "mo": 0.6, "score": 0.856499969959259, "time": 1792133660.0}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.047, "mo": 0.36, "score": 0.8565999865531921, "time": 1792133662.2}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.047, "mo": 0.22, "score": 0.8563999533653259, "time": 1792133664.4}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.047, "mo": 0.13, "score": 0.8533999919891357, "time": 1792133666.6}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.047, "mo": 0.047, "score": 0.8513999581336975, "time": 1792133668.9}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.047, "mo": 0.0, "score": 0.8520999550819397, "time": 1792133671.1}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.0, "mo": "cont", "score": 0.6523999571800232, "time": 1792133673.2}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.0, "mo": "lin0", "score": 0.6329999566078186, "time": 1792133675.4}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.0, "mo": 1.0, "score": 0.6606000065803528, "time": 1792133677.5}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.0, "mo": 0.6, "score": 0.6452999711036682, "time": 1792133679.6}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.0, "mo": 0.36, "score": 0.628600001335144, "time": 1792133681.8}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.0, "mo": 0.22, "score": 0.6128999590873718, "time": 1792133683.9}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.0, "mo": 0.13, "score": 0.5978999733924866, "time": 1792133686.0}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.0, "mo": 0.047, "score": 0.5670999884605408, "time": 1792133688.2}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.0, "mo": 0.0, "score": 0.487199991941452, "time": 1792133690.3}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": "lin0", "mo": "cont", "score": 0.8707999587059021, "time": 1792133692.5}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": "lin0", "mo": "lin0", "score": 0.8696999549865723, "time": 1792133694.7}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": "lin0", "mo": 1.0, "score": 0.8748999834060669, "time": 1792133697.0}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": "lin0", "mo": 0.6, "score": 0.871399998664856, "time": 1792133699.2}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": "lin0", "mo": 0.36, "score": 0.8708999752998352, "time": 1792133701.4}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": "lin0", "mo": 0.22, "score": 0.8660999536514282, "time": 1792133703.6}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": "lin0", "mo": 0.13, "score": 0.8668999671936035, "time": 1792133705.9}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": "lin0", "mo": 0.047, "score": 0.8718999624252319, "time": 1792133708.1}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": "lin0", "mo": 0.0, "score": 0.8675999641418457, "time": 1792133710.3}
+{"kind": "none", "seed": 1, "c": 0.36, "score": 0.694599986076355, "time": 1792133712.5}
+{"kind": "truth", "seed": 1, "c": 0.36, "score": 0.9388999938964844, "time": 1792133720.5}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 1.0, "mo": "cont", "score": 0.69159996509552, "time": 1792133722.8}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 1.0, "mo": "lin0", "score": 0.7206000089645386, "time": 1792133725.0}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 1.0, "mo": 1.0, "score": 0.7282999753952026, "time": 1792133727.2}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 1.0, "mo": 0.6, "score": 0.7058999538421631, "time": 1792133729.4}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 1.0, "mo": 0.36, "score": 0.7019999623298645, "time": 1792133731.7}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 1.0, "mo": 0.22, "score": 0.715999960899353, "time": 1792133733.9}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 1.0, "mo": 0.13, "score": 0.7048999667167664, "time": 1792133736.1}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 1.0, "mo": 0.047, "score": 0.7127999663352966, "time": 1792133738.3}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 1.0, "mo": 0.0, "score": 0.7281000018119812, "time": 1792133740.6}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.6, "mo": "cont", "score": 0.8044999837875366, "time": 1792133742.8}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.6, "mo": "lin0", "score": 0.8197999596595764, "time": 1792133745.0}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.6, "mo": 1.0, "score": 0.8100000023841858, "time": 1792133747.2}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.6, "mo": 0.6, "score": 0.823699951171875, "time": 1792133749.4}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.6, "mo": 0.36, "score": 0.8166999816894531, "time": 1792133751.7}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.6, "mo": 0.22, "score": 0.8125999569892883, "time": 1792133753.9}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.6, "mo": 0.13, "score": 0.8143999576568604, "time": 1792133756.1}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.6, "mo": 0.047, "score": 0.8126999735832214, "time": 1792133758.3}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.6, "mo": 0.0, "score": 0.8119999766349792, "time": 1792133760.6}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.36, "mo": "cont", "score": 0.8743999600410461, "time": 1792133762.8}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.36, "mo": "lin0", "score": 0.871999979019165, "time": 1792133765.0}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.36, "mo": 1.0, "score": 0.8756999969482422, "time": 1792133767.2}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.36, "mo": 0.6, "score": 0.8686999678611755, "time": 1792133769.5}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.36, "mo": 0.36, "score": 0.8725000023841858, "time": 1792133771.7}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.36, "mo": 0.22, "score": 0.8725000023841858, "time": 1792133773.9}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.36, "mo": 0.13, "score": 0.8700000047683716, "time": 1792133776.1}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.36, "mo": 0.047, "score": 0.8707000017166138, "time": 1792133778.4}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.36, "mo": 0.0, "score": 0.8624999523162842, "time": 1792133780.6}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.22, "mo": "cont", "score": 0.8858999609947205, "time": 1792133782.8}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.22, "mo": "lin0", "score": 0.8872999548912048, "time": 1792133785.0}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.22, "mo": 1.0, "score": 0.8866999745368958, "time": 1792133787.3}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.22, "mo": 0.6, "score": 0.8876000046730042, "time": 1792133789.5}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.22, "mo": 0.36, "score": 0.8860999941825867, "time": 1792133791.7}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.22, "mo": 0.22, "score": 0.8903999924659729, "time": 1792133793.9}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.22, "mo": 0.13, "score": 0.8860999941825867, "time": 1792133796.2}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.22, "mo": 0.047, "score": 0.887499988079071, "time": 1792133798.4}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.22, "mo": 0.0, "score": 0.8877999782562256, "time": 1792133800.6}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.13, "mo": "cont", "score": 0.8940999507904053, "time": 1792133802.8}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.13, "mo": "lin0", "score": 0.8932999968528748, "time": 1792133805.1}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.13, "mo": 1.0, "score": 0.8931999802589417, "time": 1792133807.3}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.13, "mo": 0.6, "score": 0.8937999606132507, "time": 1792133809.5}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.13, "mo": 0.36, "score": 0.8930999636650085, "time": 1792133811.7}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.13, "mo": 0.22, "score": 0.892799973487854, "time": 1792133814.0}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.13, "mo": 0.13, "score": 0.8920999765396118, "time": 1792133816.2}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.13, "mo": 0.047, "score": 0.8919999599456787, "time": 1792133818.4}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.13, "mo": 0.0, "score": 0.8920999765396118, "time": 1792133820.6}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.047, "mo": "cont", "score": 0.8720999956130981, "time": 1792133822.9}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.047, "mo": "lin0", "score": 0.871999979019165, "time": 1792133825.1}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.047, "mo": 1.0, "score": 0.8727999925613403, "time": 1792133827.3}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.047, "mo": 0.6, "score": 0.8726999759674072, "time": 1792133829.5}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.047, "mo": 0.36, "score": 0.8711999654769897, "time": 1792133831.8}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.047, "mo": 0.22, "score": 0.8705999851226807, "time": 1792133834.0}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.047, "mo": 0.13, "score": 0.8707999587059021, "time": 1792133836.2}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.047, "mo": 0.047, "score": 0.8697999715805054, "time": 1792133838.4}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.047, "mo": 0.0, "score": 0.8702999949455261, "time": 1792133840.7}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.0, "mo": "cont", "score": 0.7694999575614929, "time": 1792133842.8}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.0, "mo": "lin0", "score": 0.758899986743927, "time": 1792133844.9}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.0, "mo": 1.0, "score": 0.7741000056266785, "time": 1792133847.1}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.0, "mo": 0.6, "score": 0.7656999826431274, "time": 1792133849.2}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.0, "mo": 0.36, "score": 0.7565999627113342, "time": 1792133851.3}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.0, "mo": 0.22, "score": 0.7476999759674072, "time": 1792133853.5}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.0, "mo": 0.13, "score": 0.7360000014305115, "time": 1792133855.6}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.0, "mo": 0.047, "score": 0.7196999788284302, "time": 1792133857.7}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.0, "mo": 0.0, "score": 0.694599986076355, "time": 1792133859.9}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": "lin0", "mo": "cont", "score": 0.8953999876976013, "time": 1792133862.1}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": "lin0", "mo": "lin0", "score": 0.8960999846458435, "time": 1792133864.3}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": "lin0", "mo": 1.0, "score": 0.8971999883651733, "time": 1792133866.5}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": "lin0", "mo": 0.6, "score": 0.897599995136261, "time": 1792133868.8}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": "lin0", "mo": 0.36, "score": 0.8973000049591064, "time": 1792133871.0}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": "lin0", "mo": 0.22, "score": 0.8960999846458435, "time": 1792133873.2}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": "lin0", "mo": 0.13, "score": 0.8958999514579773, "time": 1792133875.4}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": "lin0", "mo": 0.047, "score": 0.8946999907493591, "time": 1792133877.7}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": "lin0", "mo": 0.0, "score": 0.8937999606132507, "time": 1792133879.9}
+{"kind": "none", "seed": 1, "c": 0.22, "score": 0.7949000000953674, "time": 1792133882.1}
+{"kind": "truth", "seed": 1, "c": 0.22, "score": 0.9388999938964844, "time": 1792133890.1}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 1.0, "mo": "cont", "score": 0.8190000057220459, "time": 1792133892.3}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 1.0, "mo": "lin0", "score": 0.8087999820709229, "time": 1792133894.5}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 1.0, "mo": 1.0, "score": 0.8100000023841858, "time": 1792133896.8}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 1.0, "mo": 0.6, "score": 0.8211999535560608, "time": 1792133899.0}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 1.0, "mo": 0.36, "score": 0.8015999794006348, "time": 1792133901.2}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 1.0, "mo": 0.22, "score": 0.8104999661445618, "time": 1792133903.4}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 1.0, "mo": 0.13, "score": 0.8292999863624573, "time": 1792133905.7}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 1.0, "mo": 0.047, "score": 0.8078999519348145, "time": 1792133907.9}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 1.0, "mo": 0.0, "score": 0.8137999773025513, "time": 1792133910.1}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.6, "mo": "cont", "score": 0.8657000064849854, "time": 1792133912.3}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.6, "mo": "lin0", "score": 0.8648999929428101, "time": 1792133914.6}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.6, "mo": 1.0, "score": 0.8744999766349792, "time": 1792133916.8}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.6, "mo": 0.6, "score": 0.871999979019165, "time": 1792133919.0}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.6, "mo": 0.36, "score": 0.8679999709129333, "time": 1792133921.2}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.6, "mo": 0.22, "score": 0.8666999936103821, "time": 1792133923.5}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.6, "mo": 0.13, "score": 0.8757999539375305, "time": 1792133925.7}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.6, "mo": 0.047, "score": 0.8693000078201294, "time": 1792133927.9}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.6, "mo": 0.0, "score": 0.8697999715805054, "time": 1792133930.1}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.36, "mo": "cont", "score": 0.9000999927520752, "time": 1792133932.4}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.36, "mo": "lin0", "score": 0.9010999798774719, "time": 1792133934.6}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.36, "mo": 1.0, "score": 0.8977999687194824, "time": 1792133936.9}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.36, "mo": 0.6, "score": 0.8962999582290649, "time": 1792133939.1}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.36, "mo": 0.36, "score": 0.9012999534606934, "time": 1792133941.4}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.36, "mo": 0.22, "score": 0.9004999995231628, "time": 1792133943.6}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.36, "mo": 0.13, "score": 0.8989999890327454, "time": 1792133945.8}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.36, "mo": 0.047, "score": 0.8988999724388123, "time": 1792133948.1}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.36, "mo": 0.0, "score": 0.8981999754905701, "time": 1792133950.3}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.22, "mo": "cont", "score": 0.9056999683380127, "time": 1792133952.6}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.22, "mo": "lin0", "score": 0.905299961566925, "time": 1792133954.8}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.22, "mo": 1.0, "score": 0.9050999879837036, "time": 1792133957.1}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.22, "mo": 0.6, "score": 0.9043999910354614, "time": 1792133959.3}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.22, "mo": 0.36, "score": 0.9044999480247498, "time": 1792133961.5}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.22, "mo": 0.22, "score": 0.9057999849319458, "time": 1792133963.8}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.22, "mo": 0.13, "score": 0.9056999683380127, "time": 1792133966.0}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.22, "mo": 0.047, "score": 0.9048999547958374, "time": 1792133968.3}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.22, "mo": 0.0, "score": 0.9047999978065491, "time": 1792133970.5}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.13, "mo": "cont", "score": 0.903499960899353, "time": 1792133972.8}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.13, "mo": "lin0", "score": 0.9031999707221985, "time": 1792133975.0}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.13, "mo": 1.0, "score": 0.9037999510765076, "time": 1792133977.2}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.13, "mo": 0.6, "score": 0.9034000039100647, "time": 1792133979.5}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.13, "mo": 0.36, "score": 0.902899980545044, "time": 1792133981.7}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.13, "mo": 0.22, "score": 0.9023000001907349, "time": 1792133984.0}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.13, "mo": 0.13, "score": 0.9023000001907349, "time": 1792133986.2}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.13, "mo": 0.047, "score": 0.9018999934196472, "time": 1792133988.4}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.13, "mo": 0.0, "score": 0.9018999934196472, "time": 1792133990.7}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.047, "mo": "cont", "score": 0.8865000009536743, "time": 1792133992.9}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.047, "mo": "lin0", "score": 0.8840999603271484, "time": 1792133995.2}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.047, "mo": 1.0, "score": 0.8867999911308289, "time": 1792133997.4}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.047, "mo": 0.6, "score": 0.8854999542236328, "time": 1792133999.7}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.047, "mo": 0.36, "score": 0.8835999965667725, "time": 1792134001.9}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.047, "mo": 0.22, "score": 0.8836999535560608, "time": 1792134004.1}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.047, "mo": 0.13, "score": 0.8836999535560608, "time": 1792134006.4}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.047, "mo": 0.047, "score": 0.8833999633789062, "time": 1792134008.6}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.047, "mo": 0.0, "score": 0.8829999566078186, "time": 1792134010.9}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.0, "mo": "cont", "score": 0.8378999829292297, "time": 1792134013.0}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.0, "mo": "lin0", "score": 0.8349999785423279, "time": 1792134015.2}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.0, "mo": 1.0, "score": 0.8388999700546265, "time": 1792134017.3}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.0, "mo": 0.6, "score": 0.8370999693870544, "time": 1792134019.5}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.0, "mo": 0.36, "score": 0.8330999612808228, "time": 1792134021.6}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.0, "mo": 0.22, "score": 0.8295999765396118, "time": 1792134023.8}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.0, "mo": 0.13, "score": 0.8264999985694885, "time": 1792134025.9}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.0, "mo": 0.047, "score": 0.8163999915122986, "time": 1792134028.1}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.0, "mo": 0.0, "score": 0.7949000000953674, "time": 1792134030.2}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": "lin0", "mo": "cont", "score": 0.9079999923706055, "time": 1792134032.5}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": "lin0", "mo": "lin0", "score": 0.9088999629020691, "time": 1792134034.7}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": "lin0", "mo": 1.0, "score": 0.9081999659538269, "time": 1792134036.9}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": "lin0", "mo": 0.6, "score": 0.9090999960899353, "time": 1792134039.2}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": "lin0", "mo": 0.36, "score": 0.9072999954223633, "time": 1792134041.4}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": "lin0", "mo": 0.22, "score": 0.9089999794960022, "time": 1792134043.7}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": "lin0", "mo": 0.13, "score": 0.9059000015258789, "time": 1792134045.9}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": "lin0", "mo": 0.047, "score": 0.9059000015258789, "time": 1792134048.2}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": "lin0", "mo": 0.0, "score": 0.9077000021934509, "time": 1792134050.4}
+{"kind": "none", "seed": 1, "c": 0.13, "score": 0.8186999559402466, "time": 1792134052.6}
+{"kind": "truth", "seed": 1, "c": 0.13, "score": 0.9400999546051025, "time": 1792134060.7}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 1.0, "mo": "cont", "score": 0.8646000027656555, "time": 1792134063.0}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 1.0, "mo": "lin0", "score": 0.8698999881744385, "time": 1792134065.2}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 1.0, "mo": 1.0, "score": 0.8675999641418457, "time": 1792134067.4}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 1.0, "mo": 0.6, "score": 0.8679999709129333, "time": 1792134069.7}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 1.0, "mo": 0.36, "score": 0.8646000027656555, "time": 1792134071.9}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 1.0, "mo": 0.22, "score": 0.8633999824523926, "time": 1792134074.2}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 1.0, "mo": 0.13, "score": 0.8628000020980835, "time": 1792134076.4}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 1.0, "mo": 0.047, "score": 0.8722999691963196, "time": 1792134078.6}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 1.0, "mo": 0.0, "score": 0.8643999695777893, "time": 1792134080.9}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.6, "mo": "cont", "score": 0.8971999883651733, "time": 1792134083.1}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.6, "mo": "lin0", "score": 0.8955000042915344, "time": 1792134085.4}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.6, "mo": 1.0, "score": 0.8958999514579773, "time": 1792134087.6}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.6, "mo": 0.6, "score": 0.8964999914169312, "time": 1792134089.8}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.6, "mo": 0.36, "score": 0.8959999680519104, "time": 1792134092.1}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.6, "mo": 0.22, "score": 0.8962999582290649, "time": 1792134094.3}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.6, "mo": 0.13, "score": 0.8940999507904053, "time": 1792134096.6}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.6, "mo": 0.047, "score": 0.8941999673843384, "time": 1792134098.8}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.6, "mo": 0.0, "score": 0.8948999643325806, "time": 1792134101.1}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.36, "mo": "cont", "score": 0.9041000008583069, "time": 1792134103.3}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.36, "mo": "lin0", "score": 0.9038999676704407, "time": 1792134105.5}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.36, "mo": 1.0, "score": 0.9034000039100647, "time": 1792134107.8}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.36, "mo": 0.6, "score": 0.9035999774932861, "time": 1792134110.0}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.36, "mo": 0.36, "score": 0.9024999737739563, "time": 1792134112.3}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.36, "mo": 0.22, "score": 0.901699960231781, "time": 1792134114.5}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.36, "mo": 0.13, "score": 0.9027000069618225, "time": 1792134116.7}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.36, "mo": 0.047, "score": 0.9021999835968018, "time": 1792134119.0}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.36, "mo": 0.0, "score": 0.9013999700546265, "time": 1792134121.2}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.22, "mo": "cont", "score": 0.9054999947547913, "time": 1792134123.5}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.22, "mo": "lin0", "score": 0.9057999849319458, "time": 1792134125.7}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.22, "mo": 1.0, "score": 0.9056999683380127, "time": 1792134128.0}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.22, "mo": 0.6, "score": 0.9056999683380127, "time": 1792134130.2}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.22, "mo": 0.36, "score": 0.9050999879837036, "time": 1792134132.4}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.22, "mo": 0.22, "score": 0.9044999480247498, "time": 1792134134.7}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.22, "mo": 0.13, "score": 0.9041000008583069, "time": 1792134136.9}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.22, "mo": 0.047, "score": 0.9036999940872192, "time": 1792134139.2}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.22, "mo": 0.0, "score": 0.9037999510765076, "time": 1792134141.4}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.13, "mo": "cont", "score": 0.9009999632835388, "time": 1792134143.6}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.13, "mo": "lin0", "score": 0.9009999632835388, "time": 1792134145.9}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.13, "mo": 1.0, "score": 0.9009000062942505, "time": 1792134148.1}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.13, "mo": 0.6, "score": 0.9005999565124512, "time": 1792134150.4}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.13, "mo": 0.36, "score": 0.9001999497413635, "time": 1792134152.6}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.13, "mo": 0.22, "score": 0.9004999995231628, "time": 1792134154.8}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.13, "mo": 0.13, "score": 0.9005999565124512, "time": 1792134157.1}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.13, "mo": 0.047, "score": 0.899899959564209, "time": 1792134159.3}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.13, "mo": 0.0, "score": 0.9001999497413635, "time": 1792134161.6}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.047, "mo": "cont", "score": 0.8872999548912048, "time": 1792134163.8}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.047, "mo": "lin0", "score": 0.8869999647140503, "time": 1792134166.1}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.047, "mo": 1.0, "score": 0.8881999850273132, "time": 1792134168.3}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.047, "mo": 0.6, "score": 0.887499988079071, "time": 1792134170.5}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.047, "mo": 0.36, "score": 0.8862999677658081, "time": 1792134172.8}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.047, "mo": 0.22, "score": 0.8862999677658081, "time": 1792134175.0}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.047, "mo": 0.13, "score": 0.8863999843597412, "time": 1792134177.3}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.047, "mo": 0.047, "score": 0.886199951171875, "time": 1792134179.5}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.047, "mo": 0.0, "score": 0.886199951171875, "time": 1792134181.7}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.0, "mo": "cont", "score": 0.8583999872207642, "time": 1792134183.9}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.0, "mo": "lin0", "score": 0.854699969291687, "time": 1792134186.0}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.0, "mo": 1.0, "score": 0.8592999577522278, "time": 1792134188.2}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.0, "mo": 0.6, "score": 0.8560999631881714, "time": 1792134190.3}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.0, "mo": 0.36, "score": 0.8540999889373779, "time": 1792134192.5}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.0, "mo": 0.22, "score": 0.8506999611854553, "time": 1792134194.6}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.0, "mo": 0.13, "score": 0.8468999862670898, "time": 1792134196.8}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.0, "mo": 0.047, "score": 0.838699996471405, "time": 1792134198.9}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.0, "mo": 0.0, "score": 0.8186999559402466, "time": 1792134201.1}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": "lin0", "mo": "cont", "score": 0.9126999974250793, "time": 1792134203.3}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": "lin0", "mo": "lin0", "score": 0.9134999513626099, "time": 1792134205.6}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": "lin0", "mo": 1.0, "score": 0.9128999710083008, "time": 1792134207.8}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": "lin0", "mo": 0.6, "score": 0.9113999605178833, "time": 1792134210.0}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": "lin0", "mo": 0.36, "score": 0.9109999537467957, "time": 1792134212.3}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": "lin0", "mo": 0.22, "score": 0.911899983882904, "time": 1792134214.5}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": "lin0", "mo": 0.13, "score": 0.9101999998092651, "time": 1792134216.8}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": "lin0", "mo": 0.047, "score": 0.9095999598503113, "time": 1792134219.0}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": "lin0", "mo": 0.0, "score": 0.9098999500274658, "time": 1792134221.3}
+{"kind": "none", "seed": 1, "c": 0.078, "score": 0.8382999897003174, "time": 1792134223.5}
+{"kind": "truth", "seed": 1, "c": 0.078, "score": 0.9386000037193298, "time": 1792134231.6}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 1.0, "mo": "cont", "score": 0.8922999501228333, "time": 1792134233.8}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 1.0, "mo": "lin0", "score": 0.8894999623298645, "time": 1792134236.0}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 1.0, "mo": 1.0, "score": 0.8901999592781067, "time": 1792134238.3}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 1.0, "mo": 0.6, "score": 0.8905999660491943, "time": 1792134240.5}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 1.0, "mo": 0.36, "score": 0.8889999985694885, "time": 1792134242.8}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 1.0, "mo": 0.22, "score": 0.8906999826431274, "time": 1792134245.0}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 1.0, "mo": 0.13, "score": 0.8907999992370605, "time": 1792134247.3}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 1.0, "mo": 0.047, "score": 0.8904999494552612, "time": 1792134249.5}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 1.0, "mo": 0.0, "score": 0.8881999850273132, "time": 1792134251.7}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.6, "mo": "cont", "score": 0.8962000012397766, "time": 1792134254.0}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.6, "mo": "lin0", "score": 0.8942999839782715, "time": 1792134256.2}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.6, "mo": 1.0, "score": 0.8958999514579773, "time": 1792134258.5}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.6, "mo": 0.6, "score": 0.8964999914169312, "time": 1792134260.7}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.6, "mo": 0.36, "score": 0.8959999680519104, "time": 1792134262.9}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.6, "mo": 0.22, "score": 0.8946999907493591, "time": 1792134265.2}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.6, "mo": 0.13, "score": 0.8940999507904053, "time": 1792134267.4}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.6, "mo": 0.047, "score": 0.8938999772071838, "time": 1792134269.7}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.6, "mo": 0.0, "score": 0.8942999839782715, "time": 1792134271.9}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.36, "mo": "cont", "score": 0.897599995136261, "time": 1792134274.2}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.36, "mo": "lin0", "score": 0.898099958896637, "time": 1792134276.4}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.36, "mo": 1.0, "score": 0.8982999920845032, "time": 1792134278.6}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.36, "mo": 0.6, "score": 0.8973999619483948, "time": 1792134280.9}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.36, "mo": 0.36, "score": 0.8976999521255493, "time": 1792134283.1}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.36, "mo": 0.22, "score": 0.896399974822998, "time": 1792134285.4}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.36, "mo": 0.13, "score": 0.8960999846458435, "time": 1792134287.6}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.36, "mo": 0.047, "score": 0.896399974822998, "time": 1792134289.9}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.36, "mo": 0.0, "score": 0.8965999484062195, "time": 1792134292.1}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.22, "mo": "cont", "score": 0.8939999938011169, "time": 1792134294.3}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.22, "mo": "lin0", "score": 0.8940999507904053, "time": 1792134296.6}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.22, "mo": 1.0, "score": 0.8946999907493591, "time": 1792134298.8}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.22, "mo": 0.6, "score": 0.8938999772071838, "time": 1792134301.1}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.22, "mo": 0.36, "score": 0.8932999968528748, "time": 1792134303.3}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.22, "mo": 0.22, "score": 0.8928999900817871, "time": 1792134305.5}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.22, "mo": 0.13, "score": 0.8925999999046326, "time": 1792134307.8}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.22, "mo": 0.047, "score": 0.8926999568939209, "time": 1792134310.0}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.22, "mo": 0.0, "score": 0.8924999833106995, "time": 1792134312.3}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.13, "mo": "cont", "score": 0.8858999609947205, "time": 1792134314.5}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.13, "mo": "lin0", "score": 0.8854999542236328, "time": 1792134316.8}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.13, "mo": 1.0, "score": 0.8854999542236328, "time": 1792134319.0}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.13, "mo": 0.6, "score": 0.8854999542236328, "time": 1792134321.3}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.13, "mo": 0.36, "score": 0.8844999670982361, "time": 1792134323.5}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.13, "mo": 0.22, "score": 0.8844999670982361, "time": 1792134325.7}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.13, "mo": 0.13, "score": 0.8840999603271484, "time": 1792134328.0}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.13, "mo": 0.047, "score": 0.8833999633789062, "time": 1792134330.2}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.13, "mo": 0.0, "score": 0.8831999897956848, "time": 1792134332.5}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.047, "mo": "cont", "score": 0.8763999938964844, "time": 1792134334.7}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.047, "mo": "lin0", "score": 0.8751999735832214, "time": 1792134336.9}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.047, "mo": 1.0, "score": 0.8777999877929688, "time": 1792134339.2}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.047, "mo": 0.6, "score": 0.8764999508857727, "time": 1792134341.4}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.047, "mo": 0.36, "score": 0.8748999834060669, "time": 1792134343.7}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.047, "mo": 0.22, "score": 0.8744999766349792, "time": 1792134345.9}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.047, "mo": 0.13, "score": 0.8747999668121338, "time": 1792134348.2}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.047, "mo": 0.047, "score": 0.8752999901771545, "time": 1792134350.4}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.047, "mo": 0.0, "score": 0.8757999539375305, "time": 1792134352.6}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.0, "mo": "cont", "score": 0.8583999872207642, "time": 1792134354.8}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.0, "mo": "lin0", "score": 0.8560999631881714, "time": 1792134356.9}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.0, "mo": 1.0, "score": 0.8580999970436096, "time": 1792134359.1}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.0, "mo": 0.6, "score": 0.8578999638557434, "time": 1792134361.2}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.0, "mo": 0.36, "score": 0.8561999797821045, "time": 1792134363.4}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.0, "mo": 0.22, "score": 0.8555999994277954, "time": 1792134365.5}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.0, "mo": 0.13, "score": 0.8529999852180481, "time": 1792134367.7}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.0, "mo": 0.047, "score": 0.8472999930381775, "time": 1792134369.8}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.0, "mo": 0.0, "score": 0.8382999897003174, "time": 1792134372.0}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": "lin0", "mo": "cont", "score": 0.9014999866485596, "time": 1792134374.2}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": "lin0", "mo": "lin0", "score": 0.9012999534606934, "time": 1792134376.5}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": "lin0", "mo": 1.0, "score": 0.9018999934196472, "time": 1792134378.7}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": "lin0", "mo": 0.6, "score": 0.901199996471405, "time": 1792134381.0}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": "lin0", "mo": 0.36, "score": 0.9013999700546265, "time": 1792134383.2}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": "lin0", "mo": 0.22, "score": 0.901199996471405, "time": 1792134385.5}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": "lin0", "mo": 0.13, "score": 0.9013999700546265, "time": 1792134387.7}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": "lin0", "mo": 0.047, "score": 0.9013999700546265, "time": 1792134389.9}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": "lin0", "mo": 0.0, "score": 0.9009000062942505, "time": 1792134392.2}
+{"kind": "none", "seed": 1, "c": 0.047, "score": 0.8193999528884888, "time": 1792134394.4}
+{"kind": "truth", "seed": 1, "c": 0.047, "score": 0.9382999539375305, "time": 1792134402.5}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 1.0, "mo": "cont", "score": 0.8806999921798706, "time": 1792134404.7}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 1.0, "mo": "lin0", "score": 0.8781999945640564, "time": 1792134407.0}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 1.0, "mo": 1.0, "score": 0.8815000057220459, "time": 1792134409.2}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 1.0, "mo": 0.6, "score": 0.882099986076355, "time": 1792134411.4}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 1.0, "mo": 0.36, "score": 0.8793999552726746, "time": 1792134413.7}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 1.0, "mo": 0.22, "score": 0.8794999718666077, "time": 1792134415.9}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 1.0, "mo": 0.13, "score": 0.8789999485015869, "time": 1792134418.2}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 1.0, "mo": 0.047, "score": 0.8791999816894531, "time": 1792134420.4}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 1.0, "mo": 0.0, "score": 0.8792999982833862, "time": 1792134422.6}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.6, "mo": "cont", "score": 0.8822999596595764, "time": 1792134424.9}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.6, "mo": "lin0", "score": 0.8813999891281128, "time": 1792134427.1}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.6, "mo": 1.0, "score": 0.8805999755859375, "time": 1792134429.4}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.6, "mo": 0.6, "score": 0.8818999528884888, "time": 1792134431.6}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.6, "mo": 0.36, "score": 0.8822999596595764, "time": 1792134433.9}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.6, "mo": 0.22, "score": 0.8813999891281128, "time": 1792134436.1}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.6, "mo": 0.13, "score": 0.8801999688148499, "time": 1792134438.3}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.6, "mo": 0.047, "score": 0.8801999688148499, "time": 1792134440.6}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.6, "mo": 0.0, "score": 0.8797000050544739, "time": 1792134442.8}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.36, "mo": "cont", "score": 0.8782999515533447, "time": 1792134445.1}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.36, "mo": "lin0", "score": 0.8770999908447266, "time": 1792134447.3}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.36, "mo": 1.0, "score": 0.8779000043869019, "time": 1792134449.6}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.36, "mo": 0.6, "score": 0.8775999546051025, "time": 1792134451.8}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.36, "mo": 0.36, "score": 0.8768999576568604, "time": 1792134454.0}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.36, "mo": 0.22, "score": 0.876800000667572, "time": 1792134456.3}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.36, "mo": 0.13, "score": 0.8762999773025513, "time": 1792134458.5}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.36, "mo": 0.047, "score": 0.8758999705314636, "time": 1792134460.8}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.36, "mo": 0.0, "score": 0.8761999607086182, "time": 1792134463.0}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.22, "mo": "cont", "score": 0.8721999526023865, "time": 1792134465.3}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.22, "mo": "lin0", "score": 0.8721999526023865, "time": 1792134467.5}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.22, "mo": 1.0, "score": 0.8725999593734741, "time": 1792134469.7}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.22, "mo": 0.6, "score": 0.8722999691963196, "time": 1792134472.0}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.22, "mo": 0.36, "score": 0.8714999556541443, "time": 1792134474.2}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.22, "mo": 0.22, "score": 0.8711999654769897, "time": 1792134476.5}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.22, "mo": 0.13, "score": 0.8708999752998352, "time": 1792134478.7}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.22, "mo": 0.047, "score": 0.8694999814033508, "time": 1792134481.0}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.22, "mo": 0.0, "score": 0.8689000010490417, "time": 1792134483.2}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.13, "mo": "cont", "score": 0.8640999794006348, "time": 1792134485.4}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.13, "mo": "lin0", "score": 0.8631999492645264, "time": 1792134487.7}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.13, "mo": 1.0, "score": 0.8646999597549438, "time": 1792134489.9}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.13, "mo": 0.6, "score": 0.8639999628067017, "time": 1792134492.2}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.13, "mo": 0.36, "score": 0.8636999726295471, "time": 1792134494.4}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.13, "mo": 0.22, "score": 0.8628000020980835, "time": 1792134496.7}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.13, "mo": 0.13, "score": 0.8622999787330627, "time": 1792134498.9}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.13, "mo": 0.047, "score": 0.8616999983787537, "time": 1792134501.1}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.13, "mo": 0.0, "score": 0.8614999651908875, "time": 1792134503.4}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.047, "mo": "cont", "score": 0.8529999852180481, "time": 1792134505.6}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.047, "mo": "lin0", "score": 0.8533999919891357, "time": 1792134507.9}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.047, "mo": 1.0, "score": 0.8531999588012695, "time": 1792134510.1}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.047, "mo": 0.6, "score": 0.8527999520301819, "time": 1792134512.4}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.047, "mo": 0.36, "score": 0.8518999814987183, "time": 1792134514.6}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.047, "mo": 0.22, "score": 0.8518999814987183, "time": 1792134516.8}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.047, "mo": 0.13, "score": 0.8513000011444092, "time": 1792134519.1}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.047, "mo": 0.047, "score": 0.8508999943733215, "time": 1792134521.3}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.047, "mo": 0.0, "score": 0.8504999876022339, "time": 1792134523.6}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.0, "mo": "cont", "score": 0.8324999809265137, "time": 1792134525.7}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.0, "mo": "lin0", "score": 0.8316999673843384, "time": 1792134527.9}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.0, "mo": 1.0, "score": 0.833299994468689, "time": 1792134530.0}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.0, "mo": 0.6, "score": 0.8325999975204468, "time": 1792134532.2}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.0, "mo": 0.36, "score": 0.8319000005722046, "time": 1792134534.3}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.0, "mo": 0.22, "score": 0.8301999568939209, "time": 1792134536.5}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.0, "mo": 0.13, "score": 0.8278999924659729, "time": 1792134538.6}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.0, "mo": 0.047, "score": 0.8262999653816223, "time": 1792134540.8}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.0, "mo": 0.0, "score": 0.8193999528884888, "time": 1792134542.9}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": "lin0", "mo": "cont", "score": 0.8885999917984009, "time": 1792134545.2}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": "lin0", "mo": "lin0", "score": 0.887499988079071, "time": 1792134547.4}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": "lin0", "mo": 1.0, "score": 0.8885999917984009, "time": 1792134549.7}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": "lin0", "mo": 0.6, "score": 0.8876999616622925, "time": 1792134551.9}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": "lin0", "mo": 0.36, "score": 0.8870999813079834, "time": 1792134554.2}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": "lin0", "mo": 0.22, "score": 0.8868999481201172, "time": 1792134556.4}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": "lin0", "mo": 0.13, "score": 0.886199951171875, "time": 1792134558.7}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": "lin0", "mo": 0.047, "score": 0.8853999972343445, "time": 1792134560.9}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": "lin0", "mo": 0.0, "score": 0.8847000002861023, "time": 1792134563.2}
+{"kind": "done", "train_steps": 21560, "time": 1792134563.2}

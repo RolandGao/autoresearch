@@ -35,3 +35,24 @@ Single-run seed sd ~0.12-0.13; an 8-seed mean has sd ~0.045.
 Results
 -------
 (filled in as experiments finish)
+
+1. Cooldown proxy fidelity (scenario A, conv, BS 2000; research/cooldown_fidelity.py)
+   For main interval k (40 steps) and 7 constant conv LRs, truth = final TTA when the
+   baseline schedule resumes after the interval (4 seeds); proxy = TTA after a 40-step
+   lookahead under 72 cooldown designs (searched: m_s x c or linear c->0; others: continue,
+   linear ->0, or m_o x their main-interval mean).
+   k=1 (steps 40-80), seed-mean TTA per candidate conv LR:
+                    0.028  0.047  0.078   0.13   0.22   0.36    0.6
+     truth          93.63  93.73  93.83  93.94  93.98  93.57  93.26
+     no cooldown    90.68  90.65  89.66  87.25  81.99  72.31  55.96
+     s0.22|cont     91.74  92.36  92.66  92.55  91.64  89.37  86.07
+     s0.36|cont     91.90  92.45  92.62  92.15  90.65  87.36  80.88
+     lin0|cont      92.13  92.59  92.91  92.59  91.72  90.03  87.97
+   - Every 40-step lookahead peaks at 0.078; the truth peaks at 0.13-0.22. The bias toward
+     small LRs (short-horizon bias) is ~1-1.5 grid steps and no cooldown design removes it.
+   - The non-searched groups' cooldown (continue / linear / any m_o, even 0) changes the
+     proxy by <= ~0.1 pp and never the ranking: when conv is searched, the other groups'
+     cooldown does not matter (they are insensitive hparams).
+   - The searched group's mult shapes the curve: 0.13-0.22 (or linear to 0) is flattest
+     and closest to the truth; 1.0 (no cooldown of the searched LR) is as bad as none.
+   Next: longer lookaheads (2L, rest of the run) to see whether the bias is a horizon effect.

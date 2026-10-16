@@ -25,8 +25,10 @@ parser.add_argument("--searched-mults", default="1,0.6,0.36,0.22,0.13,0.047,0,li
 parser.add_argument("--other-mults", default="cont,lin0,1,0.6,0.36,0.22,0.13,0.047,0")
 parser.add_argument("--fraction", type=int, default=5)
 parser.add_argument("--transform", default=None, help="json lr_transform for the searched group")
+parser.add_argument("--cool", default="1", help="lookahead length in main-interval units, or 'rest'")
 args = parser.parse_args()
-log = open_log(f"cooldown_fidelity_bs{args.batch_size}_{args.group}_k{args.interval}", args, __file__)
+cool_tag = "" if args.cool == "1" else f"_cool{args.cool}"
+log = open_log(f"cooldown_fidelity_bs{args.batch_size}_{args.group}_k{args.interval}{cool_tag}", args, __file__)
 
 import json  # noqa: E402
 
@@ -49,7 +51,8 @@ for seed in [int(s) for s in args.seeds.split(",")]:
     base = trainer.base_schedules
     total = trainer.total_steps
     length = total // args.fraction
-    start, cool = args.interval * length, length
+    start = args.interval * length
+    cool = total - start - length if args.cool == "rest" else int(float(args.cool) * length)
     if start + length + cool > total:
         raise SystemExit("interval has no room for a cooldown")
     if candidates is None:

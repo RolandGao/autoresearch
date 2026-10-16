@@ -1,4 +1,4 @@
-"""Analyze cooldown_fidelity logs: python research/analyze_fidelity.py [bs] [group]
+"""Analyze cooldown_fidelity logs: python research/analyze_fidelity.py [bs] [group] [cool]
 
 Per interval k: truth = mean final TTA per candidate over seeds. For each proxy variant
 (none, or searched mult x others mode): per-seed regret = truth(best) - truth(argmax of
@@ -14,8 +14,10 @@ from collections import defaultdict
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 bs = sys.argv[1] if len(sys.argv) > 1 else "2000"
 group = sys.argv[2] if len(sys.argv) > 2 else "conv"
+cool = sys.argv[3] if len(sys.argv) > 3 else ""  # e.g. "rest" or "2" for _cool<tag> logs
+pattern = f"research_cooldown_fidelity_bs{bs}_{group}_k[0-9]_{'cool' + cool + '_' if cool else ''}2026*.log"
 records = defaultdict(list)  # k -> records
-for path in glob.glob(os.path.join(REPO, "logs", f"research_cooldown_fidelity_bs{bs}_{group}_k*.log")):
+for path in glob.glob(os.path.join(REPO, "logs", pattern)):
     k = int(path.split("_k")[1].split("_")[0])
     for line in open(path):
         if line.startswith("{"):
