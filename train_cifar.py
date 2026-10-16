@@ -3072,6 +3072,21 @@ for transform, spec in LR_TRANSFORMS.items():
         group["lr_scheduler"] = [(total // 5, a, b) for a, b in zip(knots, knots[1:])]
         group["lr_transform"] = copy.deepcopy(spec)
         RUN_CONFIGS[f"oracle_knots_{transform}{'_grid' if snap else ''}_bs2000"] = config
+# first_knot: the first interval also searches each LR's start value (wave needs a falling
+# first segment: oracle knots 0.22 -> 0.078). v1k = v1 + first_knot; v1pk adds polish.
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for scenario in ("a", "b"):
+            extra = (dict(coarse_mult=None, coarse_scan=3, scan_lookahead=5)
+                     if scenario == "b" else {})
+            common = dict(shape="linear", cooldown_searched="linear", cooldown_fraction=1,
+                          first_knot=True, **extra)
+            RUN_CONFIGS[f"auto_{scenario}_v1k_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, **common)
+            RUN_CONFIGS[f"auto_{scenario}_v1pk_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, **common, polish_rounds=3,
+                polish_margin=0.001)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -4352,7 +4367,7 @@ AUTO_REQUIRED = {
 AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "shape",
                  "final_anneal", "coarse_scan", "polish_rounds", "polish_margin",
                  "polish_scale_first", "alternate",
-                 "scan_lookahead", "polish_steps", "freeze_threshold"}
+                 "scan_lookahead", "polish_steps", "freeze_threshold", "first_knot"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4403,6 +4418,8 @@ def run_auto_search(run, model, config):
         2 x polish_margin (skips insensitive groups).
       scan_lookahead (optional, default 0 = the search's lookahead): the coarse scan's
         lookahead is total // scan_lookahead steps (cheaper; x10 steps tolerate the bias).
+      first_knot (optional, default False; shape="linear"): in the first interval also
+        search each LR's start value (the first segment need not be flat).
       freeze_threshold (optional, default 0): after the coarse scan, an LR whose best
         scan score beats the mean of its one-decade neighbours by less than this is frozen
         at its scanned value (no later searching; insensitive groups cost nothing).
@@ -4452,6 +4469,7 @@ def run_auto_search(run, model, config):
     alternate = tuning.get("alternate", 0)
     scan_lookahead = tuning.get("scan_lookahead", 0)
     freeze_threshold = tuning.get("freeze_threshold", 0.0)
+    first_knot = tuning.get("first_knot", False)
     revisit = tuning.get("revisit", True)
     larger_within = tuning.get("larger_within", 0.0)
     shape = tuning.get("shape", "constant")
@@ -4460,6 +4478,8 @@ def run_auto_search(run, model, config):
         raise ValueError("final_anneal must be none, linear or search")
     if shape not in ("constant", "linear"):
         raise ValueError("shape must be constant or linear")
+    if first_knot and shape != "linear":
+        raise ValueError("first_knot requires shape='linear'")
     log_config(run, config, label="base_config")
 
     trainer = SegmentTrainer(model, config)
@@ -4492,8 +4512,9 @@ def run_auto_search(run, model, config):
     look_override = None  # The coarse scan's own (shorter) lookahead.
     frozen = set()  # LRs found insensitive by the coarse scan (freeze_threshold).
 
-    def main_window(lines, path, start, steps, value):
-        first = knots.get(path, value) if shape == "linear" else value
+    def main_window(lines, path, start, steps, value, first_override):
+        first = (first_override if first_override is not None
+                 else knots.get(path, value) if shape == "linear" else value)
         if anneal_now:
             return linear_window(lines, start, steps, first, 0.0)
         if shape == "linear":
@@ -4516,7 +4537,10 @@ def run_auto_search(run, model, config):
             trainer.restore(state)
             sched = dict(committed)
             for path, value in values.items():
-                sched[path] = main_window(committed[path], path, start, main_steps, value)
+                if path.endswith("@start"):
+                    continue
+                sched[path] = main_window(committed[path], path, start, main_steps, value,
+                                          values.get(path + "@start"))
             ok = trainer.train(sched, main_steps)
             if ok and look_eff and searched_mode == "max":
                 # The better of a linear (to 0) and a geometric (searched ratio) lookahead.
@@ -4527,6 +4551,8 @@ def run_auto_search(run, model, config):
                     trainer.restore(main_state)
                     cool_sched = dict(sched)
                     for path, value in values.items():
+                        if path.endswith("@start"):
+                            continue
                         cool_sched[path] = (
                             linear_window(sched[path], cool_start, look_eff, value, 0.0)
                             if kind == "linear" else
@@ -4545,6 +4571,8 @@ def run_auto_search(run, model, config):
             if ok and look_eff:
                 cool_start = start + main_steps
                 for path, value in values.items():
+                    if path.endswith("@start"):
+                        continue
                     if searched_mode == "geometric":
                         sched[path] = segments_window(sched[path], cool_start, geometric_lookahead(
                             value, cool["ratio"], look_eff, interval_steps))
@@ -4613,18 +4641,19 @@ def run_auto_search(run, model, config):
             nonlocal current
 
             def neighbour_on_grid(path):
-                return lambda v, d: grid_neighbour(v, grid_of(path), d, None)
+                return lambda v, d: grid_neighbour(v, grid_of(path.split("@")[0]), d, None)
 
             for _ in range(10 if revisit else 1):
                 moved_any = False
-                for path in [p for p in params if p not in frozen]:
+                for path in [p for p in current if p.split("@")[0] not in frozen]:
                     current, best, moved = climb(
                         current, path, lambda values: evaluate(values, mults),
                         neighbour_on_grid(path))
                     # Short lookaheads favour small LRs: take the largest LR within
                     # larger_within of the best (upward neighbours are mostly cached).
                     while larger_within:
-                        value = grid_neighbour(current[path], grid_of(path), 1, None)
+                        value = grid_neighbour(current[path], grid_of(path.split("@")[0]), 1,
+                                               None)
                         candidate = dict(current, **{path: value})
                         if evaluate(candidate, mults) < best - larger_within:
                             break
@@ -4656,6 +4685,8 @@ def run_auto_search(run, model, config):
         if start == 0 and coarse:
             search_main(lambda path: coarse)
             current = {path: snap_lr_to_grid(v, params[path]["mult"]) for path, v in current.items()}
+        if start == 0 and first_knot:
+            current.update({f"{path}@start": current[path] for path in params})
         final = start + main_steps == total
         anneal_now = final and final_anneal == "linear"
         search_main(lambda path: params[path]["mult"])
@@ -4675,16 +4706,21 @@ def run_auto_search(run, model, config):
         selected = evaluate(current, mults)
         trainer.restore(state)
         for path, value in current.items():
-            committed[path] = main_window(committed[path], path, start, main_steps, value)
+            if path.endswith("@start"):
+                continue
+            committed[path] = main_window(committed[path], path, start, main_steps, value,
+                                          current.get(path + "@start"))
             knots[path] = value
+        start_knots = {p: v for p, v in current.items() if p.endswith("@start")}
+        current = {p: v for p, v in current.items() if not p.endswith("@start")}
         if not trainer.train(committed, main_steps):
             raise RuntimeError(f"Committed interval diverged at step {start}")
         history.append(dict(start_step=start, steps=main_steps, lookahead=look,
-                            main=dict(current), mults=dict(mults), score=selected,
+                            main=dict(current, **start_knots), mults=dict(mults), score=selected,
                             evaluations=evaluations - before))
         log_event("auto_interval", run=run, interval=len(history) - 1, start_step=start,
                   annealed=anneal_now,
-                  evaluations=evaluations - before, **{metric: selected}, **current,
+                  evaluations=evaluations - before, **{metric: selected}, **current, **start_knots,
                   **{f"cooldown.{k}": v for k, v in mults.items() if v is not None})
 
     polish_rounds = tuning.get("polish_rounds", 0)
