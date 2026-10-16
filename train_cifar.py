@@ -3202,6 +3202,14 @@ for transform in LR_TRANSFORMS:
         for name in names:
             config["param_groups"][name]["lr_transform"] = copy.deepcopy(LR_TRANSFORMS[transform])
         RUN_CONFIGS[f"transformed_{tag}_{transform}_bs2000"] = config
+# Three passes (later ones on 2 fresh seeds each, tail-scaling plan): does a third pass
+# finish raising the early knots under ramp?
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        RUN_CONFIGS[f"auto_a_v1x3m2t_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "a", transform, None, shape="linear", cooldown_searched="linear",
+            cooldown_fraction=1, passes=3, pass_seeds=2, plan_tail=True)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
