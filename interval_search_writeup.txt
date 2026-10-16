@@ -95,3 +95,32 @@ Results
      80 -> 0.078/0.13 tie, rest of run -> 0.13. With the lookahead running to the end of
      training, a constant cooldown at 0.13-0.22 x c (or linear c -> 0) ranks candidates
      like the truth. A rest-of-run lookahead costs ~1.7x the 20/20 evaluation steps.
+
+5. Scenario A searches at BS 2000, 20%/20% intervals (2 search seeds, held-out 8 seeds each)
+     cooldown variant                      search s  evals  held-out TTA
+     no cooldown                                62    22.5   92.12
+     searched 0.36, others continue             90    21.5   93.38
+     searched 0.36, others 0.36 (shared)        91    21.5   93.50
+     0.36 + larger_within 0.1 pp                96    23.0   93.54
+     0.36 + larger_within 0.2 pp               101    24.0   93.65
+     searched mult (search), others continue   127    30.5   93.78
+     searched mult, others shared              130    31.0   93.76
+     searched mult, others own searched mult   163    39.0   93.73
+     rest-of-run lookahead, 0.13               129    21.0   93.80
+     rest-of-run lookahead, 0.22               135    21.5   93.72
+     rest-of-run lookahead, linear c->0        130    21.5   93.82
+   - The others' cooldown does not matter (continue = shared = own mult), as in section 1.
+   - The searched mult converges to 0.22 from 1.0 in every run.
+   - None reaches the baseline (93.92-93.94); see section 6 for why.
+
+6. The real cap: the final interval must anneal (fixed schedules, conv, seeds 100-107)
+     staircase (n constant steps at the mean of the baseline's linear decay in each step)
+     n=5  93.64 | n=5 grid-snapped 93.52 | n=10 93.92 | n=20 93.95
+     n=5 but the last step decays linearly (same mean, 0.045 -> 0)      93.90
+     n=5 but the last step is the baseline's own (0.044 -> 0)           93.91
+     all four groups as n=5 staircases: 93.68 (grid-snapped 93.64)
+   - Constant intervals cost nothing except at the end: a constant final interval
+     (no anneal to 0) costs ~0.28 pp, and the 5-interval searches above were capped by it.
+   - Fix under test: final_anneal ("linear": last interval decays to 0 from its searched
+     value; "search": try constant and annealed, keep the better), shape="linear"
+     (piecewise-linear knots), and 10 intervals.
