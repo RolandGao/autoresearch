@@ -3139,6 +3139,20 @@ for batch_size in (2000, 500, 125):
                 batch_size, scenario, transform, None, shape="linear",
                 cooldown_searched="linear", cooldown_fraction=5, passes=2, pass_seeds=3,
                 **extra)
+# final_anneal="search" (all searched groups decay to 0 in the last interval, kept if it
+# scores higher): scenario B under ramp left insensitive groups (head, biases) un-annealed.
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for scenario in ("a", "b"):
+            extra = (dict(coarse_mult=None, coarse_scan=3, scan_lookahead=5)
+                     if scenario == "b" else {})
+            common = dict(shape="linear", cooldown_searched="linear", cooldown_fraction=1,
+                          final_anneal="search", **extra)
+            RUN_CONFIGS[f"auto_{scenario}_v1x2m3fas_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, **common, passes=2, pass_seeds=3)
+            RUN_CONFIGS[f"auto_{scenario}_v1fas_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, **common)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
