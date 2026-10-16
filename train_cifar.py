@@ -2981,6 +2981,17 @@ for batch_size in (2000, 500, 125):
                 batch_size, scenario, transform, None, shape="linear",
                 cooldown_searched="linear", cooldown_fraction=1, polish_rounds=2,
                 polish_margin=0.001, polish_scale_first=True, **extra)
+# Cheaper polished variants: one polish round (v1p1); a cheaper online pass (20% lookahead,
+# searched constant mult, linear knots) followed by 2 polish rounds (linssp).
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        RUN_CONFIGS[f"auto_a_v1p1_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "a", transform, None, shape="linear", cooldown_searched="linear",
+            cooldown_fraction=1, polish_rounds=1, polish_margin=0.001)
+        RUN_CONFIGS[f"auto_a_linssp_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "a", transform, None, shape="linear", cooldown_searched="search",
+            polish_rounds=2, polish_margin=0.001)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
