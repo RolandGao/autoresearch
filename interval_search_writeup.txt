@@ -208,3 +208,19 @@ Results
     almost never beat a lucky incumbent. The same lock-in explains why polish stalls under
     wave. first_knot (sloped first segment) did not help (wave 93.61 / 93.45 with polish).
     Fix under test: reseed (each later pass / polish round re-scores the incumbent on a fresh seed).
+
+13. Multi-seed second pass (scenario A, BS 2000, held-out, 2 search seeds)
+    On a fresh seed, pass 2 still did not move under wave: the oracle needs knots 1 and 2
+    both lowered (0.37 pp together) but each single move scores within ~0.05 pp of the
+    incumbent, below single-seed noise. pass_seeds=3 scores pass-2 candidates by the mean over
+    3 fresh seeds (MultiTrainer: each seed's run swapped into the shared model).
+                                  none    ramp    wave    mean    search s
+      v1     (one pass)           93.94   93.57   93.59   93.70   ~135
+      v1p    (+ polish)           93.93   93.92   93.59   93.81   ~300
+      v1x2   (two passes)         93.92   93.94   93.50   93.79   ~245
+      v1x2r  (+ fresh seed)       93.95   93.80   93.70   93.82   ~245
+      v1x2m3 (pass 2 on 3 seeds)  93.95   93.86   93.83   93.88   ~480
+      v1pr   (polish, fresh seed per round): wave 93.59
+    baseline 93.92-93.94; oracle knots ramp 93.91, wave 93.97.
+    v1x2m3 is the first variant within ~0.1 pp of the baseline in all three conditions.
+    Validation queued: BS 500 / 125 (scenario A) and scenario B at BS 2000.
