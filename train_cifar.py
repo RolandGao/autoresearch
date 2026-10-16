@@ -2940,6 +2940,15 @@ for batch_size in (2000, 500, 125):
     for name, options in AUTO_SHAPES.items():
         RUN_CONFIGS[f"auto_a_{name}_bs{batch_size}"] = auto_config(
             batch_size, "a", None, None, **options)
+# Candidate algorithm v1: piecewise-linear knots every 20%, lookahead to the end of the run
+# with the searched LRs decaying linearly to 0 (others continue their schedules).
+AUTO_V1 = dict(shape="linear", cooldown_searched="linear", cooldown_fraction=1)
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for scenario in ("a", "b"):
+            RUN_CONFIGS[f"auto_{scenario}_v1_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, **AUTO_V1)
 AUTO_B_COOLDOWNS = {  # name: (cooldown_searched, cooldown_fraction); no other trained groups
     "s036": (0.36, 5),
     "ssearch": ("search", 5),
