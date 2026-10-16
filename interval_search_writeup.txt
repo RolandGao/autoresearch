@@ -56,3 +56,25 @@ Results
    - The searched group's mult shapes the curve: 0.13-0.22 (or linear to 0) is flattest
      and closest to the truth; 1.0 (no cooldown of the searched LR) is as bad as none.
    Next: longer lookaheads (2L, rest of the run) to see whether the bias is a horizon effect.
+
+2. Screening with a few steps (research/overfit_screen.py, analyze_screen.py)
+   Each group's constant LR swept over a x sqrt(10) grid (1e-4 .. 1e5), others at their
+   baseline initial LR; loss after k steps, 2 seeds. "fixed" = overfit one batch, "fresh"
+   = normal batches scored on 2000 test images. Best LR vs the baseline's full-run LR:
+     group        BS2000 fresh k=16    BS500 fresh k=16    BS125 fresh k=16    full-run (2000/500/125)
+     conv         0.1  (dloss .16)     0.1  (.18/.04)      0.1  (.11/.02)      0.22 / 0.13 / 0.047
+     head         1000 (.06/.02)       3200 (.02/.12)      3200 (.00/.26)      1300 / 280 / 170
+     norm_bias    320  (.02/.05)       1000 (.02/.05)      1000 (.01/.04)      99 / 21 / 4.6
+     whiten_bias  320  (.01/.04)       ~flat               320  (.00/.01)      36 / 36 / 7.7
+   (dloss = loss increase one x sqrt(10) step below / above the best.)
+   - A few steps find the conv LR scale within x2-5 at every BS, with a sharp minimum, and
+     the head scale within ~1 decade. The bias LRs give nearly flat curves whose minimum
+     wanders over decades (fixed mode: 1e-4 .. 3200): short runs cannot place them.
+   - The sensitivity ranking from a few steps matches the full-run one (conv >> head >
+     biases), at a cost of seconds (BS 2000: ~0.5 s per probe of 16 steps).
+   - Usable as a cheap start for scenario B (conv, head); not for the bias LRs.
+
+3. What the transforms cost if nothing adapts (baseline schedule kept, BS 2000, seeds 100-107)
+     transformed_a_ramp (conv x0.25 -> x4):      93.42  (-0.50 vs 93.92)
+     transformed_a_wave (conv x2**sin):          93.72  (-0.20)
+     transformed_b_ramp (all four LRs ramped):   93.25  (-0.67)
