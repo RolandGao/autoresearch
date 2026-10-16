@@ -2931,6 +2931,10 @@ AUTO_SHAPES = {
     "lin_ssearch": dict(shape="linear", cooldown_searched="search"),
     "lin_rest_lin": dict(shape="linear", cooldown_searched="linear", cooldown_fraction=1),
     "i10_ssearch": dict(interval_fraction=10, cooldown_searched="search"),
+    # The final interval anneals to 0 (5-step staircases lose 0.28 without it).
+    "ssearch_fa": dict(cooldown_searched="search", final_anneal="linear"),
+    "ssearch_fas": dict(cooldown_searched="search", final_anneal="search"),
+    "rest_s013_fa": dict(cooldown_searched=0.13, cooldown_fraction=1, final_anneal="linear"),
 }
 for batch_size in (2000, 500, 125):
     for name, options in AUTO_SHAPES.items():
@@ -4168,7 +4172,8 @@ AUTO_REQUIRED = {
     "algorithm", "metric", "params", "interval_fraction", "cooldown_fraction",
     "cooldown_searched", "cooldown_others", "move_margin", "max_side_steps",
 }
-AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "shape"}
+AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "shape",
+                 "final_anneal"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4203,6 +4208,9 @@ def run_auto_search(run, model, config):
       shape (optional, default "constant"): "linear" makes each searched value the LR
         at the end of its interval, reached linearly from the previous interval's end
         value (piecewise-linear schedules; the first interval is flat).
+      final_anneal (optional, default "none"): "linear" makes the final interval decay
+        linearly from its searched value to 0; "search" also climbs that annealed form
+        and keeps whichever of constant / annealed scores higher.
       larger_within (optional, default 0): after each LR climb, move up the grid while
         the score stays within this of the climb's best (counters short-horizon bias).
       heldout_seeds (optional): after the search, train the committed schedule from
@@ -4238,6 +4246,9 @@ def run_auto_search(run, model, config):
     revisit = tuning.get("revisit", True)
     larger_within = tuning.get("larger_within", 0.0)
     shape = tuning.get("shape", "constant")
+    final_anneal = tuning.get("final_anneal", "none")
+    if final_anneal not in ("none", "linear", "search"):
+        raise ValueError("final_anneal must be none, linear or search")
     if shape not in ("constant", "linear"):
         raise ValueError("shape must be constant or linear")
     log_config(run, config, label="base_config")
@@ -4261,9 +4272,14 @@ def run_auto_search(run, model, config):
     history = []
     knots = {}  # shape="linear": each searched LR at the end of the last committed interval
 
+    anneal_now = False  # The final interval decays to 0 (final_anneal).
+
     def main_window(lines, path, start, steps, value):
+        first = knots.get(path, value) if shape == "linear" else value
+        if anneal_now:
+            return linear_window(lines, start, steps, first, 0.0)
         if shape == "linear":
-            return linear_window(lines, start, steps, knots.get(path, value), value)
+            return linear_window(lines, start, steps, first, value)
         return constant_window(lines, start, steps, value)
 
     while trainer.step < total:
@@ -4275,7 +4291,7 @@ def run_auto_search(run, model, config):
 
         def evaluate(values, cool):
             nonlocal evaluations
-            key = (tuple(sorted(values.items())), tuple(sorted(cool.items())))
+            key = (tuple(sorted(values.items())), tuple(sorted(cool.items())), anneal_now)
             if key in cache:
                 return cache[key]
             trainer.restore(state)
@@ -4362,7 +4378,15 @@ def run_auto_search(run, model, config):
         if start == 0 and coarse:
             search_main(lambda path: coarse)
             current = {path: snap_lr_to_grid(v, params[path]["mult"]) for path, v in current.items()}
+        final = start + main_steps == total
+        anneal_now = final and final_anneal == "linear"
         search_main(lambda path: params[path]["mult"])
+        if final and final_anneal == "search":
+            constant_values, constant_score = dict(current), evaluate(current, mults)
+            anneal_now = True
+            search_main(lambda path: params[path]["mult"])
+            if evaluate(current, mults) <= constant_score:
+                anneal_now, current = False, constant_values
         selected = evaluate(current, mults)
         trainer.restore(state)
         for path, value in current.items():
@@ -4374,6 +4398,7 @@ def run_auto_search(run, model, config):
                             main=dict(current), mults=dict(mults), score=selected,
                             evaluations=evaluations - before))
         log_event("auto_interval", run=run, interval=len(history) - 1, start_step=start,
+                  annealed=anneal_now,
                   evaluations=evaluations - before, **{metric: selected}, **current,
                   **{f"cooldown.{k}": v for k, v in mults.items() if v is not None})
 
