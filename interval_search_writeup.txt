@@ -184,3 +184,14 @@ Results
      the baseline's scales (conv 0.22, head 1300, norm_bias 99); seed 1 found norm_bias 1300
      decaying to 170 and whiten_bias ~0.001 (irrelevant group) and still scored 93.85.
    Next for B: a cheaper scan (20% lookahead, scan_lookahead=5) with and without one polish round.
+
+11. Is the 5-knot representation the limit under transforms? No (oracle knots, conv, seeds 100-107)
+    Knots = baseline(t) / transform(t) at the 6 interval boundaries, linear in between:
+      ramp: exact 93.86, grid-snapped 93.91  (knots 1.0, 0.36, 0.22, 0.078, 0.017, 0)
+      wave: exact 93.97, grid-snapped 93.97  (knots 0.22, 0.078, 0.078, 0.13, 0.078, 0)
+    The searches (93.6-93.8 under transforms, v1p 93.92 under ramp) lose to the search, not
+    the representation. Under wave the first segment must fall (0.22 -> 0.078), but the
+    linear shape made the first interval flat: first_knot (search the start value too).
+    v4 (max of linear and geometric lookahead): 93.88 / 93.71 / 93.76 (none/ramp/wave).
+    Scenario B under ramp fails for every variant so far (v1ps 93.12, v1fast 92.93 vs
+    do-nothing 93.25): with all four groups transformed the linear lookahead misleads all.

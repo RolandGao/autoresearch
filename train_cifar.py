@@ -3087,6 +3087,16 @@ for batch_size in (2000, 500, 125):
             RUN_CONFIGS[f"auto_{scenario}_v1pk_bs{batch_size}{suffix}"] = auto_config(
                 batch_size, scenario, transform, None, **common, polish_rounds=3,
                 polish_margin=0.001)
+# v1x2: two passes; the second uses the first pass's schedule as its lookahead.
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for scenario in ("a", "b"):
+            extra = (dict(coarse_mult=None, coarse_scan=3, scan_lookahead=5)
+                     if scenario == "b" else {})
+            RUN_CONFIGS[f"auto_{scenario}_v1x2_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, shape="linear",
+                cooldown_searched="linear", cooldown_fraction=1, passes=2, **extra)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -3768,6 +3778,16 @@ def geometric_lookahead(value, ratio, steps, interval):
     return segments
 
 
+def plan_end_value(lines, step):
+    """A schedule's value reached at step (a segment end exactly at step wins)."""
+    offset = 0
+    for line in lines:
+        offset += line[0]
+        if offset == step:
+            return line[-1]
+    return schedule_value_at_step(lines, step)
+
+
 def window_mean(lines, start, steps):
     return sum(schedule_value_at_step(lines, s) for s in range(start, start + steps)) / steps
 
@@ -4367,7 +4387,8 @@ AUTO_REQUIRED = {
 AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "shape",
                  "final_anneal", "coarse_scan", "polish_rounds", "polish_margin",
                  "polish_scale_first", "alternate",
-                 "scan_lookahead", "polish_steps", "freeze_threshold", "first_knot"}
+                 "scan_lookahead", "polish_steps", "freeze_threshold", "first_knot",
+                 "passes"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4418,6 +4439,10 @@ def run_auto_search(run, model, config):
         2 x polish_margin (skips insensitive groups).
       scan_lookahead (optional, default 0 = the search's lookahead): the coarse scan's
         lookahead is total // scan_lookahead steps (cheaper; x10 steps tolerate the bias).
+      passes (optional, default 1; shape="linear"): repeat the online search from the
+        initial state; later passes start each interval at the previous pass's knot and use
+        the previous pass's schedule as the lookahead (joined from the candidate's value),
+        so late, reliable decisions correct the lookahead of early ones.
       first_knot (optional, default False; shape="linear"): in the first interval also
         search each LR's start value (the first segment need not be flat).
       freeze_threshold (optional, default 0): after the coarse scan, an LR whose best
@@ -4470,6 +4495,7 @@ def run_auto_search(run, model, config):
     scan_lookahead = tuning.get("scan_lookahead", 0)
     freeze_threshold = tuning.get("freeze_threshold", 0.0)
     first_knot = tuning.get("first_knot", False)
+    passes = tuning.get("passes", 1)
     revisit = tuning.get("revisit", True)
     larger_within = tuning.get("larger_within", 0.0)
     shape = tuning.get("shape", "constant")
@@ -4480,6 +4506,8 @@ def run_auto_search(run, model, config):
         raise ValueError("shape must be constant or linear")
     if first_knot and shape != "linear":
         raise ValueError("first_knot requires shape='linear'")
+    if passes > 1 and shape != "linear":
+        raise ValueError("passes > 1 requires shape='linear'")
     log_config(run, config, label="base_config")
 
     trainer = SegmentTrainer(model, config)
@@ -4521,207 +4549,228 @@ def run_auto_search(run, model, config):
             return linear_window(lines, start, steps, first, value)
         return constant_window(lines, start, steps, value)
 
-    while trainer.step < total:
-        start = trainer.step
-        main_steps = min(interval_steps, total - start)
-        look = min(cooldown_steps, total - start - main_steps)
-        state = trainer.snapshot()
-        cache = {}
+    plan = None  # passes > 1: the previous pass's committed schedules of searched LRs
+    for pass_index in range(passes):
+        if pass_index:
+            plan = {path: list(committed[path]) for path in params}
+            trainer.restore(initial_state)
+            committed = copy.deepcopy(trainer.base_schedules)
+            knots.clear()
+            log_event("auto_pass", run=run, pass_index=pass_index, evaluations=evaluations)
+        while trainer.step < total:
+            start = trainer.step
+            main_steps = min(interval_steps, total - start)
+            look = min(cooldown_steps, total - start - main_steps)
+            state = trainer.snapshot()
+            cache = {}
+            if plan is not None:
+                current = {path: plan_end_value(plan[path], start + main_steps) for path in params}
 
-        def evaluate(values, cool):
-            nonlocal evaluations
-            look_eff = look if look_override is None else look_override
-            key = (tuple(sorted(values.items())), tuple(sorted(cool.items())), anneal_now, look_eff)
-            if key in cache:
-                return cache[key]
-            trainer.restore(state)
-            sched = dict(committed)
-            for path, value in values.items():
-                if path.endswith("@start"):
-                    continue
-                sched[path] = main_window(committed[path], path, start, main_steps, value,
-                                          values.get(path + "@start"))
-            ok = trainer.train(sched, main_steps)
-            if ok and look_eff and searched_mode == "max":
-                # The better of a linear (to 0) and a geometric (searched ratio) lookahead.
-                cool_start = start + main_steps
-                main_state = trainer.snapshot()
-                results = []
-                for kind in ("linear", "geometric"):
-                    trainer.restore(main_state)
-                    cool_sched = dict(sched)
+            def evaluate(values, cool):
+                nonlocal evaluations
+                look_eff = look if look_override is None else look_override
+                key = (tuple(sorted(values.items())), tuple(sorted(cool.items())), anneal_now, look_eff)
+                if key in cache:
+                    return cache[key]
+                trainer.restore(state)
+                sched = dict(committed)
+                for path, value in values.items():
+                    if path.endswith("@start"):
+                        continue
+                    sched[path] = main_window(committed[path], path, start, main_steps, value,
+                                              values.get(path + "@start"))
+                ok = trainer.train(sched, main_steps)
+                if ok and look_eff and plan is not None:
+                    # Follow the previous pass's schedule, joined from the candidate's value.
+                    cool_start = start + main_steps
                     for path, value in values.items():
                         if path.endswith("@start"):
                             continue
-                        cool_sched[path] = (
-                            linear_window(sched[path], cool_start, look_eff, value, 0.0)
-                            if kind == "linear" else
-                            segments_window(sched[path], cool_start, geometric_lookahead(
-                                value, cool["ratio"], look_eff, interval_steps)))
-                    results.append(trainer.score(metric) if trainer.train(cool_sched, look_eff)
-                                   else float("-inf"))
-                value = max(results)
+                        rest = slice_schedule(plan[path], cool_start, cool_start + look_eff)
+                        rest[0] = (rest[0][0], value, rest[0][-1])
+                        sched[path] = segments_window(sched[path], cool_start, rest)
+                    ok = trainer.train(sched, look_eff)
+                if ok and look_eff and plan is None and searched_mode == "max":
+                    # The better of a linear (to 0) and a geometric (searched ratio) lookahead.
+                    cool_start = start + main_steps
+                    main_state = trainer.snapshot()
+                    results = []
+                    for kind in ("linear", "geometric"):
+                        trainer.restore(main_state)
+                        cool_sched = dict(sched)
+                        for path, value in values.items():
+                            if path.endswith("@start"):
+                                continue
+                            cool_sched[path] = (
+                                linear_window(sched[path], cool_start, look_eff, value, 0.0)
+                                if kind == "linear" else
+                                segments_window(sched[path], cool_start, geometric_lookahead(
+                                    value, cool["ratio"], look_eff, interval_steps)))
+                        results.append(trainer.score(metric) if trainer.train(cool_sched, look_eff)
+                                       else float("-inf"))
+                    value = max(results)
+                    value = value if isfinite(value) else float("-inf")
+                    evaluations += 1
+                    cache[key] = value
+                    print(f"  eval {hparam_text(values)} cooldown={hparam_text(cool)} "
+                          f"linear={format_log_value(results[0])} geometric={format_log_value(results[1])} "
+                          f"{metric}={format_log_value(value)}", flush=True)
+                    return value
+                if ok and look_eff and plan is None:
+                    cool_start = start + main_steps
+                    for path, value in values.items():
+                        if path.endswith("@start"):
+                            continue
+                        if searched_mode == "geometric":
+                            sched[path] = segments_window(sched[path], cool_start, geometric_lookahead(
+                                value, cool["ratio"], look_eff, interval_steps))
+                        elif searched_mode == "plan":
+                            sched[path] = linear_window(sched[path], cool_start, look_eff,
+                                                        cool[f"plan:{path}"], 0.0)
+                        elif searched_mode in ("linear", "linear_search"):
+                            sched[path] = linear_window(sched[path], cool_start, look_eff,
+                                                        cool["searched"] * value, 0.0)
+                        else:
+                            sched[path] = constant_window(sched[path], cool_start, look_eff,
+                                                          cool["searched"] * value)
+                    others = cool["searched"] if others_mode == "shared" else cool["others"]
+                    if others is not None:
+                        for path in other_paths:
+                            sched[path] = constant_window(
+                                committed[path], cool_start, look_eff,
+                                others * window_mean(committed[path], start, main_steps))
+                    ok = trainer.train(sched, look_eff)
+                value = trainer.score(metric) if ok else float("-inf")
                 value = value if isfinite(value) else float("-inf")
                 evaluations += 1
                 cache[key] = value
                 print(f"  eval {hparam_text(values)} cooldown={hparam_text(cool)} "
-                      f"linear={format_log_value(results[0])} geometric={format_log_value(results[1])} "
                       f"{metric}={format_log_value(value)}", flush=True)
                 return value
-            if ok and look_eff:
-                cool_start = start + main_steps
-                for path, value in values.items():
-                    if path.endswith("@start"):
-                        continue
-                    if searched_mode == "geometric":
-                        sched[path] = segments_window(sched[path], cool_start, geometric_lookahead(
-                            value, cool["ratio"], look_eff, interval_steps))
-                    elif searched_mode == "plan":
-                        sched[path] = linear_window(sched[path], cool_start, look_eff,
-                                                    cool[f"plan:{path}"], 0.0)
-                    elif searched_mode in ("linear", "linear_search"):
-                        sched[path] = linear_window(sched[path], cool_start, look_eff,
-                                                    cool["searched"] * value, 0.0)
-                    else:
-                        sched[path] = constant_window(sched[path], cool_start, look_eff,
-                                                      cool["searched"] * value)
-                others = cool["searched"] if others_mode == "shared" else cool["others"]
-                if others is not None:
-                    for path in other_paths:
-                        sched[path] = constant_window(
-                            committed[path], cool_start, look_eff,
-                            others * window_mean(committed[path], start, main_steps))
-                ok = trainer.train(sched, look_eff)
-            value = trainer.score(metric) if ok else float("-inf")
-            value = value if isfinite(value) else float("-inf")
-            evaluations += 1
-            cache[key] = value
-            print(f"  eval {hparam_text(values)} cooldown={hparam_text(cool)} "
-                  f"{metric}={format_log_value(value)}", flush=True)
-            return value
 
-        def climb(point, key, score_of, neighbour):
-            """Move one coordinate while a neighbour beats the incumbent by > margin."""
-            best = score_of(point)
-            for direction in (1, -1):
-                incumbent, incumbent_score, steps = point, best, 0
-                while steps < max_side:
-                    value = neighbour(incumbent[key], direction)
-                    if value is None:
-                        break
-                    candidate = dict(incumbent, **{key: value})
-                    candidate_score = score_of(candidate)
-                    if candidate_score <= incumbent_score + margin:
-                        break
-                    incumbent, incumbent_score, steps = candidate, candidate_score, steps + 1
-                if steps:
-                    return incumbent, incumbent_score, True
-            return point, best, False
-
-        def search_mults():
-            nonlocal mults
-            keys = [k for k, mode in (("searched", searched_mode), ("others", others_mode))
-                    if mode in ("search", "linear_search") and (k == "searched" or other_paths)]
-            if searched_mode == "plan":
-                keys = [key for key in mults if key.startswith("plan:")]
-            if searched_mode in ("geometric", "max"):
-                keys = ["ratio"]
-            def capped_grid(cap):
-                return lambda v, d: grid_neighbour(v, 0.6, d, cap)
-
-            def ratio_grid(v, d):
-                return grid_neighbour(v, 0.8, d, 1.0)
-
-            for key in keys:
-                mults, _, _ = climb(mults, key, lambda m: evaluate(current, m),
-                                    ratio_grid if key == "ratio"
-                                    else capped_grid(None if key.startswith("plan:") else 1.0))
-
-        def search_main(grid_of):
-            nonlocal current
-
-            def neighbour_on_grid(path):
-                return lambda v, d: grid_neighbour(v, grid_of(path.split("@")[0]), d, None)
-
-            for _ in range(10 if revisit else 1):
-                moved_any = False
-                for path in [p for p in current if p.split("@")[0] not in frozen]:
-                    current, best, moved = climb(
-                        current, path, lambda values: evaluate(values, mults),
-                        neighbour_on_grid(path))
-                    # Short lookaheads favour small LRs: take the largest LR within
-                    # larger_within of the best (upward neighbours are mostly cached).
-                    while larger_within:
-                        value = grid_neighbour(current[path], grid_of(path.split("@")[0]), 1,
-                                               None)
-                        candidate = dict(current, **{path: value})
-                        if evaluate(candidate, mults) < best - larger_within:
+            def climb(point, key, score_of, neighbour):
+                """Move one coordinate while a neighbour beats the incumbent by > margin."""
+                best = score_of(point)
+                for direction in (1, -1):
+                    incumbent, incumbent_score, steps = point, best, 0
+                    while steps < max_side:
+                        value = neighbour(incumbent[key], direction)
+                        if value is None:
                             break
-                        current, moved = candidate, True
-                    moved_any |= moved
-                if not moved_any:
-                    break
+                        candidate = dict(incumbent, **{key: value})
+                        candidate_score = score_of(candidate)
+                        if candidate_score <= incumbent_score + margin:
+                            break
+                        incumbent, incumbent_score, steps = candidate, candidate_score, steps + 1
+                    if steps:
+                        return incumbent, incumbent_score, True
+                return point, best, False
 
-        before = evaluations
-        if look:
-            search_mults()
-        if start == 0 and scan:
-            # Scan each LR over x10 steps (+-scan decades), keep the best, then refine.
-            if scan_lookahead:
-                look_override = min(total // scan_lookahead, total - main_steps)
-            for path in params:
-                values = [round_hparam(current[path] * 10.0 ** k) for k in range(-scan, scan + 1)]
-                scores = {v: evaluate(dict(current, **{path: v}), mults) for v in values}
-                best = max(values, key=lambda v: scores[v])
-                current = dict(current, **{path: best})
-                # Flat around the best (one decade either side): freeze this LR.
-                i = values.index(best)
-                sides = [scores[values[j]] for j in (i - 1, i + 1) if 0 <= j < len(values)]
-                if freeze_threshold and scores[best] - sum(sides) / len(sides) < freeze_threshold:
-                    frozen.add(path)
-                    print(f"  frozen {path}={best}", flush=True)
-            look_override = None
-            current = {path: snap_lr_to_grid(v, params[path]["mult"]) for path, v in current.items()}
-        if start == 0 and coarse:
-            search_main(lambda path: coarse)
-            current = {path: snap_lr_to_grid(v, params[path]["mult"]) for path, v in current.items()}
-        if start == 0 and first_knot:
-            current.update({f"{path}@start": current[path] for path in params})
-        final = start + main_steps == total
-        anneal_now = final and final_anneal == "linear"
-        search_main(lambda path: params[path]["mult"])
-        # Re-search the lookahead for the chosen main LRs, then the main LRs, until stable.
-        for _ in range(alternate if look else 0):
-            before_round = (dict(current), dict(mults))
-            search_mults()
+            def search_mults():
+                nonlocal mults
+                keys = [k for k, mode in (("searched", searched_mode), ("others", others_mode))
+                        if mode in ("search", "linear_search") and (k == "searched" or other_paths)]
+                if searched_mode == "plan":
+                    keys = [key for key in mults if key.startswith("plan:")]
+                if searched_mode in ("geometric", "max"):
+                    keys = ["ratio"]
+                def capped_grid(cap):
+                    return lambda v, d: grid_neighbour(v, 0.6, d, cap)
+
+                def ratio_grid(v, d):
+                    return grid_neighbour(v, 0.8, d, 1.0)
+
+                for key in keys:
+                    mults, _, _ = climb(mults, key, lambda m: evaluate(current, m),
+                                        ratio_grid if key == "ratio"
+                                        else capped_grid(None if key.startswith("plan:") else 1.0))
+
+            def search_main(grid_of):
+                nonlocal current
+
+                def neighbour_on_grid(path):
+                    return lambda v, d: grid_neighbour(v, grid_of(path.split("@")[0]), d, None)
+
+                for _ in range(10 if revisit else 1):
+                    moved_any = False
+                    for path in [p for p in current if p.split("@")[0] not in frozen]:
+                        current, best, moved = climb(
+                            current, path, lambda values: evaluate(values, mults),
+                            neighbour_on_grid(path))
+                        # Short lookaheads favour small LRs: take the largest LR within
+                        # larger_within of the best (upward neighbours are mostly cached).
+                        while larger_within:
+                            value = grid_neighbour(current[path], grid_of(path.split("@")[0]), 1,
+                                                   None)
+                            candidate = dict(current, **{path: value})
+                            if evaluate(candidate, mults) < best - larger_within:
+                                break
+                            current, moved = candidate, True
+                        moved_any |= moved
+                    if not moved_any:
+                        break
+
+            before = evaluations
+            if look and plan is None:
+                search_mults()
+            if start == 0 and scan and plan is None:
+                # Scan each LR over x10 steps (+-scan decades), keep the best, then refine.
+                if scan_lookahead:
+                    look_override = min(total // scan_lookahead, total - main_steps)
+                for path in params:
+                    values = [round_hparam(current[path] * 10.0 ** k) for k in range(-scan, scan + 1)]
+                    scores = {v: evaluate(dict(current, **{path: v}), mults) for v in values}
+                    best = max(values, key=lambda v: scores[v])
+                    current = dict(current, **{path: best})
+                    # Flat around the best (one decade either side): freeze this LR.
+                    i = values.index(best)
+                    sides = [scores[values[j]] for j in (i - 1, i + 1) if 0 <= j < len(values)]
+                    if freeze_threshold and scores[best] - sum(sides) / len(sides) < freeze_threshold:
+                        frozen.add(path)
+                        print(f"  frozen {path}={best}", flush=True)
+                look_override = None
+                current = {path: snap_lr_to_grid(v, params[path]["mult"]) for path, v in current.items()}
+            if start == 0 and coarse and plan is None:
+                search_main(lambda path: coarse)
+                current = {path: snap_lr_to_grid(v, params[path]["mult"]) for path, v in current.items()}
+            if start == 0 and first_knot:
+                current.update({f"{path}@start": plan[path][0][1] if plan else current[path]
+                                for path in params})
+            final = start + main_steps == total
+            anneal_now = final and final_anneal == "linear"
             search_main(lambda path: params[path]["mult"])
-            if (dict(current), dict(mults)) == before_round:
-                break
-        if final and final_anneal == "search":
-            constant_values, constant_score = dict(current), evaluate(current, mults)
-            anneal_now = True
-            search_main(lambda path: params[path]["mult"])
-            if evaluate(current, mults) <= constant_score:
-                anneal_now, current = False, constant_values
-        selected = evaluate(current, mults)
-        trainer.restore(state)
-        for path, value in current.items():
-            if path.endswith("@start"):
-                continue
-            committed[path] = main_window(committed[path], path, start, main_steps, value,
-                                          current.get(path + "@start"))
-            knots[path] = value
-        start_knots = {p: v for p, v in current.items() if p.endswith("@start")}
-        current = {p: v for p, v in current.items() if not p.endswith("@start")}
-        if not trainer.train(committed, main_steps):
-            raise RuntimeError(f"Committed interval diverged at step {start}")
-        history.append(dict(start_step=start, steps=main_steps, lookahead=look,
-                            main=dict(current, **start_knots), mults=dict(mults), score=selected,
-                            evaluations=evaluations - before))
-        log_event("auto_interval", run=run, interval=len(history) - 1, start_step=start,
-                  annealed=anneal_now,
-                  evaluations=evaluations - before, **{metric: selected}, **current, **start_knots,
-                  **{f"cooldown.{k}": v for k, v in mults.items() if v is not None})
+            # Re-search the lookahead for the chosen main LRs, then the main LRs, until stable.
+            for _ in range(alternate if look else 0):
+                before_round = (dict(current), dict(mults))
+                search_mults()
+                search_main(lambda path: params[path]["mult"])
+                if (dict(current), dict(mults)) == before_round:
+                    break
+            if final and final_anneal == "search":
+                constant_values, constant_score = dict(current), evaluate(current, mults)
+                anneal_now = True
+                search_main(lambda path: params[path]["mult"])
+                if evaluate(current, mults) <= constant_score:
+                    anneal_now, current = False, constant_values
+            selected = evaluate(current, mults)
+            trainer.restore(state)
+            for path, value in current.items():
+                if path.endswith("@start"):
+                    continue
+                committed[path] = main_window(committed[path], path, start, main_steps, value,
+                                              current.get(path + "@start"))
+                knots[path] = value
+            start_knots = {p: v for p, v in current.items() if p.endswith("@start")}
+            current = {p: v for p, v in current.items() if not p.endswith("@start")}
+            if not trainer.train(committed, main_steps):
+                raise RuntimeError(f"Committed interval diverged at step {start}")
+            history.append(dict(start_step=start, steps=main_steps, lookahead=look,
+                                main=dict(current, **start_knots), mults=dict(mults), score=selected,
+                                evaluations=evaluations - before))
+            log_event("auto_interval", run=run, interval=len(history) - 1, start_step=start,
+                      annealed=anneal_now,
+                      evaluations=evaluations - before, **{metric: selected}, **current, **start_knots,
+                      **{f"cooldown.{k}": v for k, v in mults.items() if v is not None})
 
     polish_rounds = tuning.get("polish_rounds", 0)
     if polish_rounds:
