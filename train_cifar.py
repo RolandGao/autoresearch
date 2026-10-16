@@ -2971,6 +2971,16 @@ for batch_size in (2000, 500, 125):
             batch_size, "b", transform, None, shape="linear", cooldown_searched="linear",
             cooldown_fraction=1, polish_rounds=3, polish_margin=0.001,
             coarse_mult=None, coarse_scan=3)
+# v1ps: polish with scale moves first and knot moves only for sensitive groups (2 rounds).
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for scenario in ("a", "b"):
+            extra = dict(coarse_mult=None, coarse_scan=3) if scenario == "b" else {}
+            RUN_CONFIGS[f"auto_{scenario}_v1ps_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, shape="linear",
+                cooldown_searched="linear", cooldown_fraction=1, polish_rounds=2,
+                polish_margin=0.001, polish_scale_first=True, **extra)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -4249,7 +4259,8 @@ AUTO_REQUIRED = {
     "cooldown_searched", "cooldown_others", "move_margin", "max_side_steps",
 }
 AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "shape",
-                 "final_anneal", "coarse_scan", "polish_rounds", "polish_margin"}
+                 "final_anneal", "coarse_scan", "polish_rounds", "polish_margin",
+                 "polish_scale_first"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4286,6 +4297,9 @@ def run_auto_search(run, model, config):
       polish_rounds (optional, default 0; shape="linear" only): after the online pass,
         coordinate-search the schedule's knots (+-1 grid step each) with full runs from
         the initial state, moving when a run beats the best by more than polish_margin.
+      polish_scale_first (optional, default False): per group, first try scaling its whole
+        schedule one grid step; polish its knots only if that changes the score by at least
+        2 x polish_margin (skips insensitive groups).
       revisit (optional, default True): repeat coordinate passes until none moves.
       shape (optional, default "constant"): "linear" makes each searched value the LR
         at the end of its interval, reached linearly from the previous interval's end
@@ -4523,6 +4537,7 @@ def run_auto_search(run, model, config):
         if shape != "linear":
             raise ValueError("polish_rounds requires shape='linear'")
         polish_margin = tuning.get("polish_margin", 0.0)
+        polish_scale_first = tuning.get("polish_scale_first", False)
         knots_of = {
             path: [committed[path][0][1]] + [line[2] for line in committed[path]]
             for path in params
@@ -4555,6 +4570,24 @@ def run_auto_search(run, model, config):
         for round_index in range(polish_rounds):
             moved = False
             for path in params:
+                # Whole-schedule scale moves first; knot moves only for groups where a
+                # scale step changes the score by >= 2 x polish_margin (sensitive groups).
+                sensitive = not polish_scale_first
+                if polish_scale_first:
+                    for direction in (1, -1):
+                        candidate = copy.deepcopy(best_knots)
+                        candidate[path] = [
+                            grid_neighbour(k, params[path]["mult"], direction, None) or k
+                            for k in best_knots[path]]
+                        score = full_run(candidate)
+                        if score > best_score + polish_margin:
+                            best_knots, best_score, moved = candidate, score, True
+                            accepted_state = trainer.snapshot()
+                            sensitive = True
+                            break
+                        sensitive |= best_score - score >= 2 * polish_margin
+                if not sensitive:
+                    continue
                 for index in range(len(best_knots[path])):
                     for direction in (1, -1):
                         value = grid_neighbour(best_knots[path][index], params[path]["mult"],
