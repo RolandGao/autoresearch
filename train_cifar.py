@@ -2960,6 +2960,17 @@ for batch_size in (2000, 500, 125):
         RUN_CONFIGS[f"auto_b_v3_bs{batch_size}{suffix}"] = auto_config(
             batch_size, "b", transform, None, shape="linear", cooldown_searched="geometric",
             cooldown_fraction=1, coarse_mult=None, coarse_scan=3)
+# v1 + polish: after the online pass, full-run coordinate search of the knots.
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        RUN_CONFIGS[f"auto_a_v1p_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "a", transform, None, shape="linear", cooldown_searched="linear",
+            cooldown_fraction=1, polish_rounds=3, polish_margin=0.001)
+        RUN_CONFIGS[f"auto_b_v1p_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "b", transform, None, shape="linear", cooldown_searched="linear",
+            cooldown_fraction=1, polish_rounds=3, polish_margin=0.001,
+            coarse_mult=None, coarse_scan=3)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -4238,7 +4249,7 @@ AUTO_REQUIRED = {
     "cooldown_searched", "cooldown_others", "move_margin", "max_side_steps",
 }
 AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "shape",
-                 "final_anneal", "coarse_scan"}
+                 "final_anneal", "coarse_scan", "polish_rounds", "polish_margin"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4272,6 +4283,9 @@ def run_auto_search(run, model, config):
       coarse_scan (optional, default 0): in the first interval, evaluate each LR at
         x10**k for k in [-coarse_scan, coarse_scan] (others fixed) and keep the best
         before refining; robust where a greedy coarse climb stalls on a flat, noisy LR.
+      polish_rounds (optional, default 0; shape="linear" only): after the online pass,
+        coordinate-search the schedule's knots (+-1 grid step each) with full runs from
+        the initial state, moving when a run beats the best by more than polish_margin.
       revisit (optional, default True): repeat coordinate passes until none moves.
       shape (optional, default "constant"): "linear" makes each searched value the LR
         at the end of its interval, reached linearly from the previous interval's end
@@ -4324,6 +4338,7 @@ def run_auto_search(run, model, config):
     log_config(run, config, label="base_config")
 
     trainer = SegmentTrainer(model, config)
+    initial_state = trainer.snapshot()
     total = trainer.total_steps
     interval_steps = total // tuning["interval_fraction"]
     cooldown_steps = total // tuning["cooldown_fraction"] if tuning["cooldown_fraction"] else 0
@@ -4502,6 +4517,64 @@ def run_auto_search(run, model, config):
                   annealed=anneal_now,
                   evaluations=evaluations - before, **{metric: selected}, **current,
                   **{f"cooldown.{k}": v for k, v in mults.items() if v is not None})
+
+    polish_rounds = tuning.get("polish_rounds", 0)
+    if polish_rounds:
+        if shape != "linear":
+            raise ValueError("polish_rounds requires shape='linear'")
+        polish_margin = tuning.get("polish_margin", 0.0)
+        knots_of = {
+            path: [committed[path][0][1]] + [line[2] for line in committed[path]]
+            for path in params
+        }
+        lengths = {path: [line[0] for line in committed[path]] for path in params}
+        polish_cache = {}
+
+        def full_run(knot_values):
+            nonlocal evaluations
+            key = tuple((path, tuple(k)) for path, k in sorted(knot_values.items()))
+            if key in polish_cache:
+                return polish_cache[key]
+            trainer.restore(initial_state)
+            sched = dict(committed)
+            for path, k in knot_values.items():
+                sched[path] = [(n, a, b) for n, a, b in zip(lengths[path], k, k[1:])]
+            ok = trainer.train(sched, total)
+            value = trainer.score(metric) if ok else float("-inf")
+            value = value if isfinite(value) else float("-inf")
+            evaluations += 1
+            polish_cache[key] = value
+            print(f"  polish {json.dumps(knot_values)} {metric}={format_log_value(value)}", flush=True)
+            return value
+
+        best_knots = copy.deepcopy(knots_of)
+        best_score = full_run(best_knots)
+        # An accepted candidate was never evaluated before (the best only rises), so the
+        # trainer holds its final state: keep it as the result (no replay).
+        accepted_state = trainer.snapshot()
+        for round_index in range(polish_rounds):
+            moved = False
+            for path in params:
+                for index in range(len(best_knots[path])):
+                    for direction in (1, -1):
+                        value = grid_neighbour(best_knots[path][index], params[path]["mult"],
+                                               direction, None)
+                        if value is None:
+                            continue
+                        candidate = copy.deepcopy(best_knots)
+                        candidate[path][index] = value
+                        score = full_run(candidate)
+                        if score > best_score + polish_margin:
+                            best_knots, best_score, moved = candidate, score, True
+                            accepted_state = trainer.snapshot()
+                            break
+            log_event("auto_polish_round", run=run, round=round_index, evaluations=evaluations,
+                      **{metric: best_score})
+            if not moved:
+                break
+        for path, k in best_knots.items():
+            committed[path] = [(n, a, b) for n, a, b in zip(lengths[path], k, k[1:])]
+        trainer.restore(accepted_state)
 
     val_acc = trainer.score("val_acc")
     tta_val_acc = trainer.score("tta_val_acc")
