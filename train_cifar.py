@@ -3003,6 +3003,16 @@ for batch_size in (2000, 500, 125):
                 batch_size, scenario, transform, None, shape="linear",
                 cooldown_searched="geometric", cooldown_fraction=1, polish_rounds=2,
                 polish_margin=0.001, **extra)
+# v3alt: geometric lookahead, re-searching the ratio for the chosen LR and then the LR
+# again (alternate), so the ratio is not tuned to the previous interval's LR.
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for scenario in ("a", "b"):
+            extra = dict(coarse_mult=None, coarse_scan=3) if scenario == "b" else {}
+            RUN_CONFIGS[f"auto_{scenario}_v3alt_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, shape="linear",
+                cooldown_searched="geometric", cooldown_fraction=1, alternate=3, **extra)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -4282,7 +4292,7 @@ AUTO_REQUIRED = {
 }
 AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "shape",
                  "final_anneal", "coarse_scan", "polish_rounds", "polish_margin",
-                 "polish_scale_first"}
+                 "polish_scale_first", "alternate"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4322,6 +4332,8 @@ def run_auto_search(run, model, config):
       polish_scale_first (optional, default False): per group, first try scaling its whole
         schedule one grid step; polish its knots only if that changes the score by at least
         2 x polish_margin (skips insensitive groups).
+      alternate (optional, default 0): after the main search, up to this many rounds of
+        re-searching the lookahead (for the chosen main LRs) and then the main LRs.
       revisit (optional, default True): repeat coordinate passes until none moves.
       shape (optional, default "constant"): "linear" makes each searched value the LR
         at the end of its interval, reached linearly from the previous interval's end
@@ -4363,6 +4375,7 @@ def run_auto_search(run, model, config):
     margin, max_side = tuning["move_margin"], tuning["max_side_steps"]
     coarse = tuning.get("coarse_mult")
     scan = tuning.get("coarse_scan", 0)
+    alternate = tuning.get("alternate", 0)
     revisit = tuning.get("revisit", True)
     larger_within = tuning.get("larger_within", 0.0)
     shape = tuning.get("shape", "constant")
@@ -4533,6 +4546,13 @@ def run_auto_search(run, model, config):
         final = start + main_steps == total
         anneal_now = final and final_anneal == "linear"
         search_main(lambda path: params[path]["mult"])
+        # Re-search the lookahead for the chosen main LRs, then the main LRs, until stable.
+        for _ in range(alternate if look else 0):
+            before_round = (dict(current), dict(mults))
+            search_mults()
+            search_main(lambda path: params[path]["mult"])
+            if (dict(current), dict(mults)) == before_round:
+                break
         if final and final_anneal == "search":
             constant_values, constant_score = dict(current), evaluate(current, mults)
             anneal_now = True

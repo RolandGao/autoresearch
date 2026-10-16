@@ -161,7 +161,7 @@ Results
                               none            ramp            wave
      v1   (online only)       93.94 / 132 s   93.57 / 150 s   93.59 / 128 s
      v1p  (online + polish)   93.93 / 267 s   93.92 / 369 s   93.59 / 259 s
-     BS 500 v1p               93.81 / 335 s   93.76 (1 seed)        (baseline_bs500 93.83)
+     BS 500 v1p               93.81 / 335 s   93.80 / 405 s         (baseline_bs500 93.83)
    - Polish fixes the ramp failure (v1's lookahead too high late -> knots 1-3 raised by one
      step each in round 0) and leaves the no-transform result at the baseline.
    - It does not fix wave: the online pass left knots 1 and 3 two to three grid steps too
