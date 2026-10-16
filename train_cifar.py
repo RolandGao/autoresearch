@@ -3032,6 +3032,17 @@ for batch_size in (2000, 500, 125):
         RUN_CONFIGS[f"auto_a_v1p2_bs{batch_size}{suffix}"] = auto_config(
             batch_size, "a", transform, None, shape="linear", cooldown_searched="linear",
             cooldown_fraction=1, polish_rounds=3, polish_margin=0.001, polish_steps=[1, 2])
+# Cheaper scenario B: freeze LRs that the scan finds flat (0.2 pp), optionally one coordinate
+# pass per interval (revisit=False).
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        common = dict(shape="linear", cooldown_searched="linear", cooldown_fraction=1,
+                      coarse_mult=None, coarse_scan=3, scan_lookahead=5, freeze_threshold=0.002)
+        RUN_CONFIGS[f"auto_b_v1ff_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "b", transform, None, **common)
+        RUN_CONFIGS[f"auto_b_v1ffnr_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "b", transform, None, **common, revisit=False)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -4312,7 +4323,7 @@ AUTO_REQUIRED = {
 AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "shape",
                  "final_anneal", "coarse_scan", "polish_rounds", "polish_margin",
                  "polish_scale_first", "alternate",
-                 "scan_lookahead", "polish_steps"}
+                 "scan_lookahead", "polish_steps", "freeze_threshold"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4356,6 +4367,9 @@ def run_auto_search(run, model, config):
         2 x polish_margin (skips insensitive groups).
       scan_lookahead (optional, default 0 = the search's lookahead): the coarse scan's
         lookahead is total // scan_lookahead steps (cheaper; x10 steps tolerate the bias).
+      freeze_threshold (optional, default 0): after the coarse scan, an LR whose best
+        scan score beats the mean of its one-decade neighbours by less than this is frozen
+        at its scanned value (no later searching; insensitive groups cost nothing).
       alternate (optional, default 0): after the main search, up to this many rounds of
         re-searching the lookahead (for the chosen main LRs) and then the main LRs.
       revisit (optional, default True): repeat coordinate passes until none moves.
@@ -4401,6 +4415,7 @@ def run_auto_search(run, model, config):
     scan = tuning.get("coarse_scan", 0)
     alternate = tuning.get("alternate", 0)
     scan_lookahead = tuning.get("scan_lookahead", 0)
+    freeze_threshold = tuning.get("freeze_threshold", 0.0)
     revisit = tuning.get("revisit", True)
     larger_within = tuning.get("larger_within", 0.0)
     shape = tuning.get("shape", "constant")
@@ -4439,6 +4454,7 @@ def run_auto_search(run, model, config):
 
     anneal_now = False  # The final interval decays to 0 (final_anneal).
     look_override = None  # The coarse scan's own (shorter) lookahead.
+    frozen = set()  # LRs found insensitive by the coarse scan (freeze_threshold).
 
     def main_window(lines, path, start, steps, value):
         first = knots.get(path, value) if shape == "linear" else value
@@ -4541,7 +4557,7 @@ def run_auto_search(run, model, config):
 
             for _ in range(10 if revisit else 1):
                 moved_any = False
-                for path in params:
+                for path in [p for p in params if p not in frozen]:
                     current, best, moved = climb(
                         current, path, lambda values: evaluate(values, mults),
                         neighbour_on_grid(path))
@@ -4567,7 +4583,14 @@ def run_auto_search(run, model, config):
             for path in params:
                 values = [round_hparam(current[path] * 10.0 ** k) for k in range(-scan, scan + 1)]
                 scores = {v: evaluate(dict(current, **{path: v}), mults) for v in values}
-                current = dict(current, **{path: max(values, key=lambda v: scores[v])})
+                best = max(values, key=lambda v: scores[v])
+                current = dict(current, **{path: best})
+                # Flat around the best (one decade either side): freeze this LR.
+                i = values.index(best)
+                sides = [scores[values[j]] for j in (i - 1, i + 1) if 0 <= j < len(values)]
+                if freeze_threshold and scores[best] - sum(sides) / len(sides) < freeze_threshold:
+                    frozen.add(path)
+                    print(f"  frozen {path}={best}", flush=True)
             look_override = None
             current = {path: snap_lr_to_grid(v, params[path]["mult"]) for path, v in current.items()}
         if start == 0 and coarse:
