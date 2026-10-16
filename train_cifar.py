@@ -3172,6 +3172,19 @@ for batch_size in (2000, 500, 125):
             batch_size, "b", transform, None, shape="linear", cooldown_searched="linear",
             cooldown_fraction=1, final_anneal="search", passes=2, pass_seeds=2,
             coarse_mult=None, coarse_scan=3, scan_lookahead=5, freeze_threshold=0.002)
+# Cost reductions on v1x2m3t: pass 2 on 2 seeds (v1x2m2t); pass 1 with a 20% lookahead
+# (s20x2m3t). Scenario B: v1x2m3t + final_anneal search (v1x2m3tfas).
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        base = dict(shape="linear", cooldown_searched="linear", passes=2, plan_tail=True)
+        RUN_CONFIGS[f"auto_a_v1x2m2t_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "a", transform, None, **base, cooldown_fraction=1, pass_seeds=2)
+        RUN_CONFIGS[f"auto_a_s20x2m3t_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "a", transform, None, **base, cooldown_fraction=5, pass_seeds=3)
+        RUN_CONFIGS[f"auto_b_v1x2m3tfas_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "b", transform, None, **base, cooldown_fraction=1, pass_seeds=3,
+            final_anneal="search", coarse_mult=None, coarse_scan=3, scan_lookahead=5)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
