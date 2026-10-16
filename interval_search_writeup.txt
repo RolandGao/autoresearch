@@ -272,3 +272,16 @@ Results
       wave 93.91 (1814 s), 2 search seeds each.
     - Search-seed spread is the remaining weakness: v1x2m3t ramp over 4 searches 93.58-94.03
       (the low one never raised the early knots above 0.13; the ramp oracle wants ~1.0, 0.36).
+
+18. Validation of v1x2m2t (two passes, pass 2 on 2 fresh seeds, tail-scaling plan)
+    held-out mean over search seeds (n) and search seconds:
+                none                ramp                wave              baseline / do-nothing ramp, wave
+      BS 2000   93.98 (4, 359 s)    93.78 (4, 387 s)    93.91 (4, 362 s)   93.94 / 93.42, 93.72
+      BS 500    93.83 (2, 446 s)    93.67 (2, 500 s)    93.91 (2, 456 s)   93.83 / 93.35, 93.68
+      BS 125    93.63 (2, 712 s)    93.65 (2, 722 s)    93.78 (1, 689 s)   93.85 / 93.31, 93.68
+    - The 5-knot grid representation is not the limit at any batch size: grid-snapped
+      piecewise-linear baseline knots score 93.98 / 93.84 / 93.83 (BS 2000 / 500 / 125).
+    - At BS 125 every two-pass variant lands ~0.15-0.2 below the baseline in all conditions
+      (v1x2m3t 93.64 / 93.66 / 93.75), so the gap is in the search, not the representation.
+    - Ramp is the hardest transform at every batch size (the searches do not raise the early
+      knots far enough; spread over search seeds ~0.4 pp).

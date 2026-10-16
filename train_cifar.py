@@ -3210,6 +3210,16 @@ for batch_size in (2000, 500, 125):
         RUN_CONFIGS[f"auto_a_v1x3m2t_bs{batch_size}{suffix}"] = auto_config(
             batch_size, "a", transform, None, shape="linear", cooldown_searched="linear",
             cooldown_fraction=1, passes=3, pass_seeds=2, plan_tail=True)
+# Representation check at BS 500 / 125: conv as piecewise-linear knots through the grid-
+# snapped baseline values (BS 2000's version, staircase_a_knots_grid_bs2000, scored 93.98).
+for batch_size in (500, 125):
+    config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
+    group = config["param_groups"]["conv"]
+    total, lr = group["lr_scheduler"][0][0], group["lr_scheduler"][0][1]
+    knots = [round_hparam(0.6 ** round(log(lr * (1 - i / 5)) / log(0.6))) if i < 5 else 0.0
+             for i in range(6)]
+    group["lr_scheduler"] = [(total // 5, a, b) for a, b in zip(knots, knots[1:])]
+    RUN_CONFIGS[f"staircase_a_knots_grid_bs{batch_size}"] = config
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
