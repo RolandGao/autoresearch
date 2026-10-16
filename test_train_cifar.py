@@ -612,11 +612,12 @@ class SearchTests(unittest.TestCase):
                 # LR-only global_neighbour_*_bs2000 searches have no momentum entries.
                 if (original["hparam_tuning"]["algorithm"] == "global_neighbour"
                         and "head.momentum" in initial):
-                    self.assertEqual(initial["head.momentum"], 0.85)
+                    # Searches start at their baseline's momenta.
+                    groups = train.RUN_CONFIGS[
+                        f"baseline_bs{original['batch_size']}"]["param_groups"]
+                    self.assertEqual(initial["head.momentum"], groups["head"]["momentum"])
                     self.assertEqual(
-                        initial["norm_bias.momentum"],
-                        0.8 if original["batch_size"] == 2000 else 0.85,
-                    )
+                        initial["norm_bias.momentum"], groups["norm_bias"]["momentum"])
                     for path in ("head.initial_lr", "norm_bias.initial_lr"):
                         spec = original["hparam_tuning"]["params"][path]
                         self.assertEqual(

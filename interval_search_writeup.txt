@@ -322,7 +322,7 @@ Results
                v1x2m2t  93.98 (4, 359s)  93.78 (4, 387s)  93.91 (4, 362s)   (cheaper, weaker under ramp)
       BS 500   v1x3m2t  93.79 (2, 725s)  93.75 (2, 774s)  93.84 (2, 736s)   93.83   93.35 / 93.68
                v1x2m3   93.91 (2, 551s)  93.85 (2, 658s)  93.85 (2, 624s)
-      BS 125   v1x3m2t  93.59 (1)        93.88 (1)        93.66 (1)  ~1100s 93.85   93.31 / 93.68
+      BS 125   v1x3m2t  93.64 (2,1159s)  93.88 (1,1109s)  93.72 (2,1164s)   93.85   93.31 / 93.68
                v1x2m2t  93.63 (2, 712s)  93.65 (2, 722s)  93.79 (2, 732s)
     Other searched groups (BS 2000, two passes on 3 seeds with tail scaling):
       head only:   none 93.91 (2), ramp 93.90 (2)   (do-nothing head ramp 93.82)
@@ -331,13 +331,14 @@ Results
       BS 2000: none 93.96 (2, 1690s), ramp 93.81 (2, 1867s), wave 93.91 (2, 1814s)
                (do-nothing ramp 93.25; one-pass variants under ramp 93.05-93.36)
       BS 500:  none 93.89 (1, 2471s), ramp 93.90 (1, 2698s)
+      (with tail scaling, v1x2m3tfas, BS 2000: ramp 93.52 (1), wave 93.92 (1): no better)
     Verdict against the goal (match the baseline's held-out TTA at least cost, survive the
     transforms and BS 500 / 125):
       - BS 2000: matched in every condition (93.88-93.96 vs 93.94) in ~600 s per searched LR,
         i.e. ~60 training runs; from scratch ~1800 s (~180 runs). The older seed-averaged
         global search cost 3780 s for four groups and cannot reshape a transformed schedule.
       - BS 500: within 0.05-0.1 pp (93.75-93.91 vs 93.83) in ~700 s.
-      - BS 125: 0.0-0.25 pp short (93.59-93.88 vs 93.85, single seeds) in ~1100 s; the shortfall
+      - BS 125: 0.0-0.2 pp short (93.64 / 93.88 / 93.72 vs 93.85) in ~1100-1160 s; the shortfall
         is in the search (the representation reaches 93.83), so it is not yet solved.
     Limits and open problems:
       - Search-seed spread is 0.1-0.4 pp, about the size of the differences between the best
@@ -354,3 +355,20 @@ Results
     (probes: cooldown_fidelity.py, overfit_screen.py; analysis: summarize_auto.py,
     analyze_fidelity.py, analyze_screen.py, final_table.py; queue: worker.sh, enqueue.py,
     sync.sh), logs/ (every run; cifar_baseline_* and research_*).
+
+20. Baselines updated after the campaign (2026-10-16 ~18:30 UTC)
+    baseline_bs500 and baseline_bs125 in train_cifar.py are now the best SGD configs of the
+    seed-averaged searches (identical to seeded_best_bs500_sgd / seeded_best_bs125_sgd; same
+    optimizers: Muon2 conv, SGD head and biases, linear-decay schedules). Held-out TTA with
+    the current code:
+      BS 500: 94.01 +- 0.12 (seeds 100-115); seeds 100-107: 94.00 vs 93.83 for the previous
+              baseline (head LR 280 -> 770, norm_bias LR 21 -> 60 / momentum 0.85 -> 0.8).
+      BS 125: 93.88 +- 0.11 (seeds 100-115); seeds 100-107: 93.86 vs 93.85 (a tie; conv
+              momentum 0.5 -> 0.7, head LR 170 -> 99 / momentum 0.85 -> 0.8, norm_bias LR
+              4.6 -> 7.7, whiten_bias momentum 0.85 -> 0.8).
+    BS 2000 is unchanged (baseline_bs2000 was already the best SGD config, 93.94).
+    Every BS 500 / 125 result above (sections 14-19) used the previous baselines, both as
+    the target and as the fixed schedules of the non-searched groups in scenario A. Against
+    the new BS 500 baseline (94.01) those searches are 0.1-0.25 pp short; part of that is the
+    weaker fixed groups they ran with, which the new baselines remove. The logs keep the
+    source they ran with.

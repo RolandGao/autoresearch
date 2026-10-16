@@ -1916,15 +1916,28 @@ for batch_size, whiten_bias_lr, norm_bias_lr, bias_momentum, head_lr, conv_lr, c
 # convolutions). BS 125 and 500 come from exp14 with Muon2 convolutions
 # (TTA 0.9400, logs/cifar_baseline_20260930_213907_841629Z_566125.log;
 # TTA 0.9401, logs/cifar_baseline_20260930_213912_848424Z_566236.log).
+# BS 125 and 500 were then replaced (2026-10-16) by the best SGD configs of the
+# seed-averaged searches (SEEDED_SEARCH_BEST, seeded_best_bs{BS}_sgd): held-out TTA on
+# seeds 100-115 with the current code: BS 500 94.01 (seeds 100-107: 94.00 vs 93.83 for
+# the previous baseline: head LR 280, norm_bias LR 21 / momentum 0.85); BS 125 93.88
+# (seeds 100-107: 93.86 vs 93.85 for the previous one: conv momentum 0.5, head LR 170 /
+# momentum 0.85, norm_bias LR 4.6, whiten_bias momentum 0.85).
 for batch_size, whiten_bias_lr, norm_bias_lr, bias_momentum, head_lr, conv_lr, conv_momentum in (
-    (125, 7.7, 4.6, 0.85, 170, 0.047, 0.5),
-    (500, 36, 21, 0.85, 280, 0.13, 0.6),
+    (125, 7.7, 7.7, 0.85, 99, 0.047, 0.7),
+    (500, 36, 60, 0.85, 770, 0.13, 0.6),
     (2000, 36, 99, 0.8, 1300, 0.22, 0.7),
 ):
     RUN_CONFIGS[f"baseline_bs{batch_size}"] = baseline_config(
         batch_size, whiten_bias_lr, norm_bias_lr, bias_momentum, head_lr, conv_lr,
         conv_momentum,
     )
+# Group momenta of the BS 125 / 500 baselines that baseline_config shares or fixes.
+for batch_size, momenta in (
+    (125, dict(head=0.8, norm_bias=0.85, whiten_bias=0.8)),
+    (500, dict(head=0.85, norm_bias=0.8, whiten_bias=0.85)),
+):
+    for name, momentum in momenta.items():
+        RUN_CONFIGS[f"baseline_bs{batch_size}"]["param_groups"][name]["momentum"] = momentum
 
 # BS 2000 head baselines, one per head optimizer; other groups match
 # baseline_bs2000. Candidates came from the head grids (exp5-exp11, single seed)
