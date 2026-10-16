@@ -34,7 +34,7 @@ Single-run seed sd ~0.12-0.13; an 8-seed mean has sd ~0.045.
 
 Results
 -------
-(filled in as experiments finish)
+(sections 1-18 in the order they were run; section 19 at the end is the summary and recommendation)
 
 1. Cooldown proxy fidelity (scenario A, conv, BS 2000; research/cooldown_fidelity.py)
    For main interval k (40 steps) and 7 constant conv LRs, truth = final TTA when the
@@ -285,3 +285,53 @@ Results
       (v1x2m3t 93.64 / 93.66 / 93.75), so the gap is in the search, not the representation.
     - Ramp is the hardest transform at every batch size (the searches do not raise the early
       knots far enough; spread over search seeds ~0.4 pp).
+
+19. SUMMARY AND RECOMMENDATION (numbers as of 16:50 UTC; held-out TTA, mean over search seeds)
+    ===========================================================================================
+    Recommended algorithm ("multi-pass knot search", configs auto_a_v1x2m2t / auto_a_v1x3m2t /
+    auto_b_v1x2m3fas in train_cifar.py, algorithm="auto"):
+      Representation: each searched LR is piecewise linear through knots at every 20% of the
+        run (5 intervals). The 0.6^k grid with 5 knots is enough at every batch size
+        (grid-snapped baseline knots: 93.98 / 93.84 / 93.83 at BS 2000 / 500 / 125).
+      Pass 1 (online): for each interval in order, coordinate-climb each searched LR's end knot
+        on the 0.6 grid from the previous value; score a candidate by training the interval from
+        the committed state, then a lookahead to the END of the run in which the searched LRs
+        decay linearly to 0 and the other groups continue their schedules; commit; repeat.
+      Passes 2..P: restart from scratch; each interval starts at the previous pass's knot, and
+        the lookahead is the previous pass's schedule, its tail scaled by candidate / plan value
+        (plan_tail); candidates are scored by the mean over 2 fresh seeds (pass_seeds) so that a
+        lucky incumbent cannot lock out its neighbours and joint knot moves become detectable.
+      From scratch (scenario B) add: in the first interval, scan each LR over +-3 decades (x10
+        steps) with a 20% lookahead before refining, and final_anneal="search" (try annealing
+        every searched LR to 0 in the last interval). Three passes total are not needed there.
+    Why each piece exists (sections):
+      - lookahead to the end of the run, not a short cooldown: short lookaheads are biased to
+        small LRs by 1-1.5 grid steps whatever the cooldown design (1, 4, 5); the other groups'
+        cooldown never matters (1, 5).
+      - piecewise-linear knots with the anneal to 0 at the end: a constant final interval costs
+        ~0.28 pp (6, 7).
+      - extra passes: the fixed linear lookahead is distorted by transforms (ramp: high LRs
+        penalized early); the previous pass's schedule is a self-correcting lookahead (12).
+      - fresh multi-seed scoring in later passes: single-seed searches lock in lucky schedules
+        (winner's curse) and miss joint moves smaller than the noise per knot (12, 13).
+      - tail scaling: larger moves per decision, needed under wave at small batch (16).
+    Results, scenario A (conv searched, others on the baseline; baseline / do-nothing ramp, wave):
+      BS 2000 (93.94 / 93.42, 93.72): v1x3m2t 94.03, 93.96, 93.85 (2 seeds; 562-612 s)
+                                      v1x2m2t 93.98, 93.78, 93.91 (4 seeds; 359-387 s)
+      BS 500  (93.83 / 93.35, 93.68): v1x2m3  93.91, 93.85, 93.85 (2 seeds; 551-658 s)
+                                      v1x2m2t 93.83, 93.67, 93.91; v1x3m2t 93.79, 93.75, (pending)
+      BS 125  (93.85 / 93.31, 93.68): v1x2m2t 93.63, 93.65, 93.79 (2 seeds; 712-732 s)
+                                      v1x2m3  93.81, 93.75, 93.50; v1x3m2t (pending)
+    Results, scenario B (all four LRs from 1.0; v1x2m3fas):
+      BS 2000: none 93.96 (1690 s), ramp 93.81 (1867 s), wave 93.91 (1814 s)  (2 seeds each)
+      BS 500:  none 93.89 (2471 s), ramp 93.90 (2698 s)                      (1 seed each)
+    Cost reference: one BS 2000 training run ~10 s, so scenario A costs ~35-60 runs and
+    scenario B ~170-190 runs; the earlier seed-averaged global_neighbour_seeds search cost
+    3780 s (192 runs) for 4 groups at BS 2000 and could not adapt to a transformed schedule.
+    Limits:
+      - Search-seed spread is 0.1-0.4 pp, the same size as the differences between the best
+        variants; two search seeds rank them only coarsely.
+      - BS 125 stays ~0.1-0.2 pp below its baseline for the two-pass variants (search-limited,
+        not representation-limited).
+      - Scenario B costs ~3x scenario A; making a short-horizon scan or freezing "flat" LRs
+        cheaper failed (norm_bias looks flat at short horizons but matters over the run).
