@@ -326,7 +326,7 @@ Results
                v1x2m2t  93.63 (2, 712s)  93.65 (2, 722s)  93.79 (2, 732s)
     Other searched groups (BS 2000, two passes on 3 seeds with tail scaling):
       head only:   none 93.91 (2), ramp 93.90 (2)   (do-nothing head ramp 93.82)
-      conv + head: none 93.99 (2), ramp 93.72 (1)   (do-nothing ramp on both 93.30)
+      conv + head: none 93.99 (2), ramp 93.73 (2)   (do-nothing ramp on both 93.30)
     Scenario B (all four LRs from 1.0, v1x2m3fas = two passes, pass 2 on 3 seeds):
       BS 2000: none 93.96 (2, 1690s), ramp 93.81 (2, 1867s), wave 93.91 (2, 1814s)
                (do-nothing ramp 93.25; one-pass variants under ramp 93.05-93.36)
