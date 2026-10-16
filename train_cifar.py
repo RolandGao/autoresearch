@@ -3013,6 +3013,18 @@ for batch_size in (2000, 500, 125):
             RUN_CONFIGS[f"auto_{scenario}_v3alt_bs{batch_size}{suffix}"] = auto_config(
                 batch_size, scenario, transform, None, shape="linear",
                 cooldown_searched="geometric", cooldown_fraction=1, alternate=3, **extra)
+# Cheaper scenario B: the coarse scan uses a 20% lookahead (scan_lookahead=5) instead of
+# the rest of the run; v1psfast adds one scale-first polish round.
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        common = dict(shape="linear", cooldown_searched="linear", cooldown_fraction=1,
+                      coarse_mult=None, coarse_scan=3, scan_lookahead=5)
+        RUN_CONFIGS[f"auto_b_v1fast_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "b", transform, None, **common)
+        RUN_CONFIGS[f"auto_b_v1psfast_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "b", transform, None, **common, polish_rounds=1, polish_margin=0.001,
+            polish_scale_first=True)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -4292,7 +4304,8 @@ AUTO_REQUIRED = {
 }
 AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "shape",
                  "final_anneal", "coarse_scan", "polish_rounds", "polish_margin",
-                 "polish_scale_first", "alternate"}
+                 "polish_scale_first", "alternate",
+                 "scan_lookahead"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4332,6 +4345,8 @@ def run_auto_search(run, model, config):
       polish_scale_first (optional, default False): per group, first try scaling its whole
         schedule one grid step; polish its knots only if that changes the score by at least
         2 x polish_margin (skips insensitive groups).
+      scan_lookahead (optional, default 0 = the search's lookahead): the coarse scan's
+        lookahead is total // scan_lookahead steps (cheaper; x10 steps tolerate the bias).
       alternate (optional, default 0): after the main search, up to this many rounds of
         re-searching the lookahead (for the chosen main LRs) and then the main LRs.
       revisit (optional, default True): repeat coordinate passes until none moves.
@@ -4376,6 +4391,7 @@ def run_auto_search(run, model, config):
     coarse = tuning.get("coarse_mult")
     scan = tuning.get("coarse_scan", 0)
     alternate = tuning.get("alternate", 0)
+    scan_lookahead = tuning.get("scan_lookahead", 0)
     revisit = tuning.get("revisit", True)
     larger_within = tuning.get("larger_within", 0.0)
     shape = tuning.get("shape", "constant")
@@ -4413,6 +4429,7 @@ def run_auto_search(run, model, config):
     knots = {}  # shape="linear": each searched LR at the end of the last committed interval
 
     anneal_now = False  # The final interval decays to 0 (final_anneal).
+    look_override = None  # The coarse scan's own (shorter) lookahead.
 
     def main_window(lines, path, start, steps, value):
         first = knots.get(path, value) if shape == "linear" else value
@@ -4431,7 +4448,8 @@ def run_auto_search(run, model, config):
 
         def evaluate(values, cool):
             nonlocal evaluations
-            key = (tuple(sorted(values.items())), tuple(sorted(cool.items())), anneal_now)
+            look_eff = look if look_override is None else look_override
+            key = (tuple(sorted(values.items())), tuple(sorted(cool.items())), anneal_now, look_eff)
             if key in cache:
                 return cache[key]
             trainer.restore(state)
@@ -4439,28 +4457,28 @@ def run_auto_search(run, model, config):
             for path, value in values.items():
                 sched[path] = main_window(committed[path], path, start, main_steps, value)
             ok = trainer.train(sched, main_steps)
-            if ok and look:
+            if ok and look_eff:
                 cool_start = start + main_steps
                 for path, value in values.items():
                     if searched_mode == "geometric":
                         sched[path] = segments_window(sched[path], cool_start, geometric_lookahead(
-                            value, cool["ratio"], look, interval_steps))
+                            value, cool["ratio"], look_eff, interval_steps))
                     elif searched_mode == "plan":
-                        sched[path] = linear_window(sched[path], cool_start, look,
+                        sched[path] = linear_window(sched[path], cool_start, look_eff,
                                                     cool[f"plan:{path}"], 0.0)
                     elif searched_mode in ("linear", "linear_search"):
-                        sched[path] = linear_window(sched[path], cool_start, look,
+                        sched[path] = linear_window(sched[path], cool_start, look_eff,
                                                     cool["searched"] * value, 0.0)
                     else:
-                        sched[path] = constant_window(sched[path], cool_start, look,
+                        sched[path] = constant_window(sched[path], cool_start, look_eff,
                                                       cool["searched"] * value)
                 others = cool["searched"] if others_mode == "shared" else cool["others"]
                 if others is not None:
                     for path in other_paths:
                         sched[path] = constant_window(
-                            committed[path], cool_start, look,
+                            committed[path], cool_start, look_eff,
                             others * window_mean(committed[path], start, main_steps))
-                ok = trainer.train(sched, look)
+                ok = trainer.train(sched, look_eff)
             value = trainer.score(metric) if ok else float("-inf")
             value = value if isfinite(value) else float("-inf")
             evaluations += 1
@@ -4535,10 +4553,13 @@ def run_auto_search(run, model, config):
             search_mults()
         if start == 0 and scan:
             # Scan each LR over x10 steps (+-scan decades), keep the best, then refine.
+            if scan_lookahead:
+                look_override = min(total // scan_lookahead, total - main_steps)
             for path in params:
                 values = [round_hparam(current[path] * 10.0 ** k) for k in range(-scan, scan + 1)]
                 scores = {v: evaluate(dict(current, **{path: v}), mults) for v in values}
                 current = dict(current, **{path: max(values, key=lambda v: scores[v])})
+            look_override = None
             current = {path: snap_lr_to_grid(v, params[path]["mult"]) for path, v in current.items()}
         if start == 0 and coarse:
             search_main(lambda path: coarse)
