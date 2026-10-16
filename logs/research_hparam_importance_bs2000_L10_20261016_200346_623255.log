@@ -1,0 +1,216 @@
+# commit 884c6debead9e049f56f3658095f97c987d82357
+# args {"steps": 10, "seed": 0, "side": 5}
+# worker w5 gpu GPU-c22040b7-bccf-34fe-5e2b-0cfb97b00021
+# source
+# | """Hparam importance from scratch: main-interval search of the four LRs, then one-at-a-time sweeps.
+# | 
+# | Batch size 2000, baseline_bs2000 except the four trained LRs (conv, head, norm_bias,
+# | whiten_bias), which are constant for the first L training steps from initialization; the score
+# | is taken right after those L steps (no lookahead).
+# |   1. Joint main-interval search from scratch: every LR starts at 1.0; scan each LR over
+# |      x10^k, k = -3..3 (others fixed), keep the best, snap to the 0.6^k grid, then coordinate
+# |      climb on the grid (one step up / down, move while the score improves) until no LR moves.
+# |   2. Sweep: from that center, vary each LR alone over 5 grid points on each side.
+# | Score: test-set TTA accuracy; the test cross-entropy loss is logged too.
+# | """
+# | import argparse
+# | 
+# | import torch
+# | import torch.nn.functional as F
+# | 
+# | from common import base_config, emit, new_model, open_log, t
+# | 
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--steps", type=int, required=True, help="main interval length L")
+# | parser.add_argument("--seed", type=int, default=0)
+# | parser.add_argument("--side", type=int, default=5, help="grid points on each side in the sweep")
+# | args = parser.parse_args()
+# | log = open_log(f"hparam_importance_bs2000_L{args.steps}", args, __file__)
+# | 
+# | GROUPS = ("conv", "head", "norm_bias", "whiten_bias")
+# | MULT = 0.6
+# | config = base_config(2000, None)
+# | model = new_model()
+# | t.TRAINING_SEED = args.seed
+# | trainer = t.SegmentTrainer(model, config)
+# | start = trainer.snapshot()
+# | base = trainer.base_schedules
+# | cache = {}
+# | 
+# | 
+# | def test_loss():
+# |     model.train()  # Train-mode BatchNorm, as in every evaluation.
+# |     with torch.inference_mode():
+# |         images, labels = trainer.test_loader.normalized_images(), trainer.test_loader.labels
+# |         total = sum(F.cross_entropy(model(x).float(), y, reduction="sum")
+# |                     for x, y in zip(images.split(2000), labels.split(2000)))
+# |     return (total / len(labels)).item()
+# | 
+# | 
+# | def evaluate(values, phase):
+# |     key = tuple(values[g] for g in GROUPS)
+# |     if key not in cache:
+# |         trainer.restore(start)
+# |         sched = dict(base)
+# |         for g in GROUPS:
+# |             sched[f"{g}.initial_lr"] = t.constant_window(base[f"{g}.initial_lr"], 0, args.steps, values[g])
+# |         ok = trainer.train(sched, args.steps)
+# |         tta = trainer.score("tta_val_acc") if ok else float("-inf")
+# |         loss = test_loss() if ok else float("inf")
+# |         cache[key] = (tta, loss)
+# |         emit(log, kind="eval", phase=phase, values=dict(values), tta=tta, loss=loss)
+# |     return cache[key][0]
+# | 
+# | 
+# | def grid(value, offset):
+# |     return t.round_hparam(MULT ** (t.lr_grid_index(value, MULT) - offset))
+# | 
+# | 
+# | # 1. Joint main-interval search from scratch.
+# | current = {g: 1.0 for g in GROUPS}
+# | for g in GROUPS:  # Coarse scan over decades.
+# |     options = [t.round_hparam(current[g] * 10.0 ** k) for k in range(-3, 4)]
+# |     scores = {v: evaluate(dict(current, **{g: v}), "scan") for v in options}
+# |     current[g] = max(options, key=lambda v: scores[v])
+# | current = {g: grid(v, 0) for g, v in current.items()}
+# | best = evaluate(current, "climb")
+# | for _ in range(20):  # Coordinate climb on the grid.
+# |     moved = False
+# |     for g in GROUPS:
+# |         for direction in (1, -1):
+# |             while True:
+# |                 trial = dict(current, **{g: grid(current[g], direction)})
+# |                 score = evaluate(trial, "climb")
+# |                 if score <= best:
+# |                     break
+# |                 current, best, moved = trial, score, True
+# |     if not moved:
+# |         break
+# | emit(log, kind="center", values=dict(current), tta=best, loss=cache[tuple(current[g] for g in GROUPS)][1],
+# |      evaluations=len(cache))
+# | 
+# | # 2. One-at-a-time sweeps around the center.
+# | for g in GROUPS:
+# |     for offset in range(-args.side, args.side + 1):
+# |         trial = dict(current, **{g: grid(current[g], offset)})
+# |         evaluate(trial, "sweep")
+# |         tta, loss = cache[tuple(trial[h] for h in GROUPS)]
+# |         emit(log, kind="sweep", group=g, offset=offset, value=trial[g], tta=tta, loss=loss)
+# | emit(log, kind="done", evaluations=len(cache), train_steps=trainer.train_steps)
+
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.001, "head": 1.0, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.11999999731779099, "loss": 2.296574592590332, "time": 1792181028.6}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.01, "head": 1.0, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.35409998893737793, "loss": 2.1663389205932617, "time": 1792181029.4}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 1.0, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.5974000096321106, "loss": 1.7468889951705933, "time": 1792181030.2}
+{"kind": "eval", "phase": "scan", "values": {"conv": 1.0, "head": 1.0, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.3472999930381775, "loss": 2.0541980266571045, "time": 1792181031.1}
+{"kind": "eval", "phase": "scan", "values": {"conv": 10.0, "head": 1.0, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.21409998834133148, "loss": 2.2310373783111572, "time": 1792181031.9}
+{"kind": "eval", "phase": "scan", "values": {"conv": 100.0, "head": 1.0, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.19629999995231628, "loss": 2.2127435207366943, "time": 1792181032.7}
+{"kind": "eval", "phase": "scan", "values": {"conv": 1000.0, "head": 1.0, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.22999998927116394, "loss": 2.2123284339904785, "time": 1792181033.6}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.001, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.5977999567985535, "loss": 1.7490882873535156, "time": 1792181034.4}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.5992000102996826, "loss": 1.7478673458099365, "time": 1792181035.2}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.1, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.5964999794960022, "loss": 1.7494184970855713, "time": 1792181036.1}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 10.0, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.5942999720573425, "loss": 1.7451982498168945, "time": 1792181036.9}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 100.0, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.5774999856948853, "loss": 1.7087087631225586, "time": 1792181037.7}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 1000.0, "norm_bias": 1.0, "whiten_bias": 1.0}, "tta": 0.5734999775886536, "loss": 1.487484097480774, "time": 1792181038.6}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 0.001, "whiten_bias": 1.0}, "tta": 0.5985000133514404, "loss": 1.7493829727172852, "time": 1792181039.4}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 0.01, "whiten_bias": 1.0}, "tta": 0.5949999690055847, "loss": 1.7491685152053833, "time": 1792181040.2}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 0.1, "whiten_bias": 1.0}, "tta": 0.5974000096321106, "loss": 1.74984610080719, "time": 1792181041.1}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 10.0, "whiten_bias": 1.0}, "tta": 0.592199981212616, "loss": 1.7469072341918945, "time": 1792181041.9}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 100.0, "whiten_bias": 1.0}, "tta": 0.5958999991416931, "loss": 1.7334649562835693, "time": 1792181042.7}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 1000.0, "whiten_bias": 1.0}, "tta": 0.6001999974250793, "loss": 1.6827819347381592, "time": 1792181043.6}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 1000.0, "whiten_bias": 0.001}, "tta": 0.6075999736785889, "loss": 1.6809210777282715, "time": 1792181044.4}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 1000.0, "whiten_bias": 0.01}, "tta": 0.6049999594688416, "loss": 1.681170105934143, "time": 1792181045.2}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 1000.0, "whiten_bias": 0.1}, "tta": 0.6010000109672546, "loss": 1.6881816387176514, "time": 1792181046.1}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 1000.0, "whiten_bias": 10.0}, "tta": 0.6098999977111816, "loss": 1.6729761362075806, "time": 1792181046.9}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 1000.0, "whiten_bias": 100.0}, "tta": 0.6006999611854553, "loss": 1.6776769161224365, "time": 1792181047.7}
+{"kind": "eval", "phase": "scan", "values": {"conv": 0.1, "head": 0.01, "norm_bias": 1000.0, "whiten_bias": 1000.0}, "tta": 0.5999999642372131, "loss": 1.6824272871017456, "time": 1792181048.6}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.078, "head": 0.01, "norm_bias": 1300.0, "whiten_bias": 13.0}, "tta": 0.5910999774932861, "loss": 1.7035943269729614, "time": 1792181049.4}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.13, "head": 0.01, "norm_bias": 1300.0, "whiten_bias": 13.0}, "tta": 0.5906999707221985, "loss": 1.6706132888793945, "time": 1792181050.2}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.047, "head": 0.01, "norm_bias": 1300.0, "whiten_bias": 13.0}, "tta": 0.5720999836921692, "loss": 1.7914026975631714, "time": 1792181051.1}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 1300.0, "whiten_bias": 13.0}, "tta": 0.5938000082969666, "loss": 1.7037694454193115, "time": 1792181051.9}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.078, "head": 0.028, "norm_bias": 1300.0, "whiten_bias": 13.0}, "tta": 0.5913000106811523, "loss": 1.704327940940857, "time": 1792181052.7}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5946999788284302, "loss": 1.7049667835235596, "time": 1792181053.6}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 3500.0, "whiten_bias": 13.0}, "tta": 0.573199987411499, "loss": 1.7233167886734009, "time": 1792181054.4}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 21.0}, "tta": 0.5910999774932861, "loss": 1.7063347101211548, "time": 1792181055.2}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 7.7}, "tta": 0.5879999995231628, "loss": 1.7023472785949707, "time": 1792181056.1}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.13, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5819000005722046, "loss": 1.6749273538589478, "time": 1792181056.9}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.047, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5670999884605408, "loss": 1.789766550064087, "time": 1792181057.7}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.078, "head": 0.028, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5913000106811523, "loss": 1.706591010093689, "time": 1792181058.6}
+{"kind": "eval", "phase": "climb", "values": {"conv": 0.078, "head": 0.01, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5916000008583069, "loss": 1.7049989700317383, "time": 1792181059.4}
+{"kind": "center", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5946999788284302, "loss": 1.7049667835235596, "evaluations": 38, "time": 1792181059.4}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.006, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.3511999845504761, "loss": 2.175804615020752, "time": 1792181060.2}
+{"kind": "sweep", "group": "conv", "offset": -5, "value": 0.006, "tta": 0.3511999845504761, "loss": 2.175804615020752, "time": 1792181060.2}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.01, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.40299999713897705, "loss": 2.1169285774230957, "time": 1792181061.1}
+{"kind": "sweep", "group": "conv", "offset": -4, "value": 0.01, "tta": 0.40299999713897705, "loss": 2.1169285774230957, "time": 1792181061.1}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.017, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.46699997782707214, "loss": 2.022688865661621, "time": 1792181061.9}
+{"kind": "sweep", "group": "conv", "offset": -3, "value": 0.017, "tta": 0.46699997782707214, "loss": 2.022688865661621, "time": 1792181061.9}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.028, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5218999981880188, "loss": 1.9087425470352173, "time": 1792181062.7}
+{"kind": "sweep", "group": "conv", "offset": -2, "value": 0.028, "tta": 0.5218999981880188, "loss": 1.9087425470352173, "time": 1792181062.7}
+{"kind": "sweep", "group": "conv", "offset": -1, "value": 0.047, "tta": 0.5670999884605408, "loss": 1.789766550064087, "time": 1792181062.7}
+{"kind": "sweep", "group": "conv", "offset": 0, "value": 0.078, "tta": 0.5946999788284302, "loss": 1.7049667835235596, "time": 1792181062.7}
+{"kind": "sweep", "group": "conv", "offset": 1, "value": 0.13, "tta": 0.5819000005722046, "loss": 1.6749273538589478, "time": 1792181062.7}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.22, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5852000117301941, "loss": 1.658158302307129, "time": 1792181063.6}
+{"kind": "sweep", "group": "conv", "offset": 2, "value": 0.22, "tta": 0.5852000117301941, "loss": 1.658158302307129, "time": 1792181063.6}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.36, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.493399977684021, "loss": 1.803826093673706, "time": 1792181064.4}
+{"kind": "sweep", "group": "conv", "offset": 3, "value": 0.36, "tta": 0.493399977684021, "loss": 1.803826093673706, "time": 1792181064.4}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.6, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.3375000059604645, "loss": 2.055152416229248, "time": 1792181065.2}
+{"kind": "sweep", "group": "conv", "offset": 4, "value": 0.6, "tta": 0.3375000059604645, "loss": 2.055152416229248, "time": 1792181065.2}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 1.0, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.3009999990463257, "loss": 2.1098482608795166, "time": 1792181066.1}
+{"kind": "sweep", "group": "conv", "offset": 5, "value": 1.0, "tta": 0.3009999990463257, "loss": 2.1098482608795166, "time": 1792181066.1}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.0013, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5929999947547913, "loss": 1.704569697380066, "time": 1792181066.9}
+{"kind": "sweep", "group": "head", "offset": -5, "value": 0.0013, "tta": 0.5929999947547913, "loss": 1.704569697380066, "time": 1792181066.9}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.0022, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5924000144004822, "loss": 1.7068686485290527, "time": 1792181067.7}
+{"kind": "sweep", "group": "head", "offset": -4, "value": 0.0022, "tta": 0.5924000144004822, "loss": 1.7068686485290527, "time": 1792181067.7}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.0036, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5945000052452087, "loss": 1.706294059753418, "time": 1792181068.6}
+{"kind": "sweep", "group": "head", "offset": -3, "value": 0.0036, "tta": 0.5945000052452087, "loss": 1.706294059753418, "time": 1792181068.6}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.006, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5879999995231628, "loss": 1.707393765449524, "time": 1792181069.4}
+{"kind": "sweep", "group": "head", "offset": -2, "value": 0.006, "tta": 0.5879999995231628, "loss": 1.707393765449524, "time": 1792181069.4}
+{"kind": "sweep", "group": "head", "offset": -1, "value": 0.01, "tta": 0.5916000008583069, "loss": 1.7049989700317383, "time": 1792181069.4}
+{"kind": "sweep", "group": "head", "offset": 0, "value": 0.017, "tta": 0.5946999788284302, "loss": 1.7049667835235596, "time": 1792181069.4}
+{"kind": "sweep", "group": "head", "offset": 1, "value": 0.028, "tta": 0.5913000106811523, "loss": 1.706591010093689, "time": 1792181069.4}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.047, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5916999578475952, "loss": 1.7061526775360107, "time": 1792181070.2}
+{"kind": "sweep", "group": "head", "offset": 2, "value": 0.047, "tta": 0.5916999578475952, "loss": 1.7061526775360107, "time": 1792181070.2}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.078, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5959999561309814, "loss": 1.7050522565841675, "time": 1792181071.1}
+{"kind": "sweep", "group": "head", "offset": 3, "value": 0.078, "tta": 0.5959999561309814, "loss": 1.7050522565841675, "time": 1792181071.1}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.13, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.590499997138977, "loss": 1.704677939414978, "time": 1792181071.9}
+{"kind": "sweep", "group": "head", "offset": 4, "value": 0.13, "tta": 0.590499997138977, "loss": 1.704677939414978, "time": 1792181071.9}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.22, "norm_bias": 2100.0, "whiten_bias": 13.0}, "tta": 0.5909000039100647, "loss": 1.7071341276168823, "time": 1792181072.7}
+{"kind": "sweep", "group": "head", "offset": 5, "value": 0.22, "tta": 0.5909000039100647, "loss": 1.7071341276168823, "time": 1792181072.7}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 170.0, "whiten_bias": 13.0}, "tta": 0.5917999744415283, "loss": 1.763930082321167, "time": 1792181073.6}
+{"kind": "sweep", "group": "norm_bias", "offset": -5, "value": 170.0, "tta": 0.5917999744415283, "loss": 1.763930082321167, "time": 1792181073.6}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 280.0, "whiten_bias": 13.0}, "tta": 0.5907999873161316, "loss": 1.7495241165161133, "time": 1792181074.4}
+{"kind": "sweep", "group": "norm_bias", "offset": -4, "value": 280.0, "tta": 0.5907999873161316, "loss": 1.7495241165161133, "time": 1792181074.4}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 460.0, "whiten_bias": 13.0}, "tta": 0.5934999585151672, "loss": 1.7369939088821411, "time": 1792181075.2}
+{"kind": "sweep", "group": "norm_bias", "offset": -3, "value": 460.0, "tta": 0.5934999585151672, "loss": 1.7369939088821411, "time": 1792181075.2}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 770.0, "whiten_bias": 13.0}, "tta": 0.5934000015258789, "loss": 1.7208484411239624, "time": 1792181076.1}
+{"kind": "sweep", "group": "norm_bias", "offset": -2, "value": 770.0, "tta": 0.5934000015258789, "loss": 1.7208484411239624, "time": 1792181076.1}
+{"kind": "sweep", "group": "norm_bias", "offset": -1, "value": 1300.0, "tta": 0.5938000082969666, "loss": 1.7037694454193115, "time": 1792181076.1}
+{"kind": "sweep", "group": "norm_bias", "offset": 0, "value": 2100.0, "tta": 0.5946999788284302, "loss": 1.7049667835235596, "time": 1792181076.1}
+{"kind": "sweep", "group": "norm_bias", "offset": 1, "value": 3500.0, "tta": 0.573199987411499, "loss": 1.7233167886734009, "time": 1792181076.1}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 5900.0, "whiten_bias": 13.0}, "tta": 0.5404999852180481, "loss": 1.7596161365509033, "time": 1792181076.9}
+{"kind": "sweep", "group": "norm_bias", "offset": 2, "value": 5900.0, "tta": 0.5404999852180481, "loss": 1.7596161365509033, "time": 1792181076.9}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 9800.0, "whiten_bias": 13.0}, "tta": 0.49239999055862427, "loss": 1.8050222396850586, "time": 1792181077.7}
+{"kind": "sweep", "group": "norm_bias", "offset": 3, "value": 9800.0, "tta": 0.49239999055862427, "loss": 1.8050222396850586, "time": 1792181077.7}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 16000.0, "whiten_bias": 13.0}, "tta": 0.4276999831199646, "loss": 1.9718233346939087, "time": 1792181078.6}
+{"kind": "sweep", "group": "norm_bias", "offset": 4, "value": 16000.0, "tta": 0.4276999831199646, "loss": 1.9718233346939087, "time": 1792181078.6}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 27000.0, "whiten_bias": 13.0}, "tta": 0.30629998445510864, "loss": 2.1553115844726562, "time": 1792181079.4}
+{"kind": "sweep", "group": "norm_bias", "offset": 5, "value": 27000.0, "tta": 0.30629998445510864, "loss": 2.1553115844726562, "time": 1792181079.4}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 1.0}, "tta": 0.5920999646186829, "loss": 1.7039810419082642, "time": 1792181080.2}
+{"kind": "sweep", "group": "whiten_bias", "offset": -5, "value": 1.0, "tta": 0.5920999646186829, "loss": 1.7039810419082642, "time": 1792181080.2}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 1.7}, "tta": 0.5893999934196472, "loss": 1.7087677717208862, "time": 1792181081.1}
+{"kind": "sweep", "group": "whiten_bias", "offset": -4, "value": 1.7, "tta": 0.5893999934196472, "loss": 1.7087677717208862, "time": 1792181081.1}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 2.8}, "tta": 0.5746999979019165, "loss": 1.7081269025802612, "time": 1792181081.9}
+{"kind": "sweep", "group": "whiten_bias", "offset": -3, "value": 2.8, "tta": 0.5746999979019165, "loss": 1.7081269025802612, "time": 1792181081.9}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 4.6}, "tta": 0.5861999988555908, "loss": 1.7068614959716797, "time": 1792181082.7}
+{"kind": "sweep", "group": "whiten_bias", "offset": -2, "value": 4.6, "tta": 0.5861999988555908, "loss": 1.7068614959716797, "time": 1792181082.7}
+{"kind": "sweep", "group": "whiten_bias", "offset": -1, "value": 7.7, "tta": 0.5879999995231628, "loss": 1.7023472785949707, "time": 1792181082.7}
+{"kind": "sweep", "group": "whiten_bias", "offset": 0, "value": 13.0, "tta": 0.5946999788284302, "loss": 1.7049667835235596, "time": 1792181082.7}
+{"kind": "sweep", "group": "whiten_bias", "offset": 1, "value": 21.0, "tta": 0.5910999774932861, "loss": 1.7063347101211548, "time": 1792181082.7}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 36.0}, "tta": 0.5914999842643738, "loss": 1.7032692432403564, "time": 1792181083.6}
+{"kind": "sweep", "group": "whiten_bias", "offset": 2, "value": 36.0, "tta": 0.5914999842643738, "loss": 1.7032692432403564, "time": 1792181083.6}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 60.0}, "tta": 0.5878999829292297, "loss": 1.7071069478988647, "time": 1792181084.4}
+{"kind": "sweep", "group": "whiten_bias", "offset": 3, "value": 60.0, "tta": 0.5878999829292297, "loss": 1.7071069478988647, "time": 1792181084.4}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 99.0}, "tta": 0.5978999733924866, "loss": 1.7055487632751465, "time": 1792181085.2}
+{"kind": "sweep", "group": "whiten_bias", "offset": 4, "value": 99.0, "tta": 0.5978999733924866, "loss": 1.7055487632751465, "time": 1792181085.2}
+{"kind": "eval", "phase": "sweep", "values": {"conv": 0.078, "head": 0.017, "norm_bias": 2100.0, "whiten_bias": 170.0}, "tta": 0.59579998254776, "loss": 1.703539252281189, "time": 1792181086.1}
+{"kind": "sweep", "group": "whiten_bias", "offset": 5, "value": 170.0, "tta": 0.59579998254776, "loss": 1.703539252281189, "time": 1792181086.1}
+{"kind": "done", "evaluations": 70, "train_steps": 700, "time": 1792181086.1}

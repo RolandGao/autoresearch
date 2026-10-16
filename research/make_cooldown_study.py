@@ -21,6 +21,7 @@ from reportlab.platypus import (Image, KeepTogether, Paragraph, SimpleDocTemplat
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "research"))
 import cooldown_study as cs  # noqa: E402
+import importance_study as imp  # noqa: E402
 
 OUT = os.path.join(REPO, "cooldown_study.pdf")
 OBSERVATIONS = os.path.join(REPO, "research", "cooldown_study_observations.txt")
@@ -106,21 +107,23 @@ img = Image(fig_path)
 img.drawWidth, img.drawHeight = 17 * cm, 17 * cm * img.imageHeight / img.imageWidth
 
 story = [
-    P("Cooldown study: which 40-step lookahead ranks interval candidates like the final result?",
-      "title"),
+    P("Interval search experiments", "title"),
     P(f"Built {datetime.now(ZoneInfo('America/Los_Angeles')):%Y-%m-%d %H:%M} PT"
       f"{'' if all(x is not None and len(x['cands']) == 7 for x in summaries) else ' (runs in progress; partial results are marked)'}. "
       "Experiment design by Roland Gao; runs and analysis by Claude. Code: "
       "research/cooldown_search_probe.py (runs), research/cooldown_study.py (analysis), "
-      "research/make_cooldown_study.py (this PDF). Logs: logs/research_cooldown_search_probe_*.", "sub"),
-    P("Question", "h1"),
+      "research/make_cooldown_study.py (this PDF). Logs: logs/research_cooldown_search_probe_*, "
+      "logs/research_hparam_importance_*. Batch size 2000 throughout.", "sub"),
+    P("Experiment 1. Cooldown study: which 40-step lookahead ranks interval candidates like the final "
+      "result?", "h1"),
+    P("Question", "h2"),
     P("An interval search picks each interval's LR by training the interval with a candidate LR, then "
       "a short lookahead (the cooldown), and scoring the result. Which cooldown ranks the candidates the "
       "way the final accuracy does? Compared, all with a 40-step lookahead (one interval at batch size "
       "2000): no lookahead; linear decay to 0 (conv only, or all four groups); one searched constant "
       "cooldown, either for conv only with the other groups on their ground-truth schedules, or shared by "
       "all four groups; and four searched constant cooldowns (one per group)."),
-    P("Setup", "h1"),
+    P("Setup", "h2"),
     table([
         ["Item", "Value"],
         ["Model / data", "CIFAR-10 airbench, batch size 2000, 200 steps, baseline_bs2000 (conv Muon2 0.22 -> 0; "
@@ -145,7 +148,7 @@ story = [
         ["Seed", "1 training seed (0); every method uses the same prefix and data order"],
         ["Score", "Test-set TTA accuracy (%)"],
     ], [3.3 * cm, 13.7 * cm]),
-    P("Results", "h1"),
+    P("Results", "h2"),
     P("Picked LR = the candidate with the highest score. Regret = ground truth at its best candidate "
       "minus ground truth at the picked one (pp). One seed: single-run noise is about 0.13 pp, so "
       "differences of that size between candidates are not resolved.", "small"),
@@ -184,14 +187,115 @@ for s in summaries:
                      "; ".join(f"({', '.join(f'{v:g}' for v in ms)}) x{n}" for ms, n in sorted(per[c].items()))])
     story += [table(rows, [1.8 * cm, 3.6 * cm, 3.6 * cm, 8.0 * cm])]
 if os.path.exists(OBSERVATIONS):
-    story += [P("Observations", "h1")] + [P(line) for line in open(OBSERVATIONS).read().split("\n\n") if line.strip()]
+    story += [P("Observations", "h2")] + [P(line) for line in open(OBSERVATIONS).read().split("\n\n") if line.strip()]
+
+# Experiment 2: hparam importance from scratch.
+runs = imp.all_lengths()
+story += [
+    P("Experiment 2. Hparam importance from scratch", "h1"),
+    P("Question", "h2"),
+    P("How important is each of the four LRs when they are searched jointly from scratch, and does the answer "
+      "depend on the main interval length?"),
+    P("Setup", "h2"),
+    table([
+        ["Item", "Value"],
+        ["Model / data", "baseline_bs2000 except the four trained LRs (conv, head, norm_bias, whiten_bias), which "
+                         "are constant for the first L training steps from initialization"],
+        ["Main interval L", "1, 2, 5, 10, 40 steps; the score is taken right after the L steps (no lookahead)"],
+        ["Joint search", "From scratch: every LR starts at 1.0. Scan each LR over x10^k, k = -3..3 (others fixed), "
+                         "keep the best, snap to the 0.6^k grid, then coordinate-climb on the grid (one step up / down, "
+                         "move while the score improves) until no LR moves: the center"],
+        ["Sweep", "From the center, each LR alone over 5 grid points on each side (others at the center). Offset +1 "
+                  "= one grid step larger (x1/0.6), -1 = one step smaller (x0.6)"],
+        ["Seed / score", "1 seed (0); test-set TTA accuracy (%); the test cross-entropy loss is logged too"],
+    ], [3.3 * cm, 13.7 * cm]),
+]
+rows = [["L (steps)", "Center: conv, head, norm_bias, whiten_bias", "Center TTA", "Evaluations"]]
+for length, r in runs.items():
+    c = r["center"]
+    rows.append([str(length), "running" if c is None else ", ".join(f"{c['values'][g]:g}" for g in imp.GROUPS),
+                 "-" if c is None else f"{100 * c['tta']:.2f}", str(r["evaluations"])])
+story += [P("Joint-search centers", "h2"), table(rows, [2.0 * cm, 8.0 * cm, 2.6 * cm, 2.6 * cm])]
+
+
+def drops(sweep):
+    center = sweep[0][1]
+    side = lambda k: center - (sweep[-k][1] + sweep[k][1]) / 2  # noqa: E731
+    return side(1), side(2), center - min(v[1] for v in sweep.values())
+
+
+rows = [["LR"] + [f"L = {length}" for length in runs]]
+for g in imp.GROUPS:
+    cells = [g]
+    for length, r in runs.items():
+        sw = r["sweep"].get(g, {})
+        cells.append(f"{drops(sw)[0]:.2f} / {drops(sw)[1]:.2f} / {drops(sw)[2]:.2f}"
+                     if len(sw) == 11 else "running")
+    rows.append(cells)
+story += [P("Importance: TTA drop from the center (pp) at 1 step / 2 steps (mean of both sides) / worst within "
+            "5 steps", "h2"), table(rows, [2.6 * cm] + [2.88 * cm] * len(runs))]
+
+fig, axes = plt.subplots(2, 3, figsize=(10, 6.2), layout="constrained", sharey=True)
+colors_g = {"conv": "#2a78d6", "head": "#eb6834", "norm_bias": "#1baf7a", "whiten_bias": "#6250d6"}
+for ax, (length, r) in zip(axes.flat, runs.items()):
+    ax.set_title(f"L = {length} step{'s' if length > 1 else ''}", loc="left", fontsize=9.5)
+    ax.axhline(0, color="#8c8b86", linewidth=0.8, linestyle=":")
+    for g in imp.GROUPS:
+        sw = r["sweep"].get(g, {})
+        if 0 not in sw:
+            continue
+        offs = sorted(sw)
+        ax.plot(offs, [sw[o][1] - sw[0][1] for o in offs], color=colors_g[g], marker="o", markersize=3.5, label=g)
+    ax.set_xlabel("grid offset from the center (+ = larger LR)")
+    ax.set_xticks(range(-5, 6))
+for ax in axes[:, 0]:
+    ax.set_ylabel("TTA minus the center's (pp)")
+axes.flat[-1].axis("off")
+handles = {}
+for ax in axes.flat:
+    for h, label in zip(*ax.get_legend_handles_labels()):
+        handles.setdefault(label, h)
+axes.flat[-1].legend(handles.values(), handles.keys(), loc="center", frameon=False, fontsize=9)
+imp_path = os.path.join(REPO, "plots", "importance_study.png")
+fig.savefig(imp_path, dpi=140)
+plt.close(fig)
+imp_img = Image(imp_path)
+imp_img.drawWidth, imp_img.drawHeight = 17 * cm, 17 * cm * imp_img.imageHeight / imp_img.imageWidth
+story += [KeepTogether([imp_img, P("Figure 2. One-at-a-time sweeps around each L's joint-search center.",
+                                   "small")])]
+for length, r in runs.items():
+    if len(r["sweep"]) < 4:
+        continue
+    rows = [["LR"] + [f"{o:+d}" for o in range(-5, 6)]]
+    for g in imp.GROUPS:
+        sw = r["sweep"][g]
+        rows.append([f"{g} ({sw[0][0]:g})"] + [f"{sw[o][1] - sw[0][1]:+.2f}" if o in sw else "-"
+                                              for o in range(-5, 6)])
+    story += [KeepTogether([P(f"L = {length}: TTA minus the center's (pp) at each grid offset (center LR in "
+                              f"brackets; center TTA {100 * r['center']['tta']:.2f})", "h2"),
+                            table(rows, [3.4 * cm] + [1.23 * cm] * 11)])]
+
+
+def attach_headings(flowables):
+    """Keep each subheading on the same page as the table / figure that follows it."""
+    out = []
+    for item in flowables:
+        if (isinstance(item, KeepTogether) and out and isinstance(out[-1], Paragraph)
+                and out[-1].style.name == "h2"):
+            out[-1] = KeepTogether([out[-1], item])
+        else:
+            out.append(item)
+    return out
+
+
+story = attach_headings(story)
 
 
 def footer(canvas, doc):
     canvas.saveState()
     canvas.setFont("Helvetica", 7.5)
     canvas.setFillColor(MUTED)
-    canvas.drawString(2 * cm, 1.2 * cm, "Cooldown study (batch size 2000)")
+    canvas.drawString(2 * cm, 1.2 * cm, "Interval search experiments (batch size 2000)")
     canvas.drawRightString(A4[0] - 2 * cm, 1.2 * cm, f"page {doc.page}")
     canvas.restoreState()
 

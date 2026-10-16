@@ -1,0 +1,7 @@
+One seed: single-run noise is about 0.13 pp, so ground-truth differences of that size are not resolved. Interval 1's ground truth is flat (93.85-94.06 from 0.047 to 0.6) and interval 3's is non-monotone (0.028: 93.99, 0.047: 93.79, 0.078: 94.00), so regrets of about 0.2 pp or less at those intervals are within noise.
+
+All five 40-step lookahead variants pick the same LR at intervals 1 and 2, and the three searched-constant variants (conv only, shared, four per group) pick the same LR at every interval. How the other three groups cool down (continuing their ground-truth schedules, one shared multiplier, or their own multipliers) never changed the pick. Four searched multipliers score slightly higher in absolute terms than one but rank the candidates the same way.
+
+The 40-step lookahead picks a smaller LR than the ground truth where the ground truth is clearly peaked: interval 2 (all variants pick 0.078 where 0.13 is best, 0.26 pp regret) and interval 4 (0.028-0.047 where 0.078 is best, 0.21-0.29 pp). No lookahead is worse at intervals 2 and 4 (0.34 / 0.29 pp) and always picks the smallest or second-smallest candidate after interval 1.
+
+Linear decay and searched constants differ only at intervals 3 and 4, in opposite directions (linear conv-only is better at interval 3, searched constants at interval 4), both by about 0.2-0.3 pp: not resolved with one seed.
