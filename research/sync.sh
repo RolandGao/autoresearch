@@ -1,6 +1,6 @@
 #!/bin/bash
-# Commit code, research scripts, writeup and finished logs, push, and copy the logs into
-# the main checkout's logs/ (where the user looks). Usage: research/sync.sh "<message>"
+# Commit code, research scripts, writeup and finished logs, and push to master
+# (the main checkout gets them by pulling master). Usage: research/sync.sh "<message>"
 # Logs of still-running processes are skipped (no trailing completion marker yet is fine:
 # only logs whose writer pid is gone are committed).
 set -u
@@ -13,7 +13,6 @@ for f in logs/*.log; do
     continue  # Still being written.
   fi
   git add "$f"
-  cp --update=none "$f" /workspace/autoresearch/logs/ 2>/dev/null
 done
 git add train_cifar.py test_train_cifar.py research/*.py research/*.sh 2>/dev/null
 [ -f interval_search_writeup.txt ] && git add interval_search_writeup.txt
