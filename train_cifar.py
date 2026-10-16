@@ -3043,6 +3043,16 @@ for batch_size in (2000, 500, 125):
             batch_size, "b", transform, None, **common)
         RUN_CONFIGS[f"auto_b_v1ffnr_bs{batch_size}{suffix}"] = auto_config(
             batch_size, "b", transform, None, **common, revisit=False)
+# v4: each candidate scored by the better of a linear and a geometric lookahead.
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for scenario in ("a", "b"):
+            extra = (dict(coarse_mult=None, coarse_scan=3, scan_lookahead=5)
+                     if scenario == "b" else {})
+            RUN_CONFIGS[f"auto_{scenario}_v4_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, shape="linear", cooldown_searched="max",
+                cooldown_fraction=1, **extra)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -4346,7 +4356,14 @@ def run_auto_search(run, model, config):
       cooldown_fraction: lookahead length total // cooldown_fraction (0 = none).
       cooldown_searched: lookahead LR of searched groups = mult x main LR; a number,
         or "search" (one mult shared by the searched groups, searched every interval
-        on the x0.6 grid capped at 1, starting from the previous interval's value).
+        on the x0.6 grid capped at 1, starting from the previous interval's value),
+        "linear" (main LR decaying linearly to 0 over the lookahead), "linear_search"
+        (from a searched mult x main LR, capped at 1, linearly to 0), "plan" (from a
+        searched absolute level per searched group, carried between intervals, linearly
+        to 0), "geometric" (knots main LR x ratio**j one interval apart, the last decaying
+        to 0; ratio searched each interval on a x0.8 grid capped at 1, from 0.64), or "max"
+        (the better of the linear and geometric lookaheads; ~2x the lookahead cost).
+        cooldown_fraction=1 makes the lookahead the rest of the run.
       cooldown_others: non-searched groups in the lookahead: "continue" (their schedule),
         a number m (constant m x their mean LR over the main interval), "shared" (the
         searched groups' mult) or "search" (their own searched mult).
@@ -4405,7 +4422,7 @@ def run_auto_search(run, model, config):
         if not spec["initial"] > 0 or not 0 < spec["mult"] < 1:
             raise ValueError(f"{path}: needs initial > 0 and 0 < mult < 1")
     searched_mode, others_mode = tuning["cooldown_searched"], tuning["cooldown_others"]
-    if not (searched_mode in ("search", "linear", "linear_search", "plan", "geometric")
+    if not (searched_mode in ("search", "linear", "linear_search", "plan", "geometric", "max")
             or isinstance(searched_mode, (int, float))):
         raise ValueError("cooldown_searched must be a number, search, linear, linear_search or plan")
     if not (others_mode in ("continue", "shared", "search") or isinstance(others_mode, (int, float))):
@@ -4435,12 +4452,12 @@ def run_auto_search(run, model, config):
     current = {path: snap_lr_to_grid(spec["initial"], spec["mult"]) for path, spec in params.items()}
     mults = {
         "searched": (1.0 if searched_mode in ("search", "linear", "linear_search", "plan",
-                                              "geometric")
+                                              "geometric", "max")
                      else float(searched_mode)),
         "others": (1.0 if others_mode == "search"
                    else None if others_mode in ("continue", "shared") else float(others_mode)),
     }
-    if searched_mode == "geometric":  # Lookahead knots decay by a searched ratio.
+    if searched_mode in ("geometric", "max"):  # Lookahead knots decay by a searched ratio.
         mults["ratio"] = 0.64
     if searched_mode == "plan":  # Absolute lookahead start level per searched group.
         mults.update({f"plan:{path}": value for path, value in current.items()})
@@ -4482,6 +4499,30 @@ def run_auto_search(run, model, config):
             for path, value in values.items():
                 sched[path] = main_window(committed[path], path, start, main_steps, value)
             ok = trainer.train(sched, main_steps)
+            if ok and look_eff and searched_mode == "max":
+                # The better of a linear (to 0) and a geometric (searched ratio) lookahead.
+                cool_start = start + main_steps
+                main_state = trainer.snapshot()
+                results = []
+                for kind in ("linear", "geometric"):
+                    trainer.restore(main_state)
+                    cool_sched = dict(sched)
+                    for path, value in values.items():
+                        cool_sched[path] = (
+                            linear_window(sched[path], cool_start, look_eff, value, 0.0)
+                            if kind == "linear" else
+                            segments_window(sched[path], cool_start, geometric_lookahead(
+                                value, cool["ratio"], look_eff, interval_steps)))
+                    results.append(trainer.score(metric) if trainer.train(cool_sched, look_eff)
+                                   else float("-inf"))
+                value = max(results)
+                value = value if isfinite(value) else float("-inf")
+                evaluations += 1
+                cache[key] = value
+                print(f"  eval {hparam_text(values)} cooldown={hparam_text(cool)} "
+                      f"linear={format_log_value(results[0])} geometric={format_log_value(results[1])} "
+                      f"{metric}={format_log_value(value)}", flush=True)
+                return value
             if ok and look_eff:
                 cool_start = start + main_steps
                 for path, value in values.items():
@@ -4536,7 +4577,7 @@ def run_auto_search(run, model, config):
                     if mode in ("search", "linear_search") and (k == "searched" or other_paths)]
             if searched_mode == "plan":
                 keys = [key for key in mults if key.startswith("plan:")]
-            if searched_mode == "geometric":
+            if searched_mode in ("geometric", "max"):
                 keys = ["ratio"]
             def capped_grid(cap):
                 return lambda v, d: grid_neighbour(v, 0.6, d, cap)
