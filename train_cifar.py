@@ -2892,6 +2892,26 @@ for batch_size in (2000, 500, 125):
     for name, searched_mult in AUTO_REST.items():
         RUN_CONFIGS[f"auto_a_{name}_bs{batch_size}"] = auto_config(
             batch_size, "a", None, None, cooldown_searched=searched_mult, cooldown_fraction=1)
+# Staircase baselines: each group's schedule replaced by n constant steps at the exact mean
+# of its configured schedule over each step (grid: snapped to the x0.6 grid). Measures what
+# piecewise-constant intervals cost by themselves.
+for batch_size in (2000, 500, 125):
+    for scenario, names in (("a", ("conv",)), ("b", TRAINED_LR_GROUPS)):
+        for n in (5, 10, 20):
+            for snap in (False, True):
+                config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
+                for name in names:
+                    lines = config["param_groups"][name]["lr_scheduler"]
+                    total = sum(line[0] for line in lines)
+                    bounds = [total * i // n for i in range(n + 1)]
+                    means = [sum(schedule_value_at_step(lines, s) for s in range(a, b)) / (b - a)
+                             for a, b in zip(bounds, bounds[1:])]
+                    config["param_groups"][name]["lr_scheduler"] = [
+                        (b - a, round_hparam(0.6 ** round(log(m) / log(0.6))) if snap and m
+                         else round_hparam(m))
+                        for a, b, m in zip(bounds, bounds[1:], means)
+                    ]
+                RUN_CONFIGS[f"staircase_{scenario}_n{n}{'_grid' if snap else ''}_bs{batch_size}"] = config
 AUTO_B_COOLDOWNS = {  # name: (cooldown_searched, cooldown_fraction); no other trained groups
     "s036": (0.36, 5),
     "ssearch": ("search", 5),
