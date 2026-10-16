@@ -1,4 +1,4 @@
-"""Summarize auto-search logs: python research/summarize_auto.py [name-substring ...]
+"""Summarize auto-search logs: python research/summarize_auto.py [--since YYYYMMDD_HHMMSS] [name ...]
 
 One row per search run (experiment, seed): search seconds, evaluations, the search's own
 final TTA, the held-out mean over seeds 100-107 and the committed schedules; then the
@@ -12,9 +12,17 @@ import sys
 from collections import defaultdict
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-filters = sys.argv[1:]
+args = sys.argv[1:]
+since = ""  # --since YYYYMMDD_HHMMSS: only logs started at or after this time
+if "--since" in args:
+    i = args.index("--since")
+    since = args[i + 1]
+    args = args[:i] + args[i + 2:]
+filters = args
 rows = []
 for path in sorted(glob.glob(os.path.join(REPO, "logs", "cifar_baseline_*.log"))):
+    if since and os.path.basename(path)[len("cifar_baseline_"):][:15] < since:
+        continue
     run = result = heldout = None
     finals = {}
     with open(path, encoding="utf-8", errors="replace") as log:
