@@ -2940,6 +2940,15 @@ for batch_size in (2000, 500, 125):
     for name, options in AUTO_SHAPES.items():
         RUN_CONFIGS[f"auto_a_{name}_bs{batch_size}"] = auto_config(
             batch_size, "a", None, None, **options)
+# Scenario B with a +-3-decade scan of each LR in the first interval instead of the greedy
+# coarse climb (which left norm_bias at 1, costing ~0.26 pp).
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for tag, mode in (("v1", "linear"), ("v2plan", "plan")):
+            RUN_CONFIGS[f"auto_b_{tag}scan_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, "b", transform, None, shape="linear", cooldown_searched=mode,
+                cooldown_fraction=1, coarse_mult=None, coarse_scan=3)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -4199,7 +4208,7 @@ AUTO_REQUIRED = {
     "cooldown_searched", "cooldown_others", "move_margin", "max_side_steps",
 }
 AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "shape",
-                 "final_anneal"}
+                 "final_anneal", "coarse_scan"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4230,6 +4239,9 @@ def run_auto_search(run, model, config):
       max_side_steps: most grid steps one direction may move in one climb.
       coarse_mult (optional): in the first interval, first climb each LR on this grid
         (e.g. 0.1), then refine on params' grid.
+      coarse_scan (optional, default 0): in the first interval, evaluate each LR at
+        x10**k for k in [-coarse_scan, coarse_scan] (others fixed) and keep the best
+        before refining; robust where a greedy coarse climb stalls on a flat, noisy LR.
       revisit (optional, default True): repeat coordinate passes until none moves.
       shape (optional, default "constant"): "linear" makes each searched value the LR
         at the end of its interval, reached linearly from the previous interval's end
@@ -4270,6 +4282,7 @@ def run_auto_search(run, model, config):
         raise ValueError("cooldown_others must be continue, shared, search or a number")
     margin, max_side = tuning["move_margin"], tuning["max_side_steps"]
     coarse = tuning.get("coarse_mult")
+    scan = tuning.get("coarse_scan", 0)
     revisit = tuning.get("revisit", True)
     larger_within = tuning.get("larger_within", 0.0)
     shape = tuning.get("shape", "constant")
@@ -4414,6 +4427,13 @@ def run_auto_search(run, model, config):
         before = evaluations
         if look:
             search_mults()
+        if start == 0 and scan:
+            # Scan each LR over x10 steps (+-scan decades), keep the best, then refine.
+            for path in params:
+                values = [round_hparam(current[path] * 10.0 ** k) for k in range(-scan, scan + 1)]
+                scores = {v: evaluate(dict(current, **{path: v}), mults) for v in values}
+                current = dict(current, **{path: max(values, key=lambda v: scores[v])})
+            current = {path: snap_lr_to_grid(v, params[path]["mult"]) for path, v in current.items()}
         if start == 0 and coarse:
             search_main(lambda path: coarse)
             current = {path: snap_lr_to_grid(v, params[path]["mult"]) for path, v in current.items()}
