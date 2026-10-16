@@ -2940,6 +2940,13 @@ for batch_size in (2000, 500, 125):
     for name, options in AUTO_SHAPES.items():
         RUN_CONFIGS[f"auto_a_{name}_bs{batch_size}"] = auto_config(
             batch_size, "a", None, None, **options)
+# How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
+for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    for name in names:
+        config["param_groups"][name]["lr_scheduler"] = scale_lr_schedule(
+            config["param_groups"][name]["lr_scheduler"], 1.0)
+    RUN_CONFIGS[f"baseline_bs2000_{tag}"] = config
 # v2: the lookahead level is searched (adapts to transforms): "plan" = absolute level per
 # group, "linsearch" = searched mult x main LR, both decaying linearly to 0 by the end.
 for batch_size in (2000, 500, 125):
