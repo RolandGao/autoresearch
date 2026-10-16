@@ -53,6 +53,14 @@ def P(text, style="body"):
     return Paragraph(text, S[style])
 
 
+def keep(items):
+    """KeepTogether with nested KeepTogethers flattened (nesting makes reportlab break pages)."""
+    flat = []
+    for item in items:
+        flat += item._content if isinstance(item, KeepTogether) else [item]
+    return KeepTogether(flat)
+
+
 def table(rows, widths):
     data = [[Paragraph(str(c), S["cellb"] if r == 0 else S["cell"]) for c in row]
             for r, row in enumerate(rows)]
@@ -166,7 +174,7 @@ for m in cs.METHODS:
     rows.append(cells)
 story += [P("Picked LR (regret, pp)", "h2"),
           table(rows, [5.0 * cm, 3.0 * cm, 3.0 * cm, 3.0 * cm, 3.0 * cm]),
-          KeepTogether([img, P("Figure 1. Each method's score per candidate, relative to its own best "
+          keep([img, P("Figure 1. Each method's score per candidate, relative to its own best "
                                "(the point at 0 is its pick).", "small")])]
 for s in summaries:
     if s is None:
@@ -180,7 +188,7 @@ for s in summaries:
                                       for c in s["cands"]])
     width = (17 - 5.2) / len(s["cands"])
     partial = "" if len(s["cands"]) == 7 else f" - PARTIAL, {len(s['cands'])} of 7 candidates so far"
-    story += [KeepTogether([P(f"Interval {k + 1}: score per candidate conv LR (bold: each row's best){partial}",
+    story += [keep([P(f"Interval {k + 1}: score per candidate conv LR (bold: each row's best){partial}",
                               "h2"), table(rows, [5.2 * cm] + [width * cm] * len(s["cands"]))])]
     conv_only, shared, per = (s["chosen"][m] for m in ("conv_only", "shared", "per_group"))
     rows = [["Candidate", "Conv only: chosen m (seeds)", "Shared: chosen m (seeds)",
@@ -265,7 +273,7 @@ fig.savefig(imp_path, dpi=140)
 plt.close(fig)
 imp_img = Image(imp_path)
 imp_img.drawWidth, imp_img.drawHeight = 17 * cm, 17 * cm * imp_img.imageHeight / imp_img.imageWidth
-story += [KeepTogether([imp_img, P("Figure 2. One-at-a-time sweeps around each L's joint-search center.",
+story += [keep([imp_img, P("Figure 2. One-at-a-time sweeps around each L's joint-search center.",
                                    "small")])]
 for length, r in runs.items():
     if len(r["sweep"]) < 4:
@@ -275,7 +283,7 @@ for length, r in runs.items():
         sw = r["sweep"][g]
         rows.append([f"{g} ({sw[0][0]:g})"] + [f"{sw[o][1] - sw[0][1]:+.2f}" if o in sw else "-"
                                               for o in range(-5, 6)])
-    story += [KeepTogether([P(f"L = {length}: TTA minus the center's (pp) at each grid offset (center LR in "
+    story += [keep([P(f"L = {length}: TTA minus the center's (pp) at each grid offset (center LR in "
                               f"brackets; center TTA {100 * r['center']['tta']:.2f})", "h2"),
                             table(rows, [3.4 * cm] + [1.23 * cm] * 11)])]
 
@@ -374,9 +382,12 @@ fig.savefig(fam_path, dpi=140)
 plt.close(fig)
 fam_img = Image(fam_path)
 fam_img.drawWidth, fam_img.drawHeight = 17 * cm, 17 * cm * fam_img.imageHeight / fam_img.imageWidth
-story += [KeepTogether([fam_img, P("Figure 3. Applied conv LR (spec x transform) of each family's best schedule; "
+story += [keep([fam_img, P("Figure 3. Applied conv LR (spec x transform) of each family's best schedule; "
                                    "the black line is the baseline's applied LR, which a perfect search would "
                                    "reproduce.", "small")])]
+fam_obs = os.path.join(REPO, "research", "family_study_observations.txt")
+if os.path.exists(fam_obs):
+    story += [P("Observations", "h2")] + [P(x) for x in open(fam_obs).read().split("\n\n") if x.strip()]
 
 
 def attach_headings(flowables):
@@ -385,7 +396,7 @@ def attach_headings(flowables):
     for item in flowables:
         if (isinstance(item, KeepTogether) and out and isinstance(out[-1], Paragraph)
                 and out[-1].style.name == "h2"):
-            out[-1] = KeepTogether([out[-1], item])
+            out[-1] = keep([out[-1], item])
         else:
             out.append(item)
     return out

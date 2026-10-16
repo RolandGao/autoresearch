@@ -1,0 +1,11 @@
+Held-out means over 8 seeds have a standard error of about 0.045 pp, so differences below about 0.1 pp are not resolved. Target: the baseline's 93.92 on the same seeds.
+
+5 knots is the only family at the target in all four conditions (93.91-93.96), and its start, the oracle projected onto the family, is already there (93.91-93.97): 5 knots on the grid represent all four target schedules.
+
+5 constant intervals cannot represent them. The projected oracle scores 93.52 / 93.32 / 93.81 / 93.11 (no transform / ramp / reverse ramp / wave); search raises that to 93.62 / 93.65 / 93.86 / 93.82, still 0.1-0.3 pp short without a transform and under ramp. Its last value stays at 0.028 without a transform: a constant final interval at that level does not anneal.
+
+Linear decay matches the target without a transform (93.86-93.92) and under wave (93.91), but no initial LR compensates a ramp (93.42) or a reverse ramp (93.59): the shape is wrong, not the scale. Power decay fixes the ramp (93.95 with p = 2, lr 0.36: decaying faster) but not the reverse ramp (93.59): (1-t)^p cannot rise early, which the reverse ramp needs.
+
+2 and 3 knots land in between (93.68-94.06), with no consistent ordering across conditions.
+
+Single-seed search sometimes leaves a good start for a worse held-out schedule (no transform: linear 93.92 -> 93.86, 3 knots 93.94 -> 93.86, 5 constant intervals moved its first value from 0.22 to 0.13): the search optimizes seed 0's test score, the same winner's curse as before.
