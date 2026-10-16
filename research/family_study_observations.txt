@@ -1,8 +1,8 @@
 Held-out means over 8 seeds have a standard error of about 0.045 pp, so differences below about 0.1 pp are not resolved. Target: the baseline's 93.92 on the same seeds.
 
-5 knots is the only family at the target in all four conditions (93.91-93.96), and its start, the oracle projected onto the family, is already there (93.91-93.97): 5 knots on the grid represent all four target schedules.
+5 knots is the only family that reached the target in all four conditions in these searches (93.91-93.96), and its start, the oracle projected onto the family, is already there (93.91-93.97): 5 knots on the grid represent all four target schedules.
 
-5 constant intervals cannot represent them. The projected oracle scores 93.52 / 93.32 / 93.81 / 93.11 (no transform / ramp / reverse ramp / wave); search raises that to 93.62 / 93.65 / 93.86 / 93.82, still 0.1-0.3 pp short without a transform and under ramp. Its last value stays at 0.028 without a transform: a constant final interval at that level does not anneal.
+5 constant intervals of conv reach only 93.62 here without a transform (start 93.52), but that is this search's local optimum, not the family's limit. Earlier 5-interval searches at batch size 2000 (same held-out seeds) did better: conv only 93.77 (interval search; conv 0.13, 0.13, 0.078, 0.047, 0.01) and 93.72 (global_interval), and with all four LRs as 5 intervals 93.92 (interval search), matching the baseline, and 93.85 (global_interval). This search kept the last interval at 0.028 where those went to 0.01-0.017: a single-seed coordinate search can stop one grid step short at the end. Under the transforms it reaches 93.65 / 93.86 / 93.82 (ramp / reverse ramp / wave; projected starts 93.32 / 93.81 / 93.11).
 
 Linear decay matches the target without a transform (93.86-93.92) and under wave (93.91), but no initial LR compensates a ramp (93.42) or a reverse ramp (93.59): the shape is wrong, not the scale. Power decay fixes the ramp (93.95 with p = 2, lr 0.36: decaying faster) but not the reverse ramp (93.59): (1-t)^p cannot rise early, which the reverse ramp needs.
 
