@@ -153,3 +153,18 @@ Results
      norm_bias at 1 in one of two runs (93.58 vs 93.86): mean 93.72, 588 s. Replaced by a
      +-3-decade scan per LR in the first interval (coarse_scan).
    - Next: polish (full-run knot coordinate search after the online pass, margin 0.1 pp).
+
+9. Polish: full-run knot coordinate search after the online pass (v1p; margin 0.1 pp, <= 3 rounds)
+   Each candidate moves one knot of the piecewise-linear schedule one x0.6 grid step and is
+   trained from scratch to the end (same seed), accepted if it beats the best by > 0.1 pp;
+   the accepted run's own model is the result.
+                              none            ramp            wave
+     v1   (online only)       93.94 / 132 s   93.57 / 150 s   93.59 / 128 s
+     v1p  (online + polish)   93.93 / 267 s   93.92 / 369 s   93.59 / 259 s
+     BS 500 v1p               93.81 / 335 s   93.76 (1 seed)        (baseline_bs500 93.83)
+   - Polish fixes the ramp failure (v1's lookahead too high late -> knots 1-3 raised by one
+     step each in round 0) and leaves the no-transform result at the baseline.
+   - It does not fix wave: the online pass left knots 1 and 3 two to three grid steps too
+     high, and a one-knot, one-step move gains less than the single-seed noise (~0.17 pp),
+     so no move clears the margin. Polish needs a starting point within ~1 step.
+   - Next: v3p = the transform-adaptive online pass (geometric lookahead) + polish.
