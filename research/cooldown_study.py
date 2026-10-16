@@ -50,6 +50,8 @@ def summary(k):
     seeds = sorted({s for by_c in scores["truth"].values() for s in by_c})
     cands = sorted(scores["truth"])
     complete = [c for c in cands if all(len(scores[m][c]) == len(seeds) for m in METHODS)]
+    if not complete:
+        return None  # Still running: no candidate has every method on every seed yet.
     curves = {m: {c: sum(scores[m][c].values()) / len(scores[m][c]) for c in complete} for m in METHODS}
     truth = curves["truth"]
     best = max(truth.values())
