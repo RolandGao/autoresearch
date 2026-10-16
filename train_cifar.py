@@ -2766,6 +2766,27 @@ for suffix, start in GLOBAL_INTERVAL_STARTS.items():
     )
     RUN_CONFIGS[f"global_interval_{suffix}_bs2000"] = config
 
+# Plain runs (no search) of the interval-wise schedules: the 20%/20% interval-search
+# starts above (interval_*) and the best global_interval schedules found from them
+# (global_interval_*; logs/cifar_baseline_20261016_020523_059746Z_244331.log and
+# ..._020524_076790Z_244401.log), for held-out seeds 100-107.
+GLOBAL_INTERVAL_BESTS = {
+    "conv_lr": dict(conv=(0.22, 0.13, 0.078, 0.078, 0.017)),
+    "lrs": dict(
+        conv=(0.22, 0.13, 0.078, 0.047, 0.01),
+        head=(2100, 2100, 2100, 1300, 1300),
+        norm_bias=(770, 770, 770, 460, 280),
+        whiten_bias=(460, 460, 280, 280, 170),
+    ),
+}
+for source, schedules in (("interval", GLOBAL_INTERVAL_STARTS),
+                          ("global_interval", GLOBAL_INTERVAL_BESTS)):
+    for suffix, start in schedules.items():
+        config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+        for name, lrs in start.items():
+            config["param_groups"][name]["lr_scheduler"] = [(40, lr) for lr in lrs]
+        RUN_CONFIGS[f"schedule_{source}_{suffix}_bs2000"] = config
+
 # K-FAC Jacobian for every trainable group, and the hybrid with Muon2 convs (12-hour
 # study, dev/KJ_NOTES.md). kfacjac_all_bs{BS}: conv (whole-matrix normalization,
 # momentum before conditioning), head (conditioning first, G pseudoinverse) and both
@@ -2823,15 +2844,20 @@ for batch_size, (source, head_lr, bias_lr) in KFACJAC_HYBRID.items():
 # Runs to execute, in order, by name in RUN_CONFIGS. Each runs once per seed
 # (seeds 0, 1, ..., num_seeds - 1); set num_seeds = 8 for a seed-averaged comparison.
 experiments_to_run = [
-    # global_interval from the 20%/20% interval-search schedules at BS 2000.
-    "global_interval_conv_lr_bs2000",
-    "global_interval_lrs_bs2000",
+    # Held-out seeds 100-107: best global_interval schedules, their interval-search
+    # starts, and the baseline (CIFAR_SEEDS=100,...,107).
+    *(f"schedule_{source}_{suffix}_bs2000"
+      for source in ("global_interval", "interval") for suffix in ("conv_lr", "lrs")),
+    "baseline_bs2000",
 ]
 # CIFAR_EXPERIMENTS (comma-separated names) overrides the list, e.g. one run per GPU.
 if os.environ.get("CIFAR_EXPERIMENTS"):
     experiments_to_run = os.environ["CIFAR_EXPERIMENTS"].split(",")
 num_seeds = 1
 SEEDS = list(range(num_seeds))
+# CIFAR_SEEDS (comma-separated integers) overrides the seeds, e.g. held-out 100-107.
+if os.environ.get("CIFAR_SEEDS"):
+    SEEDS = [int(seed) for seed in os.environ["CIFAR_SEEDS"].split(",")]
 RUNS = [(name, RUN_CONFIGS[name]) for name in experiments_to_run]
 
 
