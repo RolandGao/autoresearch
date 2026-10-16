@@ -124,3 +124,15 @@ Results
    - Fix under test: final_anneal ("linear": last interval decays to 0 from its searched
      value; "search": try constant and annealed, keep the better), shape="linear"
      (piecewise-linear knots), and 10 intervals.
+
+7. v1 = piecewise-linear knots + lookahead to the end decaying linearly to 0 (scenario A, BS 2000)
+     no transform: 93.94 held-out (2 search seeds: 93.95, 93.93), 132 s, 21.5 evaluations
+       -> matches the baseline (93.94). final_anneal on constant intervals: 93.86-93.91.
+     ramp:  93.57 (do-nothing 93.42; baseline 93.92) -> recovers only 0.15 of 0.50 pp
+     wave:  93.59 (do-nothing 93.72)                 -> worse than not searching
+   Why: the lookahead's linear decay is specified in spec space, so under a transform its
+   applied shape is distorted (ramp: the applied LR rises late in the lookahead), which
+   penalizes high-LR candidates (ramp: chose 0.13-0.22 where the compensating spec is ~0.9).
+   Only "decays to 0 by the end" survives a multiplicative transform. Next (v2): search the
+   lookahead's level ("plan": an absolute start level per group, carried between intervals;
+   "linsearch": a searched mult x candidate LR), still decaying linearly to 0 by the end.

@@ -2940,6 +2940,16 @@ for batch_size in (2000, 500, 125):
     for name, options in AUTO_SHAPES.items():
         RUN_CONFIGS[f"auto_a_{name}_bs{batch_size}"] = auto_config(
             batch_size, "a", None, None, **options)
+# v2: the lookahead level is searched (adapts to transforms): "plan" = absolute level per
+# group, "linsearch" = searched mult x main LR, both decaying linearly to 0 by the end.
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for scenario in ("a", "b"):
+            for tag, mode in (("plan", "plan"), ("linsearch", "linear_search")):
+                RUN_CONFIGS[f"auto_{scenario}_v2{tag}_bs{batch_size}{suffix}"] = auto_config(
+                    batch_size, scenario, transform, None, shape="linear",
+                    cooldown_searched=mode, cooldown_fraction=1)
 # Candidate algorithm v1: piecewise-linear knots every 20%, lookahead to the end of the run
 # with the searched LRs decaying linearly to 0 (others continue their schedules).
 AUTO_V1 = dict(shape="linear", cooldown_searched="linear", cooldown_fraction=1)
@@ -4246,8 +4256,9 @@ def run_auto_search(run, model, config):
         if not spec["initial"] > 0 or not 0 < spec["mult"] < 1:
             raise ValueError(f"{path}: needs initial > 0 and 0 < mult < 1")
     searched_mode, others_mode = tuning["cooldown_searched"], tuning["cooldown_others"]
-    if not (searched_mode in ("search", "linear") or isinstance(searched_mode, (int, float))):
-        raise ValueError("cooldown_searched must be a number, 'search' or 'linear'")
+    if not (searched_mode in ("search", "linear", "linear_search", "plan")
+            or isinstance(searched_mode, (int, float))):
+        raise ValueError("cooldown_searched must be a number, search, linear, linear_search or plan")
     if not (others_mode in ("continue", "shared", "search") or isinstance(others_mode, (int, float))):
         raise ValueError("cooldown_others must be continue, shared, search or a number")
     margin, max_side = tuning["move_margin"], tuning["max_side_steps"]
@@ -4269,10 +4280,13 @@ def run_auto_search(run, model, config):
     committed = copy.deepcopy(trainer.base_schedules)
     current = {path: snap_lr_to_grid(spec["initial"], spec["mult"]) for path, spec in params.items()}
     mults = {
-        "searched": 1.0 if searched_mode in ("search", "linear") else float(searched_mode),
+        "searched": (1.0 if searched_mode in ("search", "linear", "linear_search", "plan")
+                     else float(searched_mode)),
         "others": (1.0 if others_mode == "search"
                    else None if others_mode in ("continue", "shared") else float(others_mode)),
     }
+    if searched_mode == "plan":  # Absolute lookahead start level per searched group.
+        mults.update({f"plan:{path}": value for path, value in current.items()})
     other_paths = [
         path for path, lines in trainer.base_schedules.items()
         if path.endswith(".initial_lr") and path not in params and not is_zero_lr_schedule(lines)
@@ -4311,11 +4325,15 @@ def run_auto_search(run, model, config):
             if ok and look:
                 cool_start = start + main_steps
                 for path, value in values.items():
-                    sched[path] = (
-                        linear_window(sched[path], cool_start, look, value, 0.0)
-                        if searched_mode == "linear"
-                        else constant_window(sched[path], cool_start, look,
-                                             cool["searched"] * value))
+                    if searched_mode == "plan":
+                        sched[path] = linear_window(sched[path], cool_start, look,
+                                                    cool[f"plan:{path}"], 0.0)
+                    elif searched_mode in ("linear", "linear_search"):
+                        sched[path] = linear_window(sched[path], cool_start, look,
+                                                    cool["searched"] * value, 0.0)
+                    else:
+                        sched[path] = constant_window(sched[path], cool_start, look,
+                                                      cool["searched"] * value)
                 others = cool["searched"] if others_mode == "shared" else cool["others"]
                 if others is not None:
                     for path in other_paths:
@@ -4352,10 +4370,15 @@ def run_auto_search(run, model, config):
         def search_mults():
             nonlocal mults
             keys = [k for k, mode in (("searched", searched_mode), ("others", others_mode))
-                    if mode == "search" and (k == "searched" or other_paths)]
+                    if mode in ("search", "linear_search") and (k == "searched" or other_paths)]
+            if searched_mode == "plan":
+                keys = [key for key in mults if key.startswith("plan:")]
+            def capped_grid(cap):
+                return lambda v, d: grid_neighbour(v, 0.6, d, cap)
+
             for key in keys:
                 mults, _, _ = climb(mults, key, lambda m: evaluate(current, m),
-                                    lambda v, d: grid_neighbour(v, 0.6, d, cap=1.0))
+                                    capped_grid(None if key.startswith("plan:") else 1.0))
 
         def search_main(grid_of):
             nonlocal current
