@@ -3097,6 +3097,20 @@ for batch_size in (2000, 500, 125):
             RUN_CONFIGS[f"auto_{scenario}_v1x2_bs{batch_size}{suffix}"] = auto_config(
                 batch_size, scenario, transform, None, shape="linear",
                 cooldown_searched="linear", cooldown_fraction=1, passes=2, **extra)
+# reseed: later passes / polish rounds on fresh seeds (no lock-in of a lucky incumbent).
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for scenario in ("a", "b"):
+            extra = (dict(coarse_mult=None, coarse_scan=3, scan_lookahead=5)
+                     if scenario == "b" else {})
+            common = dict(shape="linear", cooldown_searched="linear", cooldown_fraction=1,
+                          reseed=True, **extra)
+            RUN_CONFIGS[f"auto_{scenario}_v1x2r_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, **common, passes=2)
+            RUN_CONFIGS[f"auto_{scenario}_v1pr_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, **common, polish_rounds=3,
+                polish_margin=0.001)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -3792,6 +3806,16 @@ def window_mean(lines, start, steps):
     return sum(schedule_value_at_step(lines, s) for s in range(start, start + steps)) / steps
 
 
+def segment_trainer_with_seed(model, config, seed):
+    """A SegmentTrainer whose run uses TRAINING_SEED = seed (restored afterwards)."""
+    global TRAINING_SEED
+    previous, TRAINING_SEED = TRAINING_SEED, seed
+    try:
+        return SegmentTrainer(model, config)
+    finally:
+        TRAINING_SEED = previous
+
+
 def run_interval_search(run, model, config, debug):
     """Choose each committed interval using replayed main/cooldown training probes.
 
@@ -4388,7 +4412,7 @@ AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "sh
                  "final_anneal", "coarse_scan", "polish_rounds", "polish_margin",
                  "polish_scale_first", "alternate",
                  "scan_lookahead", "polish_steps", "freeze_threshold", "first_knot",
-                 "passes"}
+                 "passes", "reseed"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4443,6 +4467,9 @@ def run_auto_search(run, model, config):
         initial state; later passes start each interval at the previous pass's knot and use
         the previous pass's schedule as the lookahead (joined from the candidate's value),
         so late, reliable decisions correct the lookahead of early ones.
+      reseed (optional, default False): later passes and every polish round use a fresh
+        training seed and re-score the incumbent on it, so an incumbent selected for a lucky
+        score on one seed does not lock out its neighbours (winner's curse).
       first_knot (optional, default False; shape="linear"): in the first interval also
         search each LR's start value (the first segment need not be flat).
       freeze_threshold (optional, default 0): after the coarse scan, an LR whose best
@@ -4496,6 +4523,7 @@ def run_auto_search(run, model, config):
     freeze_threshold = tuning.get("freeze_threshold", 0.0)
     first_knot = tuning.get("first_knot", False)
     passes = tuning.get("passes", 1)
+    reseed = tuning.get("reseed", False)
     revisit = tuning.get("revisit", True)
     larger_within = tuning.get("larger_within", 0.0)
     shape = tuning.get("shape", "constant")
@@ -4553,6 +4581,9 @@ def run_auto_search(run, model, config):
     for pass_index in range(passes):
         if pass_index:
             plan = {path: list(committed[path]) for path in params}
+            if reseed:  # A fresh seed: the plan's own (selected, lucky) score is not reused.
+                trainer = segment_trainer_with_seed(model, config, TRAINING_SEED + 1000 * pass_index)
+                initial_state = trainer.snapshot()
             trainer.restore(initial_state)
             committed = copy.deepcopy(trainer.base_schedules)
             knots.clear()
@@ -4809,6 +4840,13 @@ def run_auto_search(run, model, config):
         # trainer holds its final state: keep it as the result (no replay).
         accepted_state = trainer.snapshot()
         for round_index in range(polish_rounds):
+            if reseed:  # Re-score the incumbent on a fresh seed every round.
+                trainer = segment_trainer_with_seed(
+                    model, config, TRAINING_SEED + 1000 * (passes + round_index))
+                initial_state = trainer.snapshot()
+                polish_cache.clear()
+                best_score = full_run(best_knots)
+                accepted_state = trainer.snapshot()
             moved = False
             for path in params:
                 # Whole-schedule scale moves first; knot moves only for groups where a
