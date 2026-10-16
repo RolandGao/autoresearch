@@ -1,0 +1,196 @@
+LR-schedule search for CIFAR-10 airbench: report
+===============================================
+2026-10-16. Condensed from interval_search_writeup.txt (the run-by-run log; "W§n" below points
+to its section n). Code: train_cifar.py (algorithm="auto"), research/. Logs: logs/.
+
+
+1. QUESTION
+-----------
+Find one LR-schedule search algorithm that
+  (a) matches the baseline's held-out accuracy,
+  (b) uses as little search time as possible,
+  (c) still works when an unknown transformation is applied on top of the schedule, and
+  (d) still works at batch sizes 500 and 125 (development was at batch size 2000).
+
+Two use cases:
+  Scenario A  "good baseline": search one LR schedule (conv), keep the other groups on the
+              baseline. Also tested: head only; conv + head.
+  Scenario B  "from scratch": search all four trained LRs (conv, head, norm_bias, whiten_bias),
+              each starting at 1.0 with no knowledge of scale or shape.
+
+
+2. DEFINITIONS
+--------------
+Spec schedule     The LR schedule the search writes (piecewise linear, see §3).
+Transform         A fixed multiplier applied to the spec LR before training uses it, unknown
+                  to the search (x = fraction of training):
+                    ramp: x 4^(2x-1)       (x0.25 at the start -> x4 at the end)
+                    wave: x 2^sin(2 pi x)   (x1 -> x2 -> x0.5 -> x1)
+                  With a transform, the best spec schedule is no longer linear decay.
+                  Plot: plots/lr_transforms.pdf.
+Held-out TTA      Quality of a found schedule: the schedule is retrained from scratch on
+                  seeds 100-107 and the test-set TTA accuracy is averaged. Search decisions
+                  use the test set too (intentional).
+Search seeds      Independent runs of a search (seeds 0-3). Tables report the mean held-out
+                  TTA over n search seeds.
+Cost              Wall-clock seconds of the search on one A100 (held-out retraining
+                  excluded). One full BS 2000 training run takes ~10 s.
+Lookahead         To score a candidate LR for the current interval, the search trains the
+                  interval and then continues training for a while with some assumed future
+                  schedule; the TTA at the end is the candidate's score.
+Do-nothing        The baseline schedule kept unchanged under the transform (no search):
+                  the accuracy a search has to recover.
+
+
+3. RECOMMENDED ALGORITHM: multi-pass knot search
+-------------------------------------------------
+Configs: auto_a_v1x3m2t_* (scenario A), auto_b_v1x2m3fas_* (scenario B).
+
+Representation
+  Each searched LR is piecewise linear through 6 knots, one at every 20% of training
+  (5 intervals). Knot values are on the grid round(0.6^k, 2 significant figures).
+
+Pass 1 (one forward sweep over the 5 intervals)
+  For interval i = 1..5:
+    1. For each searched LR, coordinate-climb the knot at the END of interval i on the grid,
+       starting from the previous interval's value: try one step up and one step down, move
+       while the score improves, stop otherwise.
+    2. Score of a candidate = TTA after: train interval i from the committed state, then a
+       lookahead to the END of training in which the searched LRs decay linearly from the
+       candidate value to 0 (the other groups follow their own schedules).
+    3. Commit interval i with the best knot; continue from the trained state.
+
+Passes 2 and 3 (same sweep, restarted from the initial weights)
+    - Each interval starts its climb at the previous pass's knot.
+    - The lookahead is the previous pass's schedule for the rest of training, rescaled by
+      (candidate / previous knot), so one decision shifts the whole remaining schedule.
+    - Every candidate is scored as the mean over 2 fresh training seeds.
+
+Scenario B additions
+    - First interval: before climbing, scan each LR over 7 values x10^-3 .. x10^3 around its
+      start (with a 20% lookahead) and keep the best.
+    - Last interval: also try annealing every searched LR linearly to 0, keep it if better.
+    - Two passes instead of three; pass 2 scores on 3 seeds and does not rescale the tail.
+
+
+4. RESULTS
+----------
+4.1 Scenario A (conv searched from its baseline LR; other groups on the baseline)
+    Held-out TTA, mean over n search seeds; cost in seconds.
+
+  BS 2000   baseline 93.94                 none          ramp          wave
+            do-nothing                       -           93.42         93.72
+            v1x3m2t (recommended, n=4)     93.96 (588)   93.93 (611)   93.88 (572)
+            v1x2m2t (two passes, n=4)      93.98 (359)   93.78 (387)   93.91 (362)
+            v1 (pass 1 only, n=2)          93.94 (132)   93.57 (150)   93.59 (128)
+
+  BS 500    baseline 93.83 (old) / 94.01 (new, see 4.4)
+            do-nothing (old baseline)        -           93.35         93.68
+            v1x3m2t (n=2)                  93.79 (725)   93.75 (774)   93.84 (736)
+
+  BS 125    baseline 93.85 (old) / 93.88 (new)
+            do-nothing (old baseline)        -           93.31         93.68
+            v1x3m2t (n=2, ramp n=1)        93.64 (1159)  93.88 (1109)  93.72 (1164)
+
+  Other searched groups (BS 2000, two passes on 3 seeds, n=2):
+            head only          none 93.91   ramp 93.90   (do-nothing ramp 93.82)
+            conv + head        none 93.99   ramp 93.73   (do-nothing ramp 93.30)
+
+4.2 Scenario B (all four LRs from 1.0), algorithm v1x2m3fas
+  BS 2000   baseline 93.94     none 93.96 (1690 s)   ramp 93.81 (1867 s)   wave 93.91 (1814 s)  n=2
+            do-nothing ramp 93.25; one-pass variants under ramp: 93.05 - 93.36
+  BS 500    baseline 94.01     none 93.89 (2471 s)   ramp 93.90 (2698 s)                        n=1
+  BS 125    not run yet.
+
+4.3 Verdict
+  - BS 2000: goal met in both scenarios and all three conditions (within 0.13 pp, mostly
+    within 0.05 pp), at ~600 s per searched LR (~60 training runs) or ~1800 s from scratch.
+    For comparison, the earlier 8-seed global search cost 3780 s for four groups and cannot
+    change a schedule's shape.
+  - BS 500 and 125: NOT met. Against the new baselines (94.01 / 93.88) scenario A is
+    0.1 - 0.25 pp short at BS 500 and 0.0 - 0.25 pp short at BS 125.
+
+4.4 Baseline update (after the campaign)
+  baseline_bs500 and baseline_bs125 were replaced by the best SGD configs of the earlier
+  seed-averaged searches (same optimizers: Muon2 conv, SGD head and biases):
+    BS 500: 94.01 +- 0.12 (seeds 100-115); previous baseline 93.83 on seeds 100-107.
+    BS 125: 93.88 +- 0.11 (seeds 100-115); previous baseline 93.85 (a tie).
+  All BS 500 / 125 numbers in 4.1 and 4.2 used the previous baselines, both as the target and
+  as the fixed groups of scenario A. Reruns on the new baselines are in progress
+  (do-nothing on the new baselines: BS 500 ramp 93.37 / wave 93.77, BS 125 93.48 / 93.69).
+
+
+5. FINDINGS (each with its evidence)
+------------------------------------
+F1  Short lookaheads choose LRs that are too small, whatever the cooldown.  (W§1, W§4)
+    At interval 2 (BS 2000), the final accuracy is best for conv LR 0.13-0.22, but every
+    40-step lookahead (72 cooldown designs) scores 0.078 best. Lookahead 80 steps: 0.078/0.13
+    tie. Lookahead to the end of training: 0.13, matching the truth.
+
+F2  The cooldown of the non-searched groups does not matter.  (W§1, W§5)
+    Continue / linear to 0 / any constant multiplier, even 0: proxy scores change by
+    <= 0.1 pp and the ranking never changes. Full searches agree (93.73 - 93.78 for all three).
+
+F3  The final interval must anneal to 0; constant intervals are otherwise fine.  (W§6)
+    Baseline as 5 constant steps: 93.64. The same with the last step decaying to 0: 93.90.
+    10 constant steps: 93.92. The 5-knot grid is enough at every batch size: grid-snapped
+    baseline knots score 93.98 / 93.84 / 93.83 (BS 2000 / 500 / 125).
+
+F4  A fixed lookahead shape breaks under transforms.  (W§7, W§8)
+    Pass 1 alone: ramp 93.57, wave 93.59 (do-nothing 93.42 / 93.72). Under ramp the linear
+    lookahead applies too much LR late, so high early LRs are penalized (it picked 0.13 where
+    0.9 is right). Searching the lookahead's level or a geometric shape helped some
+    transforms and hurt the untransformed case (93.74).
+
+F5  Using the previous pass's schedule as the lookahead fixes the transform problem.  (W§12)
+    Two passes: ramp 93.94. Late decisions have short lookaheads and are nearly unbiased, so
+    each pass corrects the lookahead of the earlier intervals.
+
+F6  Single-seed searches suffer a winner's curse.  (W§12, W§13)
+    Rescoring pass 1's schedule on the same seed reproduces its score exactly, so a schedule
+    chosen for a lucky score (94.09 on its seed, ~93.4 held out) is never displaced. Scoring
+    later passes on fresh seeds (mean of 2-3) fixes this and makes joint moves of several
+    knots visible (wave: 93.50 -> 93.83 -> 93.89 with tail rescaling).
+
+F7  A few training steps reveal the conv LR scale, but not the bias LRs.  (W§2, W§10)
+    Best LR after 16 steps: conv 0.1 at every batch size (full-run optimum 0.047-0.22), head
+    within ~10x. Bias LRs give flat curves. Yet norm_bias matters over a full run (LR 1
+    instead of 99 costs 0.26 pp) while whiten_bias does not (no cost) - so freezing LRs that
+    look flat early is harmful (scenario B ramp 93.13).
+
+F8  The representation is not the limit under transforms.  (W§11)
+    Oracle knots (baseline / transform, grid-snapped) score ramp 93.91, wave 93.97.
+
+
+6. WHAT DID NOT WORK
+--------------------
+  Searched cooldown multiplier with 20% lookahead       best 93.78 at BS 2000 (W§5)
+  "Prefer a larger LR within x pp" correction             93.54 - 93.65 (W§5)
+  Lookahead level searched ("plan") / geometric shape    93.82 / 93.74 untransformed (W§8)
+  Max of linear and geometric lookahead                  93.88 / 93.71 / 93.76 (W§11)
+  Full-run knot polish (single seed)                     fixes ramp, not wave (W§9)
+  Sloped first segment ("first_knot")                    wave 93.45 - 93.61 (W§12)
+  Cheap pass 1 (20% lookahead) + pass 2                  93.64 (W§17)
+  Freezing LRs that look flat in the first scan          scenario B ramp 93.13 (W§16)
+
+
+7. OPEN PROBLEMS
+----------------
+  - BS 500 / 125 fall short of the new baselines (4.3). The gap is in the search, not the
+    representation (F3). The search's own score exceeds its held-out score by ~0.2 pp at
+    BS 125, a sign of remaining winner's curse.
+  - Search-to-search spread is 0.1 - 0.4 pp, about the size of the differences between the
+    best variants; 2-4 search seeds rank them only coarsely.
+  - Scenario B costs ~3x scenario A, and grows ~2x from BS 2000 to BS 125.
+  - Only multiplicative transforms were tested.
+
+
+8. REPRODUCE
+------------
+  Run a search:      CIFAR_EXPERIMENTS=auto_a_v1x3m2t_bs2000_ramp CIFAR_SEEDS=0 \
+                       /venv/main/bin/python train_cifar.py
+                     (the log ends with auto_result and heldout_result lines)
+  Summarize:         python research/summarize_auto.py [--since YYYYMMDD_HHMMSS] [name ...]
+  Comparison table:  python research/final_table.py
+  Probes:            research/cooldown_fidelity.py (F1, F2), research/overfit_screen.py (F7)
+  Transform plot:    python research/plot_transforms.py  ->  plots/lr_transforms.pdf
