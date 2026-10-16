@@ -3,6 +3,8 @@ final result? Data: research/cooldown_search_probe.py logs via research/cooldown
 python research/make_cooldown_study.py"""
 import os
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import matplotlib
 
@@ -106,7 +108,9 @@ img.drawWidth, img.drawHeight = 17 * cm, 17 * cm * img.imageHeight / img.imageWi
 story = [
     P("Cooldown study: which 40-step lookahead ranks interval candidates like the final result?",
       "title"),
-    P("2026-10-16. Experiment design by Roland Gao; runs and analysis by Claude. Code: "
+    P(f"Built {datetime.now(ZoneInfo('America/Los_Angeles')):%Y-%m-%d %H:%M} PT"
+      f"{'' if all(x is not None and len(x['cands']) == 7 for x in summaries) else ' (runs in progress; partial results are marked)'}. "
+      "Experiment design by Roland Gao; runs and analysis by Claude. Code: "
       "research/cooldown_search_probe.py (runs), research/cooldown_study.py (analysis), "
       "research/make_cooldown_study.py (this PDF). Logs: logs/research_cooldown_search_probe_*.", "sub"),
     P("Question", "h1"),
@@ -150,7 +154,8 @@ rows = [["Method"] + [f"Interval {k + 1}" for k in range(4)]]
 for m in cs.METHODS:
     cells = [cs.LABELS[m]]
     for s in summaries:
-        cells.append("running" if s is None else f"{s['picks'][m]:g} ({s['regret'][m]:.2f})")
+        partial = "" if s is None or len(s["cands"]) == 7 else f" [{len(s['cands'])}/7 candidates]"
+        cells.append("running" if s is None else f"{s['picks'][m]:g} ({s['regret'][m]:.2f}){partial}")
     rows.append(cells)
 story += [P("Picked LR (regret, pp)", "h2"),
           table(rows, [5.0 * cm, 3.0 * cm, 3.0 * cm, 3.0 * cm, 3.0 * cm]),
@@ -167,7 +172,8 @@ for s in summaries:
         rows.append([cs.LABELS[m]] + [f"<b>{curve[c]:.2f}</b>" if curve[c] == top else f"{curve[c]:.2f}"
                                       for c in s["cands"]])
     width = (17 - 5.2) / len(s["cands"])
-    story += [P(f"Interval {k + 1}: score per candidate conv LR (bold: each row's best)", "h2"),
+    partial = "" if len(s["cands"]) == 7 else f" - PARTIAL, {len(s['cands'])} of 7 candidates so far"
+    story += [P(f"Interval {k + 1}: score per candidate conv LR (bold: each row's best){partial}", "h2"),
               table(rows, [5.2 * cm] + [width * cm] * len(s["cands"]))]
     conv_only, shared, per = (s["chosen"][m] for m in ("conv_only", "shared", "per_group"))
     rows = [["Candidate", "Conv only: chosen m (seeds)", "Shared: chosen m (seeds)",

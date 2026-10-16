@@ -1,0 +1,339 @@
+# commit a1a05c42ed005708222579727af04851620bd268 (dirty: M research/cooldown_search_probe.py;  M research/cooldown_study.py;  M research/make_cooldown_study.py)
+# args {"batch_size": 2000, "interval": 3, "seeds": "0", "offsets": "1,2,3", "mults": "1,0.6,0.36,0.22,0.13,0.078,0.047,0"}
+# worker w7 gpu GPU-71986cb1-2ece-f97a-a920-2c1d33f0af7c
+# source
+# | """Which one-interval (40-step at BS 2000) lookahead ranks candidates like the truth? (F1)
+# | 
+# | Scenario A probe: conv is searched; head, norm_bias and whiten_bias follow the baseline.
+# | For interval k (length L = T/5) and candidate constant conv LRs c:
+# |   truth        baseline until kL, c for L steps, then the baseline schedule to the end
+# |   none         TTA right after the interval
+# |   lin_conv     L-step lookahead: conv decays linearly c -> 0, the other groups continue
+# |   lin_all      L-step lookahead: every group decays linearly to 0 (conv from c, the others
+# |                from their current value)
+# |   shared       L-step lookahead, one searched constant cooldown multiplier m for all four
+# |                groups (conv at m x c, each other group at m x its mean LR over the interval):
+# |                the best m on this seed
+# |   conv_only    L-step lookahead, one searched constant multiplier for conv only (m x c); the
+# |                other groups follow their baseline (ground-truth) schedules: the best m
+# |   per_group    L-step lookahead, four searched multipliers (one per group): coordinate search
+# |                from the best shared m, one group at a time, until no group changes (<= 3 passes)
+# | Every evaluated cooldown is logged, so other selections can be recomputed.
+# | """
+# | import argparse
+# | 
+# | from common import base_config, emit, new_model, open_log, t
+# | 
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--batch-size", type=int, default=2000)
+# | parser.add_argument("--interval", type=int, required=True)
+# | parser.add_argument("--seeds", default="0,1,2,3")
+# | parser.add_argument("--offsets", default="-3,-2,-1,0,1,2,3")
+# | parser.add_argument("--mults", default="1,0.6,0.36,0.22,0.13,0.078,0.047,0")
+# | args = parser.parse_args()
+# | log = open_log(f"cooldown_search_probe_bs{args.batch_size}_k{args.interval}", args, __file__)
+# | 
+# | config = base_config(args.batch_size, None)
+# | mults = [float(m) for m in args.mults.split(",")]
+# | groups = ("conv", "head", "norm_bias", "whiten_bias")
+# | model = new_model()
+# | candidates = None
+# | for seed in [int(s) for s in args.seeds.split(",")]:
+# |     t.TRAINING_SEED = seed
+# |     trainer = t.SegmentTrainer(model, config)
+# |     base = trainer.base_schedules
+# |     total = trainer.total_steps
+# |     length = total // 5
+# |     start = args.interval * length
+# |     cool_start = start + length
+# |     if cool_start + length > total:
+# |         raise SystemExit("the last interval has no room for a lookahead")
+# |     if candidates is None:
+# |         centre = t.lr_grid_index(t.window_mean(base["conv.initial_lr"], start, length), 0.6)
+# |         candidates = [t.round_hparam(0.6 ** (centre + o)) for o in map(int, args.offsets.split(","))]
+# |         emit(log, kind="setup", total=total, length=length, start=start, candidates=candidates)
+# |     means = {g: t.window_mean(base[f"{g}.initial_lr"], start, length) for g in groups}
+# |     trainer.train(base, start)
+# |     prefix = trainer.snapshot()
+# |     for c in candidates:
+# |         trainer.restore(prefix)
+# |         main = dict(base)
+# |         main["conv.initial_lr"] = t.constant_window(base["conv.initial_lr"], start, length, c)
+# |         ok = trainer.train(main, length)
+# |         main_state = trainer.snapshot()
+# |         emit(log, kind="none", seed=seed, c=c, score=trainer.score("tta_val_acc") if ok else None)
+# |         if ok:
+# |             ok = trainer.train(main, total - cool_start)
+# |         emit(log, kind="truth", seed=seed, c=c, score=trainer.score("tta_val_acc") if ok else None)
+# |         cache = {}
+# | 
+# |         def lookahead(kind, ms):
+# |             """Score of the L-step lookahead; ms maps group -> constant multiplier."""
+# |             key = (kind, tuple(ms[g] for g in groups) if ms else None)
+# |             if key in cache:
+# |                 return cache[key]
+# |             trainer.restore(main_state)
+# |             sched = dict(main)
+# |             for g in groups:
+# |                 path = f"{g}.initial_lr"
+# |                 level = c if g == "conv" else means[g]
+# |                 if kind in ("lin_conv", "const_conv") and g != "conv":
+# |                     continue  # The other groups continue their schedules.
+# |                 if kind in ("lin_conv", "lin_all"):
+# |                     first = c if g == "conv" else t.schedule_value_at_step(base[path], cool_start)
+# |                     sched[path] = t.linear_window(main[path], cool_start, length, first, 0.0)
+# |                 else:
+# |                     sched[path] = t.constant_window(main[path], cool_start, length, ms[g] * level)
+# |             ok = trainer.train(sched, length)
+# |             value = trainer.score("tta_val_acc") if ok else float("-inf")
+# |             cache[key] = value
+# |             emit(log, kind="eval", seed=seed, c=c, mode=kind,
+# |                  mults=None if ms is None else [ms[g] for g in groups], score=value)
+# |             return value
+# | 
+# |         emit(log, kind="lin_conv", seed=seed, c=c, score=lookahead("lin_conv", None))
+# |         emit(log, kind="lin_all", seed=seed, c=c, score=lookahead("lin_all", None))
+# |         shared = {m: lookahead("const", {g: m for g in groups}) for m in mults}
+# |         best_m = max(mults, key=lambda m: shared[m])
+# |         emit(log, kind="shared", seed=seed, c=c, m=best_m, score=shared[best_m])
+# |         conv_only = {m: lookahead("const_conv", {g: m for g in groups}) for m in mults}
+# |         best_conv = max(mults, key=lambda m: conv_only[m])
+# |         emit(log, kind="conv_only", seed=seed, c=c, m=best_conv, score=conv_only[best_conv])
+# |         current = {g: best_m for g in groups}
+# |         best = shared[best_m]
+# |         for _ in range(3):
+# |             moved = False
+# |             for g in groups:
+# |                 for m in mults:
+# |                     trial = dict(current, **{g: m})
+# |                     value = lookahead("const", trial)
+# |                     if value > best:
+# |                         current, best, moved = trial, value, True
+# |             if not moved:
+# |                 break
+# |         emit(log, kind="per_group", seed=seed, c=c, mults=[current[g] for g in groups], score=best)
+# | emit(log, kind="done", train_steps=trainer.train_steps)
+
+{"kind": "setup", "total": 200, "length": 40, "start": 120, "candidates": [0.047, 0.028, 0.017], "time": 1792180252.2}
+{"kind": "none", "seed": 0, "c": 0.047, "score": 0.9284999966621399, "time": 1792180260.9}
+{"kind": "truth", "seed": 0, "c": 0.047, "score": 0.9377999901771545, "time": 1792180263.1}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "lin_conv", "mults": null, "score": 0.9371999502182007, "time": 1792180265.4}
+{"kind": "lin_conv", "seed": 0, "c": 0.047, "score": 0.9371999502182007, "time": 1792180265.4}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "lin_all", "mults": null, "score": 0.9375999569892883, "time": 1792180267.6}
+{"kind": "lin_all", "seed": 0, "c": 0.047, "score": 0.9375999569892883, "time": 1792180267.6}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [1.0, 1.0, 1.0, 1.0], "score": 0.9300999641418457, "time": 1792180269.8}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.6, 0.6, 0.6, 0.6], "score": 0.9364999532699585, "time": 1792180272.1}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 0.36, 0.36], "score": 0.9388999938964844, "time": 1792180274.3}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.22, 0.22, 0.22, 0.22], "score": 0.9381999969482422, "time": 1792180276.6}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.13, 0.13, 0.13, 0.13], "score": 0.9368999600410461, "time": 1792180278.8}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.078, 0.078, 0.078, 0.078], "score": 0.9354999661445618, "time": 1792180281.0}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.047, 0.047, 0.047, 0.047], "score": 0.9346999526023865, "time": 1792180283.3}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.0, 0.0, 0.0, 0.0], "score": 0.9284999966621399, "time": 1792180285.4}
+{"kind": "shared", "seed": 0, "c": 0.047, "m": 0.36, "score": 0.9388999938964844, "time": 1792180285.4}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const_conv", "mults": [1.0, 1.0, 1.0, 1.0], "score": 0.9303999543190002, "time": 1792180287.7}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const_conv", "mults": [0.6, 0.6, 0.6, 0.6], "score": 0.9368999600410461, "time": 1792180289.9}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const_conv", "mults": [0.36, 0.36, 0.36, 0.36], "score": 0.9388999938964844, "time": 1792180292.1}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const_conv", "mults": [0.22, 0.22, 0.22, 0.22], "score": 0.9382999539375305, "time": 1792180294.4}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const_conv", "mults": [0.13, 0.13, 0.13, 0.13], "score": 0.9371999502182007, "time": 1792180296.6}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const_conv", "mults": [0.078, 0.078, 0.078, 0.078], "score": 0.9354999661445618, "time": 1792180298.9}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const_conv", "mults": [0.047, 0.047, 0.047, 0.047], "score": 0.9351999759674072, "time": 1792180301.1}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const_conv", "mults": [0.0, 0.0, 0.0, 0.0], "score": 0.9301999807357788, "time": 1792180303.3}
+{"kind": "conv_only", "seed": 0, "c": 0.047, "m": 0.36, "score": 0.9388999938964844, "time": 1792180303.3}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [1.0, 0.36, 0.36, 0.36], "score": 0.9296000003814697, "time": 1792180305.5}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.6, 0.36, 0.36, 0.36], "score": 0.9362999796867371, "time": 1792180307.8}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.22, 0.36, 0.36, 0.36], "score": 0.9382999539375305, "time": 1792180310.0}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.13, 0.36, 0.36, 0.36], "score": 0.9370999932289124, "time": 1792180312.2}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.078, 0.36, 0.36, 0.36], "score": 0.9357999563217163, "time": 1792180314.5}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.047, 0.36, 0.36, 0.36], "score": 0.9350999593734741, "time": 1792180316.7}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.0, 0.36, 0.36, 0.36], "score": 0.9303999543190002, "time": 1792180318.9}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 1.0, 0.36, 0.36], "score": 0.9386000037193298, "time": 1792180321.1}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.6, 0.36, 0.36], "score": 0.9387999773025513, "time": 1792180323.3}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 0.36, 0.36], "score": 0.9387999773025513, "time": 1792180325.6}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.13, 0.36, 0.36], "score": 0.9388999938964844, "time": 1792180327.8}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.078, 0.36, 0.36], "score": 0.9387999773025513, "time": 1792180330.1}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.047, 0.36, 0.36], "score": 0.9388999938964844, "time": 1792180332.3}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.0, 0.36, 0.36], "score": 0.9386999607086182, "time": 1792180334.5}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 1.0, 0.36], "score": 0.9389999508857727, "time": 1792180336.8}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 0.6, 0.36], "score": 0.9387999773025513, "time": 1792180339.0}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 0.22, 0.36], "score": 0.9387999773025513, "time": 1792180341.3}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 0.13, 0.36], "score": 0.9386000037193298, "time": 1792180343.5}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 0.078, 0.36], "score": 0.9386999607086182, "time": 1792180345.7}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 0.047, 0.36], "score": 0.9388999938964844, "time": 1792180348.0}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 0.0, 0.36], "score": 0.9387999773025513, "time": 1792180350.2}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 1.0, 1.0], "score": 0.9389999508857727, "time": 1792180352.5}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 1.0, 0.6], "score": 0.9389999508857727, "time": 1792180354.7}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 1.0, 0.22], "score": 0.9389999508857727, "time": 1792180357.0}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 1.0, 0.13], "score": 0.9389999508857727, "time": 1792180359.2}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 1.0, 0.078], "score": 0.9389999508857727, "time": 1792180361.4}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 1.0, 0.047], "score": 0.9389999508857727, "time": 1792180363.7}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.36, 1.0, 0.0], "score": 0.9389999508857727, "time": 1792180365.9}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [1.0, 0.36, 1.0, 0.36], "score": 0.9299999475479126, "time": 1792180368.1}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.6, 0.36, 1.0, 0.36], "score": 0.9368000030517578, "time": 1792180370.4}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.22, 0.36, 1.0, 0.36], "score": 0.9383999705314636, "time": 1792180372.6}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.13, 0.36, 1.0, 0.36], "score": 0.9371999502182007, "time": 1792180374.9}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.078, 0.36, 1.0, 0.36], "score": 0.9358999729156494, "time": 1792180377.1}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.047, 0.36, 1.0, 0.36], "score": 0.9345999956130981, "time": 1792180379.3}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.0, 0.36, 1.0, 0.36], "score": 0.9307999610900879, "time": 1792180381.5}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 1.0, 1.0, 0.36], "score": 0.9388999938964844, "time": 1792180383.7}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.6, 1.0, 0.36], "score": 0.9387999773025513, "time": 1792180385.9}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 1.0, 0.36], "score": 0.9393999576568604, "time": 1792180388.1}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.13, 1.0, 0.36], "score": 0.9393999576568604, "time": 1792180390.3}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.078, 1.0, 0.36], "score": 0.9391999840736389, "time": 1792180392.6}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.047, 1.0, 0.36], "score": 0.9389999508857727, "time": 1792180394.8}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.0, 1.0, 0.36], "score": 0.9387999773025513, "time": 1792180397.0}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 0.6, 0.36], "score": 0.9387999773025513, "time": 1792180399.2}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 0.22, 0.36], "score": 0.9386999607086182, "time": 1792180401.4}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 0.13, 0.36], "score": 0.9388999938964844, "time": 1792180403.7}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 0.078, 0.36], "score": 0.9388999938964844, "time": 1792180405.9}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 0.047, 0.36], "score": 0.9386000037193298, "time": 1792180408.1}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 0.0, 0.36], "score": 0.9388999938964844, "time": 1792180410.4}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 1.0, 1.0], "score": 0.9393999576568604, "time": 1792180412.6}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 1.0, 0.6], "score": 0.9393999576568604, "time": 1792180414.9}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 1.0, 0.22], "score": 0.9393999576568604, "time": 1792180417.1}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 1.0, 0.13], "score": 0.9393999576568604, "time": 1792180419.3}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 1.0, 0.078], "score": 0.9393999576568604, "time": 1792180421.6}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 1.0, 0.047], "score": 0.9393999576568604, "time": 1792180423.8}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.36, 0.22, 1.0, 0.0], "score": 0.9393999576568604, "time": 1792180426.1}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [1.0, 0.22, 1.0, 0.36], "score": 0.9302999973297119, "time": 1792180428.3}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.6, 0.22, 1.0, 0.36], "score": 0.9372999668121338, "time": 1792180430.5}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.22, 0.22, 1.0, 0.36], "score": 0.9384999871253967, "time": 1792180432.8}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.13, 0.22, 1.0, 0.36], "score": 0.9372999668121338, "time": 1792180435.0}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.078, 0.22, 1.0, 0.36], "score": 0.9358999729156494, "time": 1792180437.3}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.047, 0.22, 1.0, 0.36], "score": 0.9345999956130981, "time": 1792180439.5}
+{"kind": "eval", "seed": 0, "c": 0.047, "mode": "const", "mults": [0.0, 0.22, 1.0, 0.36], "score": 0.9307000041007996, "time": 1792180441.6}
+{"kind": "per_group", "seed": 0, "c": 0.047, "mults": [0.36, 0.22, 1.0, 0.36], "score": 0.9393999576568604, "time": 1792180441.6}
+{"kind": "none", "seed": 0, "c": 0.028, "score": 0.9317999482154846, "time": 1792180443.9}
+{"kind": "truth", "seed": 0, "c": 0.028, "score": 0.9369999766349792, "time": 1792180446.1}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "lin_conv", "mults": null, "score": 0.937999963760376, "time": 1792180448.4}
+{"kind": "lin_conv", "seed": 0, "c": 0.028, "score": 0.937999963760376, "time": 1792180448.4}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "lin_all", "mults": null, "score": 0.9375999569892883, "time": 1792180450.6}
+{"kind": "lin_all", "seed": 0, "c": 0.028, "score": 0.9375999569892883, "time": 1792180450.6}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [1.0, 1.0, 1.0, 1.0], "score": 0.9350000023841858, "time": 1792180452.8}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.6, 0.6, 0.6], "score": 0.9372999668121338, "time": 1792180455.1}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.36, 0.36, 0.36, 0.36], "score": 0.9371999502182007, "time": 1792180457.3}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.22, 0.22, 0.22, 0.22], "score": 0.9363999962806702, "time": 1792180459.6}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.13, 0.13, 0.13, 0.13], "score": 0.9353999495506287, "time": 1792180461.8}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.078, 0.078, 0.078, 0.078], "score": 0.9343000054359436, "time": 1792180464.0}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.047, 0.047, 0.047, 0.047], "score": 0.934499979019165, "time": 1792180466.3}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.0, 0.0, 0.0, 0.0], "score": 0.9317999482154846, "time": 1792180468.4}
+{"kind": "shared", "seed": 0, "c": 0.028, "m": 0.6, "score": 0.9372999668121338, "time": 1792180468.4}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const_conv", "mults": [1.0, 1.0, 1.0, 1.0], "score": 0.9355999827384949, "time": 1792180470.7}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const_conv", "mults": [0.6, 0.6, 0.6, 0.6], "score": 0.9370999932289124, "time": 1792180472.9}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const_conv", "mults": [0.36, 0.36, 0.36, 0.36], "score": 0.9370999932289124, "time": 1792180475.1}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const_conv", "mults": [0.22, 0.22, 0.22, 0.22], "score": 0.9361000061035156, "time": 1792180477.4}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const_conv", "mults": [0.13, 0.13, 0.13, 0.13], "score": 0.9359999895095825, "time": 1792180479.6}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const_conv", "mults": [0.078, 0.078, 0.078, 0.078], "score": 0.9346999526023865, "time": 1792180481.9}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const_conv", "mults": [0.047, 0.047, 0.047, 0.047], "score": 0.9345999956130981, "time": 1792180484.1}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const_conv", "mults": [0.0, 0.0, 0.0, 0.0], "score": 0.9328999519348145, "time": 1792180486.2}
+{"kind": "conv_only", "seed": 0, "c": 0.028, "m": 0.6, "score": 0.9370999932289124, "time": 1792180486.2}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [1.0, 0.6, 0.6, 0.6], "score": 0.9347999691963196, "time": 1792180488.5}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.36, 0.6, 0.6, 0.6], "score": 0.9371999502182007, "time": 1792180490.7}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.22, 0.6, 0.6, 0.6], "score": 0.9361000061035156, "time": 1792180493.0}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.13, 0.6, 0.6, 0.6], "score": 0.9363999962806702, "time": 1792180495.2}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.078, 0.6, 0.6, 0.6], "score": 0.9354999661445618, "time": 1792180497.5}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.047, 0.6, 0.6, 0.6], "score": 0.9343000054359436, "time": 1792180499.7}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.0, 0.6, 0.6, 0.6], "score": 0.9325999617576599, "time": 1792180501.9}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.6, 0.6], "score": 0.9373999834060669, "time": 1792180504.1}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.36, 0.6, 0.6], "score": 0.9373999834060669, "time": 1792180506.3}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.22, 0.6, 0.6], "score": 0.9371999502182007, "time": 1792180508.6}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.13, 0.6, 0.6], "score": 0.9368000030517578, "time": 1792180510.8}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.078, 0.6, 0.6], "score": 0.9369999766349792, "time": 1792180513.1}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.047, 0.6, 0.6], "score": 0.9370999932289124, "time": 1792180515.3}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.0, 0.6, 0.6], "score": 0.9373999834060669, "time": 1792180517.5}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 1.0, 0.6], "score": 0.9376999735832214, "time": 1792180519.8}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.36, 0.6], "score": 0.9378999471664429, "time": 1792180522.0}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.22, 0.6], "score": 0.9370999932289124, "time": 1792180524.3}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.13, 0.6], "score": 0.9369999766349792, "time": 1792180526.5}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.078, 0.6], "score": 0.9371999502182007, "time": 1792180528.8}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.047, 0.6], "score": 0.9368999600410461, "time": 1792180531.0}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.0, 0.6], "score": 0.9371999502182007, "time": 1792180533.2}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.36, 1.0], "score": 0.9378999471664429, "time": 1792180535.5}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.36, 0.36], "score": 0.9378999471664429, "time": 1792180537.7}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.36, 0.22], "score": 0.9378999471664429, "time": 1792180540.0}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.36, 0.13], "score": 0.9378999471664429, "time": 1792180542.2}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.36, 0.078], "score": 0.9378999471664429, "time": 1792180544.4}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.36, 0.047], "score": 0.9378999471664429, "time": 1792180546.7}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 1.0, 0.36, 0.0], "score": 0.9378999471664429, "time": 1792180548.9}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [1.0, 1.0, 0.36, 0.6], "score": 0.9359999895095825, "time": 1792180551.2}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.36, 1.0, 0.36, 0.6], "score": 0.9371999502182007, "time": 1792180553.4}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.22, 1.0, 0.36, 0.6], "score": 0.9362999796867371, "time": 1792180555.6}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.13, 1.0, 0.36, 0.6], "score": 0.9361000061035156, "time": 1792180557.9}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.078, 1.0, 0.36, 0.6], "score": 0.9350999593734741, "time": 1792180560.1}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.047, 1.0, 0.36, 0.6], "score": 0.9341999888420105, "time": 1792180562.4}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.0, 1.0, 0.36, 0.6], "score": 0.9327999949455261, "time": 1792180564.5}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.6, 0.36, 0.6], "score": 0.9372999668121338, "time": 1792180566.8}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.36, 0.36, 0.6], "score": 0.9372999668121338, "time": 1792180569.0}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.22, 0.36, 0.6], "score": 0.9371999502182007, "time": 1792180571.2}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.13, 0.36, 0.6], "score": 0.9369999766349792, "time": 1792180573.5}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.078, 0.36, 0.6], "score": 0.9372999668121338, "time": 1792180575.7}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.047, 0.36, 0.6], "score": 0.9368000030517578, "time": 1792180578.0}
+{"kind": "eval", "seed": 0, "c": 0.028, "mode": "const", "mults": [0.6, 0.0, 0.36, 0.6], "score": 0.9369999766349792, "time": 1792180580.2}
+{"kind": "per_group", "seed": 0, "c": 0.028, "mults": [0.6, 1.0, 0.36, 0.6], "score": 0.9378999471664429, "time": 1792180580.2}
+{"kind": "none", "seed": 0, "c": 0.017, "score": 0.9289000034332275, "time": 1792180582.5}
+{"kind": "truth", "seed": 0, "c": 0.017, "score": 0.9364999532699585, "time": 1792180584.7}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "lin_conv", "mults": null, "score": 0.9354999661445618, "time": 1792180586.9}
+{"kind": "lin_conv", "seed": 0, "c": 0.017, "score": 0.9354999661445618, "time": 1792180586.9}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "lin_all", "mults": null, "score": 0.9354999661445618, "time": 1792180589.2}
+{"kind": "lin_all", "seed": 0, "c": 0.017, "score": 0.9354999661445618, "time": 1792180589.2}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [1.0, 1.0, 1.0, 1.0], "score": 0.9351999759674072, "time": 1792180591.4}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.6, 0.6, 0.6], "score": 0.9355999827384949, "time": 1792180593.6}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.36, 0.36, 0.36, 0.36], "score": 0.9348999857902527, "time": 1792180595.9}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.22, 0.22, 0.22, 0.22], "score": 0.9335999488830566, "time": 1792180598.1}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.13, 0.13, 0.13, 0.13], "score": 0.9322999715805054, "time": 1792180600.4}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.078, 0.078, 0.078, 0.078], "score": 0.9318999648094177, "time": 1792180602.6}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.047, 0.047, 0.047, 0.047], "score": 0.9318999648094177, "time": 1792180604.9}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.0, 0.0, 0.0, 0.0], "score": 0.9289000034332275, "time": 1792180607.0}
+{"kind": "shared", "seed": 0, "c": 0.017, "m": 0.6, "score": 0.9355999827384949, "time": 1792180607.0}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const_conv", "mults": [1.0, 1.0, 1.0, 1.0], "score": 0.9347999691963196, "time": 1792180609.2}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const_conv", "mults": [0.6, 0.6, 0.6, 0.6], "score": 0.9350999593734741, "time": 1792180611.5}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const_conv", "mults": [0.36, 0.36, 0.36, 0.36], "score": 0.9348999857902527, "time": 1792180613.7}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const_conv", "mults": [0.22, 0.22, 0.22, 0.22], "score": 0.9333999752998352, "time": 1792180616.0}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const_conv", "mults": [0.13, 0.13, 0.13, 0.13], "score": 0.932699978351593, "time": 1792180618.2}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const_conv", "mults": [0.078, 0.078, 0.078, 0.078], "score": 0.9320999979972839, "time": 1792180620.5}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const_conv", "mults": [0.047, 0.047, 0.047, 0.047], "score": 0.9322999715805054, "time": 1792180622.7}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const_conv", "mults": [0.0, 0.0, 0.0, 0.0], "score": 0.9300999641418457, "time": 1792180624.9}
+{"kind": "conv_only", "seed": 0, "c": 0.017, "m": 0.6, "score": 0.9350999593734741, "time": 1792180624.9}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [1.0, 0.6, 0.6, 0.6], "score": 0.9351999759674072, "time": 1792180627.1}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.36, 0.6, 0.6, 0.6], "score": 0.9347999691963196, "time": 1792180629.3}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.22, 0.6, 0.6, 0.6], "score": 0.9336999654769897, "time": 1792180631.6}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.13, 0.6, 0.6, 0.6], "score": 0.9328999519348145, "time": 1792180633.8}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.078, 0.6, 0.6, 0.6], "score": 0.9319999814033508, "time": 1792180636.1}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.047, 0.6, 0.6, 0.6], "score": 0.9325999617576599, "time": 1792180638.3}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.0, 0.6, 0.6, 0.6], "score": 0.9310999512672424, "time": 1792180640.5}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 0.6, 0.6], "score": 0.9359999895095825, "time": 1792180642.7}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.36, 0.6, 0.6], "score": 0.9359999895095825, "time": 1792180645.0}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.22, 0.6, 0.6], "score": 0.935699999332428, "time": 1792180647.2}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.13, 0.6, 0.6], "score": 0.9357999563217163, "time": 1792180649.4}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.078, 0.6, 0.6], "score": 0.9357999563217163, "time": 1792180651.7}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.047, 0.6, 0.6], "score": 0.935699999332428, "time": 1792180653.9}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.0, 0.6, 0.6], "score": 0.9359999895095825, "time": 1792180656.2}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 1.0, 0.6], "score": 0.936199963092804, "time": 1792180658.4}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 0.36, 0.6], "score": 0.935699999332428, "time": 1792180660.7}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 0.22, 0.6], "score": 0.9355999827384949, "time": 1792180662.9}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 0.13, 0.6], "score": 0.9355999827384949, "time": 1792180665.2}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 0.078, 0.6], "score": 0.9353999495506287, "time": 1792180667.4}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 0.047, 0.6], "score": 0.9352999925613403, "time": 1792180669.6}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 0.0, 0.6], "score": 0.9353999495506287, "time": 1792180671.9}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 1.0, 1.0], "score": 0.936199963092804, "time": 1792180674.1}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 1.0, 0.36], "score": 0.936199963092804, "time": 1792180676.4}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 1.0, 0.22], "score": 0.936199963092804, "time": 1792180678.6}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 1.0, 0.13], "score": 0.936199963092804, "time": 1792180680.9}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 1.0, 0.078], "score": 0.936199963092804, "time": 1792180683.1}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 1.0, 0.047], "score": 0.936199963092804, "time": 1792180685.3}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 1.0, 1.0, 0.0], "score": 0.936199963092804, "time": 1792180687.6}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [1.0, 1.0, 1.0, 0.6], "score": 0.9351999759674072, "time": 1792180689.8}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.36, 1.0, 1.0, 0.6], "score": 0.9351999759674072, "time": 1792180692.1}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.22, 1.0, 1.0, 0.6], "score": 0.933899998664856, "time": 1792180694.3}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.13, 1.0, 1.0, 0.6], "score": 0.9328999519348145, "time": 1792180696.6}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.078, 1.0, 1.0, 0.6], "score": 0.9323999881744385, "time": 1792180698.8}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.047, 1.0, 1.0, 0.6], "score": 0.9325000047683716, "time": 1792180701.1}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.0, 1.0, 1.0, 0.6], "score": 0.9307999610900879, "time": 1792180703.2}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.6, 1.0, 0.6], "score": 0.936199963092804, "time": 1792180705.5}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.36, 1.0, 0.6], "score": 0.9359999895095825, "time": 1792180707.7}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.22, 1.0, 0.6], "score": 0.9358999729156494, "time": 1792180709.9}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.13, 1.0, 0.6], "score": 0.9357999563217163, "time": 1792180712.2}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.078, 1.0, 0.6], "score": 0.9359999895095825, "time": 1792180714.4}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.047, 1.0, 0.6], "score": 0.9358999729156494, "time": 1792180716.7}
+{"kind": "eval", "seed": 0, "c": 0.017, "mode": "const", "mults": [0.6, 0.0, 1.0, 0.6], "score": 0.9358999729156494, "time": 1792180718.9}
+{"kind": "per_group", "seed": 0, "c": 0.017, "mults": [0.6, 1.0, 1.0, 0.6], "score": 0.936199963092804, "time": 1792180718.9}
+{"kind": "done", "train_steps": 8360, "time": 1792180718.9}
