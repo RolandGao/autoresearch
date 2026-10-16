@@ -12,6 +12,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 from reportlab.lib import colors  # noqa: E402
 from reportlab.lib.enums import TA_LEFT  # noqa: E402
 from reportlab.lib.pagesizes import A4  # noqa: E402
@@ -659,6 +660,77 @@ if brange["center"] is not None:
     story += [keep([img, P(f"Figure 6. Relative TTA change of full runs as one LR's initial value moves from the "
                            f"baseline; dashed: the 10% stop. Points below {floor}% are drawn at {floor}%.",
                            "small")])]
+
+    # 95% confidence set for the best probed value (Gupta's subset selection), single runs with the
+    # seed SD of Experiment 6.
+    sigma = mean_se([v[0] for v in noise.values()])[1]
+    mc = np.random.default_rng(0)
+
+    def gupta_q(k):
+        z = mc.standard_normal((400000, k))
+        return float(np.quantile((z[:, 1:] - z[:, :1]).max(axis=1), 0.95))
+
+    conf, rows = {}, [["LR", "Probed points k", "Cutoff c (pp)", "Best observed", "95% set (initial LR)",
+                       "Points in set"]]
+    for g in rng.GROUPS:
+        initial = base_cfg["param_groups"][g]["lr_scheduler"][0][1]
+        probe = {**brange["probe"][g], 0: (initial, center_tta)}
+        c = sigma * gupta_q(len(probe))
+        best = max(probe, key=lambda o: probe[o][1])
+        members = sorted(o for o in probe if probe[o][1] >= probe[best][1] - c)
+        ends = []
+        for side, edge in ((-1, members[0]), (1, members[-1])):
+            unstopped = brange["stop"][g].get(side, 0) is None
+            ends.append(unstopped and abs(edge) >= 19)  # Reaches the probe limit: not bounded there.
+        conf[g] = (c, best, members)
+        low = f"(open) {probe[members[0]][0]:g}" if ends[0] else f"{probe[members[0]][0]:g}"
+        high = f"{probe[members[-1]][0]:g} (open)" if ends[1] else f"{probe[members[-1]][0]:g}"
+        gaps = "" if members == list(range(members[0], members[-1] + 1)) else ", with gaps"
+        rows.append([g, str(len(probe)), f"{c:.2f}", f"{probe[best][0]:g} ({probe[best][1]:.2f})",
+                     f"{low} - {high}" if members[0] != members[-1] else f"{probe[best][0]:g}",
+                     f"{len(members)} of {len(probe)}{gaps}"])
+    story += [P("95% confidence set for the best initial LR", "h2"),
+              P(f"Each probed value is one run on seed 0, so its score carries the single-run noise of Experiment 6 "
+                f"(SD {sigma:.3f} pp, assumed the same at every value and independent between values). A value is "
+                f"kept when its score is within c of the best observed score, with c = q x SD and q the 95% "
+                f"quantile of max_j (Z_j - Z_1) over the k probed values (Z independent standard normals; Monte "
+                f"Carlo). This is Gupta's subset selection: the set contains the best probed value with probability "
+                f"at least 95%, even in the hardest case where all values are equally good. (open) marks an end that "
+                f"reaches the probe limit on a side without a 10% drop, so the set may continue beyond it."),
+              table(rows, [2.4 * cm, 2.2 * cm, 2.1 * cm, 3.0 * cm, 4.6 * cm, 2.7 * cm])]
+    fig, axes = plt.subplots(2, 2, figsize=(10, 5.6), layout="constrained", sharey=True)
+    low_y = 92.4
+    for ax, g in zip(axes.flat, rng.GROUPS):
+        initial = base_cfg["param_groups"][g]["lr_scheduler"][0][1]
+        probe = {**brange["probe"][g], 0: (initial, center_tta)}
+        c, best, members = conf[g]
+        offs = sorted(probe)
+        ys = [max(low_y, probe[o][1]) for o in offs]
+        ax.plot(offs, ys, color=colors_g[g], linewidth=1.0, alpha=0.6)
+        inside = [o for o in offs if o in members]
+        outside = [o for o in offs if o not in members]
+        ax.scatter(inside, [max(low_y, probe[o][1]) for o in inside], color=colors_g[g], s=22, zorder=3)
+        ax.scatter(outside, [max(low_y, probe[o][1]) for o in outside], facecolor="white", edgecolor=colors_g[g],
+                   s=22, zorder=3)
+        ax.axhline(probe[best][1] - c, color="#0b0b0b", linewidth=0.8, linestyle="--")
+        ax.set_title(f"{g} (baseline {initial:g})", loc="left", fontsize=9.5)
+        ax.set_xlim(-21, 21)
+        ax.set_ylim(low_y - 0.1, 94.45)
+        ax.set_xlabel("grid steps of the initial LR from the baseline")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("test TTA (%)")
+    legend_items = [plt.Line2D([], [], marker="o", linestyle="", color="#52514e", label="in the 95% set"),
+                    plt.Line2D([], [], marker="o", linestyle="", markerfacecolor="white", color="#52514e",
+                               label="excluded"),
+                    plt.Line2D([], [], color="#0b0b0b", linestyle="--", linewidth=0.8, label="best - c")]
+    fig.legend(handles=legend_items, loc="outside lower center", ncol=3, frameon=False, fontsize=8)
+    conf_path = os.path.join(REPO, "plots", "baseline_range_confidence.png")
+    fig.savefig(conf_path, dpi=140)
+    plt.close(fig)
+    img = Image(conf_path)
+    img.drawWidth, img.drawHeight = 17 * cm, 17 * cm * img.imageHeight / img.imageWidth
+    story += [keep([img, P(f"Figure 7. The probes near the top: filled points are in the 95% set (score at least "
+                           f"best - c, dashed); points below {low_y} are drawn at {low_y}.", "small")])]
 story += observations("baseline_range_observations.txt")
 
 

@@ -7,3 +7,9 @@ Head, norm_bias and whiten_bias never drop by 10% on the smaller side within 20 
 On the larger side, head stops at +8 (76000: 78.35; 46000 still 92.91) and norm_bias at +9 (9800: 66.44; 5900: 90.16), both after 6-7 steps of no loss: they fail by blowing up, not gradually. whiten_bias never stops: up to 980000 (x27000) it stays above 92.3.
 
 So around the baseline only conv needs tuning; the three other LRs only need to stay below a blow-up edge about 35x above their baseline values (head, norm_bias; the last points without loss are 46000 and 3500), and whiten_bias barely matters at all.
+
+95% confidence sets for the best initial LR (single runs with SD 0.121 pp; cutoff c = 0.43-0.48 pp below the best observed score, wider for more probed points). Conv: 0.13-0.22, the two values at the top (93.95, 93.92); the next ones are excluded (0.36: 93.51, only 0.01 pp under the cutoff 93.52; 0.078: 93.08), so the best conv initial LR is pinned to two grid points, and the baseline's 0.22 is one of them.
+
+Head: 280-27000 (10 of 29 points, contiguous), a factor of about 100 around the best observed 770; below 280 the scores fall off (170: 93.58), and 46000 is 1.0 pp below the baseline (92.91). The baseline's 1300 is inside.
+
+Norm_bias: anything from the smallest probed values (0.006; open, as the probe never dropped 10% on that side) up to 3500, with gaps: the scores below 3500 are within noise of each other, so the data do not locate a best value, only an upper edge. Whiten_bias: likewise from 0.0013 (open) up to 5900; from 9800 upward the scores fall (93.66 and lower) and are excluded.
