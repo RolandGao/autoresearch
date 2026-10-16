@@ -229,3 +229,21 @@ Results
     held-out seeds 100-107, 2 search seeds; baseline_bs500 93.83)
       none 93.91 (551 s)   ramp 93.85 (658 s)   wave 93.85 (624 s)
     Matches the baseline in all three conditions, at ~1.2-1.4x the BS 2000 search time.
+
+15. BS 125 validation (scenario A) and scenario B (from scratch, BS 2000)
+    BS 125, v1x2m3 (held-out, 2 search seeds; baseline 93.85, do-nothing ramp 93.31, wave 93.68):
+      none 93.81 (873 s)   ramp 93.75 (886 s)   wave 93.50 (905 s)
+      -> matches without a transform, recovers 0.44 of 0.54 pp under ramp, fails under wave
+         (knots 1-2 stay at 0.047 where the oracle needs ~0.017; a one-knot move is still
+         below the 3-seed noise). BS 500 do-nothing: ramp 93.35, wave 93.68.
+    Scenario B (all four LRs from 1.0; +-3-decade scan with a 20% lookahead; baseline 93.94,
+    do-nothing ramp 93.25), held-out, 2 search seeds:
+      v1fast  (one pass)                     none 93.90 (618 s)   ramp 93.05 (623 s)
+      v1fas   (+ final_anneal search)        none 93.92 (635 s)   ramp 93.20 (642 s)
+      v1psfast (+ 1 scale-first polish round) none 93.95 (1066 s) ramp 93.36 (1058 s)
+      v1x2m3fas (two passes, pass 2 on 3 seeds, final_anneal search)  ramp 93.81 (1867 s)
+    - Under ramp, one-pass searches fail from scratch: conv stays too low early (lookahead
+      distortion) and insensitive groups wander and do not anneal (head/norm_bias at 770-1300
+      late, i.e. ~18x the baseline's applied norm_bias LR once the ramp's x2.3 applies).
+      The final anneal alone does not fix it; the multi-seed second pass does (93.81).
+    - From scratch without a transform, one pass is enough (93.90-93.95, ~620 s).
