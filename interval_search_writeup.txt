@@ -168,3 +168,19 @@ Results
      high, and a one-knot, one-step move gains less than the single-seed noise (~0.17 pp),
      so no move clears the margin. Polish needs a starting point within ~1 step.
    - Next: v3p = the transform-adaptive online pass (geometric lookahead) + polish.
+
+10. More variants (BS 2000, held-out, 2 search seeds unless noted)
+                                          none    ramp    wave    search s (none)
+     v3    geometric lookahead            93.74   93.75   93.85   215
+     v3p   v3 + polish                    93.76   93.75   93.85   351
+     v3alt v3 + alternate (ratio, LR)     93.74   93.75   93.85   250
+     v1p   v1 + polish                    93.93   93.92   93.59   267
+   - v3 is ~0.1-0.2 below the baseline everywhere; neither polish nor alternation fixes it.
+   - v1p is at the baseline except under wave, where polish cannot move (one-step knot
+     moves are below the noise). Next: two-step knot moves in polish (v1p2).
+   Scenario B (from scratch, all four LRs from 1.0, +-3-decade scan, v1 + scale-first polish):
+     v1ps: 93.86 held-out (both search seeds 93.85-93.86), 1158 s (online ~590 s incl. a
+     28-evaluation full-horizon scan; polish ~45 full runs that made no move). Seed 0 found
+     the baseline's scales (conv 0.22, head 1300, norm_bias 99); seed 1 found norm_bias 1300
+     decaying to 170 and whiten_bias ~0.001 (irrelevant group) and still scored 93.85.
+   Next for B: a cheaper scan (20% lookahead, scan_lookahead=5) with and without one polish round.
