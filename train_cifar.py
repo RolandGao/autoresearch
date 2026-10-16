@@ -3153,6 +3153,17 @@ for batch_size in (2000, 500, 125):
                 batch_size, scenario, transform, None, **common, passes=2, pass_seeds=3)
             RUN_CONFIGS[f"auto_{scenario}_v1fas_bs{batch_size}{suffix}"] = auto_config(
                 batch_size, scenario, transform, None, **common)
+# v1x2m3t: v1x2m3 with plan_tail (pass-2 candidates scale the plan's whole tail).
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for scenario in ("a", "b"):
+            extra = (dict(coarse_mult=None, coarse_scan=3, scan_lookahead=5)
+                     if scenario == "b" else {})
+            RUN_CONFIGS[f"auto_{scenario}_v1x2m3t_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, shape="linear",
+                cooldown_searched="linear", cooldown_fraction=1, passes=2, pass_seeds=3,
+                plan_tail=True, **extra)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -4498,7 +4509,7 @@ AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "sh
                  "final_anneal", "coarse_scan", "polish_rounds", "polish_margin",
                  "polish_scale_first", "alternate",
                  "scan_lookahead", "polish_steps", "freeze_threshold", "first_knot",
-                 "passes", "reseed", "pass_seeds"}
+                 "passes", "reseed", "pass_seeds", "plan_tail"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4558,6 +4569,9 @@ def run_auto_search(run, model, config):
         score on one seed does not lock out its neighbours (winner's curse).
       pass_seeds (optional, default 1): later passes score every candidate by the mean
         over this many fresh seeds (MultiTrainer; ~pass_seeds x the cost of those passes).
+      plan_tail (optional, default False): in later passes a candidate for an interval's
+        end knot scales the plan's whole remaining schedule by candidate / plan value (a
+        larger, more detectable move), and the committed choice keeps that scaled tail.
       first_knot (optional, default False; shape="linear"): in the first interval also
         search each LR's start value (the first segment need not be flat).
       freeze_threshold (optional, default 0): after the coarse scan, an LR whose best
@@ -4613,6 +4627,7 @@ def run_auto_search(run, model, config):
     passes = tuning.get("passes", 1)
     reseed = tuning.get("reseed", False)
     pass_seeds = tuning.get("pass_seeds", 1)
+    plan_tail = tuning.get("plan_tail", False)
     revisit = tuning.get("revisit", True)
     larger_within = tuning.get("larger_within", 0.0)
     shape = tuning.get("shape", "constant")
@@ -4713,6 +4728,9 @@ def run_auto_search(run, model, config):
                         if path.endswith("@start"):
                             continue
                         rest = slice_schedule(plan[path], cool_start, cool_start + look_eff)
+                        if plan_tail and rest[0][1] > 0:  # Scale the plan's whole tail.
+                            factor = value / rest[0][1]
+                            rest = [(seg[0], *(v * factor for v in seg[1:])) for seg in rest]
                         rest[0] = (rest[0][0], value, rest[0][-1])
                         sched[path] = segments_window(sched[path], cool_start, rest)
                     ok = trainer.train(sched, look_eff)
@@ -4886,6 +4904,16 @@ def run_auto_search(run, model, config):
                 committed[path] = main_window(committed[path], path, start, main_steps, value,
                                               current.get(path + "@start"))
                 knots[path] = value
+            if plan is not None and plan_tail:  # Keep the scaled tail for later intervals.
+                end = start + main_steps
+                for path, value in current.items():
+                    if path.endswith("@start") or end >= total:
+                        continue
+                    old = plan_end_value(plan[path], end)
+                    if old > 0:
+                        tail = [(seg[0], *(v * value / old for v in seg[1:]))
+                                for seg in slice_schedule(plan[path], end, total)]
+                        plan[path] = slice_schedule(plan[path], 0, end) + tail
             start_knots = {p: v for p, v in current.items() if p.endswith("@start")}
             current = {p: v for p, v in current.items() if not p.endswith("@start")}
             if not trainer.train(committed, main_steps):
