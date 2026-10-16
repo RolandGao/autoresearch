@@ -24,6 +24,7 @@ sys.path.insert(0, REPO)
 import cooldown_study as cs  # noqa: E402
 import importance_study as imp  # noqa: E402
 import family_study as fam  # noqa: E402
+import range_study as rng  # noqa: E402
 import report_data  # noqa: E402
 import train_cifar as tc  # noqa: E402
 
@@ -388,6 +389,83 @@ story += [keep([fam_img, P("Figure 3. Applied conv LR (spec x transform) of each
 fam_obs = os.path.join(REPO, "research", "family_study_observations.txt")
 if os.path.exists(fam_obs):
     story += [P("Observations", "h2")] + [P(x) for x in open(fam_obs).read().split("\n\n") if x.strip()]
+
+# Experiment 4: hparam range (Experiment 2 redone with probes to a 10% drop).
+ranges = rng.all_lengths()
+story += [
+    P("Experiment 4. Hparam range from scratch (Experiment 2 redone)", "h1"),
+    P("Question", "h2"),
+    P("Experiment 2's +-5 sweeps depend on where the center landed. How far can each LR move from the center, "
+      "on each side, before the score drops by 10%? A range that ends on both sides marks an LR with an optimum; "
+      "a side that never drops marks an LR the score is insensitive to in that direction."),
+    P("Setup", "h2"),
+    table([
+        ["Item", "Value"],
+        ["Model / score", "As in Experiment 2: baseline_bs2000 except the four LRs, constant for the first L steps "
+                          "from initialization; test TTA right after the L steps; 1 seed (0)"],
+        ["Center", "Experiment 2's joint-search center for each L (re-evaluated; it reproduces Experiment 2's TTA)"],
+        ["Probe", "One LR at a time (others at the center), one 0.6^k grid step at a time on each side (+1 = x1/0.6, "
+                  "larger), until TTA <= 0.9 x the center's TTA (a 10% relative drop) or 20 steps. A diverged run "
+                  "counts as a drop"],
+    ], [3.3 * cm, 13.7 * cm]),
+]
+
+
+def stop_text(stop, side):
+    if side not in stop:
+        return "running"
+    return f"{stop[side]:+d}" if stop[side] is not None else (">20" if side > 0 else "<-20")
+
+
+rows = [["LR"] + [f"L = {length}" for length in ranges]]
+for g in rng.GROUPS:
+    cells = [g]
+    for length, r in ranges.items():
+        stop, probe = r["stop"][g], r["probe"][g]
+        text = f"{stop_text(stop, -1)} / {stop_text(stop, 1)}"
+        if -1 in stop and 1 in stop:  # LR range kept within 10%: one step inside each stop.
+            lo = probe.get((stop[-1] or -21) + 1, (r["center"]["values"][g], 0))[0]
+            hi = probe.get((stop[1] or 21) - 1, (r["center"]["values"][g], 0))[0]
+            text += f"<br/>{lo:g} - {hi:g}"
+        cells.append(text)
+    rows.append(cells)
+centers = ", ".join(f"L = {length}: {100 * r['center']['tta']:.2f}" for length, r in ranges.items() if r["center"])
+story += [P("Stop offsets (smaller side / larger side) and the LR range within 10% of the center", "h2"),
+          table(rows, [2.6 * cm] + [2.88 * cm] * len(ranges)),
+          P(f"&lt;-20 / &gt;20: no 10% drop within 20 steps on that side (the range shown then ends at the last "
+            f"probed point). Center TTA: {centers}.", "small")]
+
+fig, axes = plt.subplots(2, 3, figsize=(10, 6.2), layout="constrained", sharey=True)
+floor = -40
+for ax, (length, r) in zip(axes.flat, ranges.items()):
+    ax.set_title(f"L = {length} step{'s' if length > 1 else ''}", loc="left", fontsize=9.5)
+    ax.axhline(0, color="#8c8b86", linewidth=0.8, linestyle=":")
+    ax.axhline(-10, color="#0b0b0b", linewidth=0.8, linestyle="--")
+    if r["center"] is None:
+        continue
+    center_tta = 100 * r["center"]["tta"]
+    for g in rng.GROUPS:
+        probe = {**r["probe"][g], 0: (r["center"]["values"][g], center_tta)}
+        offs = sorted(probe)
+        ax.plot(offs, [max(floor, 100 * (probe[o][1] / center_tta - 1)) for o in offs], color=colors_g[g],
+                marker="o", markersize=3, linewidth=1.3, label=g)
+    ax.set_xlabel("grid offset from the center (+ = larger LR)")
+    ax.set_xlim(-21, 21)
+    ax.set_ylim(floor - 2, 3)
+for ax in axes[:, 0]:
+    ax.set_ylabel("TTA change vs center (%)")
+axes.flat[-1].axis("off")
+axes.flat[-1].legend(*axes.flat[0].get_legend_handles_labels(), loc="center", frameon=False, fontsize=9)
+rng_path = os.path.join(REPO, "plots", "range_study.png")
+fig.savefig(rng_path, dpi=140)
+plt.close(fig)
+rng_img = Image(rng_path)
+rng_img.drawWidth, rng_img.drawHeight = 17 * cm, 17 * cm * rng_img.imageHeight / rng_img.imageWidth
+story += [keep([rng_img, P(f"Figure 4. Relative TTA change along each probe; the dashed line is the 10% stop. "
+                           f"Points below {floor}% are drawn at {floor}%.", "small")])]
+rng_obs = os.path.join(REPO, "research", "range_study_observations.txt")
+if os.path.exists(rng_obs):
+    story += [P("Observations", "h2")] + [P(x) for x in open(rng_obs).read().split("\n\n") if x.strip()]
 
 
 def attach_headings(flowables):

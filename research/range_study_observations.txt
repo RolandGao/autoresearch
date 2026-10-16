@@ -1,0 +1,9 @@
+One seed: single-run noise is about 0.13 pp at the full 200 steps; the stop criterion (a 10% relative drop: 2.5 pp at L = 1, 8.5 pp at L = 40) is far above it, so the stop offsets are not noise.
+
+Conv is the only LR with an optimum: its range ends on both sides at every L, at -2 or -3 grid steps (smaller) and +3 (larger). The LR range within 10% of the center spans 5-6 grid points, a factor of 4.6-7.9 in LR (0.078-0.36 at L = 1, 0.028-0.22 at L = 40).
+
+Head, norm_bias and whiten_bias never drop by 10% on the smaller side within 20 steps (down to 0.6^20 = 3.7e-5 x the center) at any L. The worst smaller-side loss is 4.10 pp (head, L = 40); most are below 1.5 pp, and at L = 1-2 below 0.5 pp. These three LRs only have an upper limit.
+
+Their larger sides do end, but late and without a pattern across L: head at +7 / +14 / none / none / +3 (L = 1 / 2 / 5 / 10 / 40), norm_bias at none / +17 / +3 / +3 / +6, whiten_bias at +10 / +5 / +6 / +17 / +11. So their Experiment 2 centers mostly mark where "too large" begins, not an optimum: any value below that edge scores about the same.
+
+At L = 10 a few probe points beat the center (whiten_bias +0.57 pp, head +0.15 pp): the joint-search center is not an exact optimum on one seed, which is the center dependence this experiment was meant to remove.

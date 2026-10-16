@@ -1,0 +1,102 @@
+# commit 140f4d08e78d76c8fd0f2301f4269b71a43fbab9 (dirty: ?? research/hparam_range.py)
+# args {"steps": 40, "groups": "conv", "seed": 0, "drop": 0.1, "max_side": 20}
+# worker w2 gpu GPU-33e7055e-3389-e185-1dcf-0d1755caa26f
+# source
+# | """Hparam range from scratch: how far each LR can move from the Experiment 2 center before the
+# | score drops by 10%.
+# | 
+# | Same setup as research/hparam_importance.py (batch size 2000, baseline_bs2000 except the four
+# | trained LRs, constant for the first L training steps from initialization, scored right after
+# | those L steps). The center is that experiment's joint-search center for L. From it, one LR
+# | at a time steps along the 0.6^k grid on each side (+1 = one step larger, x1/0.6) until the test
+# | TTA is at most (1 - drop) x the center's TTA, or after max_side steps. A diverged run counts as
+# | a drop. Every evaluated point is logged with its test loss.
+# | """
+# | import argparse
+# | 
+# | import torch
+# | import torch.nn.functional as F
+# | 
+# | from common import base_config, emit, new_model, open_log, t
+# | import importance_study
+# | 
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--steps", type=int, required=True, help="main interval length L")
+# | parser.add_argument("--groups", required=True, help="comma-separated LRs to probe")
+# | parser.add_argument("--seed", type=int, default=0)
+# | parser.add_argument("--drop", type=float, default=0.10, help="relative TTA drop that stops a side")
+# | parser.add_argument("--max-side", type=int, default=20, help="max grid steps on each side")
+# | args = parser.parse_args()
+# | log = open_log(f"hparam_range_bs2000_L{args.steps}_{args.groups.replace(',', '-')}", args, __file__)
+# | 
+# | GROUPS = ("conv", "head", "norm_bias", "whiten_bias")
+# | MULT = 0.6
+# | config = base_config(2000, None)
+# | model = new_model()
+# | t.TRAINING_SEED = args.seed
+# | trainer = t.SegmentTrainer(model, config)
+# | start = trainer.snapshot()
+# | base = trainer.base_schedules
+# | 
+# | 
+# | def test_loss():
+# |     model.train()  # Train-mode BatchNorm, as in every evaluation.
+# |     with torch.inference_mode():
+# |         images, labels = trainer.test_loader.normalized_images(), trainer.test_loader.labels
+# |         total = sum(F.cross_entropy(model(x).float(), y, reduction="sum")
+# |                     for x, y in zip(images.split(2000), labels.split(2000)))
+# |     return (total / len(labels)).item()
+# | 
+# | 
+# | def evaluate(values, phase):
+# |     trainer.restore(start)
+# |     sched = dict(base)
+# |     for g in GROUPS:
+# |         sched[f"{g}.initial_lr"] = t.constant_window(base[f"{g}.initial_lr"], 0, args.steps, values[g])
+# |     ok = trainer.train(sched, args.steps)
+# |     tta = trainer.score("tta_val_acc") if ok else float("-inf")
+# |     loss = test_loss() if ok else float("inf")
+# |     emit(log, kind="eval", phase=phase, values=dict(values), tta=tta, loss=loss)
+# |     return tta, loss
+# | 
+# | 
+# | def grid(value, offset):
+# |     return t.round_hparam(MULT ** (t.lr_grid_index(value, MULT) - offset))
+# | 
+# | 
+# | center = importance_study.load(args.steps)["center"]["values"]
+# | center_tta, center_loss = evaluate(center, "center")
+# | threshold = (1 - args.drop) * center_tta
+# | emit(log, kind="center", values=center, tta=center_tta, loss=center_loss, threshold=threshold)
+# | evaluations = 1
+# | for g in args.groups.split(","):
+# |     for direction in (-1, 1):
+# |         stop = None
+# |         for k in range(1, args.max_side + 1):
+# |             trial = dict(center, **{g: grid(center[g], direction * k)})
+# |             tta, loss = evaluate(trial, "range")
+# |             evaluations += 1
+# |             emit(log, kind="range", group=g, offset=direction * k, value=trial[g], tta=tta, loss=loss)
+# |             if tta <= threshold:
+# |                 stop = direction * k
+# |                 break
+# |         emit(log, kind="side", group=g, direction=direction, stop=stop)
+# | emit(log, kind="done", evaluations=evaluations, train_steps=trainer.train_steps)
+
+{"kind": "eval", "phase": "center", "values": {"conv": 0.078, "head": 2100.0, "norm_bias": 280.0, "whiten_bias": 2100.0}, "tta": 0.8459999561309814, "loss": 0.7015254497528076, "time": 1792186965.0}
+{"kind": "center", "values": {"conv": 0.078, "head": 2100.0, "norm_bias": 280.0, "whiten_bias": 2100.0}, "tta": 0.8459999561309814, "loss": 0.7015254497528076, "threshold": 0.7613999605178833, "time": 1792186965.0}
+{"kind": "eval", "phase": "range", "values": {"conv": 0.047, "head": 2100.0, "norm_bias": 280.0, "whiten_bias": 2100.0}, "tta": 0.8235999941825867, "loss": 0.754360556602478, "time": 1792186967.3}
+{"kind": "range", "group": "conv", "offset": -1, "value": 0.047, "tta": 0.8235999941825867, "loss": 0.754360556602478, "time": 1792186967.3}
+{"kind": "eval", "phase": "range", "values": {"conv": 0.028, "head": 2100.0, "norm_bias": 280.0, "whiten_bias": 2100.0}, "tta": 0.7976999878883362, "loss": 0.8176256418228149, "time": 1792186969.6}
+{"kind": "range", "group": "conv", "offset": -2, "value": 0.028, "tta": 0.7976999878883362, "loss": 0.8176256418228149, "time": 1792186969.6}
+{"kind": "eval", "phase": "range", "values": {"conv": 0.017, "head": 2100.0, "norm_bias": 280.0, "whiten_bias": 2100.0}, "tta": 0.751800000667572, "loss": 0.9247019290924072, "time": 1792186971.8}
+{"kind": "range", "group": "conv", "offset": -3, "value": 0.017, "tta": 0.751800000667572, "loss": 0.9247019290924072, "time": 1792186971.8}
+{"kind": "side", "group": "conv", "direction": -1, "stop": -3, "time": 1792186971.8}
+{"kind": "eval", "phase": "range", "values": {"conv": 0.13, "head": 2100.0, "norm_bias": 280.0, "whiten_bias": 2100.0}, "tta": 0.8292999863624573, "loss": 0.7361214756965637, "time": 1792186974.1}
+{"kind": "range", "group": "conv", "offset": 1, "value": 0.13, "tta": 0.8292999863624573, "loss": 0.7361214756965637, "time": 1792186974.1}
+{"kind": "eval", "phase": "range", "values": {"conv": 0.22, "head": 2100.0, "norm_bias": 280.0, "whiten_bias": 2100.0}, "tta": 0.7890999913215637, "loss": 0.8658615946769714, "time": 1792186976.4}
+{"kind": "range", "group": "conv", "offset": 2, "value": 0.22, "tta": 0.7890999913215637, "loss": 0.8658615946769714, "time": 1792186976.4}
+{"kind": "eval", "phase": "range", "values": {"conv": 0.36, "head": 2100.0, "norm_bias": 280.0, "whiten_bias": 2100.0}, "tta": 0.673799991607666, "loss": 1.1689847707748413, "time": 1792186978.7}
+{"kind": "range", "group": "conv", "offset": 3, "value": 0.36, "tta": 0.673799991607666, "loss": 1.1689847707748413, "time": 1792186978.7}
+{"kind": "side", "group": "conv", "direction": 1, "stop": 3, "time": 1792186978.7}
+{"kind": "done", "evaluations": 7, "train_steps": 280, "time": 1792186978.7}
