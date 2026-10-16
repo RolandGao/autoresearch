@@ -3053,6 +3053,25 @@ for batch_size in (2000, 500, 125):
             RUN_CONFIGS[f"auto_{scenario}_v4_bs{batch_size}{suffix}"] = auto_config(
                 batch_size, scenario, transform, None, shape="linear", cooldown_searched="max",
                 cooldown_fraction=1, **extra)
+# Oracle knots under a transform (conv, BS 2000): the 5-interval piecewise-linear spec
+# through baseline(t) / factor(t) at the interval boundaries (exact, or snapped to the x0.6
+# grid). The best a 5-knot search can represent.
+for transform, spec in LR_TRANSFORMS.items():
+    for snap in (False, True):
+        config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+        group = config["param_groups"]["conv"]
+        total = group["lr_scheduler"][0][0]
+        knots = []
+        for i in range(6):
+            x = i / 5
+            factor = (spec["factor"] ** (2 * x - 1) if spec["kind"] == "ramp"
+                      else spec["factor"] ** sin(2 * pi * (x + spec["phase"])))
+            value = 0.22 * (1 - x) / factor
+            knots.append(round_hparam(0.6 ** round(log(value) / log(0.6))) if snap and value
+                         else round_hparam(value))
+        group["lr_scheduler"] = [(total // 5, a, b) for a, b in zip(knots, knots[1:])]
+        group["lr_transform"] = copy.deepcopy(spec)
+        RUN_CONFIGS[f"oracle_knots_{transform}{'_grid' if snap else ''}_bs2000"] = config
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
