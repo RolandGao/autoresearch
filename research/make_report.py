@@ -7,10 +7,26 @@ from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import (Image, KeepTogether, ListFlowable, ListItem,
+from reportlab.platypus import (Image, KeepTogether, ListFlowable, ListItem, PageBreak,
                                 Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import sys  # noqa: E402
+
+sys.path.insert(0, os.path.join(REPO, "research"))
+import report_data  # noqa: E402
+import report_findings  # noqa: E402
+
+NEW = report_data.search_runs(since=report_findings.CUT)
+
+
+def new_row(name, label):
+    """Scenario-A row from runs on the updated baselines (filled in as they finish)."""
+    cells = []
+    for suffix in ("", "_ramp", "_wave"):
+        r = NEW.get(name + suffix)
+        cells.append(f"{r['heldout']:.2f} ({r['seconds']:.0f}, n={r['n']})" if r else "running")
+    return ["", label] + cells
 OUT = os.path.join(REPO, "interval_search_report.pdf")
 INK, MUTED, RULE, HEAD_BG = (colors.HexColor(c) for c in ("#0b0b0b", "#52514e", "#d9d8d3", "#f1f0ec"))
 
@@ -172,9 +188,11 @@ story = [
         ["500", "Baseline: old / new", "93.83 / 94.01", "", ""],
         ["", "Do-nothing (old baseline)", "", "93.35", "93.68"],
         ["", "Recommended, n=2", "93.79 (725)", "93.75 (774)", "93.84 (736)"],
+        new_row("auto_a_v1x3m2t_bs500", "Recommended, new baseline"),
         ["125", "Baseline: old / new", "93.85 / 93.88", "", ""],
         ["", "Do-nothing (old baseline)", "", "93.31", "93.68"],
         ["", "Recommended, n=2 (ramp n=1)", "93.64 (1159)", "93.88 (1109)", "93.72 (1164)"],
+        new_row("auto_a_v1x3m2t_bs125", "Recommended, new baseline"),
     ], [2.0 * cm, 5.8 * cm, 3.1 * cm, 3.0 * cm, 3.0 * cm]),
     Spacer(1, 4),
     table([
@@ -207,43 +225,7 @@ story = [
       "progress; do-nothing on them: batch size 500 ramp 93.37, wave 93.77; batch size 125 ramp 93.48, "
       "wave 93.69."),
 
-    P("5. Findings", "h1"),
-    P("F1. Short lookaheads choose LRs that are too small, whatever the cooldown (W-1, W-4)", "h2"),
-    P("At interval 2 (batch size 2000) the final accuracy is best for conv LR 0.13-0.22, but every "
-      "40-step lookahead (72 cooldown designs tried) scores 0.078 best. An 80-step lookahead picks 0.13 by a hair, and a "
-      "lookahead to the end of training picks 0.13 (figure 2)."),
-    figure("plots/lookahead_bias.png", 13.5,
-           "Figure 2. Each curve relative to its own best value; labels give the LR each curve would "
-           "choose. 4 seeds per point."),
-    P("F2. The non-searched groups' cooldown does not matter (W-1, W-5)", "h2"),
-    P("Continuing their schedule, decaying to 0, or any constant multiplier (even 0) changes proxy scores "
-      "by at most 0.1 pp and never changes the ranking. Full searches agree: 93.73-93.78 for all three "
-      "designs."),
-    P("F3. The final interval must anneal to 0; constant intervals are otherwise fine (W-6)", "h2"),
-    P("The baseline as 5 constant steps scores 93.64; the same with the last step decaying to 0 scores "
-      "93.90; 10 constant steps score 93.92. The 5-knot grid is enough at every batch size: grid-snapped "
-      "baseline knots score 93.98 / 93.84 / 93.83 at batch sizes 2000 / 500 / 125."),
-    P("F4. A fixed lookahead shape breaks under transforms (W-7, W-8)", "h2"),
-    P("Pass 1 alone scores 93.57 under ramp and 93.59 under wave (do-nothing 93.42 / 93.72). Under ramp "
-      "the linear lookahead applies too much LR late, which penalizes high early LRs: the search chose 0.13 "
-      "where about 0.9 is right. Searching the lookahead's level or a geometric shape helped some transforms "
-      "and hurt the untransformed case (93.74)."),
-    P("F5. The previous pass's schedule is a self-correcting lookahead (W-12)", "h2"),
-    P("Two passes score 93.94 under ramp. Late decisions have short lookaheads and are nearly unbiased, so "
-      "each pass corrects the lookahead of the earlier intervals."),
-    P("F6. Single-seed searches suffer a winner's curse (W-12, W-13)", "h2"),
-    P("Re-scoring pass 1's schedule on the same seed reproduces its score exactly, so a schedule chosen for "
-      "a lucky score (94.09 on its own seed, about 93.4 held out) is never displaced. Scoring later passes "
-      "on fresh seeds (mean of 2-3) removes this and makes joint moves of several knots visible: wave "
-      "93.50 -> 93.83, then 93.89 with tail rescaling."),
-    P("F7. A few training steps reveal the conv LR scale, but not the bias LRs (W-2, W-10)", "h2"),
-    P("The best LR after 16 steps is 0.1 for conv at every batch size (full-run optimum 0.047-0.22) and "
-      "within about 10x for head. Bias LRs give flat curves, yet norm_bias matters over a full run (LR 1 "
-      "instead of 99 costs 0.26 pp) while whiten_bias does not. Freezing LRs that look flat early is "
-      "therefore harmful (scenario B under ramp: 93.13)."),
-    P("F8. The representation is not the limit under transforms (W-11)", "h2"),
-    P("Oracle knots (baseline divided by the transform, grid-snapped) score 93.91 under ramp and 93.97 under "
-      "wave."),
+    *report_findings.build(P, table, figure, KeepTogether),
 
     P("6. What did not work", "h1"),
     table([
@@ -281,6 +263,8 @@ story = [
         ["Figures", "python research/plot_transforms.py; python research/plot_lookahead_bias.py"],
         ["This report", "python research/make_report.py"],
     ], [3.2 * cm, 13.8 * cm]),
+    PageBreak(),
+    *report_findings.appendices(P, table),
 ]
 
 

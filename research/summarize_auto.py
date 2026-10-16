@@ -18,10 +18,16 @@ if "--since" in args:
     i = args.index("--since")
     since = args[i + 1]
     args = args[:i] + args[i + 2:]
+until = ""  # --until YYYYMMDD_HHMMSS: only logs started before this time
+if "--until" in args:
+    i = args.index("--until")
+    until = args[i + 1]
+    args = args[:i] + args[i + 2:]
 filters = args
 rows = []
 for path in sorted(glob.glob(os.path.join(REPO, "logs", "cifar_baseline_*.log"))):
-    if since and os.path.basename(path)[len("cifar_baseline_"):][:15] < since:
+    stamp = os.path.basename(path)[len("cifar_baseline_"):][:15]
+    if (since and stamp < since) or (until and stamp >= until):
         continue
     run = result = heldout = None
     finals = {}
