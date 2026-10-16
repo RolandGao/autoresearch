@@ -2931,6 +2931,9 @@ STAIRCASE_TESTS = {
     "lastlin": [(40, 0.2), (40, 0.15), (40, 0.11), (40, 0.067), (40, 0.045, 0.0)],
     # Staircase means with the baseline's exact last interval (0.044 -> 0).
     "lastexact": [(40, 0.2), (40, 0.15), (40, 0.11), (40, 0.067), (40, 0.044, 0.0)],
+    # Staircase means, but a small constant last step (is it the anneal, or the last value?).
+    "last001": [(40, 0.2), (40, 0.15), (40, 0.11), (40, 0.067), (40, 0.01)],
+    "last00036": [(40, 0.2), (40, 0.15), (40, 0.11), (40, 0.067), (40, 0.0036)],
     # Piecewise linear through grid-snapped knots of the baseline (0.22 .. 0).
     "knots_grid": [(40, 0.22, 0.22), (40, 0.22, 0.13), (40, 0.13, 0.078), (40, 0.078, 0.047),
                    (40, 0.047, 0.0)],
