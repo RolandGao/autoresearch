@@ -2949,6 +2949,17 @@ for batch_size in (2000, 500, 125):
             RUN_CONFIGS[f"auto_b_{tag}scan_bs{batch_size}{suffix}"] = auto_config(
                 batch_size, "b", transform, None, shape="linear", cooldown_searched=mode,
                 cooldown_fraction=1, coarse_mult=None, coarse_scan=3)
+# v3: piecewise-linear knots, lookahead to the end with geometrically decaying knots
+# (searched ratio), the last interval of the lookahead annealing to 0.
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        RUN_CONFIGS[f"auto_a_v3_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "a", transform, None, shape="linear", cooldown_searched="geometric",
+            cooldown_fraction=1)
+        RUN_CONFIGS[f"auto_b_v3_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "b", transform, None, shape="linear", cooldown_searched="geometric",
+            cooldown_fraction=1, coarse_mult=None, coarse_scan=3)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -3609,6 +3620,25 @@ def linear_window(lines, start, steps, first, last):
     total = sum(line[0] for line in lines)
     return (slice_schedule(lines, 0, start) + [(steps, first, last)]
             + slice_schedule(lines, start + steps, total))
+
+
+def segments_window(lines, start, segments):
+    """lines with [start, start + their total) replaced by segments."""
+    total = sum(line[0] for line in lines)
+    end = start + sum(segment[0] for segment in segments)
+    return slice_schedule(lines, 0, start) + list(segments) + slice_schedule(lines, end, total)
+
+
+def geometric_lookahead(value, ratio, steps, interval):
+    """Segments through knots value * ratio**j every interval steps; the last decays to 0."""
+    segments, knot, left = [], value, steps
+    while left > 0:
+        length = min(interval, left)
+        left -= length
+        following = 0.0 if left == 0 else knot * ratio
+        segments.append((length, knot, following))
+        knot = following
+    return segments
 
 
 def window_mean(lines, start, steps):
@@ -4275,7 +4305,7 @@ def run_auto_search(run, model, config):
         if not spec["initial"] > 0 or not 0 < spec["mult"] < 1:
             raise ValueError(f"{path}: needs initial > 0 and 0 < mult < 1")
     searched_mode, others_mode = tuning["cooldown_searched"], tuning["cooldown_others"]
-    if not (searched_mode in ("search", "linear", "linear_search", "plan")
+    if not (searched_mode in ("search", "linear", "linear_search", "plan", "geometric")
             or isinstance(searched_mode, (int, float))):
         raise ValueError("cooldown_searched must be a number, search, linear, linear_search or plan")
     if not (others_mode in ("continue", "shared", "search") or isinstance(others_mode, (int, float))):
@@ -4300,11 +4330,14 @@ def run_auto_search(run, model, config):
     committed = copy.deepcopy(trainer.base_schedules)
     current = {path: snap_lr_to_grid(spec["initial"], spec["mult"]) for path, spec in params.items()}
     mults = {
-        "searched": (1.0 if searched_mode in ("search", "linear", "linear_search", "plan")
+        "searched": (1.0 if searched_mode in ("search", "linear", "linear_search", "plan",
+                                              "geometric")
                      else float(searched_mode)),
         "others": (1.0 if others_mode == "search"
                    else None if others_mode in ("continue", "shared") else float(others_mode)),
     }
+    if searched_mode == "geometric":  # Lookahead knots decay by a searched ratio.
+        mults["ratio"] = 0.64
     if searched_mode == "plan":  # Absolute lookahead start level per searched group.
         mults.update({f"plan:{path}": value for path, value in current.items()})
     other_paths = [
@@ -4345,7 +4378,10 @@ def run_auto_search(run, model, config):
             if ok and look:
                 cool_start = start + main_steps
                 for path, value in values.items():
-                    if searched_mode == "plan":
+                    if searched_mode == "geometric":
+                        sched[path] = segments_window(sched[path], cool_start, geometric_lookahead(
+                            value, cool["ratio"], look, interval_steps))
+                    elif searched_mode == "plan":
                         sched[path] = linear_window(sched[path], cool_start, look,
                                                     cool[f"plan:{path}"], 0.0)
                     elif searched_mode in ("linear", "linear_search"):
@@ -4393,12 +4429,18 @@ def run_auto_search(run, model, config):
                     if mode in ("search", "linear_search") and (k == "searched" or other_paths)]
             if searched_mode == "plan":
                 keys = [key for key in mults if key.startswith("plan:")]
+            if searched_mode == "geometric":
+                keys = ["ratio"]
             def capped_grid(cap):
                 return lambda v, d: grid_neighbour(v, 0.6, d, cap)
 
+            def ratio_grid(v, d):
+                return grid_neighbour(v, 0.8, d, 1.0)
+
             for key in keys:
                 mults, _, _ = climb(mults, key, lambda m: evaluate(current, m),
-                                    capped_grid(None if key.startswith("plan:") else 1.0))
+                                    ratio_grid if key == "ratio"
+                                    else capped_grid(None if key.startswith("plan:") else 1.0))
 
         def search_main(grid_of):
             nonlocal current
