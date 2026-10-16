@@ -173,8 +173,8 @@ for s in summaries:
                                       for c in s["cands"]])
     width = (17 - 5.2) / len(s["cands"])
     partial = "" if len(s["cands"]) == 7 else f" - PARTIAL, {len(s['cands'])} of 7 candidates so far"
-    story += [P(f"Interval {k + 1}: score per candidate conv LR (bold: each row's best){partial}", "h2"),
-              table(rows, [5.2 * cm] + [width * cm] * len(s["cands"]))]
+    story += [KeepTogether([P(f"Interval {k + 1}: score per candidate conv LR (bold: each row's best){partial}",
+                              "h2"), table(rows, [5.2 * cm] + [width * cm] * len(s["cands"]))])]
     conv_only, shared, per = (s["chosen"][m] for m in ("conv_only", "shared", "per_group"))
     rows = [["Candidate", "Conv only: chosen m (seeds)", "Shared: chosen m (seeds)",
              "4 searched: chosen (conv, head, norm_bias, whiten_bias) (seeds)"]]
