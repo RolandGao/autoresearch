@@ -20,8 +20,12 @@ from reportlab.platypus import (Image, KeepTogether, Paragraph, SimpleDocTemplat
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "research"))
+sys.path.insert(0, REPO)
 import cooldown_study as cs  # noqa: E402
 import importance_study as imp  # noqa: E402
+import family_study as fam  # noqa: E402
+import report_data  # noqa: E402
+import train_cifar as tc  # noqa: E402
 
 OUT = os.path.join(REPO, "cooldown_study.pdf")
 OBSERVATIONS = os.path.join(REPO, "research", "cooldown_study_observations.txt")
@@ -274,6 +278,105 @@ for length, r in runs.items():
     story += [KeepTogether([P(f"L = {length}: TTA minus the center's (pp) at each grid offset (center LR in "
                               f"brackets; center TTA {100 * r['center']['tta']:.2f})", "h2"),
                             table(rows, [3.4 * cm] + [1.23 * cm] * 11)])]
+
+
+# Experiment 3: representation quality of schedule families.
+families = fam.load()
+fixed = report_data.fixed_runs()
+
+
+def fixed_ref(name):
+    r = fixed.get((name, 8, 100, "old")) or fixed.get((name, 8, 100, "new"))
+    return f"{r[1]:.2f}" if r else "running"
+
+
+story += [
+    P("Experiment 3. Representation quality of schedule families", "h1"),
+    P("Question", "h2"),
+    P("How close to the baseline can each family of conv LR schedules get, under no transform and under "
+      "the ramp, reverse ramp and wave transforms, when searched by the same global search?"),
+    P("Setup", "h2"),
+    table([
+        ["Item", "Value"],
+        ["Model / data", "baseline_bs2000; only the conv LR schedule is searched, the other groups stay on the "
+                         "baseline. The transform multiplies the conv LR the search specifies"],
+        ["Conditions", "No transform; ramp x 4^(2x-1) (x0.25 -> x4); reverse ramp x 4^(1-2x) (x4 -> x0.25); wave "
+                       "x 2^sin(2 pi x) (x1 -> x2 -> x0.5 -> x1); x = fraction of training"],
+        ["Families", "5 constant intervals (5 values); linear decay to 0 (initial LR); power decay lr x (1-t)^p "
+                     "(lr, p; p = 1 is linear); 2 knots at t = 0, 0.5; 3 knots at t = 0, 1/3, 2/3; 5 knots at "
+                     "t = 0, 0.2, 0.4, 0.6, 0.8 (knot values; linear between knots, 0 at the end)"],
+        ["Search", "Generalized global_neighbour (global_family): coordinate search over the family's parameters on "
+                   "multiplicative grids (LR values x0.6, p x0.8), one grid step at a time, moving while the score "
+                   "improves; every candidate is a full training run on seed 0 from the same initial state"],
+        ["Start", "The oracle spec (baseline conv schedule divided by the transform) projected onto the family: "
+                  "interval means or knot values snapped to the grid; linear / power start at 0.22 with p = 1"],
+        ["Evaluation", "Start and best schedules retrained on held-out seeds 100-107 (mean test TTA; not part of "
+                       "the search)"],
+    ], [3.3 * cm, 13.7 * cm]),
+]
+ref = {"": "93.92", "_ramp": fixed_ref("transformed_a_ramp_bs2000"),
+       "_rampdown": fixed_ref("transformed_a_rampdown_bs2000"), "_wave": fixed_ref("transformed_a_wave_bs2000")}
+story += [P("References (held-out TTA, seeds 100-107)", "h2"),
+          table([["", *(fam.CONDITION_LABELS[c] for c in fam.CONDITIONS)],
+                 ["Baseline linear decay, no transform (the target)", *(["93.92"] * 4)],
+                 ["Baseline spec kept under the transform (do-nothing)", *(ref[c] for c in fam.CONDITIONS)]],
+                [6.6 * cm] + [2.6 * cm] * 4)]
+rows = [["Family", *(fam.CONDITION_LABELS[c] for c in fam.CONDITIONS)]]
+for f in fam.FAMILIES:
+    cells = [fam.FAMILY_LABELS[f]]
+    for c in fam.CONDITIONS:
+        r = families.get(f"auto_gfam_{f}_bs2000{c}")
+        if r is None or "final" not in r:
+            cells.append("running")
+        else:
+            cells.append(f"<b>{r['final'][0]:.2f}</b> (start {r['start'][0]:.2f}; {r['evaluations']} runs, "
+                         f"{r['seconds']:.0f} s)")
+    rows.append(cells)
+story += [P("Held-out TTA of the best schedule (start = the projected oracle before search; search cost)", "h2"),
+          table(rows, [3.6 * cm] + [3.35 * cm] * 4)]
+rows = [["Family", *(fam.CONDITION_LABELS[c] for c in fam.CONDITIONS)]]
+for f in fam.FAMILIES:
+    cells = [fam.FAMILY_LABELS[f]]
+    for c in fam.CONDITIONS:
+        r = families.get(f"auto_gfam_{f}_bs2000{c}")
+        cells.append("running" if r is None or "final_values" not in r else
+                     ", ".join(f"{v:g}" for v in r["final_values"].values()))
+    rows.append(cells)
+story += [P("Best parameter values (LR values in order; power: lr, p)", "h2"), table(rows, [3.6 * cm] + [3.35 * cm] * 4)]
+
+fig, axes = plt.subplots(2, 2, figsize=(10, 6.6), layout="constrained", sharey=True)
+fam_colors = {"intervals5": "#2a78d6", "linear": "#8c8b86", "power": "#eb6834", "knots2": "#1baf7a",
+              "knots3": "#6250d6", "knots5": "#e34948"}
+steps = list(range(200))
+for ax, c in zip(axes.flat, fam.CONDITIONS):
+    ax.set_title(fam.CONDITION_LABELS[c], loc="left", fontsize=9.5)
+    ax.plot(steps, [0.22 * (1 - st / 200) for st in steps], color="#0b0b0b", linewidth=2.2,
+            label="target: baseline applied LR")
+    transform = tc.LR_TRANSFORMS.get(c.lstrip("_"))
+    for f in fam.FAMILIES:
+        r = families.get(f"auto_gfam_{f}_bs2000{c}")
+        if r is None or "final_values" not in r:
+            continue
+        lines = tc.family_schedule(tc.GLOBAL_FAMILIES[f], r["final_values"], 200)
+        applied = [tc.schedule_value_at_step(lines, st) * (tc.lr_transform_factor(transform, st, 200)
+                                                           if transform else 1.0) for st in steps]
+        ax.plot(steps, applied, color=fam_colors[f], linewidth=1.3, label=fam.FAMILY_LABELS[f])
+    ax.set_xlabel("training step")
+for ax in axes[:, 0]:
+    ax.set_ylabel("applied conv LR")
+handles = {}
+for ax in axes.flat:
+    for h, label in zip(*ax.get_legend_handles_labels()):
+        handles.setdefault(label, h)
+fig.legend(handles.values(), handles.keys(), loc="outside lower center", ncol=4, frameon=False, fontsize=8)
+fam_path = os.path.join(REPO, "plots", "family_study.png")
+fig.savefig(fam_path, dpi=140)
+plt.close(fig)
+fam_img = Image(fam_path)
+fam_img.drawWidth, fam_img.drawHeight = 17 * cm, 17 * cm * fam_img.imageHeight / fam_img.imageWidth
+story += [KeepTogether([fam_img, P("Figure 3. Applied conv LR (spec x transform) of each family's best schedule; "
+                                   "the black line is the baseline's applied LR, which a perfect search would "
+                                   "reproduce.", "small")])]
 
 
 def attach_headings(flowables):
