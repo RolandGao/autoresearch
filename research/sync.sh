@@ -25,5 +25,5 @@ else
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 fi
-git push -q 2>&1 | tail -2
+git push -q origin HEAD:master 2>&1 | tail -2
 git log --oneline -1
