@@ -2912,6 +2912,30 @@ for batch_size in (2000, 500, 125):
                         for a, b, m in zip(bounds, bounds[1:], means)
                     ]
                 RUN_CONFIGS[f"staircase_{scenario}_n{n}{'_grid' if snap else ''}_bs{batch_size}"] = config
+# Why 5-step staircases lose: the final anneal or the steps themselves? (conv, BS 2000)
+STAIRCASE_TESTS = {
+    # Staircase means, but the last interval decays linearly with the same mean (0.045 -> 0).
+    "lastlin": [(40, 0.2), (40, 0.15), (40, 0.11), (40, 0.067), (40, 0.045, 0.0)],
+    # Staircase means with the baseline's exact last interval (0.044 -> 0).
+    "lastexact": [(40, 0.2), (40, 0.15), (40, 0.11), (40, 0.067), (40, 0.044, 0.0)],
+    # Piecewise linear through grid-snapped knots of the baseline (0.22 .. 0).
+    "knots_grid": [(40, 0.22, 0.22), (40, 0.22, 0.13), (40, 0.13, 0.078), (40, 0.078, 0.047),
+                   (40, 0.047, 0.0)],
+}
+for name, lines in STAIRCASE_TESTS.items():
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    config["param_groups"]["conv"]["lr_scheduler"] = lines
+    RUN_CONFIGS[f"staircase_a_{name}_bs2000"] = config
+# Representation: piecewise-linear schedules (shape="linear") or finer constant intervals.
+AUTO_SHAPES = {
+    "lin_ssearch": dict(shape="linear", cooldown_searched="search"),
+    "lin_rest_lin": dict(shape="linear", cooldown_searched="linear", cooldown_fraction=1),
+    "i10_ssearch": dict(interval_fraction=10, cooldown_searched="search"),
+}
+for batch_size in (2000, 500, 125):
+    for name, options in AUTO_SHAPES.items():
+        RUN_CONFIGS[f"auto_a_{name}_bs{batch_size}"] = auto_config(
+            batch_size, "a", None, None, **options)
 AUTO_B_COOLDOWNS = {  # name: (cooldown_searched, cooldown_fraction); no other trained groups
     "s036": (0.36, 5),
     "ssearch": ("search", 5),
@@ -4144,7 +4168,7 @@ AUTO_REQUIRED = {
     "algorithm", "metric", "params", "interval_fraction", "cooldown_fraction",
     "cooldown_searched", "cooldown_others", "move_margin", "max_side_steps",
 }
-AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within"}
+AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "shape"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4176,6 +4200,9 @@ def run_auto_search(run, model, config):
       coarse_mult (optional): in the first interval, first climb each LR on this grid
         (e.g. 0.1), then refine on params' grid.
       revisit (optional, default True): repeat coordinate passes until none moves.
+      shape (optional, default "constant"): "linear" makes each searched value the LR
+        at the end of its interval, reached linearly from the previous interval's end
+        value (piecewise-linear schedules; the first interval is flat).
       larger_within (optional, default 0): after each LR climb, move up the grid while
         the score stays within this of the climb's best (counters short-horizon bias).
       heldout_seeds (optional): after the search, train the committed schedule from
@@ -4210,6 +4237,9 @@ def run_auto_search(run, model, config):
     coarse = tuning.get("coarse_mult")
     revisit = tuning.get("revisit", True)
     larger_within = tuning.get("larger_within", 0.0)
+    shape = tuning.get("shape", "constant")
+    if shape not in ("constant", "linear"):
+        raise ValueError("shape must be constant or linear")
     log_config(run, config, label="base_config")
 
     trainer = SegmentTrainer(model, config)
@@ -4229,6 +4259,12 @@ def run_auto_search(run, model, config):
     ]
     evaluations = 0
     history = []
+    knots = {}  # shape="linear": each searched LR at the end of the last committed interval
+
+    def main_window(lines, path, start, steps, value):
+        if shape == "linear":
+            return linear_window(lines, start, steps, knots.get(path, value), value)
+        return constant_window(lines, start, steps, value)
 
     while trainer.step < total:
         start = trainer.step
@@ -4245,7 +4281,7 @@ def run_auto_search(run, model, config):
             trainer.restore(state)
             sched = dict(committed)
             for path, value in values.items():
-                sched[path] = constant_window(committed[path], start, main_steps, value)
+                sched[path] = main_window(committed[path], path, start, main_steps, value)
             ok = trainer.train(sched, main_steps)
             if ok and look:
                 cool_start = start + main_steps
@@ -4330,7 +4366,8 @@ def run_auto_search(run, model, config):
         selected = evaluate(current, mults)
         trainer.restore(state)
         for path, value in current.items():
-            committed[path] = constant_window(committed[path], start, main_steps, value)
+            committed[path] = main_window(committed[path], path, start, main_steps, value)
+            knots[path] = value
         if not trainer.train(committed, main_steps):
             raise RuntimeError(f"Committed interval diverged at step {start}")
         history.append(dict(start_step=start, steps=main_steps, lookahead=look,
