@@ -247,3 +247,14 @@ Results
       late, i.e. ~18x the baseline's applied norm_bias LR once the ramp's x2.3 applies).
       The final anneal alone does not fix it; the multi-seed second pass does (93.81).
     - From scratch without a transform, one pass is enough (93.90-93.95, ~620 s).
+
+16. plan_tail: pass-2 candidates scale the plan's whole remaining schedule (v1x2m3t)
+    A candidate for an interval's end knot multiplies the rest of the plan by
+    candidate / plan value, and the committed choice keeps that scaled tail, so each pass-2
+    decision moves a whole region of the schedule (a larger, more detectable effect); a
+    later interval can still move back (wave: lower knots 1-2, then raise knot 3).
+      BS 2000 (2 search seeds): none 94.05 (457 s)  ramp 93.90 (509 s)  wave 93.86 (493 s)
+      BS 125 wave: 93.75 (912 s; v1x2m3 93.50, do-nothing 93.68, baseline 93.85)
+    Freezing LRs that look flat in the short first-interval scan is harmful from scratch:
+    norm_bias looks flat over a 20% horizon but matters over the run (frozen at 1000; the
+    right value is ~100, ~400 -> ~25 under ramp): v1x2m2fasff ramp 93.13 (range 0.78).
