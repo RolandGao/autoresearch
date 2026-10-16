@@ -11,13 +11,14 @@ import os
 from collections import Counter, defaultdict
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-METHODS = ("truth", "none", "lin_conv", "lin_all", "shared", "per_group")
+METHODS = ("truth", "none", "lin_conv", "lin_all", "conv_only", "shared", "per_group")
 LABELS = {
     "truth": "Ground truth (final TTA)",
     "none": "No lookahead",
     "lin_conv": "Linear to 0: conv only",
     "lin_all": "Linear to 0: all four groups",
-    "shared": "1 searched cooldown (shared)",
+    "conv_only": "1 searched cooldown: conv only, others on ground truth",
+    "shared": "1 searched cooldown: shared by all four groups",
     "per_group": "4 searched cooldowns (one per group)",
 }
 
@@ -36,7 +37,7 @@ def load(k):
                 setup = r
             elif kind in METHODS and r.get("score") is not None:
                 scores[kind][r["c"]][r["seed"]] = 100 * r["score"]
-                if kind == "shared":
+                if kind in ("shared", "conv_only"):
                     chosen[kind][r["c"]][r["seed"]] = r["m"]
                 elif kind == "per_group":
                     chosen[kind][r["c"]][r["seed"]] = tuple(r["mults"])
@@ -64,7 +65,7 @@ def summary(k):
         per_seed = [max(complete, key=lambda c: scores[m][c][s]) for s in seeds]
         out["seed_picks"][m] = per_seed
         out["seed_regret"][m] = sum(best - truth[p] for p in per_seed) / len(per_seed)
-    for m in ("shared", "per_group"):
+    for m in ("conv_only", "shared", "per_group"):
         out["chosen"][m] = {c: Counter(chosen[m][c].values()) for c in complete}
     return out
 

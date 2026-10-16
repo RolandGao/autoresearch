@@ -10,6 +10,8 @@ For interval k (length L = T/5) and candidate constant conv LRs c:
   shared       L-step lookahead, one searched constant cooldown multiplier m for all four
                groups (conv at m x c, each other group at m x its mean LR over the interval):
                the best m on this seed
+  conv_only    L-step lookahead, one searched constant multiplier for conv only (m x c); the
+               other groups follow their baseline (ground-truth) schedules: the best m
   per_group    L-step lookahead, four searched multipliers (one per group): coordinate search
                from the best shared m, one group at a time, until no group changes (<= 3 passes)
 Every evaluated cooldown is logged, so other selections can be recomputed.
@@ -71,7 +73,7 @@ for seed in [int(s) for s in args.seeds.split(",")]:
             for g in groups:
                 path = f"{g}.initial_lr"
                 level = c if g == "conv" else means[g]
-                if kind == "lin_conv" and g != "conv":
+                if kind in ("lin_conv", "const_conv") and g != "conv":
                     continue  # The other groups continue their schedules.
                 if kind in ("lin_conv", "lin_all"):
                     first = c if g == "conv" else t.schedule_value_at_step(base[path], cool_start)
@@ -90,6 +92,9 @@ for seed in [int(s) for s in args.seeds.split(",")]:
         shared = {m: lookahead("const", {g: m for g in groups}) for m in mults}
         best_m = max(mults, key=lambda m: shared[m])
         emit(log, kind="shared", seed=seed, c=c, m=best_m, score=shared[best_m])
+        conv_only = {m: lookahead("const_conv", {g: m for g in groups}) for m in mults}
+        best_conv = max(mults, key=lambda m: conv_only[m])
+        emit(log, kind="conv_only", seed=seed, c=c, m=best_conv, score=conv_only[best_conv])
         current = {g: best_m for g in groups}
         best = shared[best_m]
         for _ in range(3):

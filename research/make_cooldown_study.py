@@ -62,7 +62,8 @@ def table(rows, widths):
 def figure(summaries, path):
     styles = {"truth": ("#0b0b0b", "-", "o"), "none": ("#8c8b86", ":", "x"),
               "lin_conv": ("#2a78d6", "-", "s"), "lin_all": ("#2a78d6", "--", "s"),
-              "shared": ("#eb6834", "-", "^"), "per_group": ("#eb6834", "--", "v")}
+              "conv_only": ("#1baf7a", "-", "D"), "shared": ("#eb6834", "-", "^"),
+              "per_group": ("#eb6834", "--", "v")}
     plt.rcParams.update({"font.size": 8.5, "axes.edgecolor": "#e4e3df", "axes.grid": True,
                          "grid.color": "#e4e3df", "axes.spines.top": False, "axes.spines.right": False,
                          "axes.labelcolor": "#52514e", "xtick.color": "#52514e",
@@ -112,8 +113,9 @@ story = [
     P("An interval search picks each interval's LR by training the interval with a candidate LR, then "
       "a short lookahead (the cooldown), and scoring the result. Which cooldown ranks the candidates the "
       "way the final accuracy does? Compared, all with a 40-step lookahead (one interval at batch size "
-      "2000): no lookahead, linear decay to 0 (conv only, or all four groups), one searched constant "
-      "cooldown shared by all groups, and four searched constant cooldowns (one per group)."),
+      "2000): no lookahead; linear decay to 0 (conv only, or all four groups); one searched constant "
+      "cooldown, either for conv only with the other groups on their ground-truth schedules, or shared by "
+      "all four groups; and four searched constant cooldowns (one per group)."),
     P("Setup", "h1"),
     table([
         ["Item", "Value"],
@@ -128,30 +130,31 @@ story = [
         ["Linear to 0", "Conv only: conv decays linearly from the candidate to 0 over 40 steps, the other groups "
                         "continue their schedules. All groups: every group decays linearly to 0 from its current "
                         "value"],
-        ["1 searched cooldown", "Constant LRs for 40 steps: conv at m x candidate, each other group at m x its "
-                                "mean LR over the interval; m chosen from {1, 0.6, 0.36, 0.22, 0.13, 0.078, "
-                                "0.047, 0} by the best score on that seed"],
+        ["1 searched cooldown: conv only", "Conv constant at m x candidate for 40 steps; the other groups follow "
+                                           "their baseline (ground-truth) schedules; m chosen from {1, 0.6, 0.36, "
+                                           "0.22, 0.13, 0.078, 0.047, 0} by the best score on that seed"],
+        ["1 searched cooldown: shared", "Constant LRs for 40 steps: conv at m x candidate, each other group at m x "
+                                        "its mean LR over the interval; one m for all groups, chosen as above"],
         ["4 searched cooldowns", "As above but one m per group; coordinate search from the best shared m, one "
                                  "group at a time over the same 8 values, until no group changes (at most 3 "
                                  "passes)"],
-        ["Seeds", "4 training seeds (0-3); every method uses the same prefix and data order per seed"],
+        ["Seed", "1 training seed (0); every method uses the same prefix and data order"],
         ["Score", "Test-set TTA accuracy (%)"],
     ], [3.3 * cm, 13.7 * cm]),
     P("Results", "h1"),
-    P("Picked LR = the candidate with the highest seed-mean score. Regret = ground truth at its best "
-      "candidate minus ground truth at the picked one (pp). Per-seed regret = the same when each seed picks "
-      "from its own scores (what a single-seed search sees), averaged over seeds.", "small"),
+    P("Picked LR = the candidate with the highest score. Regret = ground truth at its best candidate "
+      "minus ground truth at the picked one (pp). One seed: single-run noise is about 0.13 pp, so "
+      "differences of that size between candidates are not resolved.", "small"),
 ]
 rows = [["Method"] + [f"Interval {k + 1}" for k in range(4)]]
 for m in cs.METHODS:
     cells = [cs.LABELS[m]]
     for s in summaries:
-        cells.append("running" if s is None else
-                     f"{s['picks'][m]:g} ({s['regret'][m]:.2f}; per seed {s['seed_regret'][m]:.2f})")
+        cells.append("running" if s is None else f"{s['picks'][m]:g} ({s['regret'][m]:.2f})")
     rows.append(cells)
-story += [P("Picked LR (regret; per-seed regret)", "h2"),
+story += [P("Picked LR (regret, pp)", "h2"),
           table(rows, [5.0 * cm, 3.0 * cm, 3.0 * cm, 3.0 * cm, 3.0 * cm]),
-          KeepTogether([img, P("Figure 1. Each method's seed-mean score per candidate, relative to its own best "
+          KeepTogether([img, P("Figure 1. Each method's score per candidate, relative to its own best "
                                "(the point at 0 is its pick).", "small")])]
 for s in summaries:
     if s is None:
@@ -164,16 +167,16 @@ for s in summaries:
         rows.append([cs.LABELS[m]] + [f"<b>{curve[c]:.2f}</b>" if curve[c] == top else f"{curve[c]:.2f}"
                                       for c in s["cands"]])
     width = (17 - 5.2) / len(s["cands"])
-    story += [P(f"Interval {k + 1}: seed-mean score per candidate conv LR (bold: each row's best)", "h2"),
+    story += [P(f"Interval {k + 1}: score per candidate conv LR (bold: each row's best)", "h2"),
               table(rows, [5.2 * cm] + [width * cm] * len(s["cands"]))]
-    shared = s["chosen"]["shared"]
-    per = s["chosen"]["per_group"]
-    rows = [["Candidate", "1 searched cooldown: chosen m (seeds)",
-             "4 searched cooldowns: chosen (conv, head, norm_bias, whiten_bias) (seeds)"]]
+    conv_only, shared, per = (s["chosen"][m] for m in ("conv_only", "shared", "per_group"))
+    rows = [["Candidate", "Conv only: chosen m (seeds)", "Shared: chosen m (seeds)",
+             "4 searched: chosen (conv, head, norm_bias, whiten_bias) (seeds)"]]
     for c in s["cands"]:
-        rows.append([f"{c:g}", ", ".join(f"{m:g} x{n}" for m, n in sorted(shared[c].items())),
+        rows.append([f"{c:g}", ", ".join(f"{m:g} x{n}" for m, n in sorted(conv_only[c].items())),
+                     ", ".join(f"{m:g} x{n}" for m, n in sorted(shared[c].items())),
                      "; ".join(f"({', '.join(f'{v:g}' for v in ms)}) x{n}" for ms, n in sorted(per[c].items()))])
-    story += [table(rows, [2.0 * cm, 5.0 * cm, 10.0 * cm])]
+    story += [table(rows, [1.8 * cm, 3.6 * cm, 3.6 * cm, 8.0 * cm])]
 if os.path.exists(OBSERVATIONS):
     story += [P("Observations", "h1")] + [P(line) for line in open(OBSERVATIONS).read().split("\n\n") if line.strip()]
 
