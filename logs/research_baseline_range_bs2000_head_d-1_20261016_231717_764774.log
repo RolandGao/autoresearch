@@ -1,0 +1,92 @@
+# commit 67a5872058e9b5a4c09632ba1ad5c5f1663d9804 (dirty: M research/make_cooldown_study.py;  M train_cifar.py; ?? research/baseline_range.py; ?? research/mix_study_observations.txt; ?? research/seed_runs.py)
+# args {"groups": "head", "directions": "-1", "seed": 0, "drop": 0.1, "max_side": 20}
+# worker w5 gpu GPU-c22040b7-bccf-34fe-5e2b-0cfb97b00021
+# source
+# | """Hparam range around the baseline: how far each LR's initial value can move before the full
+# | run's score drops by 10%.
+# | 
+# | baseline_bs2000, full 200-step runs. One LR at a time (the others on the baseline), its whole
+# | baseline schedule is scaled so the initial LR steps along the 0.6^k grid (+1 = one step larger,
+# | x1/0.6), on each side until the test TTA is at most (1 - drop) x the baseline's TTA on the same
+# | seed, or after max_side steps. A diverged or crashed run counts as a drop.
+# | """
+# | import argparse
+# | import copy
+# | from math import isfinite
+# | 
+# | from common import base_config, emit, new_model, open_log, t
+# | 
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--groups", required=True, help="comma-separated LRs to probe")
+# | parser.add_argument("--directions", default="-1,1", help="sides to probe (-1 smaller, 1 larger)")
+# | parser.add_argument("--seed", type=int, default=0)
+# | parser.add_argument("--drop", type=float, default=0.10, help="relative TTA drop that stops a side")
+# | parser.add_argument("--max-side", type=int, default=20, help="max grid steps on each side")
+# | args = parser.parse_args()
+# | log = open_log(f"baseline_range_bs2000_{args.groups.replace(',', '-')}_d{args.directions.replace(',', '')}",
+# |                args, __file__)
+# | 
+# | MULT = 0.6
+# | config = base_config(2000)
+# | model = new_model()
+# | 
+# | 
+# | def run(name, cfg):
+# |     try:
+# |         result = t.run_seeded(name, model, cfg, args.seed, debug=False)
+# |         tta, acc = result["tta_val_acc"], result["val_acc"]
+# |     except Exception as error:  # A huge LR may crash the run; it counts as diverged.
+# |         emit(log, kind="error", run=name, error=repr(error)[:300])
+# |         return 0.0, 0.0
+# |     return (tta, acc) if isfinite(tta) else (0.0, 0.0)
+# | 
+# | 
+# | def scaled(group, initial):
+# |     lines = config["param_groups"][group]["lr_scheduler"]
+# |     factor = initial / lines[0][1]
+# |     return [[line[0], *(v * factor for v in line[1:])] for line in lines]
+# | 
+# | 
+# | center_tta, center_acc = run("baseline_range_center", config)
+# | threshold = (1 - args.drop) * center_tta
+# | emit(log, kind="center", tta=center_tta, val_acc=center_acc, threshold=threshold, seed=args.seed)
+# | for g in args.groups.split(","):
+# |     initial = config["param_groups"][g]["lr_scheduler"][0][1]
+# |     index = t.lr_grid_index(initial, MULT)
+# |     for direction in map(int, args.directions.split(",")):
+# |         stop = None
+# |         for k in range(1, args.max_side + 1):
+# |             value = t.round_hparam(MULT ** (index - direction * k))
+# |             cfg = copy.deepcopy(config)
+# |             cfg["param_groups"][g]["lr_scheduler"] = scaled(g, value)
+# |             tta, acc = run(f"baseline_range_{g}_{direction * k:+d}", cfg)
+# |             emit(log, kind="range", group=g, offset=direction * k, value=value, tta=tta, val_acc=acc)
+# |             if tta <= threshold:
+# |                 stop = direction * k
+# |                 break
+# |         emit(log, kind="side", group=g, direction=direction, stop=stop)
+# | emit(log, kind="done")
+
+{"kind": "center", "tta": 0.9391999840736389, "val_acc": 0.9316999912261963, "threshold": 0.845279985666275, "seed": 0, "time": 1792192650.3}
+{"kind": "range", "group": "head", "offset": -1, "value": 770.0, "tta": 0.9407999515533447, "val_acc": 0.930899977684021, "time": 1792192660.8}
+{"kind": "range", "group": "head", "offset": -2, "value": 460.0, "tta": 0.9390999674797058, "val_acc": 0.9303999543190002, "time": 1792192671.3}
+{"kind": "range", "group": "head", "offset": -3, "value": 280.0, "tta": 0.9366999864578247, "val_acc": 0.9289999604225159, "time": 1792192681.8}
+{"kind": "range", "group": "head", "offset": -4, "value": 170.0, "tta": 0.9357999563217163, "val_acc": 0.9291999936103821, "time": 1792192692.3}
+{"kind": "range", "group": "head", "offset": -5, "value": 99.0, "tta": 0.9341999888420105, "val_acc": 0.9264000058174133, "time": 1792192702.8}
+{"kind": "range", "group": "head", "offset": -6, "value": 60.0, "tta": 0.9350000023841858, "val_acc": 0.9264999628067017, "time": 1792192713.3}
+{"kind": "range", "group": "head", "offset": -7, "value": 36.0, "tta": 0.9317999482154846, "val_acc": 0.923799991607666, "time": 1792192723.7}
+{"kind": "range", "group": "head", "offset": -8, "value": 21.0, "tta": 0.9315999746322632, "val_acc": 0.9235000014305115, "time": 1792192734.2}
+{"kind": "range", "group": "head", "offset": -9, "value": 13.0, "tta": 0.929099977016449, "val_acc": 0.9202999472618103, "time": 1792192744.7}
+{"kind": "range", "group": "head", "offset": -10, "value": 7.7, "tta": 0.9248999953269958, "val_acc": 0.9193999767303467, "time": 1792192755.2}
+{"kind": "range", "group": "head", "offset": -11, "value": 4.6, "tta": 0.9265999794006348, "val_acc": 0.9159999489784241, "time": 1792192765.7}
+{"kind": "range", "group": "head", "offset": -12, "value": 2.8, "tta": 0.9268999695777893, "val_acc": 0.9190999865531921, "time": 1792192776.2}
+{"kind": "range", "group": "head", "offset": -13, "value": 1.7, "tta": 0.927899956703186, "val_acc": 0.9185999631881714, "time": 1792192786.7}
+{"kind": "range", "group": "head", "offset": -14, "value": 1.0, "tta": 0.929099977016449, "val_acc": 0.9174000024795532, "time": 1792192797.2}
+{"kind": "range", "group": "head", "offset": -15, "value": 0.6, "tta": 0.927899956703186, "val_acc": 0.9185999631881714, "time": 1792192807.7}
+{"kind": "range", "group": "head", "offset": -16, "value": 0.36, "tta": 0.9284999966621399, "val_acc": 0.9197999835014343, "time": 1792192818.2}
+{"kind": "range", "group": "head", "offset": -17, "value": 0.22, "tta": 0.9283999800682068, "val_acc": 0.9193999767303467, "time": 1792192828.7}
+{"kind": "range", "group": "head", "offset": -18, "value": 0.13, "tta": 0.9267999529838562, "val_acc": 0.9195999503135681, "time": 1792192839.2}
+{"kind": "range", "group": "head", "offset": -19, "value": 0.078, "tta": 0.9268999695777893, "val_acc": 0.9204999804496765, "time": 1792192849.7}
+{"kind": "range", "group": "head", "offset": -20, "value": 0.047, "tta": 0.9264999628067017, "val_acc": 0.920699954032898, "time": 1792192860.2}
+{"kind": "side", "group": "head", "direction": -1, "stop": null, "time": 1792192860.2}
+{"kind": "done", "time": 1792192860.2}

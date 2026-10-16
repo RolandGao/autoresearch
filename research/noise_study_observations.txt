@@ -1,0 +1,5 @@
+One run of the baseline has a seed SD of 0.121 pp in TTA (128 seeds: mean 93.94, range 93.61-94.28, 0.67 pp from worst to best seed); without TTA the SD is 0.140 pp (mean 93.16). The mean over all 128 seeds is known to +-0.011 pp (SE).
+
+Averaging over seeds shrinks the noise about as SD / sqrt(n): measured on disjoint blocks of seeds, an 8-seed mean has SD 0.051 (predicted 0.043; 16 blocks, so the measured value itself is uncertain by about +-20%). Telling two schedules apart at 95% takes a difference of about 0.34 pp with 1 seed each, 0.12 pp with 8 seeds and 0.06 pp with 32 seeds (unpaired; pairing by seed helps only if the seeds' effects are shared).
+
+The seeds used so far are typical: seed 0 (the search seed) scores 93.92 and the held-out seeds 100-107 average 93.92, both within 0.02 pp of the 128-seed mean.

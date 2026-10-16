@@ -1,0 +1,7 @@
+The other groups' searched intervals do not help. With conv fixed at C4 and the other three groups on the baseline, the held-out TTA is 93.95 +- 0.06, as high as any row. Switching all three to their searched intervals gives 93.92 (-0.03 +- 0.07 paired); switching one at a time gives head -0.05 +- 0.08, whiten_bias -0.07 +- 0.07 and norm_bias -0.18 +- 0.08 (about 2.3 SE: norm_bias's searched intervals, 770 -> 280 instead of 99 -> 0, probably hurt).
+
+The 93.77 vs 93.92 gap between the original conv-only and four-LR searches came from conv, not from the other groups. Both conv schedules with the other groups on the baseline: 0.13, 0.13, 0.078, 0.078, 0.017 scores 93.77 and C4 (0.13, 0.13, 0.078, 0.047, 0.01) 93.95, +0.18 +- 0.05 paired (7 of 8 seeds). The four-LR rerun reproduces the original run's per-seed scores exactly, so the older 93.77 run is directly comparable.
+
+So 5 constant intervals of conv alone do match the baseline (93.95 vs the baseline's 93.92 on these seeds) when the last two intervals are low enough (0.047, 0.01); Experiment 3's conv-only search stopped at 0.047, 0.028.
+
+The searched non-conv intervals with the baseline's linear conv score 93.87 (-0.08 +- 0.07 vs the C4 control), close to the baseline itself: the other groups' schedules matter little with either conv schedule.

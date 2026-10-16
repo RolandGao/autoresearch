@@ -1,6 +1,8 @@
 """Build cooldown_study.pdf: which 40-step lookahead cooldown ranks interval candidates like the
 final result? Data: research/cooldown_search_probe.py logs via research/cooldown_study.py.
 python research/make_cooldown_study.py"""
+import glob
+import json
 import os
 import sys
 from datetime import datetime
@@ -25,6 +27,7 @@ import cooldown_study as cs  # noqa: E402
 import importance_study as imp  # noqa: E402
 import family_study as fam  # noqa: E402
 import range_study as rng  # noqa: E402
+import seed_runs as sr  # noqa: E402
 import report_data  # noqa: E402
 import train_cifar as tc  # noqa: E402
 
@@ -466,6 +469,197 @@ story += [keep([rng_img, P(f"Figure 4. Relative TTA change along each probe; the
 rng_obs = os.path.join(REPO, "research", "range_study_observations.txt")
 if os.path.exists(rng_obs):
     story += [P("Observations", "h2")] + [P(x) for x in open(rng_obs).read().split("\n\n") if x.strip()]
+
+
+def observations(name):
+    path = os.path.join(REPO, "research", name)
+    if not os.path.exists(path):
+        return []
+    return [P("Observations", "h2")] + [P(x) for x in open(path).read().split("\n\n") if x.strip()]
+
+
+def mean_se(values):
+    m = sum(values) / len(values)
+    sd = (sum((v - m) ** 2 for v in values) / (len(values) - 1)) ** 0.5 if len(values) > 1 else 0.0
+    return m, sd, sd / len(values) ** 0.5
+
+
+# Experiment 5: which non-conv interval schedules help (conv fixed). Runs from 2026-10-16 23:00 UTC.
+SINCE = "20261016_225000"
+HELDOUT = list(range(100, 108))
+noise = sr.per_seed("baseline_bs2000", SINCE)
+mix = [("mix_c4_ctl_bs2000", "C4", "baseline", "baseline", "baseline"),
+       ("mix_c4_head_bs2000", "C4", "searched", "baseline", "baseline"),
+       ("mix_c4_norm_bias_bs2000", "C4", "baseline", "searched", "baseline"),
+       ("mix_c4_whiten_bias_bs2000", "C4", "baseline", "baseline", "searched"),
+       ("schedule_interval_lrs_bs2000", "C4", "searched", "searched", "searched"),
+       ("mix_lin_others_bs2000", "baseline (0.22 -> 0)", "searched", "searched", "searched"),
+       ("baseline_bs2000", "baseline (0.22 -> 0)", "baseline", "baseline", "baseline")]
+mix_data = {name: (noise if name == "baseline_bs2000" else sr.per_seed(name, SINCE)) for name, *_ in mix}
+control = mix_data["mix_c4_ctl_bs2000"]
+rows = [["Conv", "head", "norm_bias", "whiten_bias", "Held-out TTA (mean +- SE)", "vs first row (paired)"]]
+for name, *cells in mix:
+    data = {s: v[0] for s, v in mix_data[name].items() if s in HELDOUT}
+    if len(data) < len(HELDOUT):
+        rows.append([*cells, f"running ({len(data)}/8)", "-"])
+        continue
+    m, _, se = mean_se(list(data.values()))
+    diff = "-"
+    if name != "mix_c4_ctl_bs2000" and all(s in control for s in HELDOUT):
+        dm, _, dse = mean_se([data[s] - control[s][0] for s in HELDOUT])
+        diff = f"{dm:+.2f} +- {dse:.2f}"
+    rows.append([*cells, f"{m:.2f} +- {se:.2f}", diff])
+story += [
+    P("Experiment 5. Which non-conv interval schedules help", "h1"),
+    P("Question", "h2"),
+    P("The two original 5-interval searches scored 93.77 (conv only) and 93.92 (all four LRs) on held-out seeds, "
+      "but their conv schedules differ in the last two intervals (0.078, 0.017 vs 0.047, 0.01). With conv fixed, do "
+      "the other groups' searched intervals help, and which group?"),
+    P("Setup", "h2"),
+    table([
+        ["Item", "Value"],
+        ["Schedules", "C4 = conv constant 0.13, 0.13, 0.078, 0.047, 0.01 (5 x 40 steps; the four-LR interval search's "
+                      "conv). Searched intervals: head 2100, 2100, 2100, 2100, 1300; norm_bias 770, 770, 770, 460, "
+                      "280; whiten_bias 460, 460, 280, 280, 280. Baseline: conv 0.22 -> 0, head 1300 -> 0, norm_bias "
+                      "99 -> 0 (linear over 200 steps), whiten_bias 36 -> 0 over 75 steps, then 0"],
+        ["Runs", "Plain training runs (no search) on held-out seeds 100-107, current code; the paired difference "
+                 "is per seed against the first row"],
+    ], [3.3 * cm, 13.7 * cm]),
+    P("Held-out TTA", "h2"),
+    table(rows, [3.0 * cm, 1.7 * cm, 1.8 * cm, 2.2 * cm, 4.0 * cm, 3.3 * cm]),
+    P("For reference, the original conv-only interval search's schedule (conv 0.13, 0.13, 0.078, 0.078, 0.017, the "
+      "others on the baseline) scored 93.77 on the same seeds (older code).", "small"),
+] + observations("mix_study_observations.txt")
+
+# Experiment 6: seed noise of the baseline.
+story += [
+    P("Experiment 6. Seed noise of the baseline", "h1"),
+    P("Question", "h2"),
+    P("How much does the baseline's score vary across training seeds, and how many seeds does a comparison need?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Runs", "baseline_bs2000, plain training runs on seeds 0-127 (seed 0 is the search seed; 100-107 are the "
+                    "held-out seeds); the seed sets the initialization, data order and augmentation"],
+           ["Score", "Test TTA accuracy (%) and test accuracy without TTA"]], [3.3 * cm, 13.7 * cm]),
+]
+if len(noise) >= 2:
+    tta = [v[0] for v in noise.values()]
+    acc = [v[1] for v in noise.values()]
+    m, sd, se = mean_se(tta)
+    am, asd, ase = mean_se(acc)
+    held = [noise[s][0] for s in HELDOUT if s in noise]
+    rows = [["Metric", "Seeds", "Mean", "SD (one run)", "SE of the mean", "Min", "Max"],
+            ["TTA", str(len(tta)), f"{m:.3f}", f"{sd:.3f}", f"{se:.3f}", f"{min(tta):.2f}", f"{max(tta):.2f}"],
+            ["No TTA", str(len(acc)), f"{am:.3f}", f"{asd:.3f}", f"{ase:.3f}", f"{min(acc):.2f}", f"{max(acc):.2f}"]]
+    story += [P(f"Baseline across seeds{'' if len(noise) == 128 else f' (PARTIAL: {len(noise)}/128)'}", "h2"),
+              table(rows, [2.4 * cm, 1.6 * cm, 2.2 * cm, 2.6 * cm, 2.9 * cm, 2.2 * cm, 2.2 * cm])]
+    order = sorted(noise)
+    rows = [["Seeds per mean (n)", "SD of an n-seed mean: SD/sqrt(n)", "Measured (disjoint blocks of n)",
+             "Smallest difference two n-seed means resolve (95%)"]]
+    block_sd = {}
+    for n in (1, 2, 4, 8, 16, 32):
+        blocks = [order[i:i + n] for i in range(0, len(order) - n + 1, n)]
+        means = [sum(noise[s][0] for s in b) / n for b in blocks]
+        block_sd[n] = mean_se(means)[1] if len(means) > 2 else None
+        rows.append([str(n), f"{sd / n ** 0.5:.3f}",
+                     f"{block_sd[n]:.3f} ({len(means)} blocks)" if block_sd[n] is not None else "-",
+                     f"{1.96 * sd * (2 / n) ** 0.5:.2f} pp"])
+    story += [P("Averaging over seeds", "h2"), table(rows, [3.4 * cm, 4.4 * cm, 4.4 * cm, 4.8 * cm])]
+    if 0 in noise and len(held) == 8:
+        story += [P(f"Seed 0 (the search seed): {noise[0][0]:.2f}. Held-out seeds 100-107: mean "
+                    f"{sum(held) / 8:.2f}. All seeds: {m:.2f}.", "small")]
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.4), layout="constrained")
+    ax = axes[0]
+    ax.hist(tta, bins=16, color="#2a78d6", edgecolor="white", linewidth=1.5)
+    ax.axvline(m, color="#0b0b0b", linewidth=1.5, label=f"mean {m:.2f}")
+    if 0 in noise:
+        ax.axvline(noise[0][0], color="#eb6834", linewidth=1.5, linestyle="--", label=f"seed 0: {noise[0][0]:.2f}")
+    ax.set_xlabel("test TTA (%)")
+    ax.set_ylabel("seeds")
+    ax.set_title("Baseline TTA across seeds", loc="left", fontsize=9.5)
+    ax.legend(frameon=False, fontsize=8)
+    ax = axes[1]
+    ns = [n for n in block_sd if block_sd[n] is not None]
+    ax.plot(ns, [sd / n ** 0.5 for n in ns], color="#8c8b86", linewidth=2, label="SD / sqrt(n)")
+    ax.plot(ns, [block_sd[n] for n in ns], color="#2a78d6", marker="o", markersize=5, linewidth=1.3,
+            label="measured (disjoint blocks)")
+    ax.set_xscale("log", base=2)
+    ax.set_xticks(ns, [str(n) for n in ns])
+    ax.set_xlabel("seeds per mean (n)")
+    ax.set_ylabel("SD of the n-seed mean (pp)")
+    ax.set_title("Noise of an n-seed mean", loc="left", fontsize=9.5)
+    ax.legend(frameon=False, fontsize=8)
+    noise_path = os.path.join(REPO, "plots", "noise_study.png")
+    fig.savefig(noise_path, dpi=140)
+    plt.close(fig)
+    img = Image(noise_path)
+    img.drawWidth, img.drawHeight = 17 * cm, 17 * cm * img.imageHeight / img.imageWidth
+    story += [keep([img, P("Figure 5. Left: the baseline's TTA over seeds. Right: the spread of an n-seed mean, "
+                           "predicted from the single-run SD and measured on disjoint blocks of seeds.", "small")])]
+story += observations("noise_study_observations.txt")
+
+# Experiment 7: hparam range around the baseline (full runs).
+brange = dict(center=None, probe={g: {} for g in rng.GROUPS}, stop={g: {} for g in rng.GROUPS})
+for path in glob.glob(os.path.join(REPO, "logs", "research_baseline_range_bs2000_*.log")):
+    for line in open(path):
+        if line.startswith("{"):
+            r = json.loads(line)
+            if r["kind"] == "center":
+                brange["center"] = r
+            elif r["kind"] == "range":
+                brange["probe"][r["group"]][r["offset"]] = (r["value"], 100 * r["tta"])
+            elif r["kind"] == "side":
+                brange["stop"][r["group"]][r["direction"]] = r["stop"]
+base_cfg = tc.normalize_config(tc.RUN_CONFIGS["baseline_bs2000"], key=None)
+story += [
+    P("Experiment 7. Hparam range around the baseline", "h1"),
+    P("Question", "h2"),
+    P("Starting from the baseline instead of a from-scratch center, how far can each LR's initial value move, on "
+      "each side, before the full run's score drops by 10%?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Runs", "baseline_bs2000, full 200-step runs, seed 0. One LR at a time (the others on the baseline)"],
+           ["Probe", "The LR's whole baseline schedule is scaled so its initial value steps along the 0.6^k grid "
+                     "(+1 = x1/0.6, larger), on each side until TTA <= 0.9 x the baseline's TTA on seed 0, or 20 "
+                     "steps. A diverged run counts as a drop"]], [3.3 * cm, 13.7 * cm]),
+]
+if brange["center"] is not None:
+    rows = [["LR", "Baseline initial LR", "Stop (smaller / larger)", "Initial LR range within 10%"]]
+    for g in rng.GROUPS:
+        stop, probe = brange["stop"][g], brange["probe"][g]
+        initial = base_cfg["param_groups"][g]["lr_scheduler"][0][1]
+        text, span = f"{stop_text(stop, -1)} / {stop_text(stop, 1)}", "-"
+        if -1 in stop and 1 in stop:
+            lo = probe.get((stop[-1] or -21) + 1, (initial, 0))[0]
+            hi = probe.get((stop[1] or 21) - 1, (initial, 0))[0]
+            span = f"{lo:g} - {hi:g} (x{hi / lo:.3g})"
+        rows.append([g, f"{initial:g}", text, span])
+    story += [P(f"Stop offsets (baseline TTA on seed 0: {100 * brange['center']['tta']:.2f}; stop at "
+                f"{100 * brange['center']['threshold']:.2f})", "h2"),
+              table(rows, [2.8 * cm, 3.4 * cm, 4.2 * cm, 6.6 * cm])]
+    fig, ax = plt.subplots(figsize=(10, 3.8), layout="constrained")
+    center_tta = 100 * brange["center"]["tta"]
+    ax.axhline(0, color="#8c8b86", linewidth=0.8, linestyle=":")
+    ax.axhline(-10, color="#0b0b0b", linewidth=0.8, linestyle="--")
+    for g in rng.GROUPS:
+        probe = {**brange["probe"][g], 0: (None, center_tta)}
+        offs = sorted(probe)
+        ax.plot(offs, [max(floor, 100 * (probe[o][1] / center_tta - 1)) for o in offs], color=colors_g[g],
+                marker="o", markersize=3.5, linewidth=1.3, label=g)
+    ax.set_xlim(-21, 21)
+    ax.set_ylim(floor - 2, 3)
+    ax.set_xlabel("grid steps of the initial LR from the baseline (+ = larger)")
+    ax.set_ylabel("TTA change vs baseline (%)")
+    ax.legend(frameon=False, fontsize=8, loc="lower left")
+    brange_path = os.path.join(REPO, "plots", "baseline_range.png")
+    fig.savefig(brange_path, dpi=140)
+    plt.close(fig)
+    img = Image(brange_path)
+    img.drawWidth, img.drawHeight = 17 * cm, 17 * cm * img.imageHeight / img.imageWidth
+    story += [keep([img, P(f"Figure 6. Relative TTA change of full runs as one LR's initial value moves from the "
+                           f"baseline; dashed: the 10% stop. Points below {floor}% are drawn at {floor}%.",
+                           "small")])]
+story += observations("baseline_range_observations.txt")
 
 
 def attach_headings(flowables):

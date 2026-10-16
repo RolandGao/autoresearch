@@ -1,0 +1,9 @@
+One seed (0); the 10% stop (84.53) is about 80 single-run SDs (Experiment 6) below the baseline, so the stop offsets are not noise; differences under about 0.34 pp between single points are.
+
+Conv has a clear optimum, and the baseline sits on it: 0.13 scores 93.95 and 0.22 (baseline) 93.92; one step further costs 0.4-0.8 pp (0.36: 93.51; 0.078: 93.08). Its 10% range ends at -6 (0.01: 84.03) and +6 (4.6: 83.28), so in full runs conv tolerates a factor of about 165 (0.017 to 2.8) before losing 10%, much wider than in the from-scratch L-step setting of Experiment 4 (5-6 grid points).
+
+Head, norm_bias and whiten_bias never drop by 10% on the smaller side within 20 steps (down to 3.7e-5 x the baseline). Norm_bias and whiten_bias are flat there (all within 93.55-94.29, within about 0.4 pp of the baseline, roughly the single-run noise range); head loses about 1.2 pp once it is below about 8 (92.5-92.9 from 7.7 down to 0.047), still far from 10%.
+
+On the larger side, head stops at +8 (76000: 78.35; 46000 still 92.91) and norm_bias at +9 (9800: 66.44; 5900: 90.16), both after 6-7 steps of no loss: they fail by blowing up, not gradually. whiten_bias never stops: up to 980000 (x27000) it stays above 92.3.
+
+So around the baseline only conv needs tuning; the three other LRs only need to stay below a blow-up edge about 35x above their baseline values (head, norm_bias; the last points without loss are 46000 and 3500), and whiten_bias barely matters at all.

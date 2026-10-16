@@ -2838,6 +2838,23 @@ for source, schedules in (("interval", GLOBAL_INTERVAL_STARTS),
             config["param_groups"][name]["lr_scheduler"] = [(40, lr) for lr in lrs]
         RUN_CONFIGS[f"schedule_{source}_{suffix}_bs2000"] = config
 
+# Which non-conv interval schedules help (held-out seeds 100-107): conv fixed at the
+# four-LR interval search's schedule (mix_c4_*) with no / one other group on its searched
+# intervals (the others on the baseline), and the baseline linear conv with all three
+# other groups on their searched intervals (mix_lin_others).
+SEARCHED_OTHERS = {g: v for g, v in GLOBAL_INTERVAL_STARTS["lrs"].items() if g != "conv"}
+for suffix, conv_intervals, others in (
+    ("c4_ctl", True, ()),
+    *((f"c4_{g}", True, (g,)) for g in SEARCHED_OTHERS),
+    ("lin_others", False, tuple(SEARCHED_OTHERS)),
+):
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    if conv_intervals:
+        config["param_groups"]["conv"]["lr_scheduler"] = [(40, lr) for lr in GLOBAL_INTERVAL_STARTS["lrs"]["conv"]]
+    for name in others:
+        config["param_groups"][name]["lr_scheduler"] = [(40, lr) for lr in SEARCHED_OTHERS[name]]
+    RUN_CONFIGS[f"mix_{suffix}_bs2000"] = config
+
 # auto search (run_auto_search) studies, research/ and interval_search_writeup.txt.
 # Scenario A ("a"): a good baseline; search the conv LR (from its baseline initial value)
 # with the other groups on their baseline schedules. Scenario B ("b"): from scratch; all
