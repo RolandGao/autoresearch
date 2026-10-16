@@ -195,3 +195,16 @@ Results
     v4 (max of linear and geometric lookahead): 93.88 / 93.71 / 93.76 (none/ramp/wave).
     Scenario B under ramp fails for every variant so far (v1ps 93.12, v1fast 92.93 vs
     do-nothing 93.25): with all four groups transformed the linear lookahead misleads all.
+
+12. Two passes, and the winner's curse (scenario A, BS 2000)
+    passes=2: the second pass starts each interval at the first pass's knot and uses the first
+    pass's schedule as its lookahead (late decisions, whose lookaheads are short and barely
+    distorted, correct the lookahead of early ones).
+      v1x2  ramp 93.94 (2 seeds, 272 s: early knots raised to 0.6, 0.6, 0.22 ~ oracle 1.0, 0.36, 0.22)
+      v1x2  wave 93.50 (2 seeds, 229 s): pass 2 made no move at all.
+    Why: pass 2's centre evaluation replays pass 1's run on the same seed exactly, so it
+    inherits pass 1's selected (lucky) score; one run had locked in a flat 0.13 schedule
+    scoring 94.09 on its own seed (~93.4 on held-out seeds), and fresh-trajectory neighbours
+    almost never beat a lucky incumbent. The same lock-in explains why polish stalls under
+    wave. first_knot (sloped first segment) did not help (wave 93.61 / 93.45 with polish).
+    Fix under test: reseed (each later pass / polish round re-scores the incumbent on a fresh seed).
