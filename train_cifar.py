@@ -2880,6 +2880,11 @@ for batch_size in (2000, 500, 125):
             batch_size, "a", None, None, cooldown_searched=searched_mult, cooldown_others=others,
             cooldown_fraction=fraction,
         )
+# Short-horizon bias: take the largest LR within larger_within (0.1 / 0.2 pp) of the best.
+for batch_size in (2000, 500, 125):
+    for tag, within in (("lw1", 0.001), ("lw2", 0.002)):
+        RUN_CONFIGS[f"auto_a_s036_cont_{tag}_bs{batch_size}"] = auto_config(
+            batch_size, "a", None, None, larger_within=within)
 AUTO_B_COOLDOWNS = {  # name: (cooldown_searched, cooldown_fraction); no other trained groups
     "s036": (0.36, 5),
     "ssearch": ("search", 5),
@@ -2899,6 +2904,15 @@ for batch_size in (2000, 500, 125):
                     batch_size, "a", transform, None, cooldown_searched=searched_mult,
                     cooldown_others=others, cooldown_fraction=fraction,
                 )
+# The baseline schedules left unchanged under each transform (no search): what a
+# transform costs if nothing adapts. a: conv transformed; b: all four trained LRs.
+for batch_size in (2000, 500, 125):
+    for transform in LR_TRANSFORMS:
+        for scenario, names in (("a", ("conv",)), ("b", TRAINED_LR_GROUPS)):
+            config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
+            for name in names:
+                config["param_groups"][name]["lr_transform"] = copy.deepcopy(LR_TRANSFORMS[transform])
+            RUN_CONFIGS[f"transformed_{scenario}_{transform}_bs{batch_size}"] = config
 RUN_CONFIGS["auto_smoke"] = auto_config(2000, "a", None, None, heldout_seeds=[100], interval_fraction=10,
                                         cooldown_fraction=20)
 
@@ -4103,7 +4117,7 @@ AUTO_REQUIRED = {
     "algorithm", "metric", "params", "interval_fraction", "cooldown_fraction",
     "cooldown_searched", "cooldown_others", "move_margin", "max_side_steps",
 }
-AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit"}
+AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4135,6 +4149,8 @@ def run_auto_search(run, model, config):
       coarse_mult (optional): in the first interval, first climb each LR on this grid
         (e.g. 0.1), then refine on params' grid.
       revisit (optional, default True): repeat coordinate passes until none moves.
+      larger_within (optional, default 0): after each LR climb, move up the grid while
+        the score stays within this of the climb's best (counters short-horizon bias).
       heldout_seeds (optional): after the search, train the committed schedule from
         scratch on these seeds (evaluation only; not part of the search cost).
     Each interval: search the cooldown mults (if searched) given the incumbent main LRs,
@@ -4166,6 +4182,7 @@ def run_auto_search(run, model, config):
     margin, max_side = tuning["move_margin"], tuning["max_side_steps"]
     coarse = tuning.get("coarse_mult")
     revisit = tuning.get("revisit", True)
+    larger_within = tuning.get("larger_within", 0.0)
     log_config(run, config, label="base_config")
 
     trainer = SegmentTrainer(model, config)
@@ -4258,9 +4275,17 @@ def run_auto_search(run, model, config):
             for _ in range(10 if revisit else 1):
                 moved_any = False
                 for path in params:
-                    current, _, moved = climb(
+                    current, best, moved = climb(
                         current, path, lambda values: evaluate(values, mults),
                         neighbour_on_grid(path))
+                    # Short lookaheads favour small LRs: take the largest LR within
+                    # larger_within of the best (upward neighbours are mostly cached).
+                    while larger_within:
+                        value = grid_neighbour(current[path], grid_of(path), 1, None)
+                        candidate = dict(current, **{path: value})
+                        if evaluate(candidate, mults) < best - larger_within:
+                            break
+                        current, moved = candidate, True
                     moved_any |= moved
                 if not moved_any:
                     break

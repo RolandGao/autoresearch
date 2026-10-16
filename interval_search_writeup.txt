@@ -1,0 +1,37 @@
+Interval search research log (2026-10-16, 12-hour autonomous study)
+====================================================================
+
+Goal
+----
+Find one general LR-schedule search algorithm that uses the least total search time while
+matching the baseline's held-out TTA, that survives simple transformations applied on top
+of the specified schedule (so the best specified schedule is not linear decay), and that
+survives batch size 500 and 125. Two scenarios:
+  A. A good baseline exists: search a few LR schedules (here: conv), keep the rest fixed.
+  B. From scratch: search every trained LR (conv, head, norm_bias, whiten_bias), starting
+     at 1.0 with no knowledge of their scale or shape.
+Selection and evaluation are on the CIFAR-10 test set (intentional).
+
+Protocol
+--------
+- Code: train_cifar.py (run_auto_search, algorithm="auto"; SegmentTrainer; lr_transform),
+  research/*.py (probes and analysis), logs/ (every run, with its source / commit).
+- Development at BS 2000 (200 steps); BS 500 (800) and BS 125 (3200) are validation.
+- Cost = wall-clock seconds of the search on one A100 (search_seconds in the log; the
+  committed run is part of it). Held-out evaluation is not part of the cost.
+- Quality = held-out TTA of the committed schedule: the schedule is retrained from scratch
+  on seeds 100-107 (heldout_result line), averaged over search seeds where available.
+- Transforms (lr_transform, applied to the searched groups): ramp = x 4**(2t/T - 1)
+  (x0.25 -> x4 over the run), wave = x 2**sin(2 pi t/T). Under a transform, keeping the
+  linear-decay spec gives a distorted applied schedule; the best spec is non-linear.
+
+Targets (held-out TTA, current code)
+------------------------------------
+baseline_bs2000: 93.92 +- 0.13 (seeds 100-107), 93.96 +- 0.12 (seeds 108-123) -> 93.94 (24 seeds)
+baseline_bs500:  93.83 +- 0.12 (seeds 100-107)
+baseline_bs125:  93.85 +- 0.11 (seeds 100-107)
+Single-run seed sd ~0.12-0.13; an 8-seed mean has sd ~0.045.
+
+Results
+-------
+(filled in as experiments finish)
