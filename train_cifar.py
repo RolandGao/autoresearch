@@ -2885,6 +2885,13 @@ for batch_size in (2000, 500, 125):
     for tag, within in (("lw1", 0.001), ("lw2", 0.002)):
         RUN_CONFIGS[f"auto_a_s036_cont_{tag}_bs{batch_size}"] = auto_config(
             batch_size, "a", None, None, larger_within=within)
+# Lookahead to the end of the run (cooldown_fraction=1): removes the short-horizon bias in
+# the fidelity probe (writeup section 4).
+AUTO_REST = {"rest_s013": 0.13, "rest_s022": 0.22, "rest_ssearch": "search", "rest_lin": "linear"}
+for batch_size in (2000, 500, 125):
+    for name, searched_mult in AUTO_REST.items():
+        RUN_CONFIGS[f"auto_a_{name}_bs{batch_size}"] = auto_config(
+            batch_size, "a", None, None, cooldown_searched=searched_mult, cooldown_fraction=1)
 AUTO_B_COOLDOWNS = {  # name: (cooldown_searched, cooldown_fraction); no other trained groups
     "s036": (0.36, 5),
     "ssearch": ("search", 5),
@@ -4175,8 +4182,8 @@ def run_auto_search(run, model, config):
         if not spec["initial"] > 0 or not 0 < spec["mult"] < 1:
             raise ValueError(f"{path}: needs initial > 0 and 0 < mult < 1")
     searched_mode, others_mode = tuning["cooldown_searched"], tuning["cooldown_others"]
-    if not (searched_mode == "search" or isinstance(searched_mode, (int, float))):
-        raise ValueError("cooldown_searched must be a number or 'search'")
+    if not (searched_mode in ("search", "linear") or isinstance(searched_mode, (int, float))):
+        raise ValueError("cooldown_searched must be a number, 'search' or 'linear'")
     if not (others_mode in ("continue", "shared", "search") or isinstance(others_mode, (int, float))):
         raise ValueError("cooldown_others must be continue, shared, search or a number")
     margin, max_side = tuning["move_margin"], tuning["max_side_steps"]
@@ -4192,7 +4199,7 @@ def run_auto_search(run, model, config):
     committed = copy.deepcopy(trainer.base_schedules)
     current = {path: snap_lr_to_grid(spec["initial"], spec["mult"]) for path, spec in params.items()}
     mults = {
-        "searched": 1.0 if searched_mode == "search" else float(searched_mode),
+        "searched": 1.0 if searched_mode in ("search", "linear") else float(searched_mode),
         "others": (1.0 if others_mode == "search"
                    else None if others_mode in ("continue", "shared") else float(others_mode)),
     }
@@ -4223,8 +4230,11 @@ def run_auto_search(run, model, config):
             if ok and look:
                 cool_start = start + main_steps
                 for path, value in values.items():
-                    sched[path] = constant_window(sched[path], cool_start, look,
-                                                  cool["searched"] * value)
+                    sched[path] = (
+                        linear_window(sched[path], cool_start, look, value, 0.0)
+                        if searched_mode == "linear"
+                        else constant_window(sched[path], cool_start, look,
+                                             cool["searched"] * value))
                 others = cool["searched"] if others_mode == "shared" else cool["others"]
                 if others is not None:
                     for path in other_paths:

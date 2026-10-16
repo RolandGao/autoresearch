@@ -78,3 +78,20 @@ Results
      transformed_a_ramp (conv x0.25 -> x4):      93.42  (-0.50 vs 93.92)
      transformed_a_wave (conv x2**sin):          93.72  (-0.20)
      transformed_b_ramp (all four LRs ramped):   93.25  (-0.67)
+
+4. Lookahead length: the short-horizon bias is a horizon effect (same probe, k=1 and k=2)
+   Seed-mean proxy per candidate conv LR (others continue their baseline schedule):
+   k=1 (truth peaks 0.13-0.22)   0.028  0.047  0.078   0.13   0.22   0.36    0.6
+     truth                       93.63  93.73  93.83  93.94  93.98  93.57  93.26
+     40 steps  s0.13             91.52  92.19  92.53  92.38  91.71  90.02  87.83
+     80 steps  s0.13             91.90  92.58  93.01  93.02  92.73  91.78  90.09
+     rest(120) s0.13             92.17  92.79  93.21  93.33  93.23  92.42  90.80
+     rest(120) linear c->0       93.13  93.52  93.84  93.88  93.70  92.82  91.43
+   k=2 (truth peaks 0.078)
+     truth                       93.88  93.84  94.04  93.86  93.62  92.69  91.68
+     rest(80)  s0.13             93.27  93.59  93.66  93.53  93.03  92.02  90.23
+     rest(80)  linear c->0       93.66  93.92  94.04  93.79  93.26  92.11  90.39
+   - Lengthening the lookahead moves the proxy's peak to the truth's: 40 steps -> 0.078,
+     80 -> 0.078/0.13 tie, rest of run -> 0.13. With the lookahead running to the end of
+     training, a constant cooldown at 0.13-0.22 x c (or linear c -> 0) ranks candidates
+     like the truth. A rest-of-run lookahead costs ~1.7x the 20/20 evaluation steps.

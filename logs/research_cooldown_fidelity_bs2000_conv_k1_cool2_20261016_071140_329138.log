@@ -1,0 +1,268 @@
+# commit 8a86836dd2cf0cb3029917cf4fa62daa9b749ee1 (dirty: D research/enqueue.sh)
+# args {"batch_size": 2000, "config": null, "group": "conv", "interval": 1, "seeds": "0,1,2,3", "offsets": "-3,-2,-1,0,1,2,3", "searched_mults": "0.13,0.22,0.36,lin0", "other_mults": "cont", "fraction": 5, "transform": null, "cool": "2"}
+# worker w6 gpu GPU-5d440f3f-0f51-ca30-2076-de778d7e35d3
+# source
+# | """Cooldown proxy fidelity (scenario A: one searched group, the rest on the baseline).
+# | 
+# | For main interval k (length L = T/5) and candidate constant LRs c of the searched group:
+# |   truth:  baseline until kL, c for L steps, then the baseline schedule to the end -> final metric.
+# |   proxy:  same prefix and main interval, then a C-step lookahead cooldown -> metric.
+# |   none:   the metric right after the main interval.
+# | Cooldown variants: searched group constant m_s * c (or linear c -> 0, "lin0");
+# | other groups continue the baseline ("cont"), decay linearly from their current value to 0
+# | ("lin0"), or are constant at m_o * their mean LR over the main interval.
+# | A good cooldown ranks the candidates like the truth does.
+# | """
+# | import argparse
+# | import itertools
+# | 
+# | from common import base_config, emit, new_model, open_log, t
+# | 
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--batch-size", type=int, default=2000)
+# | parser.add_argument("--config", default=None)
+# | parser.add_argument("--group", default="conv")
+# | parser.add_argument("--interval", type=int, required=True)
+# | parser.add_argument("--seeds", default="0,1,2,3")
+# | parser.add_argument("--offsets", default="-3,-2,-1,0,1,2,3")
+# | parser.add_argument("--searched-mults", default="1,0.6,0.36,0.22,0.13,0.047,0,lin0")
+# | parser.add_argument("--other-mults", default="cont,lin0,1,0.6,0.36,0.22,0.13,0.047,0")
+# | parser.add_argument("--fraction", type=int, default=5)
+# | parser.add_argument("--transform", default=None, help="json lr_transform for the searched group")
+# | parser.add_argument("--cool", default="1", help="lookahead length in main-interval units, or 'rest'")
+# | args = parser.parse_args()
+# | cool_tag = "" if args.cool == "1" else f"_cool{args.cool}"
+# | log = open_log(f"cooldown_fidelity_bs{args.batch_size}_{args.group}_k{args.interval}{cool_tag}", args, __file__)
+# | 
+# | import json  # noqa: E402
+# | 
+# | config = base_config(args.batch_size, args.config)
+# | if args.transform:
+# |     config["param_groups"][args.group]["lr_transform"] = json.loads(args.transform)
+# | 
+# | 
+# | def parse(values):
+# |     return [v if v in ("cont", "lin0") else float(v) for v in values.split(",")]
+# | 
+# | 
+# | searched_mults, other_mults = parse(args.searched_mults), parse(args.other_mults)
+# | model = new_model()
+# | path = f"{args.group}.initial_lr"
+# | candidates = None
+# | for seed in [int(s) for s in args.seeds.split(",")]:
+# |     t.TRAINING_SEED = seed
+# |     trainer = t.SegmentTrainer(model, config)
+# |     base = trainer.base_schedules
+# |     total = trainer.total_steps
+# |     length = total // args.fraction
+# |     start = args.interval * length
+# |     cool = total - start - length if args.cool == "rest" else int(float(args.cool) * length)
+# |     if start + length + cool > total:
+# |         raise SystemExit("interval has no room for a cooldown")
+# |     if candidates is None:
+# |         centre = t.lr_grid_index(t.window_mean(base[path], start, length), 0.6)
+# |         candidates = [t.round_hparam(0.6 ** (centre + o)) for o in map(int, args.offsets.split(","))]
+# |         emit(log, kind="setup", total=total, length=length, start=start, candidates=candidates,
+# |              mean_lr=t.window_mean(base[path], start, length))
+# |     trainer.train(base, start)
+# |     prefix = trainer.snapshot()
+# |     for c in candidates:
+# |         trainer.restore(prefix)
+# |         main = dict(base)
+# |         main[path] = t.constant_window(base[path], start, length, c)
+# |         ok = trainer.train(main, length)
+# |         main_state = trainer.snapshot()
+# |         emit(log, kind="none", seed=seed, c=c, score=trainer.score("tta_val_acc") if ok else None)
+# |         if ok:
+# |             ok = trainer.train(main, total - start - length)
+# |         emit(log, kind="truth", seed=seed, c=c, score=trainer.score("tta_val_acc") if ok else None)
+# |         cool_start = start + length
+# |         for ms, mo in itertools.product(searched_mults, other_mults):
+# |             trainer.restore(main_state)
+# |             sched = dict(main)
+# |             sched[path] = (t.linear_window(main[path], cool_start, cool, c, 0.0) if ms == "lin0"
+# |                            else t.constant_window(main[path], cool_start, cool, ms * c))
+# |             for other, lines in base.items():
+# |                 if other == path or not other.endswith(".initial_lr") or mo == "cont":
+# |                     continue
+# |                 if mo == "lin0":
+# |                     first = t.schedule_value_at_step(lines, cool_start)
+# |                     sched[other] = t.linear_window(lines, cool_start, cool, first, 0.0)
+# |                 else:
+# |                     sched[other] = t.constant_window(
+# |                         lines, cool_start, cool, mo * t.window_mean(lines, start, length))
+# |             ok = trainer.train(sched, cool)
+# |             emit(log, kind="proxy", seed=seed, c=c, ms=ms, mo=mo,
+# |                  score=trainer.score("tta_val_acc") if ok else None)
+# | emit(log, kind="done", train_steps=trainer.train_steps)
+
+{"kind": "setup", "total": 200, "length": 40, "start": 40, "candidates": [0.6, 0.36, 0.22, 0.13, 0.078, 0.047, 0.028], "mean_lr": 0.15455000000000002, "time": 1792134701.2}
+{"kind": "none", "seed": 0, "c": 0.6, "score": 0.5708000063896179, "time": 1792134706.0}
+{"kind": "truth", "seed": 0, "c": 0.6, "score": 0.9337999820709229, "time": 1792134712.1}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.13, "mo": "cont", "score": 0.9036999940872192, "time": 1792134716.3}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.22, "mo": "cont", "score": 0.8805999755859375, "time": 1792134720.5}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": 0.36, "mo": "cont", "score": 0.8288999795913696, "time": 1792134724.7}
+{"kind": "proxy", "seed": 0, "c": 0.6, "ms": "lin0", "mo": "cont", "score": 0.8986999988555908, "time": 1792134728.9}
+{"kind": "none", "seed": 0, "c": 0.36, "score": 0.7127000093460083, "time": 1792134731.1}
+{"kind": "truth", "seed": 0, "c": 0.36, "score": 0.9361000061035156, "time": 1792134737.2}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.13, "mo": "cont", "score": 0.9179999828338623, "time": 1792134741.4}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.22, "mo": "cont", "score": 0.913100004196167, "time": 1792134745.6}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": 0.36, "mo": "cont", "score": 0.8926999568939209, "time": 1792134749.8}
+{"kind": "proxy", "seed": 0, "c": 0.36, "ms": "lin0", "mo": "cont", "score": 0.9185999631881714, "time": 1792134754.0}
+{"kind": "none", "seed": 0, "c": 0.22, "score": 0.8244999647140503, "time": 1792134756.2}
+{"kind": "truth", "seed": 0, "c": 0.22, "score": 0.9407999515533447, "time": 1792134762.3}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.13, "mo": "cont", "score": 0.927299976348877, "time": 1792134766.5}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.22, "mo": "cont", "score": 0.9235999584197998, "time": 1792134770.7}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": 0.36, "mo": "cont", "score": 0.9160999655723572, "time": 1792134774.9}
+{"kind": "proxy", "seed": 0, "c": 0.22, "ms": "lin0", "mo": "cont", "score": 0.9296000003814697, "time": 1792134779.1}
+{"kind": "none", "seed": 0, "c": 0.13, "score": 0.8743000030517578, "time": 1792134781.3}
+{"kind": "truth", "seed": 0, "c": 0.13, "score": 0.9409999847412109, "time": 1792134787.4}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.13, "mo": "cont", "score": 0.9292999505996704, "time": 1792134791.6}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.22, "mo": "cont", "score": 0.9291999936103821, "time": 1792134795.8}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": 0.36, "mo": "cont", "score": 0.9271999597549438, "time": 1792134800.0}
+{"kind": "proxy", "seed": 0, "c": 0.13, "ms": "lin0", "mo": "cont", "score": 0.9332000017166138, "time": 1792134804.1}
+{"kind": "none", "seed": 0, "c": 0.078, "score": 0.8950999975204468, "time": 1792134806.4}
+{"kind": "truth", "seed": 0, "c": 0.078, "score": 0.9383999705314636, "time": 1792134812.5}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.13, "mo": "cont", "score": 0.9305999875068665, "time": 1792134816.7}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.22, "mo": "cont", "score": 0.9296999573707581, "time": 1792134820.9}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": 0.36, "mo": "cont", "score": 0.9286999702453613, "time": 1792134825.1}
+{"kind": "proxy", "seed": 0, "c": 0.078, "ms": "lin0", "mo": "cont", "score": 0.9363999962806702, "time": 1792134829.2}
+{"kind": "none", "seed": 0, "c": 0.047, "score": 0.9077000021934509, "time": 1792134831.5}
+{"kind": "truth", "seed": 0, "c": 0.047, "score": 0.9383999705314636, "time": 1792134837.6}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.13, "mo": "cont", "score": 0.9266999959945679, "time": 1792134841.8}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.22, "mo": "cont", "score": 0.9276999831199646, "time": 1792134846.0}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": 0.36, "mo": "cont", "score": 0.9287999868392944, "time": 1792134850.2}
+{"kind": "proxy", "seed": 0, "c": 0.047, "ms": "lin0", "mo": "cont", "score": 0.9322999715805054, "time": 1792134854.3}
+{"kind": "none", "seed": 0, "c": 0.028, "score": 0.9111999869346619, "time": 1792134856.6}
+{"kind": "truth", "seed": 0, "c": 0.028, "score": 0.9375999569892883, "time": 1792134862.7}
+{"kind": "proxy", "seed": 0, "c": 0.028, "ms": 0.13, "mo": "cont", "score": 0.9222999811172485, "time": 1792134866.9}
+{"kind": "proxy", "seed": 0, "c": 0.028, "ms": 0.22, "mo": "cont", "score": 0.9241999983787537, "time": 1792134871.1}
+{"kind": "proxy", "seed": 0, "c": 0.028, "ms": 0.36, "mo": "cont", "score": 0.9246999621391296, "time": 1792134875.2}
+{"kind": "proxy", "seed": 0, "c": 0.028, "ms": "lin0", "mo": "cont", "score": 0.9294999837875366, "time": 1792134879.4}
+{"kind": "none", "seed": 1, "c": 0.6, "score": 0.5967999696731567, "time": 1792134883.8}
+{"kind": "truth", "seed": 1, "c": 0.6, "score": 0.9314000010490417, "time": 1792134889.9}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.13, "mo": "cont", "score": 0.9002999663352966, "time": 1792134894.1}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.22, "mo": "cont", "score": 0.8859999775886536, "time": 1792134898.3}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": 0.36, "mo": "cont", "score": 0.8337999582290649, "time": 1792134902.5}
+{"kind": "proxy", "seed": 1, "c": 0.6, "ms": "lin0", "mo": "cont", "score": 0.9007999897003174, "time": 1792134906.7}
+{"kind": "none", "seed": 1, "c": 0.36, "score": 0.7148000001907349, "time": 1792134908.9}
+{"kind": "truth", "seed": 1, "c": 0.36, "score": 0.9345999956130981, "time": 1792134915.0}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.13, "mo": "cont", "score": 0.9168999791145325, "time": 1792134919.2}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.22, "mo": "cont", "score": 0.9092999696731567, "time": 1792134923.4}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": 0.36, "mo": "cont", "score": 0.8881999850273132, "time": 1792134927.6}
+{"kind": "proxy", "seed": 1, "c": 0.36, "ms": "lin0", "mo": "cont", "score": 0.9179999828338623, "time": 1792134931.8}
+{"kind": "none", "seed": 1, "c": 0.22, "score": 0.811199963092804, "time": 1792134934.0}
+{"kind": "truth", "seed": 1, "c": 0.22, "score": 0.9405999779701233, "time": 1792134940.1}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.13, "mo": "cont", "score": 0.9271999597549438, "time": 1792134944.3}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.22, "mo": "cont", "score": 0.9229999780654907, "time": 1792134948.5}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": 0.36, "mo": "cont", "score": 0.9101999998092651, "time": 1792134952.7}
+{"kind": "proxy", "seed": 1, "c": 0.22, "ms": "lin0", "mo": "cont", "score": 0.929099977016449, "time": 1792134956.9}
+{"kind": "none", "seed": 1, "c": 0.13, "score": 0.8729999661445618, "time": 1792134959.1}
+{"kind": "truth", "seed": 1, "c": 0.13, "score": 0.9391999840736389, "time": 1792134965.2}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.13, "mo": "cont", "score": 0.9312999844551086, "time": 1792134969.4}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.22, "mo": "cont", "score": 0.9296000003814697, "time": 1792134973.6}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": 0.36, "mo": "cont", "score": 0.9254999756813049, "time": 1792134977.8}
+{"kind": "proxy", "seed": 1, "c": 0.13, "ms": "lin0", "mo": "cont", "score": 0.9368999600410461, "time": 1792134982.0}
+{"kind": "none", "seed": 1, "c": 0.078, "score": 0.8998000025749207, "time": 1792134984.2}
+{"kind": "truth", "seed": 1, "c": 0.078, "score": 0.9388999938964844, "time": 1792134990.3}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.13, "mo": "cont", "score": 0.9318999648094177, "time": 1792134994.5}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.22, "mo": "cont", "score": 0.9339999556541443, "time": 1792134998.7}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": 0.36, "mo": "cont", "score": 0.9318999648094177, "time": 1792135002.9}
+{"kind": "proxy", "seed": 1, "c": 0.078, "ms": "lin0", "mo": "cont", "score": 0.9368999600410461, "time": 1792135007.0}
+{"kind": "none", "seed": 1, "c": 0.047, "score": 0.9056999683380127, "time": 1792135009.3}
+{"kind": "truth", "seed": 1, "c": 0.047, "score": 0.9370999932289124, "time": 1792135015.4}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.13, "mo": "cont", "score": 0.9256999492645264, "time": 1792135019.6}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.22, "mo": "cont", "score": 0.9273999929428101, "time": 1792135023.8}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": 0.36, "mo": "cont", "score": 0.9287999868392944, "time": 1792135027.9}
+{"kind": "proxy", "seed": 1, "c": 0.047, "ms": "lin0", "mo": "cont", "score": 0.934499979019165, "time": 1792135032.1}
+{"kind": "none", "seed": 1, "c": 0.028, "score": 0.9065999984741211, "time": 1792135034.4}
+{"kind": "truth", "seed": 1, "c": 0.028, "score": 0.9377999901771545, "time": 1792135040.5}
+{"kind": "proxy", "seed": 1, "c": 0.028, "ms": 0.13, "mo": "cont", "score": 0.9194999933242798, "time": 1792135044.7}
+{"kind": "proxy", "seed": 1, "c": 0.028, "ms": 0.22, "mo": "cont", "score": 0.9210999608039856, "time": 1792135048.8}
+{"kind": "proxy", "seed": 1, "c": 0.028, "ms": 0.36, "mo": "cont", "score": 0.9230999946594238, "time": 1792135053.0}
+{"kind": "proxy", "seed": 1, "c": 0.028, "ms": "lin0", "mo": "cont", "score": 0.9281999468803406, "time": 1792135057.2}
+{"kind": "none", "seed": 2, "c": 0.6, "score": 0.5704999566078186, "time": 1792135061.6}
+{"kind": "truth", "seed": 2, "c": 0.6, "score": 0.9330999851226807, "time": 1792135067.7}
+{"kind": "proxy", "seed": 2, "c": 0.6, "ms": 0.13, "mo": "cont", "score": 0.9017999768257141, "time": 1792135071.9}
+{"kind": "proxy", "seed": 2, "c": 0.6, "ms": 0.22, "mo": "cont", "score": 0.8789999485015869, "time": 1792135076.1}
+{"kind": "proxy", "seed": 2, "c": 0.6, "ms": 0.36, "mo": "cont", "score": 0.8352999687194824, "time": 1792135080.3}
+{"kind": "proxy", "seed": 2, "c": 0.6, "ms": "lin0", "mo": "cont", "score": 0.9048999547958374, "time": 1792135084.4}
+{"kind": "none", "seed": 2, "c": 0.36, "score": 0.7348999977111816, "time": 1792135086.7}
+{"kind": "truth", "seed": 2, "c": 0.36, "score": 0.9364999532699585, "time": 1792135092.8}
+{"kind": "proxy", "seed": 2, "c": 0.36, "ms": 0.13, "mo": "cont", "score": 0.9192000031471252, "time": 1792135097.0}
+{"kind": "proxy", "seed": 2, "c": 0.36, "ms": 0.22, "mo": "cont", "score": 0.9109999537467957, "time": 1792135101.2}
+{"kind": "proxy", "seed": 2, "c": 0.36, "ms": 0.36, "mo": "cont", "score": 0.8910999894142151, "time": 1792135105.4}
+{"kind": "proxy", "seed": 2, "c": 0.36, "ms": "lin0", "mo": "cont", "score": 0.9208999872207642, "time": 1792135109.6}
+{"kind": "none", "seed": 2, "c": 0.22, "score": 0.8204999566078186, "time": 1792135111.8}
+{"kind": "truth", "seed": 2, "c": 0.22, "score": 0.9376999735832214, "time": 1792135117.9}
+{"kind": "proxy", "seed": 2, "c": 0.22, "ms": 0.13, "mo": "cont", "score": 0.9279999732971191, "time": 1792135122.1}
+{"kind": "proxy", "seed": 2, "c": 0.22, "ms": 0.22, "mo": "cont", "score": 0.9235999584197998, "time": 1792135126.3}
+{"kind": "proxy", "seed": 2, "c": 0.22, "ms": 0.36, "mo": "cont", "score": 0.9161999821662903, "time": 1792135130.5}
+{"kind": "proxy", "seed": 2, "c": 0.22, "ms": "lin0", "mo": "cont", "score": 0.9317999482154846, "time": 1792135134.7}
+{"kind": "none", "seed": 2, "c": 0.13, "score": 0.8669999837875366, "time": 1792135136.9}
+{"kind": "truth", "seed": 2, "c": 0.13, "score": 0.9400999546051025, "time": 1792135143.1}
+{"kind": "proxy", "seed": 2, "c": 0.13, "ms": 0.13, "mo": "cont", "score": 0.9304999709129333, "time": 1792135147.3}
+{"kind": "proxy", "seed": 2, "c": 0.13, "ms": 0.22, "mo": "cont", "score": 0.9315999746322632, "time": 1792135151.4}
+{"kind": "proxy", "seed": 2, "c": 0.13, "ms": 0.36, "mo": "cont", "score": 0.9264000058174133, "time": 1792135155.6}
+{"kind": "proxy", "seed": 2, "c": 0.13, "ms": "lin0", "mo": "cont", "score": 0.9355999827384949, "time": 1792135159.8}
+{"kind": "none", "seed": 2, "c": 0.078, "score": 0.8965999484062195, "time": 1792135162.0}
+{"kind": "truth", "seed": 2, "c": 0.078, "score": 0.9390999674797058, "time": 1792135168.2}
+{"kind": "proxy", "seed": 2, "c": 0.078, "ms": 0.13, "mo": "cont", "score": 0.9301999807357788, "time": 1792135172.3}
+{"kind": "proxy", "seed": 2, "c": 0.078, "ms": 0.22, "mo": "cont", "score": 0.9314999580383301, "time": 1792135176.5}
+{"kind": "proxy", "seed": 2, "c": 0.078, "ms": 0.36, "mo": "cont", "score": 0.9327999949455261, "time": 1792135180.7}
+{"kind": "proxy", "seed": 2, "c": 0.078, "ms": "lin0", "mo": "cont", "score": 0.9358999729156494, "time": 1792135184.9}
+{"kind": "none", "seed": 2, "c": 0.047, "score": 0.9061999917030334, "time": 1792135187.2}
+{"kind": "truth", "seed": 2, "c": 0.047, "score": 0.9357999563217163, "time": 1792135193.3}
+{"kind": "proxy", "seed": 2, "c": 0.047, "ms": 0.13, "mo": "cont", "score": 0.9253000020980835, "time": 1792135197.5}
+{"kind": "proxy", "seed": 2, "c": 0.047, "ms": 0.22, "mo": "cont", "score": 0.9264999628067017, "time": 1792135201.7}
+{"kind": "proxy", "seed": 2, "c": 0.047, "ms": 0.36, "mo": "cont", "score": 0.927899956703186, "time": 1792135205.8}
+{"kind": "proxy", "seed": 2, "c": 0.047, "ms": "lin0", "mo": "cont", "score": 0.9319999814033508, "time": 1792135210.0}
+{"kind": "none", "seed": 2, "c": 0.028, "score": 0.9041000008583069, "time": 1792135212.3}
+{"kind": "truth", "seed": 2, "c": 0.028, "score": 0.9341999888420105, "time": 1792135218.4}
+{"kind": "proxy", "seed": 2, "c": 0.028, "ms": 0.13, "mo": "cont", "score": 0.9163999557495117, "time": 1792135222.6}
+{"kind": "proxy", "seed": 2, "c": 0.028, "ms": 0.22, "mo": "cont", "score": 0.9194999933242798, "time": 1792135226.8}
+{"kind": "proxy", "seed": 2, "c": 0.028, "ms": 0.36, "mo": "cont", "score": 0.9228999614715576, "time": 1792135231.0}
+{"kind": "proxy", "seed": 2, "c": 0.028, "ms": "lin0", "mo": "cont", "score": 0.926099956035614, "time": 1792135235.2}
+{"kind": "none", "seed": 3, "c": 0.6, "score": 0.5001999735832214, "time": 1792135239.5}
+{"kind": "truth", "seed": 3, "c": 0.6, "score": 0.9321999549865723, "time": 1792135245.6}
+{"kind": "proxy", "seed": 3, "c": 0.6, "ms": 0.13, "mo": "cont", "score": 0.8980000019073486, "time": 1792135249.8}
+{"kind": "proxy", "seed": 3, "c": 0.6, "ms": 0.22, "mo": "cont", "score": 0.8807999491691589, "time": 1792135254.0}
+{"kind": "proxy", "seed": 3, "c": 0.6, "ms": 0.36, "mo": "cont", "score": 0.8310999870300293, "time": 1792135258.2}
+{"kind": "proxy", "seed": 3, "c": 0.6, "ms": "lin0", "mo": "cont", "score": 0.9009999632835388, "time": 1792135262.4}
+{"kind": "none", "seed": 3, "c": 0.36, "score": 0.7300999760627747, "time": 1792135264.6}
+{"kind": "truth", "seed": 3, "c": 0.36, "score": 0.9357999563217163, "time": 1792135270.7}
+{"kind": "proxy", "seed": 3, "c": 0.36, "ms": 0.13, "mo": "cont", "score": 0.917199969291687, "time": 1792135274.9}
+{"kind": "proxy", "seed": 3, "c": 0.36, "ms": 0.22, "mo": "cont", "score": 0.906499981880188, "time": 1792135279.1}
+{"kind": "proxy", "seed": 3, "c": 0.36, "ms": 0.36, "mo": "cont", "score": 0.8833999633789062, "time": 1792135283.3}
+{"kind": "proxy", "seed": 3, "c": 0.36, "ms": "lin0", "mo": "cont", "score": 0.9195999503135681, "time": 1792135287.5}
+{"kind": "none", "seed": 3, "c": 0.22, "score": 0.8235999941825867, "time": 1792135289.7}
+{"kind": "truth", "seed": 3, "c": 0.22, "score": 0.9402999877929688, "time": 1792135295.9}
+{"kind": "proxy", "seed": 3, "c": 0.22, "ms": 0.13, "mo": "cont", "score": 0.9266999959945679, "time": 1792135300.0}
+{"kind": "proxy", "seed": 3, "c": 0.22, "ms": 0.22, "mo": "cont", "score": 0.9238999485969543, "time": 1792135304.2}
+{"kind": "proxy", "seed": 3, "c": 0.22, "ms": 0.36, "mo": "cont", "score": 0.9091999530792236, "time": 1792135308.4}
+{"kind": "proxy", "seed": 3, "c": 0.22, "ms": "lin0", "mo": "cont", "score": 0.9291999936103821, "time": 1792135312.6}
+{"kind": "none", "seed": 3, "c": 0.13, "score": 0.8756999969482422, "time": 1792135314.8}
+{"kind": "truth", "seed": 3, "c": 0.13, "score": 0.9372999668121338, "time": 1792135321.0}
+{"kind": "proxy", "seed": 3, "c": 0.13, "ms": 0.13, "mo": "cont", "score": 0.9297999739646912, "time": 1792135325.2}
+{"kind": "proxy", "seed": 3, "c": 0.13, "ms": 0.22, "mo": "cont", "score": 0.9303999543190002, "time": 1792135329.4}
+{"kind": "proxy", "seed": 3, "c": 0.13, "ms": 0.36, "mo": "cont", "score": 0.9233999848365784, "time": 1792135333.5}
+{"kind": "proxy", "seed": 3, "c": 0.13, "ms": "lin0", "mo": "cont", "score": 0.9330999851226807, "time": 1792135337.7}
+{"kind": "none", "seed": 3, "c": 0.078, "score": 0.8950999975204468, "time": 1792135339.9}
+{"kind": "truth", "seed": 3, "c": 0.078, "score": 0.9368999600410461, "time": 1792135346.1}
+{"kind": "proxy", "seed": 3, "c": 0.078, "ms": 0.13, "mo": "cont", "score": 0.927899956703186, "time": 1792135350.2}
+{"kind": "proxy", "seed": 3, "c": 0.078, "ms": 0.22, "mo": "cont", "score": 0.927299976348877, "time": 1792135354.4}
+{"kind": "proxy", "seed": 3, "c": 0.078, "ms": 0.36, "mo": "cont", "score": 0.9253999590873718, "time": 1792135358.6}
+{"kind": "proxy", "seed": 3, "c": 0.078, "ms": "lin0", "mo": "cont", "score": 0.9355999827384949, "time": 1792135362.8}
+{"kind": "none", "seed": 3, "c": 0.047, "score": 0.9062999486923218, "time": 1792135365.0}
+{"kind": "truth", "seed": 3, "c": 0.047, "score": 0.9378999471664429, "time": 1792135371.1}
+{"kind": "proxy", "seed": 3, "c": 0.047, "ms": 0.13, "mo": "cont", "score": 0.9254999756813049, "time": 1792135375.3}
+{"kind": "proxy", "seed": 3, "c": 0.047, "ms": 0.22, "mo": "cont", "score": 0.9264999628067017, "time": 1792135379.5}
+{"kind": "proxy", "seed": 3, "c": 0.047, "ms": 0.36, "mo": "cont", "score": 0.9273999929428101, "time": 1792135383.7}
+{"kind": "proxy", "seed": 3, "c": 0.047, "ms": "lin0", "mo": "cont", "score": 0.9319999814033508, "time": 1792135387.9}
+{"kind": "none", "seed": 3, "c": 0.028, "score": 0.9052000045776367, "time": 1792135390.1}
+{"kind": "truth", "seed": 3, "c": 0.028, "score": 0.9354999661445618, "time": 1792135396.2}
+{"kind": "proxy", "seed": 3, "c": 0.028, "ms": 0.13, "mo": "cont", "score": 0.9176999926567078, "time": 1792135400.4}
+{"kind": "proxy", "seed": 3, "c": 0.028, "ms": 0.22, "mo": "cont", "score": 0.920699954032898, "time": 1792135404.6}
+{"kind": "proxy", "seed": 3, "c": 0.028, "ms": 0.36, "mo": "cont", "score": 0.9239999651908875, "time": 1792135408.8}
+{"kind": "proxy", "seed": 3, "c": 0.028, "ms": "lin0", "mo": "cont", "score": 0.9267999529838562, "time": 1792135412.9}
+{"kind": "done", "train_steps": 3400, "time": 1792135412.9}
