@@ -2825,6 +2825,64 @@ for source, schedules in (("interval", GLOBAL_INTERVAL_STARTS),
             config["param_groups"][name]["lr_scheduler"] = [(40, lr) for lr in lrs]
         RUN_CONFIGS[f"schedule_{source}_{suffix}_bs2000"] = config
 
+# auto search (run_auto_search) studies, research/ and interval_search_writeup.txt.
+# Scenario A ("a"): a good baseline; search the conv LR (from its baseline initial value)
+# with the other groups on their baseline schedules. Scenario B ("b"): from scratch; all
+# four trained LRs start at 1.0 with a coarse x10 climb in the first interval. Transforms
+# (applied to the searched groups) make the best specified schedule non-linear.
+HELDOUT_SEEDS = list(range(100, 108))
+LR_TRANSFORMS = {
+    "ramp": dict(kind="ramp", factor=4.0),
+    "wave": dict(kind="wave", factor=2.0, phase=0.0),
+}
+TRAINED_LR_GROUPS = ("conv", "head", "norm_bias", "whiten_bias")
+
+
+def auto_config(batch_size, scenario, transform, searched, **overrides):
+    config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
+    groups = config["param_groups"]
+    if searched is None:
+        searched = ("conv",) if scenario == "a" else TRAINED_LR_GROUPS
+    tuning = dict(
+        algorithm="auto", metric="tta_val_acc",
+        params={
+            f"{name}.initial_lr": dict(
+                initial=groups[name]["lr_scheduler"][0][1] if scenario == "a" else 1.0,
+                mult=0.6,
+            )
+            for name in searched
+        },
+        interval_fraction=5, cooldown_fraction=5, cooldown_searched=0.36,
+        cooldown_others="continue", move_margin=0.0, max_side_steps=20,
+        heldout_seeds=HELDOUT_SEEDS,
+    )
+    if scenario == "b":
+        tuning["coarse_mult"] = 0.1
+    tuning.update(overrides)
+    config["hparam_tuning"] = tuning
+    if transform is not None:
+        for name in searched:
+            groups[name]["lr_transform"] = copy.deepcopy(LR_TRANSFORMS[transform])
+    return config
+
+
+AUTO_COOLDOWNS = {  # name: (cooldown_searched, cooldown_others, cooldown_fraction)
+    "s036_cont": (0.36, "continue", 5),
+    "s036_shared": (0.36, "shared", 5),
+    "ssearch_cont": ("search", "continue", 5),
+    "ssearch_shared": ("search", "shared", 5),
+    "ssearch_osearch": ("search", "search", 5),
+    "nocool": (0.36, "continue", 0),
+}
+for batch_size in (2000, 500, 125):
+    for name, (searched_mult, others, fraction) in AUTO_COOLDOWNS.items():
+        RUN_CONFIGS[f"auto_a_{name}_bs{batch_size}"] = auto_config(
+            batch_size, "a", None, None, cooldown_searched=searched_mult, cooldown_others=others,
+            cooldown_fraction=fraction,
+        )
+RUN_CONFIGS["auto_smoke"] = auto_config(2000, "a", None, None, heldout_seeds=[100], interval_fraction=10,
+                                        cooldown_fraction=20)
+
 # K-FAC Jacobian for every trainable group, and the hybrid with Muon2 convs (12-hour
 # study, dev/KJ_NOTES.md). kfacjac_all_bs{BS}: conv (whole-matrix normalization,
 # momentum before conditioning), head (conditioning first, G pseudoinverse) and both
@@ -2911,6 +2969,10 @@ def normalize_config(value, key):
         "cooldown_steps",
         "max_side_steps",
         "kfac_probes",
+        "seeds",
+        "heldout_seeds",
+        "interval_fraction",
+        "cooldown_fraction",
     ):
         return copy.deepcopy(value)
     if key == "lr_scheduler":
@@ -3028,8 +3090,11 @@ def validate_tuning_config(tuning):
         "global_neighbour_seeds",
         "interval2",
         "global_interval",
+        "auto",
     ):
         raise ValueError("hparam_tuning requires a known algorithm")
+    if tuning["algorithm"] == "auto":
+        return  # run_auto_search validates its own (partly optional) fields.
     required = {"algorithm", "metric", "params"}
     if tuning["algorithm"] in (
         "interval", "interval2", "global_neighbour", "global_neighbour_seeds"
@@ -4015,6 +4080,222 @@ def run_global_interval_search(run, model, config):
     return dict(best_config=current, best_result=current_trial["result"], trials=trials)
 
 
+AUTO_REQUIRED = {
+    "algorithm", "metric", "params", "interval_fraction", "cooldown_fraction",
+    "cooldown_searched", "cooldown_others", "move_margin", "max_side_steps",
+}
+AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit"}
+
+
+def grid_neighbour(value, mult, direction, cap):
+    """The adjacent value round2(mult**k) above (direction=+1) or below (-1) value."""
+    if value <= 0:
+        return None
+    result = round_hparam(mult ** (lr_grid_index(value, mult) - direction))
+    if cap is not None and result > cap:
+        return None
+    return result
+
+
+def run_auto_search(run, model, config):
+    """Online interval search of LR schedules with a constant-LR lookahead cooldown.
+
+    hparam_tuning:
+      params: {"<group>.initial_lr": dict(initial=v, mult=0.6)}, the searched groups.
+        Searched LRs are constant within each main interval (total // interval_fraction
+        steps); non-searched groups keep their configured schedules.
+      cooldown_fraction: lookahead length total // cooldown_fraction (0 = none).
+      cooldown_searched: lookahead LR of searched groups = mult x main LR; a number,
+        or "search" (one mult shared by the searched groups, searched every interval
+        on the x0.6 grid capped at 1, starting from the previous interval's value).
+      cooldown_others: non-searched groups in the lookahead: "continue" (their schedule),
+        a number m (constant m x their mean LR over the main interval), "shared" (the
+        searched groups' mult) or "search" (their own searched mult).
+      move_margin: a neighbour must beat the incumbent by more than this to move.
+      max_side_steps: most grid steps one direction may move in one climb.
+      coarse_mult (optional): in the first interval, first climb each LR on this grid
+        (e.g. 0.1), then refine on params' grid.
+      revisit (optional, default True): repeat coordinate passes until none moves.
+      heldout_seeds (optional): after the search, train the committed schedule from
+        scratch on these seeds (evaluation only; not part of the search cost).
+    Each interval: search the cooldown mults (if searched) given the incumbent main LRs,
+    then climb each searched LR in turn; commit the main interval; repeat. The search
+    result is the committed run's own final score.
+    """
+    run_start = time.perf_counter()
+    tuning = config["hparam_tuning"]
+    missing = AUTO_REQUIRED - tuning.keys()
+    extra = tuning.keys() - AUTO_REQUIRED - AUTO_OPTIONAL
+    if missing or extra:
+        raise ValueError(f"auto: missing {sorted(missing)}; unexpected {sorted(extra)}")
+    metric = tuning["metric"]
+    params = tuning["params"]
+    if not isinstance(params, dict) or not params:
+        raise ValueError("auto: params must be a nonempty mapping")
+    for path, spec in params.items():
+        name, _, field = path.partition(".")
+        if field != "initial_lr" or name not in config["param_groups"]:
+            raise ValueError(f"auto searches <group>.initial_lr, got {path}")
+        require_fields(spec, {"initial", "mult"}, path)
+        if not spec["initial"] > 0 or not 0 < spec["mult"] < 1:
+            raise ValueError(f"{path}: needs initial > 0 and 0 < mult < 1")
+    searched_mode, others_mode = tuning["cooldown_searched"], tuning["cooldown_others"]
+    if not (searched_mode == "search" or isinstance(searched_mode, (int, float))):
+        raise ValueError("cooldown_searched must be a number or 'search'")
+    if not (others_mode in ("continue", "shared", "search") or isinstance(others_mode, (int, float))):
+        raise ValueError("cooldown_others must be continue, shared, search or a number")
+    margin, max_side = tuning["move_margin"], tuning["max_side_steps"]
+    coarse = tuning.get("coarse_mult")
+    revisit = tuning.get("revisit", True)
+    log_config(run, config, label="base_config")
+
+    trainer = SegmentTrainer(model, config)
+    total = trainer.total_steps
+    interval_steps = total // tuning["interval_fraction"]
+    cooldown_steps = total // tuning["cooldown_fraction"] if tuning["cooldown_fraction"] else 0
+    committed = copy.deepcopy(trainer.base_schedules)
+    current = {path: snap_lr_to_grid(spec["initial"], spec["mult"]) for path, spec in params.items()}
+    mults = {
+        "searched": 1.0 if searched_mode == "search" else float(searched_mode),
+        "others": (1.0 if others_mode == "search"
+                   else None if others_mode in ("continue", "shared") else float(others_mode)),
+    }
+    other_paths = [
+        path for path, lines in trainer.base_schedules.items()
+        if path.endswith(".initial_lr") and path not in params and not is_zero_lr_schedule(lines)
+    ]
+    evaluations = 0
+    history = []
+
+    while trainer.step < total:
+        start = trainer.step
+        main_steps = min(interval_steps, total - start)
+        look = min(cooldown_steps, total - start - main_steps)
+        state = trainer.snapshot()
+        cache = {}
+
+        def evaluate(values, cool):
+            nonlocal evaluations
+            key = (tuple(sorted(values.items())), tuple(sorted(cool.items())))
+            if key in cache:
+                return cache[key]
+            trainer.restore(state)
+            sched = dict(committed)
+            for path, value in values.items():
+                sched[path] = constant_window(committed[path], start, main_steps, value)
+            ok = trainer.train(sched, main_steps)
+            if ok and look:
+                cool_start = start + main_steps
+                for path, value in values.items():
+                    sched[path] = constant_window(sched[path], cool_start, look,
+                                                  cool["searched"] * value)
+                others = cool["searched"] if others_mode == "shared" else cool["others"]
+                if others is not None:
+                    for path in other_paths:
+                        sched[path] = constant_window(
+                            committed[path], cool_start, look,
+                            others * window_mean(committed[path], start, main_steps))
+                ok = trainer.train(sched, look)
+            value = trainer.score(metric) if ok else float("-inf")
+            value = value if isfinite(value) else float("-inf")
+            evaluations += 1
+            cache[key] = value
+            print(f"  eval {hparam_text(values)} cooldown={hparam_text(cool)} "
+                  f"{metric}={format_log_value(value)}", flush=True)
+            return value
+
+        def climb(point, key, score_of, neighbour):
+            """Move one coordinate while a neighbour beats the incumbent by > margin."""
+            best = score_of(point)
+            for direction in (1, -1):
+                incumbent, incumbent_score, steps = point, best, 0
+                while steps < max_side:
+                    value = neighbour(incumbent[key], direction)
+                    if value is None:
+                        break
+                    candidate = dict(incumbent, **{key: value})
+                    candidate_score = score_of(candidate)
+                    if candidate_score <= incumbent_score + margin:
+                        break
+                    incumbent, incumbent_score, steps = candidate, candidate_score, steps + 1
+                if steps:
+                    return incumbent, incumbent_score, True
+            return point, best, False
+
+        def search_mults():
+            nonlocal mults
+            keys = [k for k, mode in (("searched", searched_mode), ("others", others_mode))
+                    if mode == "search" and (k == "searched" or other_paths)]
+            for key in keys:
+                mults, _, _ = climb(mults, key, lambda m: evaluate(current, m),
+                                    lambda v, d: grid_neighbour(v, 0.6, d, cap=1.0))
+
+        def search_main(grid_of):
+            nonlocal current
+
+            def neighbour_on_grid(path):
+                return lambda v, d: grid_neighbour(v, grid_of(path), d, None)
+
+            for _ in range(10 if revisit else 1):
+                moved_any = False
+                for path in params:
+                    current, _, moved = climb(
+                        current, path, lambda values: evaluate(values, mults),
+                        neighbour_on_grid(path))
+                    moved_any |= moved
+                if not moved_any:
+                    break
+
+        before = evaluations
+        if look:
+            search_mults()
+        if start == 0 and coarse:
+            search_main(lambda path: coarse)
+            current = {path: snap_lr_to_grid(v, params[path]["mult"]) for path, v in current.items()}
+        search_main(lambda path: params[path]["mult"])
+        selected = evaluate(current, mults)
+        trainer.restore(state)
+        for path, value in current.items():
+            committed[path] = constant_window(committed[path], start, main_steps, value)
+        if not trainer.train(committed, main_steps):
+            raise RuntimeError(f"Committed interval diverged at step {start}")
+        history.append(dict(start_step=start, steps=main_steps, lookahead=look,
+                            main=dict(current), mults=dict(mults), score=selected,
+                            evaluations=evaluations - before))
+        log_event("auto_interval", run=run, interval=len(history) - 1, start_step=start,
+                  evaluations=evaluations - before, **{metric: selected}, **current,
+                  **{f"cooldown.{k}": v for k, v in mults.items() if v is not None})
+
+    val_acc = trainer.score("val_acc")
+    tta_val_acc = trainer.score("tta_val_acc")
+    if trainer.device.type == "cuda":
+        torch.cuda.synchronize(trainer.device)
+    seconds = time.perf_counter() - run_start
+    log_event("auto_result", run=run, val_acc=val_acc, tta_val_acc=tta_val_acc,
+              search_seconds=seconds, evaluations=evaluations, train_steps=trainer.train_steps)
+    log_final_eval(val_acc, tta_val_acc, seconds)
+    final = copy.deepcopy(dict(config, hparam_tuning=None))
+    for path in params:
+        name = path.split(".", 1)[0]
+        final["param_groups"][name]["lr_scheduler"] = [list(line) for line in committed[path]]
+    for name in params:
+        print(f"  final {name}: {json.dumps(committed[name])}", flush=True)
+    result = dict(val_acc=val_acc, tta_val_acc=tta_val_acc, seconds=seconds,
+                  evaluations=evaluations, intervals=history)
+    heldout = tuning.get("heldout_seeds")
+    if heldout:
+        held_start = time.perf_counter()
+        scores = [run_seeded(f"{run}.heldout{seed}", model, final, seed, debug=False)
+                  for seed in heldout]
+        values = [s["tta_val_acc"] for s in scores]
+        mean = sum(values) / len(values)
+        sd = (sum((v - mean) ** 2 for v in values) / (len(values) - 1)) ** 0.5 if len(values) > 1 else 0.0
+        log_event("heldout_result", run=run, seeds=heldout, tta_val_acc_mean=mean,
+                  tta_val_acc_std=sd, per_seed=values, seconds=time.perf_counter() - held_start)
+        result.update(heldout_mean=mean, heldout_std=sd, heldout=values)
+    return dict(best_config=final, best_result=result, trials=[dict(run=run, config=final, result=result)])
+
+
 def run_experiment(run, model, config):
     """Run one config or a search; return its best config, result, and trials.
 
@@ -4035,6 +4316,8 @@ def run_experiment(run, model, config):
         return run_seeded_neighbour_search(run, model, config)
     if tuning is not None and tuning["algorithm"] == "global_interval":
         return run_global_interval_search(run, model, config)
+    if tuning is not None and tuning["algorithm"] == "auto":
+        return run_auto_search(run, model, config)
     if tuning is not None and tuning["algorithm"] in ("interval", "interval2", "global_neighbour"):
         result = run_interval_search(run, model, config, debug=debug)
         return dict(
