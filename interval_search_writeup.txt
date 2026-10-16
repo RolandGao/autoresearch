@@ -136,3 +136,20 @@ Results
    Only "decays to 0 by the end" survives a multiplicative transform. Next (v2): search the
    lookahead's level ("plan": an absolute start level per group, carried between intervals;
    "linsearch": a searched mult x candidate LR), still decaying linearly to 0 by the end.
+
+8. Transform-adaptive lookaheads (scenario A, BS 2000, held-out; do-nothing ramp 93.42, wave 93.72)
+                                     none    ramp    wave   (search s, none)
+     v1  linear c->0 to the end      93.94   93.57   93.59   132
+     v2plan  searched absolute level 93.82   93.47   93.59   214
+     v3  geometric knots c*r^j,      93.74   93.75   93.95*  215   (* one search seed)
+         searched ratio r
+   - v3 adapts to the transforms (ramp: r drops, wave: the plan stays flat), but loses
+     0.2 pp without a transform: the searched ratio falls to 0.26 by interval 2, the
+     lookahead decays fast, the effective horizon shortens, and the short-horizon bias
+     returns (interval 2 picks 0.047 where ~0.078 is right). The lookahead is tied to the
+     candidate (c * r^j), so a low candidate cannot have a long, high continuation.
+   - Far-off bias LRs (baseline with the LR set to 1): whiten_bias 93.92 (irrelevant),
+     norm_bias 93.66 (-0.26), both 93.61. Scenario B v1 (greedy x10 climb from 1.0) left
+     norm_bias at 1 in one of two runs (93.58 vs 93.86): mean 93.72, 588 s. Replaced by a
+     +-3-decade scan per LR in the first interval (coarse_scan).
+   - Next: polish (full-run knot coordinate search after the online pass, margin 0.1 pp).
