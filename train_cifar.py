@@ -3185,6 +3185,23 @@ for batch_size in (2000, 500, 125):
         RUN_CONFIGS[f"auto_b_v1x2m3tfas_bs{batch_size}{suffix}"] = auto_config(
             batch_size, "b", transform, None, **base, cooldown_fraction=1, pass_seeds=3,
             final_anneal="search", coarse_mult=None, coarse_scan=3, scan_lookahead=5)
+# Generality across searched hparams (scenario A, v1x2m3t): the head LR alone, and conv +
+# head together, each from its baseline initial value (the transform on the searched groups).
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for tag, searched in (("ahead", ("head",)), ("a2", ("conv", "head"))):
+            RUN_CONFIGS[f"auto_{tag}_v1x2m3t_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, "a", transform, searched, shape="linear",
+                cooldown_searched="linear", cooldown_fraction=1, passes=2, pass_seeds=3,
+                plan_tail=True)
+# Do-nothing references for those: the baseline with the transform on head / conv + head.
+for transform in LR_TRANSFORMS:
+    for tag, names in (("head", ("head",)), ("a2", ("conv", "head"))):
+        config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+        for name in names:
+            config["param_groups"][name]["lr_transform"] = copy.deepcopy(LR_TRANSFORMS[transform])
+        RUN_CONFIGS[f"transformed_{tag}_{transform}_bs2000"] = config
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
