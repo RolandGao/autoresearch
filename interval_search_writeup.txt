@@ -258,3 +258,17 @@ Results
     Freezing LRs that look flat in the short first-interval scan is harmful from scratch:
     norm_bias looks flat over a 20% horizon but matters over the run (frozen at 1000; the
     right value is ~100, ~400 -> ~25 under ramp): v1x2m2fasff ramp 93.13 (range 0.78).
+
+17. Cost reductions of the two-pass search (scenario A, BS 2000, held-out, 2 search seeds)
+                                         none           ramp           wave
+      v1x2m3t  (pass 2 on 3 seeds)       93.96 / 467 s  93.78 / 513 s  93.89 / 480 s   (4 seeds)
+      v1x2m2t  (pass 2 on 2 seeds)       94.02 / 350 s  93.90 / 391 s  93.92 / 358 s
+      s20x2m3t (pass 1 with a 20% lookahead, pass 2 to the end on 3 seeds)
+                                         93.64 / 448 s  93.76 / 451 s
+    - Two seeds in pass 2 are enough (~25% cheaper than three, same quality).
+    - A cheap, short-lookahead first pass is not: its plan is biased low (short-horizon
+      bias) and pass 2 cannot recover it (one run 93.39).
+    - Scenario B, v1x2m3fas (from scratch): none 93.96 (1690 s), ramp 93.81 (1867 s),
+      wave 93.91 (1814 s), 2 search seeds each.
+    - Search-seed spread is the remaining weakness: v1x2m3t ramp over 4 searches 93.58-94.03
+      (the low one never raised the early knots above 0.13; the ramp oracle wants ~1.0, 0.36).
