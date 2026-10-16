@@ -3233,6 +3233,26 @@ for batch_size in (500, 125):
              for i in range(6)]
     group["lr_scheduler"] = [(total // 5, a, b) for a, b in zip(knots, knots[1:])]
     RUN_CONFIGS[f"staircase_a_knots_grid_bs{batch_size}"] = config
+# The original interval search (algorithm="interval": 20%/20% intervals, conv LR constant per
+# interval, a searched constant cooldown LR, alternating main / cooldown searches), conv LR
+# only from its baseline value, with a held-out evaluation, under each transform: the
+# reference the auto search is compared with (scenario A).
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
+        conv = config["param_groups"]["conv"]
+        steps = conv["lr_scheduler"][0][0] // 5
+        config["hparam_tuning"] = dict(
+            algorithm="interval", metric="tta_val_acc", max_side_steps=20,
+            initial_dropoff_margin=0.02, interval_steps=steps, cooldown_steps=steps,
+            params={"conv.initial_lr": dict(initial=conv["lr_scheduler"][0][1], choices=None,
+                                            mult=0.6)},
+            heldout_seeds=HELDOUT_SEEDS,
+        )
+        if transform:
+            conv["lr_transform"] = copy.deepcopy(LR_TRANSFORMS[transform])
+        RUN_CONFIGS[f"auto_a_interval_bs{batch_size}{suffix}"] = config
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -3513,7 +3533,8 @@ def validate_tuning_config(tuning):
         required |= {"interval_steps", "cooldown_steps", "initial_dropoff_margin"}
     if tuning["algorithm"] == "interval2":
         required.add("cooldown_lr_mult")
-    require_fields(tuning, required, "hparam_tuning")
+    require_fields({k: v for k, v in tuning.items() if k != "heldout_seeds"}, required,
+                   "hparam_tuning")
 
 
 def tuning_params(config):
@@ -4079,6 +4100,7 @@ def run_interval_search(run, model, config, debug):
     stream = TrainingBatchStream(train_loader, fixed_batch)
     device = next(model.parameters()).device
     completed = 0
+    evaluations = 0
     history = []
     cooldown_values = {}
     recorder = SpectrumRecorder(run, model, debug_kfac_factors) if debug else None
@@ -4201,6 +4223,8 @@ def run_interval_search(run, model, config, debug):
             return values
 
         def main_score(values, cooldown):
+            nonlocal evaluations
+            evaluations += 1
             restore(start_state)
             if not train_segment(values, main_steps, start_step, commit=False):
                 return float("-inf")
@@ -4259,6 +4283,8 @@ def run_interval_search(run, model, config, debug):
                 }
 
             def cooldown_score(values):
+                nonlocal evaluations
+                evaluations += 1
                 restore(cooldown_start)
                 if not train_segment(
                     cooldown_segment(current, values),
@@ -4361,6 +4387,7 @@ def run_interval_search(run, model, config, debug):
         num_epochs=config["num_epochs"],
         overfit=config["overfit"],
         intervals=history,
+        evaluations=evaluations,
         hparam_schedules=base_schedules,
         **{f"{group['name']}_lr": group["lr"] for group in optimizer.param_groups},
     )
@@ -5112,6 +5139,29 @@ def run_auto_search(run, model, config):
     return dict(best_config=final, best_result=result, trials=[dict(run=run, config=final, result=result)])
 
 
+def heldout_evaluation(run, model, config, result, seeds):
+    """Retrain an interval search's committed LR schedules on held-out seeds. Logs
+    search_result (cost) and heldout_result lines in the format of run_auto_search."""
+    final = copy.deepcopy(dict(config, hparam_tuning=None))
+    for name, group in final["param_groups"].items():
+        group["lr_scheduler"] = [list(line) for line in result["hparam_schedules"][f"{name}.initial_lr"]]
+        momentum = result["hparam_schedules"][f"{name}.momentum"]
+        if len({line[1] for line in momentum}) != 1:
+            raise ValueError("held-out evaluation supports LR-only interval searches")
+    log_event("auto_result", run=run, val_acc=result["val_acc"], tta_val_acc=result["tta_val_acc"],
+              search_seconds=result["seconds"], evaluations=result["evaluations"], train_steps=0)
+    for path in [p for p in tuning_params(config)]:
+        name = path.split(".", 1)[0]
+        print(f"  final {path}: {json.dumps(final['param_groups'][name]['lr_scheduler'])}", flush=True)
+    held_start = time.perf_counter()
+    scores = [run_seeded(f"{run}.heldout{seed}", model, final, seed, debug=False)["tta_val_acc"]
+              for seed in seeds]
+    mean = sum(scores) / len(scores)
+    sd = (sum((v - mean) ** 2 for v in scores) / (len(scores) - 1)) ** 0.5 if len(scores) > 1 else 0.0
+    log_event("heldout_result", run=run, seeds=seeds, tta_val_acc_mean=mean, tta_val_acc_std=sd,
+              per_seed=scores, seconds=time.perf_counter() - held_start)
+
+
 def run_experiment(run, model, config):
     """Run one config or a search; return its best config, result, and trials.
 
@@ -5136,6 +5186,8 @@ def run_experiment(run, model, config):
         return run_auto_search(run, model, config)
     if tuning is not None and tuning["algorithm"] in ("interval", "interval2", "global_neighbour"):
         result = run_interval_search(run, model, config, debug=debug)
+        if tuning.get("heldout_seeds"):
+            heldout_evaluation(run, model, config, result, tuning["heldout_seeds"])
         return dict(
             best_config=config,
             best_result=result,

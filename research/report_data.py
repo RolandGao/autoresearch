@@ -126,3 +126,57 @@ def interval_scores(run):
 if __name__ == "__main__":
     print(json.dumps({"fidelity_k1": fidelity(1, ""), "interval": interval_scores(sys.argv[1])
                       if len(sys.argv) > 1 else None}, indent=1, default=str)[:3000])
+
+
+def fidelity_methods(k):
+    """Interval k (0-based) of the conv cooldown probe: seed-mean curves (TTA %, per candidate
+    conv LR) of truth, no lookahead, and linear-to-0 / searched constant cooldowns with a
+    one-interval or rest-of-training lookahead. "Searched constant" takes, per seed and
+    candidate, the best constant cooldown mult x candidate over the logged mults (as a search
+    on that seed would see it), then averages over seeds. The last interval's rest is one
+    interval, so both lookahead lengths coincide there."""
+    def collect(pattern):
+        truth, none = defaultdict(dict), defaultdict(dict)
+        lin, const = defaultdict(dict), defaultdict(lambda: defaultdict(dict))
+        for path in glob.glob(os.path.join(LOGS, pattern)):
+            for line in open(path):
+                if not line.startswith("{"):
+                    continue
+                r = json.loads(line)
+                kind = r.get("kind")
+                if kind == "truth":
+                    truth[r["c"]][r["seed"]] = r["score"]
+                elif kind == "none":
+                    none[r["c"]][r["seed"]] = r["score"]
+                elif kind == "proxy" and r["mo"] == "cont":
+                    if r["ms"] == "lin0":
+                        lin[r["c"]][r["seed"]] = r["score"]
+                    else:
+                        const[r["c"]][r["seed"]][r["ms"]] = r["score"]
+        mean = lambda by_seed: 100 * sum(by_seed.values()) / len(by_seed)  # noqa: E731
+        return (
+            {c: mean(v) for c, v in truth.items()}, {c: mean(v) for c, v in none.items()},
+            {c: mean(v) for c, v in lin.items()},
+            {c: mean({s: max(m.values()) for s, m in v.items()}) for c, v in const.items()},
+        )
+
+    one = collect(f"research_cooldown_fidelity_bs2000_conv_k{k}_2026*.log")
+    rest = collect(f"research_cooldown_fidelity_bs2000_conv_k{k}_coolrest_2026*.log")
+    if k == 3:
+        rest = one
+    curves = {"truth": one[0] or rest[0], "no lookahead": one[1] or rest[1],
+              "linear to 0, one interval": one[2], "searched constant, one interval": one[3],
+              "linear to 0, to the end": rest[2], "searched constant, to the end": rest[3]}
+    return {name: curve for name, curve in curves.items() if curve}
+
+
+def pick_and_regret(curves):
+    """Per method: the LR it picks (argmax of its curve) and the truth lost by that pick (pp)."""
+    truth = curves["truth"]
+    best = max(truth.values())
+    out = {}
+    for name, curve in curves.items():
+        common = [c for c in curve if c in truth]
+        pick = max(common, key=lambda c: curve[c])
+        out[name] = (pick, best - truth[pick])
+    return out
