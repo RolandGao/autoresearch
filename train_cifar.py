@@ -18,7 +18,7 @@ import time
 from bisect import bisect_left, bisect_right
 from datetime import datetime, timezone
 from itertools import product
-from math import ceil, isfinite, log
+from math import ceil, isfinite, log, pi, sin
 from types import SimpleNamespace
 
 timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%fZ")
@@ -319,6 +319,9 @@ class GroupOptimizer(torch.optim.Optimizer):
             group["algorithm"]
         ]
         required |= {"name", "params", "lr"} if runtime else {"lr_scheduler"}
+        if "lr_transform" in group:
+            required.add("lr_transform")
+            validate_lr_transform(group["lr_transform"])
         require_fields(group, required, f"{group['algorithm']} group")
         if not isinstance(group["nesterov"], bool):
             raise ValueError("nesterov must be a boolean")
@@ -1719,10 +1722,45 @@ def segment_hparam_schedules(base_schedules, values, start_step, steps, global_s
     return schedules
 
 
+LR_TRANSFORM_KINDS = ("ramp", "wave")
+
+
+def validate_lr_transform(transform):
+    """Optional per-group lr_transform: a fixed multiplier applied on top of the
+    scheduled LR, so the best specified schedule is no longer the applied one.
+    ramp: factor ** (2x - 1); wave: factor ** sin(2 pi (x + phase)); x = step / steps."""
+    if not isinstance(transform, dict) or transform.get("kind") not in LR_TRANSFORM_KINDS:
+        raise ValueError(f"lr_transform needs kind in {LR_TRANSFORM_KINDS}")
+    require_fields(
+        transform,
+        {"kind", "factor"} | ({"phase"} if transform["kind"] == "wave" else set()),
+        "lr_transform",
+    )
+    for name, value in transform.items():
+        if name != "kind" and (
+            isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value)
+        ):
+            raise ValueError(f"lr_transform.{name} must be a finite number")
+    if transform["factor"] <= 0:
+        raise ValueError("lr_transform.factor must be positive")
+
+
+def lr_transform_factor(transform, step, total_steps):
+    x = step / total_steps
+    if transform["kind"] == "ramp":
+        return transform["factor"] ** (2 * x - 1)
+    return transform["factor"] ** sin(2 * pi * (x + transform["phase"]))
+
+
 def apply_hparam_schedules(optimizer, schedules, step):
     for group in optimizer.param_groups:
         name = group["name"]
-        group["lr"] = hparam_at_step(schedules[f"{name}.initial_lr"], step)
+        lines = schedules[f"{name}.initial_lr"]
+        group["lr"] = hparam_at_step(lines, step)
+        if group.get("lr_transform") is not None:
+            group["lr"] *= lr_transform_factor(
+                group["lr_transform"], step, sum(line[0] for line in lines)
+            )
         for field in (
             "momentum",
             "nesterov",
@@ -3288,6 +3326,105 @@ def cooldown_lr_values(base_schedules, main_values, lr_mult, start_step, main_st
             ) / main_steps
         values[path] = main_lr * lr_mult
     return values
+
+
+class SegmentTrainer:
+    """One training run that can be snapshotted, restored and continued under any
+    full-run schedules (path -> segments covering every step), the shared machinery of
+    online searches and probe experiments. Uses the current TRAINING_SEED."""
+
+    def __init__(self, model, config):
+        self.model = model
+        self.config = config
+        set_training_seed()
+        self.test_loader = CifarLoader(
+            "cifar10", train=False, batch_size=2000, aug=dict(flip=False, translate=0)
+        )
+        train_loader = CifarLoader(
+            "cifar10", train=True, batch_size=config["batch_size"],
+            aug=dict(flip=True, translate=2),
+        )
+        self.total_steps = config["num_epochs"] * (1 if config["overfit"] else len(train_loader))
+        self.base_schedules = configured_hparam_schedules(config["param_groups"], self.total_steps)
+        self.device = next(model.parameters()).device
+        self.optimizer = make_optimizer(model, config["param_groups"])
+        self.forward = training_forward(
+            model, config["batch_size"], config["param_groups"], False, self.device
+        )
+        model.reset()
+        fixed_batch = next(iter(train_loader)) if config["overfit"] else None
+        if fixed_batch is not None:
+            self.test_loader = FixedBatchLoader(*fixed_batch)
+        model.init_whiten(
+            fixed_batch[0] if fixed_batch is not None
+            else train_loader.normalized_images()[:5000],
+            eps=0.0005,
+        )
+        self.stream = TrainingBatchStream(train_loader, fixed_batch)
+        self.step = 0
+        self.train_steps = 0  # Every trained step, including discarded probes.
+
+    def snapshot(self):
+        return dict(
+            model=copy.deepcopy(self.model.state_dict()),
+            optimizer=copy.deepcopy(self.optimizer.state_dict()),
+            stream=self.stream.state_dict(),
+            rng=torch.random.get_rng_state(),
+            cuda_rng=torch.cuda.get_rng_state_all() if self.device.type == "cuda" else None,
+            step=self.step,
+        )
+
+    def restore(self, state):
+        self.model.load_state_dict(state["model"])
+        # Each trial needs its own momentum tensors (load_state_dict may reuse them).
+        self.optimizer.load_state_dict(copy.deepcopy(state["optimizer"]))
+        self.optimizer.zero_grad(set_to_none=True)
+        self.stream.load_state_dict(state["stream"])
+        torch.random.set_rng_state(state["rng"])
+        if state["cuda_rng"] is not None:
+            torch.cuda.set_rng_state_all(state["cuda_rng"])
+        self.step = state["step"]
+
+    def train(self, schedules, steps):
+        """Train steps updates from self.step under full-run schedules; False on divergence."""
+        self.model.train()
+        for _ in range(steps):
+            apply_hparam_schedules(self.optimizer, schedules, self.step)
+            inputs, labels = self.stream.next_batch()
+            outputs = self.forward(inputs)
+            loss = F.cross_entropy(outputs, labels, label_smoothing=0.2, reduction="mean")
+            if not isfinite(loss.item()):
+                return False
+            self.optimizer.prepare_kfac(outputs)
+            loss.backward()
+            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
+            self.step += 1
+            self.train_steps += 1
+        return True
+
+    def score(self, metric):
+        if metric == "neg_train_loss":
+            return -batch_loss(self.model, self.test_loader)
+        return evaluate(self.model, self.test_loader, tta_level=2 if metric == "tta_val_acc" else 0)
+
+
+def constant_window(lines, start, steps, value):
+    """lines with [start, start + steps) replaced by a constant value."""
+    total = sum(line[0] for line in lines)
+    return (slice_schedule(lines, 0, start) + [(steps, value)]
+            + slice_schedule(lines, start + steps, total))
+
+
+def linear_window(lines, start, steps, first, last):
+    """lines with [start, start + steps) replaced by a line from first to last."""
+    total = sum(line[0] for line in lines)
+    return (slice_schedule(lines, 0, start) + [(steps, first, last)]
+            + slice_schedule(lines, start + steps, total))
+
+
+def window_mean(lines, start, steps):
+    return sum(schedule_value_at_step(lines, s) for s in range(start, start + steps)) / steps
 
 
 def run_interval_search(run, model, config, debug):
