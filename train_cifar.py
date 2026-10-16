@@ -2992,6 +2992,17 @@ for batch_size in (2000, 500, 125):
         RUN_CONFIGS[f"auto_a_linssp_bs{batch_size}{suffix}"] = auto_config(
             batch_size, "a", transform, None, shape="linear", cooldown_searched="search",
             polish_rounds=2, polish_margin=0.001)
+# v3p: the transform-adaptive online pass (geometric lookahead) followed by 2 polish rounds.
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        for scenario in ("a", "b"):
+            extra = (dict(coarse_mult=None, coarse_scan=3, polish_scale_first=True)
+                     if scenario == "b" else {})
+            RUN_CONFIGS[f"auto_{scenario}_v3p_bs{batch_size}{suffix}"] = auto_config(
+                batch_size, scenario, transform, None, shape="linear",
+                cooldown_searched="geometric", cooldown_fraction=1, polish_rounds=2,
+                polish_margin=0.001, **extra)
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
