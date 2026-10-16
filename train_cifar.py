@@ -1765,6 +1765,10 @@ def apply_hparam_schedules(optimizer, schedules, step):
 # Scalar hyperparameters stay constant throughout the run.
 # Unsearched parameters always retain their configured schedules in every algorithm.
 # It takes no interval_steps/cooldown_steps and skips the initial LR margin search.
+# algorithm="global_interval" searches interval-wise LR schedules with full runs:
+# params={"conv.lr_scheduler": dict(mult=0.6)} treats each segment of the configured
+# lr_scheduler as an interval; neighbours move one interval one grid step up or down,
+# and each round moves to the best neighbour until none beats the current schedule.
 # All schedulers use [(num_steps, value), (num_steps, start, end), ...].
 # Linear segments include the start; the end is reached one update after the
 # segment finishes. A one-step line uses its start.
@@ -2738,6 +2742,30 @@ for algorithm in ("interval", "global_neighbour"):
             )
         RUN_CONFIGS[f"{algorithm}_{suffix}_bs2000"] = config
 
+# global_interval from the schedules the 20%/20% LR-only interval searches committed
+# (seed 0, logs/cifar_baseline_20261015_214346_039816Z_194098.log and
+# ..._214347_043157Z_194170.log): five 40-step constant intervals per searched group,
+# so 10 neighbours per group. Unsearched groups keep their baseline schedules.
+GLOBAL_INTERVAL_STARTS = {
+    "conv_lr": dict(conv=(0.13, 0.13, 0.078, 0.078, 0.017)),
+    "lrs": dict(
+        conv=(0.13, 0.13, 0.078, 0.047, 0.01),
+        head=(2100, 2100, 2100, 2100, 1300),
+        norm_bias=(770, 770, 770, 460, 280),
+        whiten_bias=(460, 460, 280, 280, 280),
+    ),
+}
+for suffix, start in GLOBAL_INTERVAL_STARTS.items():
+    config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
+    for name, lrs in start.items():
+        config["param_groups"][name]["lr_scheduler"] = [(40, lr) for lr in lrs]
+    config["hparam_tuning"] = dict(
+        algorithm="global_interval",
+        metric="tta_val_acc",
+        params={f"{name}.lr_scheduler": dict(mult=0.6) for name in start},
+    )
+    RUN_CONFIGS[f"global_interval_{suffix}_bs2000"] = config
+
 # K-FAC Jacobian for every trainable group, and the hybrid with Muon2 convs (12-hour
 # study, dev/KJ_NOTES.md). kfacjac_all_bs{BS}: conv (whole-matrix normalization,
 # momentum before conditioning), head (conditioning first, G pseudoinverse) and both
@@ -2795,9 +2823,9 @@ for batch_size, (source, head_lr, bias_lr) in KFACJAC_HYBRID.items():
 # Runs to execute, in order, by name in RUN_CONFIGS. Each runs once per seed
 # (seeds 0, 1, ..., num_seeds - 1); set num_seeds = 8 for a seed-averaged comparison.
 experiments_to_run = [
-    # LR-only interval and global_neighbour searches at BS 2000 (one per GPU).
-    *(f"{algorithm}_{suffix}_bs2000"
-      for algorithm in ("interval", "global_neighbour") for suffix in ("conv_lr", "lrs")),
+    # global_interval from the 20%/20% interval-search schedules at BS 2000.
+    "global_interval_conv_lr_bs2000",
+    "global_interval_lrs_bs2000",
 ]
 # CIFAR_EXPERIMENTS (comma-separated names) overrides the list, e.g. one run per GPU.
 if os.environ.get("CIFAR_EXPERIMENTS"):
@@ -2935,6 +2963,7 @@ def validate_tuning_config(tuning):
         "global_neighbour",
         "global_neighbour_seeds",
         "interval2",
+        "global_interval",
     ):
         raise ValueError("hparam_tuning requires a known algorithm")
     required = {"algorithm", "metric", "params"}
@@ -3713,6 +3742,116 @@ def run_seeded_neighbour_search(run, model, config):
     return dict(best_config=best["config"], best_result=best["result"], trials=trials)
 
 
+def global_interval_neighbours(lines, mult):
+    """(interval, schedule) pairs: one nonzero segment moved one LR grid step up or down.
+
+    A segment's reference value (its start, or its end if the start is 0) moves to the
+    adjacent grid value round2(mult**k); a linear segment's other end scales with it.
+    All-zero segments are frozen intervals and are not searched. Higher LR first.
+    """
+    neighbours = []
+    for index, line in enumerate(lines):
+        steps, *values = line
+        reference = next((value for value in values if value), 0)
+        if not reference:
+            continue
+        grid = lr_grid_index(reference, mult)
+        for direction in (-1, 1):
+            target = round_hparam(mult ** (grid + direction))
+            moved = (steps, *(round_hparam(value * target / reference) for value in values))
+            neighbours.append((index, lines[:index] + [moved] + lines[index + 1:]))
+    return neighbours
+
+
+def run_global_interval_search(run, model, config):
+    """Steepest-ascent search over interval-wise LR schedules, scored by full runs.
+
+    hparam_tuning.params maps "<group>.lr_scheduler" to dict(mult=...); each segment of
+    that group's configured lr_scheduler is one interval. A neighbour moves one interval
+    of one group one LR grid step up or down (global_interval_neighbours), so 5 intervals
+    give 10 neighbours per group. Every round trains all neighbours of the current
+    schedules (cached) and moves to the best one if it beats the current score; the
+    search stops when no neighbour does. The search score is the result (no replay).
+    """
+    tuning = config["hparam_tuning"]
+    metric = tuning["metric"]
+    if metric not in ("val_acc", "tta_val_acc"):
+        raise ValueError(f"Unknown tuning metric: {metric!r}")
+    params = tuning["params"]
+    if not isinstance(params, dict) or not params:
+        raise ValueError("hparam_tuning.params must be a nonempty mapping")
+    mults = {}
+    for path, spec in params.items():
+        name, _, field = path.partition(".")
+        if field != "lr_scheduler" or name not in config["param_groups"]:
+            raise ValueError(f"global_interval searches <group>.lr_scheduler, got {path}")
+        if not isinstance(spec, dict) or set(spec) != {"mult"}:
+            raise ValueError(f"{path}: specify exactly dict(mult=...)")
+        mult = spec["mult"]
+        if isinstance(mult, bool) or not isinstance(mult, (int, float)) or not 0 < mult < 1:
+            raise ValueError(f"{path}: mult must be a number between 0 and 1")
+        if is_zero_lr_schedule(config["param_groups"][name]["lr_scheduler"]):
+            raise ValueError(f"{path}: an all-zero schedule has no intervals to search")
+        mults[name] = mult
+    base = dict(config, hparam_tuning=None)
+    log_config(run, config, label="base_config")
+    trials, cache = [], {}
+
+    def evaluate_config(candidate):
+        key = json.dumps(candidate["param_groups"], sort_keys=True)
+        if key not in cache:
+            trial_run = f"{run}.{len(trials)}"
+            log_config_diff(trial_run, run, base, candidate)
+            result = main(trial_run, model, **candidate, _log_config=False, debug=False)
+            trials.append(dict(run=trial_run, config=candidate, result=result))
+            value = result[metric] if isfinite(result[metric]) else float("-inf")
+            cache[key] = (value, trials[-1])
+        return cache[key]
+
+    def schedule_text(candidate):
+        return " ".join(
+            f"{name}={json.dumps(candidate['param_groups'][name]['lr_scheduler'])}"
+            for name in mults
+        )
+
+    current = base
+    current_score, current_trial = evaluate_config(current)
+    log_event("search_path", run=run, round=0, **{metric: current_score})
+    print(f"  schedules: {schedule_text(current)}", flush=True)
+    round_index = 0
+    while True:
+        round_index += 1
+        best = None
+        for name, mult in mults.items():
+            lines = [tuple(line) for line in current["param_groups"][name]["lr_scheduler"]]
+            for index, lines_moved in global_interval_neighbours(lines, mult):
+                candidate = copy.deepcopy(current)
+                candidate["param_groups"][name]["lr_scheduler"] = lines_moved
+                value, trial = evaluate_config(candidate)
+                old, new = lines[index][1:], lines_moved[index][1:]
+                log_event(
+                    "neighbour", run=run, round=round_index, trial=trial["run"],
+                    group=name, interval=index, lr=f"{old} -> {new}", **{metric: value},
+                )
+                # Strictly better only: ties keep the earlier neighbour (and the incumbent).
+                if best is None or value > best[0]:
+                    best = (value, trial, candidate, name, index, old, new)
+        if best is None or best[0] <= current_score:
+            break
+        current_score, current_trial, current, name, index, old, new = best
+        log_event(
+            "search_path", run=run, round=round_index, group=name, interval=index,
+            lr=f"{old} -> {new}", **{metric: current_score},
+        )
+        print(f"  schedules: {schedule_text(current)}", flush=True)
+    log_event("search_best", run=run, trial=current_trial["run"], **{metric: current_score})
+    log_changes("changes", flatten_config(base), flatten_config(current))
+    if debug:
+        log_event("debug_final_run", run=run, trial=current_trial["run"])
+        main(f"{run}.final", model, **current, _log_config=False, debug=True)
+    return dict(best_config=current, best_result=current_trial["result"], trials=trials)
+
+
 def run_experiment(run, model, config):
     """Run one config or a search; return its best config, result, and trials.
 
@@ -3731,6 +3870,8 @@ def run_experiment(run, model, config):
         validate_tuning_config(tuning)
     if tuning is not None and tuning["algorithm"] == "global_neighbour_seeds":
         return run_seeded_neighbour_search(run, model, config)
+    if tuning is not None and tuning["algorithm"] == "global_interval":
+        return run_global_interval_search(run, model, config)
     if tuning is not None and tuning["algorithm"] in ("interval", "interval2", "global_neighbour"):
         result = run_interval_search(run, model, config, debug=debug)
         return dict(

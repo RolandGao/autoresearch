@@ -609,7 +609,9 @@ class SearchTests(unittest.TestCase):
                     initial["conv.initial_lr"],
                     train.snap_lr_to_grid(spec["initial"], spec["mult"]),
                 )
-                if original["hparam_tuning"]["algorithm"] == "global_neighbour":
+                # LR-only global_neighbour_*_bs2000 searches have no momentum entries.
+                if (original["hparam_tuning"]["algorithm"] == "global_neighbour"
+                        and "head.momentum" in initial):
                     self.assertEqual(initial["head.momentum"], 0.85)
                     self.assertEqual(
                         initial["norm_bias.momentum"],
@@ -632,8 +634,9 @@ class SearchTests(unittest.TestCase):
                 self.assertEqual(train.get_hparam(passed, "conv.initial_lr"), baseline)
                 config = copy.deepcopy(original)
                 del config["hparam_tuning"]["params"]["conv.initial_lr"]
-                choices, _ = train.interval_search_space(config)
-                self.assertNotIn("conv.initial_lr", choices)
+                if config["hparam_tuning"]["params"]:  # Conv-only searches have nothing left.
+                    choices, _ = train.interval_search_space(config)
+                    self.assertNotIn("conv.initial_lr", choices)
                 self.assertEqual(train.get_hparam(config, "conv.initial_lr"), baseline)
         baselines = {
             f"baseline_bs{batch_size}": train.RUN_CONFIGS[f"baseline_bs{batch_size}"]
@@ -3579,6 +3582,64 @@ class OverfitEvaluationTests(unittest.TestCase):
             self.assertIs(loader.normalized_images(), trained[0])
             for x in trained:
                 self.assertIs(x, trained[0])
+
+
+class GlobalIntervalTests(unittest.TestCase):
+    def test_neighbours_move_one_nonzero_interval_one_grid_step(self):
+        lines = [(3, 0.13), (2, 0.22, 0.0), (4, 0.0), (1, 0.0, 0.36)]
+        neighbours = train.global_interval_neighbours(lines, 0.6)
+        # Higher LR first; linear segments scale both ends; frozen intervals are skipped.
+        self.assertEqual([index for index, _ in neighbours], [0, 0, 1, 1, 3, 3])
+        moved = [schedule[index] for index, schedule in neighbours]
+        self.assertEqual(moved, [(3, 0.22), (3, 0.078), (2, 0.36, 0.0), (2, 0.13, 0.0),
+                                 (1, 0.0, 0.6), (1, 0.0, 0.22)])
+        for index, schedule in neighbours:
+            self.assertEqual(schedule[:index] + schedule[index + 1:],
+                             lines[:index] + lines[index + 1:])
+
+    def test_search_climbs_to_the_best_schedule_and_stops(self):
+        config = copy.deepcopy(train.RUN_CONFIGS["global_interval_conv_lr_bs2000"])
+        head = copy.deepcopy(config["param_groups"]["head"])
+        targets = (0.22, 0.13, 0.078, 0.047, 0.028)
+        calls = []
+
+        def fake_main(run, model, batch_size, param_groups, num_epochs, overfit,
+                      hparam_tuning, _log_config, debug):
+            self.assertIsNone(hparam_tuning)
+            self.assertEqual(param_groups["head"], head)  # Unsearched groups are untouched.
+            lrs = tuple(line[1] for line in param_groups["conv"]["lr_scheduler"])
+            self.assertEqual([line[0] for line in param_groups["conv"]["lr_scheduler"]], [40] * 5)
+            calls.append(lrs)
+            score = 0.9 - sum(abs(log(lr / t)) for lr, t in zip(lrs, targets)) / 100
+            return dict(val_acc=score - 0.01, tta_val_acc=score)
+
+        with patch.object(train, "main", side_effect=fake_main), \
+                patch.object(train, "debug", False), contextlib.redirect_stdout(io.StringIO()):
+            result = train.run_experiment("gi", None, config)
+        lrs = tuple(line[1] for line in result["best_config"]["param_groups"]["conv"]["lr_scheduler"])
+        self.assertEqual(lrs, targets)
+        self.assertAlmostEqual(result["best_result"]["tta_val_acc"], 0.9)
+        self.assertEqual(len(calls), len(set(calls)))  # Cached: every schedule trains once.
+        self.assertEqual(len(calls), len(result["trials"]))
+        # Three one-step moves; every round scores all 10 neighbours of its incumbent.
+        for lrs in [targets] + [calls[0]]:
+            for index in range(5):
+                for factor in (1 / 0.6, 0.6):
+                    neighbour = list(lrs)
+                    neighbour[index] = train.round_hparam(
+                        0.6 ** (train.lr_grid_index(lrs[index], 0.6) + (-1 if factor > 1 else 1)))
+                    self.assertIn(tuple(neighbour), calls)
+
+    def test_search_validates_params(self):
+        config = copy.deepcopy(train.RUN_CONFIGS["global_interval_conv_lr_bs2000"])
+        for params in ({}, {"conv.initial_lr": dict(mult=0.6)}, {"nope.lr_scheduler": dict(mult=0.6)},
+                       {"conv.lr_scheduler": dict(mult=1.5)},
+                       {"conv.lr_scheduler": dict(mult=0.6, initial=1)},
+                       {"whiten_weight.lr_scheduler": dict(mult=0.6)}):
+            config["hparam_tuning"]["params"] = params
+            with self.assertRaises(ValueError), contextlib.redirect_stdout(io.StringIO()), \
+                    patch.object(train, "main", side_effect=AssertionError("no training")):
+                train.run_experiment("gi", None, config)
 
 
 if __name__ == "__main__":
