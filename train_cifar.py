@@ -3025,6 +3025,13 @@ for batch_size in (2000, 500, 125):
         RUN_CONFIGS[f"auto_b_v1psfast_bs{batch_size}{suffix}"] = auto_config(
             batch_size, "b", transform, None, **common, polish_rounds=1, polish_margin=0.001,
             polish_scale_first=True)
+# v1p2: polish also tries two-step knot moves (x0.36 / x2.8), whose effects beat the noise.
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "wave"):
+        suffix = f"_{transform}" if transform else ""
+        RUN_CONFIGS[f"auto_a_v1p2_bs{batch_size}{suffix}"] = auto_config(
+            batch_size, "a", transform, None, shape="linear", cooldown_searched="linear",
+            cooldown_fraction=1, polish_rounds=3, polish_margin=0.001, polish_steps=[1, 2])
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -4305,7 +4312,7 @@ AUTO_REQUIRED = {
 AUTO_OPTIONAL = {"coarse_mult", "heldout_seeds", "revisit", "larger_within", "shape",
                  "final_anneal", "coarse_scan", "polish_rounds", "polish_margin",
                  "polish_scale_first", "alternate",
-                 "scan_lookahead"}
+                 "scan_lookahead", "polish_steps"}
 
 
 def grid_neighbour(value, mult, direction, cap):
@@ -4342,6 +4349,8 @@ def run_auto_search(run, model, config):
       polish_rounds (optional, default 0; shape="linear" only): after the online pass,
         coordinate-search the schedule's knots (+-1 grid step each) with full runs from
         the initial state, moving when a run beats the best by more than polish_margin.
+      polish_steps (optional, default [1]): knot moves tried, in grid steps (e.g. [1, 2]
+        also tries two-step moves when one-step moves fail; larger effects beat the noise).
       polish_scale_first (optional, default False): per group, first try scaling its whole
         schedule one grid step; polish its knots only if that changes the score by at least
         2 x polish_margin (skips insensitive groups).
@@ -4601,6 +4610,7 @@ def run_auto_search(run, model, config):
             raise ValueError("polish_rounds requires shape='linear'")
         polish_margin = tuning.get("polish_margin", 0.0)
         polish_scale_first = tuning.get("polish_scale_first", False)
+        polish_steps = tuning.get("polish_steps", [1])
         knots_of = {
             path: [committed[path][0][1]] + [line[2] for line in committed[path]]
             for path in params
@@ -4652,9 +4662,11 @@ def run_auto_search(run, model, config):
                 if not sensitive:
                     continue
                 for index in range(len(best_knots[path])):
-                    for direction in (1, -1):
-                        value = grid_neighbour(best_knots[path][index], params[path]["mult"],
-                                               direction, None)
+                    for direction in [sign * step for step in polish_steps for sign in (1, -1)]:
+                        knot = best_knots[path][index]
+                        value = (round_hparam(params[path]["mult"] ** (
+                            lr_grid_index(knot, params[path]["mult"]) - direction))
+                            if knot > 0 else None)
                         if value is None:
                             continue
                         candidate = copy.deepcopy(best_knots)
