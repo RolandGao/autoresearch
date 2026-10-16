@@ -224,3 +224,8 @@ Results
     baseline 93.92-93.94; oracle knots ramp 93.91, wave 93.97.
     v1x2m3 is the first variant within ~0.1 pp of the baseline in all three conditions.
     Validation queued: BS 500 / 125 (scenario A) and scenario B at BS 2000.
+
+14. Validation of v1x2m3 at BS 500 (scenario A, conv searched from its baseline initial LR,
+    held-out seeds 100-107, 2 search seeds; baseline_bs500 93.83)
+      none 93.91 (551 s)   ramp 93.85 (658 s)   wave 93.85 (624 s)
+    Matches the baseline in all three conditions, at ~1.2-1.4x the BS 2000 search time.
