@@ -3447,6 +3447,10 @@ ICS_VERSIONS = {
     "v17": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
                 level_refine=0, level_joint=True, level_backoff=1, refine_start=1, replicates=[1, 1, 1, 1, 1],
                 refine_side_steps=2, final_expand=True, adaptive_reps=True, relevel_steps=4, ensemble=2),
+    # v16's bias correction (pass 1's plan one grid step up) and v17's noise averaging (two second passes).
+    "v18": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_backoff=1, refine_start=1, replicates=[1, 1, 1, 1, 1],
+                refine_side_steps=2, final_expand=True, adaptive_reps=True, relevel_steps=4, ensemble=2, plan_shift=1),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
