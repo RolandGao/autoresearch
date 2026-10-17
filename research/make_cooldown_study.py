@@ -1060,8 +1060,9 @@ story += [
       "a = conv only, b = 4 LRs); each version is run with 2 search seeds per cell. Experiments 12, 16, 17, 18 and 20 "
       "are probes that shaped the versions; 13-15, 19, 21 and 22 compare the versions."),
 ]
-FINAL_VERSION = "v19"
-final_data = ics.load(FINAL_VERSION)
+FINAL_VERSION = "v24"
+FINAL_SOURCES = {"a": "v19", "b": "v24"}  # v24's conv-only behaviour is v19's (the shift only differs with 4 LRs).
+final_by_scenario = {sc: ics.load(v) for sc, v in FINAL_SOURCES.items()}
 ics_refs = ics.references()
 story += [
     P(f"Campaign summary: the current algorithm (ICS {FINAL_VERSION})", "h2"),
@@ -1078,7 +1079,8 @@ story += [
                    "moving while the score improves); a candidate's score is the interval plus one interval at 0.22 "
                    "x the candidate (~6 runs). This finds the schedule's shape cheaply, transform included, but is "
                    "biased toward small LRs (Experiment 12)"],
-        ["Shift", "Pass 1's schedule, except its last interval, is moved one grid step up (the bias correction)"],
+        ["Shift", "Pass 1's conv schedule, except its last interval, is moved one grid step up (the bias correction; "
+                  "with 4 LRs the other groups keep their scanned levels and follow conv's profile)"],
         ["Pass 2", "From the initial state again: keep interval 1; climb each later interval up to 2 grid steps from "
                    "the shifted plan, scoring a candidate by the interval plus the rest of the run on the plan (the "
                    "plan's tail unscaled); intervals 4 and 5 average 2 and 3 continuations with fresh data order "
@@ -1092,12 +1094,14 @@ for bs in ics.BATCH_SIZES:
     for sc in ics.SCENARIOS:
         cells = [f"BS {bs}, {ics.SCENARIO_LABELS[sc]} ({'-' if base is None else f'{base:.2f}'})"]
         for tr in ics.TRANSFORMS:
-            held = [r["heldout"] for r in final_data.get((sc, bs, tr), {}).values() if "heldout" in r]
+            held = [r["heldout"] for r in final_by_scenario[sc].get((sc, bs, tr), {}).values() if "heldout" in r]
             cells.append("-" if not held else f"<b>{sum(held) / len(held):.2f}</b> ({sum(held) / len(held) - base:+.2f}; "
                          f"{len(held)} seeds)")
         rows.append(cells)
 story += [P(f"Held-out TTA of ICS {FINAL_VERSION} (mean over search seeds; vs the baseline in brackets)", "h2"),
-          table(rows, [4.2 * cm] + [3.2 * cm] * 4)]
+          table(rows, [4.2 * cm] + [3.2 * cm] * 4),
+          P("Conv-only cells are ICS v19's runs (v24 searches conv only exactly as v19 does); 4-LR cells are v24's.",
+            "small")]
 
 # Experiment 12: lookahead fidelity and noise for constant-interval decisions (2-day campaign).
 look_by_bs = {bs: las.summary(bs, "") for bs in (2000, 500, 125)}
