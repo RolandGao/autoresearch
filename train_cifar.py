@@ -3338,6 +3338,35 @@ for batch_size in (2000, 500, 125):
                 if spec:
                     group["lr_transform"] = copy.deepcopy(spec)
                 RUN_CONFIGS[f"rep_n{n}_q{round(100 * q)}_bs{batch_size}{'_' + transform if transform else ''}"] = config
+# ICS (run_ics_search), the 2-day campaign's constant-interval + cooldown search. Scenario a: conv
+# searched from its baseline initial LR (other groups on the baseline); scenario b: all four LRs
+# from 1.0 (levels scanned on a x7.7 grid in interval 0, conv refined, the others tied to conv's
+# profile). Transforms apply to the searched groups.
+def ics_config(batch_size, scenario, transform, **overrides):
+    config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
+    pg = config["param_groups"]
+    groups = ["conv"] if scenario == "a" else list(TRAINED_LR_GROUPS)
+    tuning = dict(
+        algorithm="ics", metric="tta_val_acc", groups=groups,
+        start={g: (pg[g]["lr_scheduler"][0][1] if scenario == "a" else 1.0) for g in groups},
+        intervals=5, lookahead="rest_lin", cooldown_mult=0.36, ratio=0.6,
+        level_scan=[] if scenario == "a" else list(groups), level_lookahead="short", fine=["conv"],
+        tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
+    tuning.update(overrides)
+    config["hparam_tuning"] = tuning
+    if transform is not None:
+        for g in groups:
+            pg[g]["lr_transform"] = copy.deepcopy(LR_TRANSFORMS[transform])
+    return config
+
+
+ICS_VERSIONS = {"v1": {}}
+for version, overrides in ICS_VERSIONS.items():
+    for batch_size in (2000, 500, 125):
+        for scenario in ("a", "b"):
+            for transform in (None, "ramp", "rampdown", "wave"):
+                RUN_CONFIGS[f"ics_{version}_{scenario}_bs{batch_size}{'_' + transform if transform else ''}"] = (
+                    ics_config(batch_size, scenario, transform, **overrides))
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -3606,9 +3635,10 @@ def validate_tuning_config(tuning):
         "global_family",
         "noisy_family",
         "guided_family",
+        "ics",
     ):
         raise ValueError("hparam_tuning requires a known algorithm")
-    if tuning["algorithm"] in ("auto", "global_family", "noisy_family", "guided_family"):
+    if tuning["algorithm"] in ("auto", "global_family", "noisy_family", "guided_family", "ics"):
         return  # These searches validate their own fields.
     required = {"algorithm", "metric", "params"}
     if tuning["algorithm"] in (
@@ -5654,6 +5684,203 @@ def run_guided_family_search(run, model, config):
     return dict(best_config=config, best_result=result, trials=[dict(run=run, config=config, result=result)])
 
 
+ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "lookahead", "cooldown_mult", "ratio",
+                "level_scan", "level_lookahead", "fine", "tie", "max_side_steps", "larger_within", "budget",
+                "heldout_seeds"}
+
+
+def run_ics_search(run, model, config):
+    """Interval-cooldown search (ICS): online search of constant-interval LR schedules with a
+    cooldown lookahead, within a training-step budget.
+
+    hparam_tuning:
+      groups: searched groups; the first is the lead (searched in every interval).
+      start: {group: initial LR}; snapped to the x0.6 grid.
+      intervals: n; every searched LR is constant within each of n equal intervals (spec values;
+        an lr_transform applies on top).
+      lookahead: how a candidate for interval k is scored after training the interval:
+        "rest_lin" (the rest of the run, each searched LR decaying linearly from its candidate
+        value to 0), "rest_geo" (the rest of the run as constant intervals continuing
+        value * ratio**j), or "short" (one interval at cooldown_mult x value). The last
+        interval is scored by the final metric (no lookahead).
+      cooldown_mult, ratio: parameters of "short" and "rest_geo".
+      level_scan: groups whose level is first scanned in interval 0 on a x10 grid (climb from
+        start while the score improves), each scored after interval 0 plus level_lookahead
+        ("none": right after the interval, or "short").
+      fine: groups climbed on the x0.6 grid in interval 0 (with the main lookahead).
+      tie: groups other than the lead follow the lead's profile after interval 0 (value_k =
+        value_0 x lead_k / lead_0); otherwise every group is climbed in every interval.
+      max_side_steps: most x0.6 grid steps one climb direction may move.
+      larger_within: after a climb, move up the grid while the score stays within this of the
+        best (counters the lookahead's small-LR bias; 0 = off).
+      budget: the search stops evaluating new candidates once its trained steps would exceed
+        budget x the run's total steps (every trained step counts, discarded probes included).
+      heldout_seeds: retrain the committed schedule on these seeds (evaluation only).
+    Each interval climbs each climbed group in turn (smaller values first, then larger, moving
+    while the score improves; level scans look both ways first and climb the better side),
+    commits the best and continues from its trained state.
+    """
+    run_start = time.perf_counter()
+    tuning = config["hparam_tuning"]
+    require_fields(tuning, ICS_REQUIRED, "hparam_tuning")
+    if tuning["lookahead"] not in ("rest_lin", "rest_geo", "short"):
+        raise ValueError("ics lookahead must be rest_lin, rest_geo or short")
+    if tuning["level_lookahead"] not in ("none", "short"):
+        raise ValueError("ics level_lookahead must be none or short")
+    groups = list(tuning["groups"])
+    lead = groups[0]
+    metric = tuning["metric"]
+    log_config(run, config, label="base_config")
+    trainer = SegmentTrainer(model, config)
+    base = trainer.base_schedules
+    total = trainer.total_steps
+    n = tuning["intervals"]
+    length = total // n
+    budget_steps = tuning["budget"] * total
+    current = {g: snap_lr_to_grid(tuning["start"][g], 0.6) for g in groups}
+    committed = {g: [] for g in groups}
+    evaluations = 0
+    budget_hit = False
+
+    def grid(value, steps):
+        return round_hparam(0.6 ** (lr_grid_index(value, 0.6) - steps))
+
+    def tail(value, k, kind):
+        remaining = total - (k + 1) * length
+        if remaining == 0 or kind == "none":
+            return [(remaining, 0.0)] if remaining else []
+        if kind == "rest_lin":
+            return [(remaining, value, 0.0)]
+        if kind == "rest_geo":
+            return [(length, value * tuning["ratio"] ** (j + 1)) for j in range(n - 1 - k)]
+        return [(length, tuning["cooldown_mult"] * value)] + ([(remaining - length, 0.0)] if remaining > length else [])
+
+    def lookahead_steps(k, kind):
+        remaining = total - (k + 1) * length
+        return 0 if kind == "none" else (min(length, remaining) if kind == "short" else remaining)
+
+    def evaluate(k, values, kind, state, cache):
+        """Train interval k at values (group -> LR) from state, then the lookahead; cached."""
+        nonlocal evaluations, budget_hit
+        key = (kind, tuple(values[g] for g in groups))
+        if key in cache:
+            return cache[key][0]
+        cost = length + lookahead_steps(k, kind)
+        if trainer.train_steps + cost > budget_steps:
+            budget_hit = True
+            return None
+        trainer.restore(state)
+        sched = dict(base)
+        for g in groups:
+            sched[f"{g}.initial_lr"] = [(length, v) for v in committed[g]] + [(length, values[g])] + [
+                (length, 0.0)] * (n - 1 - k)
+        ok = trainer.train(sched, length)
+        after = trainer.snapshot()
+        steps = lookahead_steps(k, kind)
+        if ok and steps:
+            for g in groups:
+                sched[f"{g}.initial_lr"] = ([(length, v) for v in committed[g]] + [(length, values[g])]
+                                            + tail(values[g], k, kind))
+            ok = trainer.train(sched, steps)
+        value = trainer.score(metric) if ok else float("-inf")
+        evaluations += 1
+        cache[key] = (value, after)
+        print(f"  ics_eval interval={k} lookahead={kind} {hparam_text(values)} {metric}={format_log_value(value)} "
+              f"train_steps={trainer.train_steps}", flush=True)
+        return value
+
+    def tied(k, values):
+        """With tie, after interval 0 the other groups follow the lead's profile."""
+        if not tuning["tie"] or k == 0:
+            return values
+        return dict(values, **{g: round_hparam(committed[g][0] * values[lead] / committed[lead][0])
+                               for g in groups[1:]})
+
+    def climb(k, g, kind, state, cache, factor_steps):
+        """Climb group g's value on its grid (factor_steps grid steps per move) from current."""
+        best = tied(k, dict(current))
+        best_score = evaluate(k, best, kind, state, cache)
+        if best_score is None:
+            return best, best_score
+        directions = (-1, 1)
+        if factor_steps > 1:  # Level scan: look both ways first, then climb the better side.
+            sides = {d: evaluate(k, tied(k, dict(best, **{g: grid(best[g], d * factor_steps)})), kind, state, cache)
+                     for d in (-1, 1)}
+            directions = sorted(sides, key=lambda d: -(sides[d] if sides[d] is not None else float("-inf")))
+        for direction in directions:
+            moved = False
+            point = best
+            for _ in range(tuning["max_side_steps"]):
+                candidate = tied(k, dict(point, **{g: grid(point[g], direction * factor_steps)}))
+                value = evaluate(k, candidate, kind, state, cache)
+                if value is None or value <= best_score:
+                    break
+                best, best_score, point, moved = candidate, value, candidate, True
+            if moved:
+                break
+        if tuning["larger_within"] > 0 and factor_steps == 1:
+            point = best
+            while True:
+                candidate = tied(k, dict(point, **{g: grid(point[g], 1)}))
+                value = evaluate(k, candidate, kind, state, cache)
+                if value is None or value < best_score - tuning["larger_within"]:
+                    break
+                point = candidate
+            if point != best:
+                best = point
+                best_score = cache[(kind, tuple(best[x] for x in groups))][0]
+        return best, best_score
+
+    state = trainer.snapshot()
+    for k in range(n):
+        kind = tuning["lookahead"] if k < n - 1 else "none"
+        cache = {}
+        if k == 0 and tuning["level_scan"]:
+            level_kind = tuning["level_lookahead"] if n > 1 else "none"
+            level_cache = {}
+            for g in tuning["level_scan"]:
+                # x10 = 0.6 ** -4.5: a x10 level step is ~4.5 grid steps; use 4 grid steps (x7.7).
+                current = climb(k, g, level_kind, state, level_cache, 4)[0]
+        climbed = tuning["fine"] if k == 0 else (groups if not tuning["tie"] else [lead])
+        current = tied(k, current)
+        for g in climbed:
+            current = climb(k, g, kind, state, cache, 1)[0]
+        key = (kind, tuple(current[g] for g in groups))
+        if key not in cache:
+            evaluate(k, current, kind, state, cache)
+        if key not in cache:  # Out of budget before this point was trained: train it anyway.
+            budget_steps_saved = budget_steps
+            budget_steps = float("inf")
+            evaluate(k, current, kind, state, cache)
+            budget_steps = budget_steps_saved
+        best_score, state = cache[key]
+        for g in groups:
+            committed[g].append(current[g])
+        log_event("ics_interval", run=run, interval=k, lookahead=kind, score=best_score,
+                  train_steps=trainer.train_steps, **{g: current[g] for g in groups})
+    trainer.restore(state)
+    final = trainer.score(metric)
+    seconds = time.perf_counter() - run_start
+    schedule = {g: [(length, v) for v in committed[g]] for g in groups}
+    log_event("auto_result", run=run, val_acc=0.0, tta_val_acc=final, search_seconds=seconds,
+              evaluations=evaluations, train_steps=trainer.train_steps,
+              budget_factor=trainer.train_steps / total, budget_hit=budget_hit)
+    for g in groups:
+        print(f"  final {g}.initial_lr: {json.dumps(committed[g])}", flush=True)
+    candidate = copy.deepcopy(dict(config, hparam_tuning=None))
+    for g in groups:
+        candidate["param_groups"][g]["lr_scheduler"] = [list(line) for line in schedule[g]]
+    held_start = time.perf_counter()
+    held = [run_seeded(f"{run}.final{seed}", model, candidate, seed, debug=False)["tta_val_acc"]
+            for seed in tuning["heldout_seeds"]]
+    avg = sum(held) / len(held)
+    sd = (sum((v - avg) ** 2 for v in held) / (len(held) - 1)) ** 0.5 if len(held) > 1 else 0.0
+    log_event("heldout_result", run=run, seeds=tuning["heldout_seeds"], tta_val_acc_mean=avg,
+              tta_val_acc_std=sd, per_seed=held, seconds=time.perf_counter() - held_start)
+    result = dict(val_acc=0.0, tta_val_acc=final, seconds=seconds, evaluations=evaluations, schedule=schedule)
+    return dict(best_config=candidate, best_result=result, trials=[dict(run=run, config=config, result=result)])
+
+
 def heldout_evaluation(run, model, config, result, seeds):
     """Retrain an interval search's committed LR schedules on held-out seeds. Logs
     search_result (cost) and heldout_result lines in the format of run_auto_search."""
@@ -5705,6 +5932,8 @@ def run_experiment(run, model, config):
         return run_noisy_family_search(run, model, config)
     if tuning is not None and tuning["algorithm"] == "guided_family":
         return run_guided_family_search(run, model, config)
+    if tuning is not None and tuning["algorithm"] == "ics":
+        return run_ics_search(run, model, config)
     if tuning is not None and tuning["algorithm"] in ("interval", "interval2", "global_neighbour"):
         result = run_interval_search(run, model, config, debug=debug)
         if tuning.get("heldout_seeds"):
