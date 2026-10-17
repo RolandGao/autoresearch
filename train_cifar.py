@@ -3355,7 +3355,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False, level_backoff=0,
         adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1, level_individual=2,
         cooldown_mults=[], shift_groups="all", ensemble_scope="last", budget_reserve=False, share_levels=False,
-        final_shape="constant",
+        final_shape="constant", relevel_groups=[],
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3526,6 +3526,14 @@ ICS_VERSIONS = {
                 level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
                 replicates=[1, 1, 1, 1, 2], refine_side_steps=2, final_expand=False, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead", budget_reserve=True, final_shape="linear"),
+    # v31: v29 + head's whole remaining profile tried x2.78 higher in pass 2's interval 2 (rest-of-run lookahead,
+    # kept if it scores higher): head x7.7 gains 0.12-0.21 pp at BS 2000 without a transform, where the common level
+    # of head and the biases holds head at 460 (baseline 1300), but diverges under the ramps (Experiment 25).
+    "v31": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
+                final_shape="linear", relevel_steps=-2, relevel_groups=["head"]),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -5864,7 +5872,7 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "larger_within", "refine_start", "replicates", "level_refine", "level_joint", "short_fraction",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
                 "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "shift_groups",
-                "ensemble_scope", "budget_reserve", "share_levels", "final_shape", "budget", "heldout_seeds"}
+                "ensemble_scope", "budget_reserve", "share_levels", "final_shape", "relevel_groups", "budget", "heldout_seeds"}
 
 
 def midpoint_linear_lines(values, length):
@@ -5935,6 +5943,8 @@ def run_ics_search(run, model, config):
           levels instead of scanning again; the rest of the budget is split evenly among members.
         level_backoff: x7.7 steps each non-lead group's level is then lowered (a safety margin: a
         short horizon accepts levels near a long-horizon edge it cannot see).
+      relevel_groups: the groups relevel_steps tries ([] = every non-lead group); a negative
+        relevel_steps tries them higher.
       relevel_steps: with tie, in the last pass's first refined interval, each non-lead group's
         whole remaining profile is also tried relevel_steps x0.6 grid steps lower (one candidate per
         group, scored with the rest-of-run lookahead, its tail lowered too) and kept if it scores
@@ -6299,7 +6309,7 @@ def run_ics_search(run, model, config):
                     and k == max(tuning["refine_start"], 1) and k < n - 1):
                 base_key = (kind, tuple(current[g] for g in groups))
                 base_score = cache[base_key][0] if base_key in cache else evaluate(k, current, kind, state, cache)
-                for g in groups[1:]:
+                for g in tuning["relevel_groups"] or groups[1:]:
                     factor = 0.6 ** tuning["relevel_steps"]
                     candidate = dict(current, **{g: round_hparam(current[g] * factor)})
                     tail_scale[g] = factor
