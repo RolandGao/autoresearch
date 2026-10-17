@@ -1547,6 +1547,95 @@ ics_compare_section(
              "evenly); conv only it is v26"]],
     "ics_v25_v27_observations.txt")
 
+# Experiment 24: held-out probes of the searched schedules' scale and of the committed schedule's shape.
+probe_runs = ics.averaged()
+
+
+def probe_block(version, scenario, columns):
+    """Per cell, each column's mean held-out TTA over the search seeds. A column is (label, kind, name):
+    kind "own" = the searches' own held-out scores, "cell" = one run per cell named name(cell), "seed" = one
+    run per search seed named name(cell, seed) (all seeds must exist), with paired differences to "own"."""
+    data = ics.load(version)
+    rows = [["Cell (baseline)", *(label for label, _, _ in columns)]]
+    paired = {label: [] for label, kind, _ in columns if kind == "seed"}
+    for bs in ics.BATCH_SIZES:
+        for tr in ics.TRANSFORMS:
+            cell = f"{scenario}_bs{bs}{tr}"
+            seeds = {s: r for s, r in data.get((scenario, bs, tr), {}).items()
+                     if "heldout" in r and r["cost"] <= 20.0001}
+            cells = [f"BS {bs}, {ics.TRANSFORM_LABELS[tr]} ({ics.target(ics_refs, bs):.2f})"]
+            for label, kind, name in columns:
+                mean = None
+                if kind == "own" and seeds:
+                    mean = sum(r["heldout"] for r in seeds.values()) / len(seeds)
+                elif kind == "cell":
+                    mean = (probe_runs.get(name(cell)) or [None])[0]
+                elif kind == "seed" and seeds:
+                    vals = {s: probe_runs.get(name(cell, s)) for s in seeds}
+                    if all(v is not None for v in vals.values()):
+                        mean = sum(v[0] for v in vals.values()) / len(vals)
+                        paired[label] += [v[0] - seeds[s]["heldout"] for s, v in vals.items()]
+                cells.append("-" if mean is None else f"<b>{mean:.2f}</b>" if mean >= ics.target(ics_refs, bs) - 0.1
+                             else f"{mean:.2f}")
+            rows.append(cells)
+    summary = []
+    for label, x in paired.items():
+        if len(x) > 1:
+            m = sum(x) / len(x)
+            se = (sum((a - m) ** 2 for a in x) / (len(x) - 1) / len(x)) ** 0.5
+            summary.append(f"{label}: {m:+.3f} +- {se:.3f} pp ({sum(a > 0 for a in x)} of {len(x)} higher)")
+    return rows, summary
+
+
+def width(rows):
+    return [4.4 * cm] + [12.6 / (len(rows[0]) - 1) * cm] * (len(rows[0]) - 1)
+
+
+scale_rows, scale_sum = probe_block("v26", "a", [
+    ("v26 steps", "own", None),
+    ("x1.67", "seed", lambda c, s: f"bias_v26_{c}_s{s}_up1"),
+    ("x2.78", "seed", lambda c, s: f"bias_v26_{c}_s{s}_up2"),
+    ("graded", "seed", lambda c, s: f"bias_v26_{c}_s{s}_grad"),
+    ("oracle steps", "cell", lambda c: f"bias_oracle_{c}")])
+shape_a_rows, shape_a_sum = probe_block("v26", "a", [
+    ("oracle steps", "cell", lambda c: f"bias_oracle_{c}"),
+    ("oracle linear", "cell", lambda c: f"lin_oracle_{c}"),
+    ("v26 steps", "own", None),
+    ("v26 linear (10)", "seed", lambda c, s: f"lin_v26_{c}_s{s}"),
+    ("v26 linear (5)", "seed", lambda c, s: f"lin5_v26_{c}_s{s}")])
+shape_b_rows, shape_b_sum = probe_block("v27", "b", [
+    ("v27 steps", "own", None),
+    ("v27 linear (10)", "seed", lambda c, s: f"lin_v27_{c}_s{s}"),
+    ("v27 linear (5)", "seed", lambda c, s: f"lin5_v27_{c}_s{s}")])
+story += [
+    P("Experiment 24. Is the searched schedule too small, or the staircase the wrong shape?", "h1"),
+    P("Question", "h2"),
+    P("From the middle of the run on, the searched conv LRs lie 1.3-4.6x below the oracle (Experiment 23). Are they "
+      "too small, so that scaling them up scores higher? And how much does committing a staircase cost, compared "
+      "with a smooth schedule through the same values?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Scaled", "v26's conv-only searched schedules (10 constant intervals) x1/0.6 everywhere, x1/0.36 "
+                      "everywhere, and x(1/0.6)^(2i/9) in interval i (x1 rising to x2.8)"],
+           ["Oracle", "The baseline conv schedule divided by the transform: its 10 interval means as constant "
+                      "steps, and joined linearly"],
+           ["Linear", "A schedule's values joined piecewise linearly through the interval midpoints, the end "
+                      "half-intervals continuing the neighbouring slope (clipped at 0); a linear schedule's interval "
+                      "means give it back exactly. Linear (10): from the 10-interval expanded schedule; linear (5): "
+                      "from the two searches' averaged 5-interval schedule, without the expansion. 4 LRs: all four "
+                      "groups"],
+           ["Runs", "research/eval_schedule.py on held-out seeds 100-107 (the seeds of the searches' own held-out "
+                    "scores, so differences are paired); means over search seeds 0-1; bold = within 0.1 pp of the "
+                    "baseline or above"]], [3.3 * cm, 13.7 * cm]),
+    P("Scaled conv-only schedules: held-out TTA", "h2"), table(scale_rows, width(scale_rows)),
+    P("Paired difference to the searched schedule: " + "; ".join(scale_sum) + ".", "small"),
+    P("Committed shape, conv only: held-out TTA", "h2"), table(shape_a_rows, width(shape_a_rows)),
+    P("Paired difference to the searched steps: " + "; ".join(shape_a_sum) + ".", "small"),
+    P("Committed shape, 4 LRs: held-out TTA", "h2"), table(shape_b_rows, width(shape_b_rows)),
+    P("Paired difference to the searched steps: " + "; ".join(shape_b_sum) + ".", "small"),
+]
+story += observations("shape_probe_observations.txt")
+
 
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
