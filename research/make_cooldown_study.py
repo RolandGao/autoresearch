@@ -961,11 +961,13 @@ for f in fam.FAMILIES:
     cells = [fam.FAMILY_LABELS[f]]
     for c in fam.CONDITIONS:
         r = xfam.get(f"auto_xfam_{f}_bs2000{c}")
+        seeds = "not verified" if r and r.get("search_seeds") == 0 else f"{r.get('search_seeds', '?') if r else '?'} seeds"
         cells.append("running" if r is None or "final_values" not in r else
                      ", ".join(f"{v:g}" for v in r["final_values"].values())
-                     + f" ({r.get('search_seeds', '?')} seeds; {r.get('stop', '?').replace('_', ' ')})")
+                     + f" ({seeds}; {r.get('stop', '?').replace('_', ' ')})")
     rows.append(cells)
-story += [P("Final parameter values (fresh seeds behind the final mean; why the search stopped)", "h2"),
+story += [P("Final parameter values (fresh seeds behind the final mean, 'not verified' when the search stopped "
+            "before testing any candidate; why it stopped)", "h2"),
           table(rows, [3.6 * cm] + [3.35 * cm] * 4)]
 if any("final_values" in r for r in xfam.values()):
     xfam_path = os.path.join(REPO, "plots", "family_study_guided.png")

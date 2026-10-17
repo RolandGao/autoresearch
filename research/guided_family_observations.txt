@@ -1,0 +1,13 @@
+Held-out means over 8 seeds have a standard error of about 0.045 pp, so differences below about 0.1 pp between cells are not resolved. Target: the baseline's 93.92.
+
+Overall the guided search is slightly ahead at lower cost, but not decisively. Mean held-out TTA over the 24 cells: 93.86 (Experiment 9: 93.85, Experiment 3: 93.81); 14 cells within 0.05 pp of the target or above (Experiment 9: 13, Experiment 3: 9). Against Experiment 9 it is better by more than 0.1 pp in 4 cells (5 intervals under the wave 93.84 vs 93.60, power under the ramp 93.88 vs 93.70, 2 knots under the ramp 93.86 vs 93.64 and under the wave 93.95 vs 93.79) and worse in 2 (5 intervals without a transform 93.52 vs 93.80, 2 knots without a transform 93.86 vs 94.03). Cost: 769 training runs for the 24 searches (Experiment 9: 1198, Experiment 3: 270), 337 s per search on average (524 s, 114 s).
+
+Deeper moves happen. Under the ramp, power reached lr 0.36, p = 1.6 (93.88; Experiment 3's lucky walk found lr 0.36, p = 2 at 93.95, Experiment 9 stopped at p = 1.2 with 93.70), and 2 knots reached 0.6, 0.047 (93.86 vs 93.64); 20 accepted moves in total (Experiment 9: 16), several of them multi-step or joint.
+
+The fresh-seed gate keeps the search honest: the final schedule's search score is 0.02 pp above its held-out score on average (SD 0.075, over the 19 searches that verified their final; Experiment 9: -0.03, Experiment 3: +0.15), and only one final is worse than its start by more than 0.05 pp (5 intervals under the reverse ramp, 93.73 vs 93.81).
+
+The weak point is candidate selection. The seed-0 runs along each line carry the same 0.12 pp noise as the effects being measured, so the quadratic fits often follow noise to the end of the explored range. 5 intervals without a transform shows it: the fit sent v0 three steps down to 0.047 on one lucky run (+0.14 pp predicted), the joint move summed four such noisy gains (+0.48 pp predicted), and with v4 to 0.01 these filled all 3 candidate slots; on fresh seeds they measured -0.16, +0.02 and -0.08 pp, so the search stopped at its start (93.52). The first step toward C4, v2 one step down to 0.078, was predicted only +0.05 pp and never tested (v3's line predicted no gain).
+
+Five searches stopped in their first round without testing any candidate (no parameter predicted to gain; 'not verified' in the table); their final is the start.
+
+Likely fixes, not run: rank candidates by predicted gain relative to the fit's own standard error rather than by the raw gain, build the joint move only from parameters whose fitted gain is clearly positive, and test the single-parameter moves before the joint one.
