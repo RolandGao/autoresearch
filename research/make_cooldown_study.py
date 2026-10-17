@@ -908,6 +908,75 @@ if any("final_values" in r for r in nfam.values()):
 story += observations("noisy_family_observations.txt")
 
 
+# Experiment 10: Experiment 3 redone with the guided search (guided_family).
+xfam = fam.load("auto_xfam")
+story += [
+    P("Experiment 10. Representation quality of schedule families, guided search", "h1"),
+    P("Question", "h2"),
+    P("Experiment 3's single-seed search walked far but climbed on seed noise; Experiment 9's significance test "
+      "removed the noise but rarely moved more than one grid step. Can a search that explores deeper on cheap "
+      "single runs, pools them with a smooth fit, jumps several steps (and several parameters) at once, and "
+      "accepts a move only on fresh seeds, get both?"),
+    P("Setup", "h2"),
+    table([
+        ["Item", "Value"],
+        ["As Experiment 3", "baseline_bs2000, conv only (the others on the baseline); the same families, conditions, "
+                            "grids (LR x0.6, p x0.8) and starts; start and final retrained on held-out seeds 100-107"],
+        ["1. Explore", "From the current schedule, along each parameter and direction, one grid step at a time, one "
+                       "run each on seed 0, while the run is not clearly worse than the best run on that line "
+                       "(score &gt;= best - 0.84 x 0.12 pp x sqrt(2), one-sided 80%), up to 3 steps"],
+        ["2. Fit", "Per parameter, a least-squares quadratic in the grid offset through that line's seed-0 runs "
+                   "(the current schedule's included): the smoothness prior pools 4-7 runs. Predicted gain of an "
+                   "offset = fit there - fit at the current schedule"],
+        ["3. Propose", "Each parameter moved alone to its best fitted offset, and the joint move of every "
+                       "parameter with a positive predicted gain (gains summed, a separability prior); the 3 "
+                       "largest predicted gains"],
+        ["4. Verify", "On fresh seeds 1-8 (never seed 0, which chose the candidates): better if the lower one-sided "
+                      "80% bound of (candidate - current) &gt; 0, ruled out if the upper bound &lt; 0, Bonferroni "
+                      "over the candidates (z = 1.50 for 3), SE = 0.12 pp x sqrt(1/n_c + 1/n_current); otherwise one "
+                      "more seed for the current schedule and the undecided candidates, up to 8"],
+        ["Moves", "Move to the better candidate with the highest mean and repeat; stop when no parameter is "
+                  "predicted to gain or no candidate proves better"],
+    ], [3.3 * cm, 13.7 * cm]),
+]
+rows = [["Family", *(fam.CONDITION_LABELS[c] for c in fam.CONDITIONS)]]
+for f in fam.FAMILIES:
+    cells = [fam.FAMILY_LABELS[f]]
+    for c in fam.CONDITIONS:
+        r = xfam.get(f"auto_xfam_{f}_bs2000{c}")
+        e3 = families.get(f"auto_gfam_{f}_bs2000{c}")
+        e9 = nfam.get(f"auto_nfam_{f}_bs2000{c}")
+        if r is None or "final" not in r:
+            cells.append("running")
+        else:
+            cells.append(f"<b>{r['final'][0]:.2f}</b> (Exp. 3: {e3['final'][0]:.2f}; Exp. 9: {e9['final'][0]:.2f}; "
+                         f"start {r['start'][0]:.2f}; {r.get('moves', '?')} moves, {r['evaluations']} runs)")
+    rows.append(cells)
+story += [P("Held-out TTA of the final schedule (Experiments 3 and 9 for comparison; the start; search cost)", "h2"),
+          table(rows, [3.6 * cm] + [3.35 * cm] * 4),
+          P("Target: the baseline's 93.92 on the held-out seeds; do-nothing references as in Experiment 3 "
+            "(ramp 93.42, reverse ramp 93.57, wave 93.72).", "small")]
+rows = [["Family", *(fam.CONDITION_LABELS[c] for c in fam.CONDITIONS)]]
+for f in fam.FAMILIES:
+    cells = [fam.FAMILY_LABELS[f]]
+    for c in fam.CONDITIONS:
+        r = xfam.get(f"auto_xfam_{f}_bs2000{c}")
+        cells.append("running" if r is None or "final_values" not in r else
+                     ", ".join(f"{v:g}" for v in r["final_values"].values())
+                     + f" ({r.get('search_seeds', '?')} seeds; {r.get('stop', '?').replace('_', ' ')})")
+    rows.append(cells)
+story += [P("Final parameter values (fresh seeds behind the final mean; why the search stopped)", "h2"),
+          table(rows, [3.6 * cm] + [3.35 * cm] * 4)]
+if any("final_values" in r for r in xfam.values()):
+    xfam_path = os.path.join(REPO, "plots", "family_study_guided.png")
+    family_figure(xfam, "auto_xfam", xfam_path)
+    img = Image(xfam_path)
+    img.drawWidth, img.drawHeight = 17 * cm, 17 * cm * img.imageHeight / img.imageWidth
+    story += [keep([img, P("Figure 10. Applied conv LR of each family's final schedule (guided search); the black "
+                           "line is the baseline's applied LR.", "small")])]
+story += observations("guided_family_observations.txt")
+
+
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
     out = []
