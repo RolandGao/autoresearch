@@ -3356,6 +3356,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1, level_individual=2,
         cooldown_mults=[], shift_groups="all", ensemble_scope="last", budget_reserve=False, share_levels=False,
         final_shape="constant", relevel_groups=[], final_shift=0, refine_ratio=0.6,
+        level_groups=[],
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3556,6 +3557,13 @@ ICS_VERSIONS = {
                 replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
                 final_shape="linear"),
+    # v35: v29 scanning head's level apart from the biases' (one joint level holds head at 460 at BS 2000, where the
+    # baseline's head is 1300 and its biases 99 and 36; head x7.7 gains 0.12-0.21 pp there, Experiment 25).
+    "v35": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
+                final_shape="linear", level_groups=[["head"], ["norm_bias", "whiten_bias"]]),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -5895,7 +5903,7 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
                 "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "shift_groups",
                 "ensemble_scope", "budget_reserve", "share_levels", "final_shape", "relevel_groups", "final_shift",
-                "refine_ratio", "budget", "heldout_seeds"}
+                "refine_ratio", "level_groups", "budget", "heldout_seeds"}
 
 
 def midpoint_linear_lines(values, length):
@@ -5964,6 +5972,8 @@ def run_ics_search(run, model, config):
           0.14 pp (Experiment 24).
         share_levels: with ensemble_scope "all", later members reuse the first member's scanned
           levels instead of scanning again; the rest of the budget is split evenly among members.
+        level_groups: with level_joint, the non-lead groups' joint scan split into these sets, each
+          scanned in turn with the same rule ([] = one set of all of them).
         level_backoff: x7.7 steps each non-lead group's level is then lowered (a safety margin: a
         short horizon accepts levels near a long-horizon edge it cannot see).
       refine_ratio: the grid ratio of the climbs from the second pass on (0.6 ** 0.5: a grid twice as
@@ -6313,7 +6323,8 @@ def run_ics_search(run, model, config):
                 if tuning["level_joint"] and tuning["level_rule"] == "largest" and len(others) > 1:
                     if lead in tuning["level_scan"]:
                         current = climb(k, lead, level_kind, state, level_cache, 4, current, tuning["max_side_steps"])
-                    current = largest_level(k, others, level_kind, state, level_cache, current, None)
+                    for part in [tuple(part) for part in tuning["level_groups"]] or [others]:
+                        current = largest_level(k, part, level_kind, state, level_cache, current, None)
                     for g in others if tuning["level_individual"] else ():
                         current = largest_level(k, g, level_kind, state, level_cache, current,
                                                 tuning["level_individual"])
