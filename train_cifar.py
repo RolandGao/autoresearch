@@ -3351,7 +3351,8 @@ def ics_config(batch_size, scenario, transform, **overrides):
         start={g: (pg[g]["lr_scheduler"][0][1] if scenario == "a" else 1.0) for g in groups},
         intervals=5, passes=["rest_lin"], cooldown_mult=0.36, ratio=0.6,
         level_scan=[] if scenario == "a" else list(groups), level_lookahead="short", level_rule="best",
-        level_margin=0.01, fine=["conv"], refine_start=0, replicates=[1, 1, 1, 1, 1],
+        level_margin=0.01, level_refine=3, level_joint=False, short_fraction=5, pass_intervals=[], fine=["conv"],
+        refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False,
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3378,13 +3379,44 @@ ICS_VERSIONS = {
     # worth ~0.1 pp each (Experiment 12), and their lookaheads are short.
     "v5": dict(passes=["short", "rest_plan"], cooldown_mult=0.22, level_lookahead="none", level_rule="largest",
                refine_start=1, replicates=[1, 1, 1, 2, 3]),
+    # v5 with level scans scored after a one-interval cooldown (single-run noise 0.56 pp there vs
+    # 1.3 pp right after the interval, research/level_horizon.py), x7.7 steps only, and (4 LRs)
+    # replicates only in the last interval, to fit the budget.
+    "v6": dict(passes=["short", "rest_plan"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+               level_refine=0, refine_start=1, replicates=[1, 1, 1, 2, 3]),
+    # 10 intervals (5 cannot represent the baseline at BS 500 / 125, the rep_* probe): the short
+    # cooldown keeps a fifth of the run; the rest-of-run pass refines from interval 4 (conv only;
+    # 6 with 4 LRs) with replicated last two intervals; joint level scan for the other groups.
+    "v7": dict(intervals=10, passes=["short", "rest_plan"], cooldown_mult=0.22, level_lookahead="short",
+               level_rule="largest", level_refine=0, level_joint=True, refine_start=3,
+               replicates=[1] * 8 + [2, 3]),
+    # Multi-resolution: pass 1 on 5 intervals (the short cooldown's bias grows with finer intervals:
+    # v7's 10-interval pass 1 decayed 2-3 grid steps too fast), its plan expanded to 10 intervals,
+    # pass 2 on 10 with the rest-of-run lookahead from fine interval 3 (5 with 4 LRs).
+    "v8": dict(intervals=10, pass_intervals=[5, 10], passes=["short", "rest_plan"], cooldown_mult=0.22,
+               level_lookahead="short", level_rule="largest", level_refine=0, level_joint=True, refine_start=2,
+               replicates=[1] * 8 + [2, 3]),
+    # 5-interval search, expanded to 10 intervals at the end (the expansion alone lifts 5-interval
+    # oracle staircases to the baseline at BS 500 / 125); the rest-of-run pass replicates every
+    # decision (2 continuations, 3 in the last interval) and moves at most one grid step from pass
+    # 1's value, to fit the budget.
+    "v9": dict(passes=["short", "rest_plan"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+               level_refine=0, level_joint=True, refine_start=1, replicates=[1, 2, 2, 2, 3], refine_side_steps=1,
+               final_expand=True),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
         for scenario in ("a", "b"):
             for transform in (None, "ramp", "rampdown", "wave"):
+                extra = dict(replicates=[1, 1, 1, 1, 2]) if version == "v6" and scenario == "b" else {}
+                if version == "v7" and scenario == "b":
+                    extra = dict(refine_start=5)
+                if version == "v8" and scenario == "b":
+                    extra = dict(refine_start=4)
+                if version == "v9" and scenario == "b":  # The level scan's cost: replicate only late.
+                    extra = dict(replicates=[1, 1, 1, 2, 3])
                 RUN_CONFIGS[f"ics_{version}_{scenario}_bs{batch_size}{'_' + transform if transform else ''}"] = (
-                    ics_config(batch_size, scenario, transform, **overrides))
+                    ics_config(batch_size, scenario, transform, **{**overrides, **extra}))
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -5704,7 +5736,8 @@ def run_guided_family_search(run, model, config):
 
 ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes", "cooldown_mult", "ratio",
                 "level_scan", "level_lookahead", "level_rule", "level_margin", "fine", "tie", "max_side_steps",
-                "larger_within", "refine_start", "replicates", "budget", "heldout_seeds"}
+                "larger_within", "refine_start", "replicates", "level_refine", "level_joint", "short_fraction",
+                "pass_intervals", "refine_side_steps", "final_expand", "budget", "heldout_seeds"}
 
 
 def run_ics_search(run, model, config):
@@ -5725,7 +5758,12 @@ def run_ics_search(run, model, config):
         previous value; later passes only). The last interval is scored by the final metric.
         Later passes start each interval's climb at the previous pass's value, and keep the previous
         pass's values (and trained states, at no cost) for the intervals before refine_start.
-      cooldown_mult, ratio: parameters of "short" and "rest_geo".
+      pass_intervals: intervals per pass ([] = intervals for every pass); a pass with twice the
+        previous pass's intervals starts from its plan expanded: each interval split into halves
+        tilted a quarter of the way (in log) toward the neighbouring interval's value, except the
+        first refine_start // 2 intervals, kept flat so their trained states can be reused.
+      cooldown_mult, ratio: parameters of "short" and "rest_geo"; short_fraction: "short"'s length
+        is total // short_fraction steps (5 = a fifth of the run, whatever the interval count).
       replicates: per interval, how many continuations score a candidate in the last pass: the
         first trains on the run's own data stream (its state is the one committed); each other
         restores the pre-interval state, reseeds the data order and augmentation (a fresh epoch)
@@ -5738,10 +5776,19 @@ def run_ics_search(run, model, config):
         than the lead, the largest level scoring within level_margin of the best seen (probing up,
         then down, on the x7.7 grid, then refining upward on the x0.6 grid): a short horizon cannot
         see such LRs' long-horizon effect below their upper edge, where the full run prefers them.
+        level_refine: x0.6 steps tried upward after the "largest" rule's x7.7 probes (0 = none).
+        level_joint: with "largest", the non-lead groups are first scanned together (one
+        multiplier for all of them), then each alone at most two x7.7 steps up from there.
+        When level_lookahead is the first pass's lookahead, interval 0's climbs reuse the scan's
+        evaluations.
       fine: groups climbed on the x0.6 grid in interval 0.
       tie: groups other than the lead follow the lead's profile after interval 0 (value_k =
         value_0 x lead_k / lead_0); otherwise every group is climbed in every interval.
-      max_side_steps: most x0.6 grid steps one climb direction may move.
+      max_side_steps: most x0.6 grid steps one climb direction may move in the first pass;
+        refine_side_steps: the same in later passes.
+      final_expand: the committed schedule is expanded to twice its intervals for the result
+        (each interval's halves tilted a quarter of the way, in log, toward its neighbours; the
+        last interval's second half continues the decay), at no search cost.
       larger_within: after a climb, move up the grid while the score stays within this of the
         best (counters a lookahead's small-LR bias; 0 = off).
       budget: the search stops evaluating new candidates once its trained steps would exceed
@@ -5794,11 +5841,14 @@ def run_ics_search(run, model, config):
         if kind == "rest_plan":
             scale = value / plan[g][k] if plan[g][k] > 0 else 1.0
             return [(length, plan[g][j] * scale) for j in range(k + 1, n)]
-        return [(length, tuning["cooldown_mult"] * value)] + ([(remaining - length, 0.0)] if remaining > length else [])
+        steps = min(short_steps, remaining)
+        return [(steps, tuning["cooldown_mult"] * value)] + ([(remaining - steps, 0.0)] if remaining > steps else [])
+
+    short_steps = total // tuning["short_fraction"]
 
     def lookahead_steps(k, kind):
         remaining = total - (k + 1) * length
-        return 0 if kind == "none" else (min(length, remaining) if kind == "short" else remaining)
+        return 0 if kind == "none" else (min(short_steps, remaining) if kind == "short" else remaining)
 
     def evaluate(k, values, kind, state, cache):
         """Train interval k at values (group -> LR) from state, then the lookahead; cached."""
@@ -5845,7 +5895,7 @@ def run_ics_search(run, model, config):
         return dict(values, **{g: round_hparam(committed[g][0] * values[lead] / committed[lead][0])
                                for g in groups[1:]})
 
-    def climb(k, g, kind, state, cache, factor_steps, start):
+    def climb(k, g, kind, state, cache, factor_steps, start, side_steps):
         """Climb group g's value on its grid (factor_steps grid steps per move) from start."""
         best = tied(k, dict(start))
         best_score = evaluate(k, best, kind, state, cache)
@@ -5859,7 +5909,7 @@ def run_ics_search(run, model, config):
         for direction in directions:
             moved = False
             point = best
-            for _ in range(tuning["max_side_steps"]):
+            for _ in range(side_steps):
                 candidate = tied(k, dict(point, **{g: grid(point[g], direction * factor_steps)}))
                 value = evaluate(k, candidate, kind, state, cache)
                 if value is None or value <= best_score:
@@ -5878,9 +5928,14 @@ def run_ics_search(run, model, config):
             best = point
         return best
 
-    def largest_level(k, g, kind, state, cache, start):
-        """The largest level of g within level_margin of the best probed (x7.7 probes, x0.6 refine)."""
+    def largest_level(k, g, kind, state, cache, start, max_up):
+        """The largest level of g within level_margin of the best probed (x7.7 probes, x0.6 refine);
+        g may be a tuple of groups moved together. max_up caps the upward x7.7 probes."""
         margin = tuning["level_margin"]
+        moved = g if isinstance(g, tuple) else (g,)
+
+        def step(point, steps):
+            return dict(point, **{h: grid(point[h], steps) for h in moved})
         probes = []
         best = None
 
@@ -5895,27 +5950,50 @@ def run_ics_search(run, model, config):
         if probe(dict(start)) is None:
             return dict(start)
         for direction in (1, -1):
-            if direction == -1 and len(probes) > 2:
-                break  # Some larger level was accepted: no need to look below the start.
+            if direction == -1 and (len(probes) > 2 or max_up is not None):
+                break  # Some larger level was accepted (or only upward moves are wanted).
             point = dict(start)
-            for _ in range(tuning["max_side_steps"]):
-                point = dict(point, **{g: grid(point[g], 4 * direction)})
+            for _ in range(tuning["max_side_steps"] if max_up is None or direction == -1 else max_up):
+                point = step(point, 4 * direction)
                 value = probe(point)
                 if value is None or value < best - margin:
                     break
-        top = max((pt for pt, v in probes if v >= best - margin), key=lambda pt: pt[g])
+        top = max((pt for pt, v in probes if v >= best - margin), key=lambda pt: pt[moved[0]])
         point = top
-        for _ in range(3):  # Refine upward between the accepted level and the next x7.7 probe.
-            point = dict(point, **{g: grid(point[g], 1)})
+        for _ in range(tuning["level_refine"]):  # Refine upward toward the next x7.7 probe.
+            point = step(point, 1)
             value = probe(point)
             if value is None or value < best - margin:
                 break
             top = point
         return top
 
+    def expand(values, keep):
+        """Double the resolution of one group's plan (see pass_intervals)."""
+        out = []
+        for j, v in enumerate(values):
+            if j < keep or v <= 0:
+                out += [v, v]
+                continue
+            left = v * (values[j - 1] / v) ** 0.25 if j > 0 else v
+            right = (v * (values[j + 1] / v) ** 0.25 if j < len(values) - 1
+                     else v * (v / values[j - 1]) ** 0.25 if j > 0 else v)
+            out += [round_hparam(left), round_hparam(right)]
+        return out
+
+    pass_counts = list(tuning["pass_intervals"]) or [tuning["intervals"]] * len(passes)
+    if len(pass_counts) != len(passes) or pass_counts[-1] != tuning["intervals"]:
+        raise ValueError("ics pass_intervals needs one count per pass, the last equal to intervals")
     pass_states = []
     replicates = [1] * n
+    prev_length = None
     for p, pass_kind in enumerate(passes):
+        n = pass_counts[p]
+        length = total // n
+        if p > 0 and n != len(plan[lead]):
+            if n != 2 * len(plan[lead]) or tuning["refine_start"] % 2:
+                raise ValueError("ics pass_intervals may only double, with an even refine_start")
+            plan = {g: expand(plan[g], tuning["refine_start"] // 2) for g in groups}
         replicates = list(tuning["replicates"]) if p == len(passes) - 1 else [1] * n
         state = initial_state
         committed = {g: [] for g in groups}
@@ -5928,7 +6006,9 @@ def run_ics_search(run, model, config):
             if p > 0:
                 current = {g: plan[g][k] for g in groups}
                 if k < tuning["refine_start"]:  # Same prefix as the previous pass: reuse its state.
-                    state = pass_states[-1][k]
+                    boundary = (k + 1) * length
+                    state = (pass_states[-1][boundary // prev_length - 1] if boundary % prev_length == 0
+                             else None)  # Mid-way through a previous interval: the next kept one ends it.
                     states.append(state)
                     for g in groups:
                         committed[g].append(current[g])
@@ -5937,17 +6017,27 @@ def run_ics_search(run, model, config):
                     continue
             if p == 0 and k == 0 and tuning["level_scan"]:
                 level_kind = tuning["level_lookahead"] if n > 1 else "none"
-                level_cache = {}
-                for g in tuning["level_scan"]:
-                    # x10 = 0.6 ** -4.5: a level step is 4 grid steps (x7.7).
-                    if tuning["level_rule"] == "largest" and g != lead:
-                        current = largest_level(k, g, level_kind, state, level_cache, current)
-                    else:
-                        current = climb(k, g, level_kind, state, level_cache, 4, current)
+                level_cache = cache if level_kind == kind else {}
+                others = tuple(g for g in tuning["level_scan"] if g != lead)
+                if tuning["level_joint"] and tuning["level_rule"] == "largest" and len(others) > 1:
+                    if lead in tuning["level_scan"]:
+                        current = climb(k, lead, level_kind, state, level_cache, 4, current, tuning["max_side_steps"])
+                    current = largest_level(k, others, level_kind, state, level_cache, current, None)
+                    for g in others:
+                        current = largest_level(k, g, level_kind, state, level_cache, current, 2)
+                else:
+                    for g in tuning["level_scan"]:
+                        # x10 = 0.6 ** -4.5: a level step is 4 grid steps (x7.7).
+                        if tuning["level_rule"] == "largest" and g != lead:
+                            current = largest_level(k, g, level_kind, state, level_cache, current, None)
+                        else:
+                            current = climb(k, g, level_kind, state, level_cache, 4, current,
+                                            tuning["max_side_steps"])
             climbed = tuning["fine"] if k == 0 else (groups if not tuning["tie"] else [lead])
             current = tied(k, current)
+            side = tuning["max_side_steps"] if p == 0 else tuning["refine_side_steps"]
             for g in climbed:
-                current = climb(k, g, kind, state, cache, 1, current)
+                current = climb(k, g, kind, state, cache, 1, current, side)
             key = (kind, tuple(current[g] for g in groups))
             if key not in cache:
                 evaluate(k, current, kind, state, cache)
@@ -5963,9 +6053,13 @@ def run_ics_search(run, model, config):
                       train_steps=trainer.train_steps, **{g: current[g] for g in groups})
         plan = {g: list(committed[g]) for g in groups}
         pass_states.append(states)
+        prev_length = length
     trainer.restore(state)
     final = trainer.score(metric)
     seconds = time.perf_counter() - run_start
+    if tuning["final_expand"]:
+        committed = {g: expand(committed[g], 0) for g in groups}
+        length = total // len(committed[lead])
     schedule = {g: [(length, v) for v in committed[g]] for g in groups}
     log_event("auto_result", run=run, val_acc=0.0, tta_val_acc=final, search_seconds=seconds,
               evaluations=evaluations, train_steps=trainer.train_steps,
