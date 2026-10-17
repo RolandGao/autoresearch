@@ -3355,7 +3355,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False, level_backoff=0,
         adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1, level_individual=2,
         cooldown_mults=[], shift_groups="all", ensemble_scope="last", budget_reserve=False, share_levels=False,
-        final_shape="constant", relevel_groups=[], final_shift=0,
+        final_shape="constant", relevel_groups=[], final_shift=0, refine_ratio=0.6,
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3542,6 +3542,13 @@ ICS_VERSIONS = {
                 replicates=[1, 1, 1, 1, 1], final_expand=False, adaptive_reps=True, shift_groups="lead",
                 ensemble=3, ensemble_scope="all", budget_reserve=True, share_levels=True, final_shape="linear",
                 final_shift=1),
+    # v33: v29 whose second passes climb on a grid twice as fine (x0.775, up to 2 steps: v29's range): the oracle's
+    # 5 interval means joined linearly match the baseline, snapped to the x0.6 grid they lose ~0.09 pp (Exp 26).
+    "v33": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=2, final_expand=False, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
+                final_shape="linear", refine_ratio=0.6 ** 0.5),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -5881,7 +5888,7 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
                 "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "shift_groups",
                 "ensemble_scope", "budget_reserve", "share_levels", "final_shape", "relevel_groups", "final_shift",
-                "budget", "heldout_seeds"}
+                "refine_ratio", "budget", "heldout_seeds"}
 
 
 def midpoint_linear_lines(values, length):
@@ -5952,6 +5959,8 @@ def run_ics_search(run, model, config):
           levels instead of scanning again; the rest of the budget is split evenly among members.
         level_backoff: x7.7 steps each non-lead group's level is then lowered (a safety margin: a
         short horizon accepts levels near a long-horizon edge it cannot see).
+      refine_ratio: the grid ratio of the climbs from the second pass on (0.6 ** 0.5: a grid twice as
+        fine, which contains the x0.6 grid; the x0.6 grid alone costs ~0.09 pp, Experiment 26).
       final_shift: x0.6 grid steps each member's result of the last pass is moved up (all but the
         last interval; tied groups keep their level and follow the lead's shifted profile): the
         plan shift for a search whose last pass is the biased short-cooldown pass.
@@ -6017,8 +6026,11 @@ def run_ics_search(run, model, config):
     plan = None
     committed = {g: [] for g in groups}
 
+    grid_ratio = {"value": 0.6}  # refine_ratio from the second pass on (after its plan shift).
+
     def grid(value, steps):
-        return round_hparam(0.6 ** (lr_grid_index(value, 0.6) - steps))
+        ratio = grid_ratio["value"]
+        return round_hparam(ratio ** (lr_grid_index(value, ratio) - steps))
 
     def tail(g, value, k, kind):
         remaining = total - (k + 1) * length
@@ -6252,6 +6264,7 @@ def run_ics_search(run, model, config):
             plan = {g: ([grid(v, tuning["plan_shift"]) if v > 0 else v for v in plan[g][:-1]] + plan[g][-1:]
                         if g == lead or tuning["shift_groups"] == "all" else plan[g])
                     for g in groups}
+        grid_ratio["value"] = tuning["refine_ratio"] if p > 0 else 0.6
         if p == len(passes) - 1 and member["index"] == 0:
             plan_before_last = {g: list(v) for g, v in (plan or {}).items()} if plan else None
         state = initial_state
