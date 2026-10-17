@@ -1,0 +1,72 @@
+# commit 73597a56d2c4a58299516f0a26d5a34fe8799883
+# args {"batch_size": 125, "seed": 0, "group": "head", "offsets": "-4,-3,-2,-1,0,1,2,3,4,5", "conv": 0.028}
+# worker  gpu GPU-71986cb1-2ece-f97a-a920-2c1d33f0af7c
+# source
+# | """How does each LR's level, set from scratch in the first interval, score at short and long
+# | horizons?
+# | 
+# | From initialization, the four trained LRs are constant over the first interval (T/5 steps) at a
+# | context (conv 0.13 and the others at their baseline initial LRs by default); one group's level is
+# | varied over a x7.7 grid (0.6^4) around its context value. Each level is scored:
+# |   none      right after the interval
+# |   short     after one more interval with every group at 0.22 x its interval value
+# |   rest_lin  after the rest of the run with every group decaying linearly from its interval value
+# |             to 0 (a full run's horizon)
+# | A level choice made at a short horizon is only as good as its agreement with rest_lin.
+# | """
+# | import argparse
+# | 
+# | from common import base_config, emit, new_model, open_log, t
+# | 
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--batch-size", type=int, required=True)
+# | parser.add_argument("--seed", type=int, required=True)
+# | parser.add_argument("--group", required=True)
+# | parser.add_argument("--offsets", default="-4,-3,-2,-1,0,1,2,3,4,5")
+# | parser.add_argument("--conv", type=float, default=0.13)
+# | args = parser.parse_args()
+# | log = open_log(f"level_horizon_bs{args.batch_size}_{args.group}_s{args.seed}", args, __file__)
+# | 
+# | GROUPS = ("conv", "head", "norm_bias", "whiten_bias")
+# | config = base_config(args.batch_size)
+# | context = {g: config["param_groups"][g]["lr_scheduler"][0][1] for g in GROUPS}
+# | context["conv"] = args.conv
+# | model = new_model()
+# | t.TRAINING_SEED = args.seed
+# | trainer = t.SegmentTrainer(model, config)
+# | base = trainer.base_schedules
+# | total = trainer.total_steps
+# | length = total // 5
+# | start = trainer.snapshot()
+# | emit(log, kind="setup", context=context, total=total, length=length, seed=args.seed)
+# | for offset in [int(o) for o in args.offsets.split(",")]:
+# |     values = dict(context)
+# |     values[args.group] = t.round_hparam(0.6 ** (t.lr_grid_index(context[args.group], 0.6) - 4 * offset))
+# |     scores = {}
+# |     for kind, steps in (("none", 0), ("short", length), ("rest_lin", total - length)):
+# |         trainer.restore(start)
+# |         sched = dict(base)
+# |         for g in GROUPS:
+# |             if kind == "short":
+# |                 sched[f"{g}.initial_lr"] = [(length, values[g]), (length, 0.22 * values[g]), (total - 2 * length, 0.0)]
+# |             elif kind == "rest_lin":
+# |                 sched[f"{g}.initial_lr"] = [(length, values[g]), (total - length, values[g], 0.0)]
+# |             else:
+# |                 sched[f"{g}.initial_lr"] = [(length, values[g]), (total - length, 0.0)]
+# |         ok = trainer.train(sched, length + steps)
+# |         scores[kind] = trainer.score("tta_val_acc") if ok else 0.0
+# |     emit(log, kind="eval", group=args.group, offset=offset, value=values[args.group], **scores)
+# | emit(log, kind="done", train_steps=trainer.train_steps)
+
+{"kind": "setup", "context": {"conv": 0.028, "head": 99, "norm_bias": 7.7, "whiten_bias": 7.7}, "total": 3200, "length": 640, "seed": 0, "time": 1792230603.8}
+{"kind": "eval", "group": "head", "offset": -4, "value": 0.028, "none": 0.8445000052452087, "short": 0.8948999643325806, "rest_lin": 0.9266999959945679, "time": 1792230635.1}
+{"kind": "eval", "group": "head", "offset": -3, "value": 0.22, "none": 0.8434999585151672, "short": 0.8931999802589417, "rest_lin": 0.9269999861717224, "time": 1792230665.6}
+{"kind": "eval", "group": "head", "offset": -2, "value": 1.7, "none": 0.8514999747276306, "short": 0.8949999809265137, "rest_lin": 0.9315999746322632, "time": 1792230695.3}
+{"kind": "eval", "group": "head", "offset": -1, "value": 13.0, "none": 0.8549999594688416, "short": 0.9068999886512756, "rest_lin": 0.9364999532699585, "time": 1792230725.0}
+{"kind": "eval", "group": "head", "offset": 0, "value": 99.0, "none": 0.8621999621391296, "short": 0.9138999581336975, "rest_lin": 0.9398999810218811, "time": 1792230755.2}
+{"kind": "eval", "group": "head", "offset": 1, "value": 770.0, "none": 0.8611999750137329, "short": 0.9121999740600586, "rest_lin": 0.9405999779701233, "time": 1792230785.0}
+{"kind": "eval", "group": "head", "offset": 2, "value": 5900.0, "none": 0.85999995470047, "short": 0.9126999974250793, "rest_lin": 0.9386000037193298, "time": 1792230814.7}
+{"kind": "eval", "group": "head", "offset": 3, "value": 46000.0, "none": 0.835099995136261, "short": 0.9017999768257141, "rest_lin": 0.935699999332428, "time": 1792230844.4}
+{"kind": "eval", "group": "head", "offset": 4, "value": 350000.0, "none": 0.28669998049736023, "short": 0.4503999948501587, "rest_lin": 0.8788999915122986, "time": 1792230874.8}
+{"kind": "eval", "group": "head", "offset": 5, "value": 2700000.0, "none": 0.09999999403953552, "short": 0.09999999403953552, "rest_lin": 0.09999999403953552, "time": 1792230905.5}
+{"kind": "done", "train_steps": 51200, "time": 1792230905.5}
