@@ -1391,6 +1391,37 @@ ics_compare_section(
      ["v11", "As v10 with replicates only in intervals 4-5 and climbs of up to 2 grid steps"]],
     "ics_v9_v11_observations.txt")
 
+# Experiment 20: why the 4-LR search falls short (diagnostic held-out runs of parts of its schedules).
+diag_labels = {
+    "full": "searched schedule, all four groups",
+    "conv_only": "its conv schedule; head, norm_bias, whiten_bias on the baseline",
+    "base_head": "head back on the baseline (the others as searched)",
+    "base_norm_bias": "norm_bias back on the baseline",
+    "base_whiten_bias": "whiten_bias back on the baseline",
+    "wb_down": "whiten_bias one x7.7 step lower",
+    "c4x_others": "conv replaced by C4 expanded; the others as searched",
+}
+rows = [["Variant", "Search seed 0", "Search seed 1"]]
+for key, label in diag_labels.items():
+    vals = [avg_runs.get(f"diag_b_s{s}_{key}") for s in (0, 1)]
+    if all(v is None for v in vals):
+        continue
+    rows.append([label, *("-" if v is None else f"{v[0]:.2f}" for v in vals)])
+story += [
+    P("Experiment 20. Why the 4-LR search falls short", "h1"),
+    P("Question", "h2"),
+    P("From scratch with all four LRs, ICS v12/v13 score 93.3-93.8 at BS 2000 without a transform, below the "
+      "conv-only searches. Is the conv schedule or the other groups' levels at fault?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Schedules", "The two committed 10-interval schedules of ICS v13 with 4 LRs at BS 2000, no transform "
+                         "(search seeds 0 and 1, head / norm_bias / whiten_bias levels 460 / 60 / 460 and 460 / 60 / "
+                         "3500, each tied to conv's profile), and variants with parts replaced"],
+           ["Runs", "Plain training runs on held-out seeds 100-107"]], [3.3 * cm, 13.7 * cm]),
+    P("Held-out TTA (baseline 93.92)", "h2"), table(rows, [9.0 * cm, 4.0 * cm, 4.0 * cm]),
+]
+story += observations("diag_b_observations.txt")
+
 
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
