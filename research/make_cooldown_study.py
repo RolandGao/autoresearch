@@ -1330,6 +1330,62 @@ if exp_gains:
 story += observations("expand_observations.txt")
 
 
+def ics_compare_section(versions, number, title, question, setup_rows, obs_file):
+    """One table: per cell, each version's held-out mean over search seeds and its cost."""
+    loaded = {v: ics.load(v) for v in versions}
+    story.extend([P(f"Experiment {number}. {title}", "h1"), P("Question", "h2"), P(question), P("Setup", "h2"),
+                  table([["Item", "Value"], *setup_rows], [3.3 * cm, 13.7 * cm])])
+    rows = [["Cell (baseline; do-nothing)", *versions]]
+    within = {v: [0, 0] for v in versions}
+    for bs in ics.BATCH_SIZES:
+        base = ics.target(ics_refs, bs)
+        for sc in ics.SCENARIOS:
+            for tr in ics.TRANSFORMS:
+                dn = ics.do_nothing(ics_refs, sc, bs, tr)
+                label = (f"BS {bs}, {ics.SCENARIO_LABELS[sc]}, {ics.TRANSFORM_LABELS[tr]} "
+                         f"({'-' if base is None else f'{base:.2f}'}" + (f"; {dn:.2f})" if tr and dn else ")"))
+                cells = [label]
+                for v in versions:
+                    seeds = loaded[v].get((sc, bs, tr), {})
+                    held = [r["heldout"] for r in seeds.values() if "heldout" in r]
+                    if not held:
+                        cells.append("-")
+                        continue
+                    mean = sum(held) / len(held)
+                    if base:
+                        within[v][1] += 1
+                        within[v][0] += mean >= base - 0.1
+                    cost = max(r["cost"] for r in seeds.values())
+                    hit = "*" if any(r["budget_hit"] for r in seeds.values()) else ""
+                    cells.append(f"<b>{mean:.2f}</b> ({'/'.join(f'{h:.2f}' for h in held)}); {cost:.0f}x{hit}")
+                rows.append(cells)
+    width = 13.0 / len(versions)
+    story.extend([P("Held-out TTA (mean over search seeds; per seed); cost in full runs", "h2"),
+                  table(rows, [4.0 * cm] + [width * cm] * len(versions)),
+                  P("Within 0.1 pp of the baseline or above (finished cells): "
+                    + "; ".join(f"{v}: {within[v][0]} of {within[v][1]}" for v in versions)
+                    + ". * = the search hit its step budget.", "small")])
+    story.extend(observations(obs_file))
+
+
+ics_compare_section(
+    ["v9", "v10", "v11"], 19, "ICS v9-v11: 5-interval search expanded to 10 intervals, with a scaled or fixed plan tail",
+    "Searching 5 intervals and expanding the result to 10 (Experiment 18), which second-pass lookahead works: the "
+    "previous pass's tail scaled by candidate / plan value (v9), or left as it is so a candidate changes only its own "
+    "interval (v10, v11)? And should the budget go to replicated decisions (v10) or wider climbs (v11)?",
+    [["Common", "5 constant intervals; pass 1: climb each interval from the previous one's value with a one-interval "
+                "cooldown at 0.22 x the candidate; pass 2: from the initial state, keep interval 1, climb intervals "
+                "2-5 from pass 1's values with a rest-of-run lookahead on pass 1's schedule; the result expanded to "
+                "10 intervals (Experiment 18). 4 LRs from 1.0: a joint x7.7 level scan of head and the biases "
+                "(largest within 1 pp after a one-interval cooldown), then each alone at most two x7.7 steps up; "
+                "the other groups follow conv's profile. Budget 20 full runs; 2 search seeds; held-out seeds 100-107"],
+     ["v9", "Pass-2 tail scaled by candidate / pass-1 value; climbs at most 1 grid step from pass 1; decisions "
+            "replicated over 2 continuations (3 in the last interval; 4 LRs: only intervals 4-5)"],
+     ["v10", "As v9 with the tail unscaled (rest_fixed)"],
+     ["v11", "As v10 with replicates only in intervals 4-5 and climbs of up to 2 grid steps"]],
+    "ics_v9_v11_observations.txt")
+
+
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
     out = []
