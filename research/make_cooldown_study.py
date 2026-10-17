@@ -979,6 +979,72 @@ if any("final_values" in r for r in xfam.values()):
 story += observations("guided_family_observations.txt")
 
 
+# Experiment 11: the guided search with uncertainty-aware candidate selection (selection = "lcb").
+yfam = fam.load("auto_yfam")
+story += [
+    P("Experiment 11. Representation quality of schedule families, guided search with uncertainty-aware "
+      "selection", "h1"),
+    P("Question", "h2"),
+    P("Experiment 10's weak point was candidate selection: quadratic fits through noisy single runs followed "
+      "noise to the end of the explored range, and a joint move summing those noisy gains crowded out the real "
+      "improvements. Does ranking by the fit's lower confidence bound, building the joint move only from clearly "
+      "positive parameters, and testing single moves first fix it?"),
+    P("Setup", "h2"),
+    table([
+        ["Item", "Value"],
+        ["As Experiment 10", "Same families, conditions, starts, exploration (one seed-0 run per point, up to 3 steps "
+                             "per direction), quadratic fit per parameter, fresh-seed verification (seeds 1-8, "
+                             "one-sided 80%, Bonferroni over the candidates raced together) and held-out evaluation"],
+        ["Fit uncertainty", "The SE of each fitted gain (fit at the offset - fit at the current schedule) from the "
+                            "regression with 0.12 pp noise per run: large where the fit extrapolates or rests on "
+                            "few points"],
+        ["Offset choice", "Per parameter, the offset (other than the current one) with the highest lower bound, "
+                          "gain - 0.84 SE"],
+        ["Candidates", "Single-parameter moves with a positive fitted gain, ranked by that lower bound; the best 3 "
+                       "are raced first. Only if none proves better: the joint move of the parameters whose lower "
+                       "bound is above 0 (at least 2), raced alone"],
+    ], [3.3 * cm, 13.7 * cm]),
+]
+rows = [["Family", *(fam.CONDITION_LABELS[c] for c in fam.CONDITIONS)]]
+for f in fam.FAMILIES:
+    cells = [fam.FAMILY_LABELS[f]]
+    for c in fam.CONDITIONS:
+        r = yfam.get(f"auto_yfam_{f}_bs2000{c}")
+        e9 = nfam.get(f"auto_nfam_{f}_bs2000{c}")
+        e10 = xfam.get(f"auto_xfam_{f}_bs2000{c}")
+        if r is None or "final" not in r:
+            cells.append("running")
+        else:
+            cells.append(f"<b>{r['final'][0]:.2f}</b> (Exp. 9: {e9['final'][0]:.2f}; Exp. 10: {e10['final'][0]:.2f}; "
+                         f"start {r['start'][0]:.2f}; {r.get('moves', '?')} moves, {r['evaluations']} runs)")
+    rows.append(cells)
+story += [P("Held-out TTA of the final schedule (Experiments 9 and 10 for comparison; the start; search cost)", "h2"),
+          table(rows, [3.6 * cm] + [3.35 * cm] * 4),
+          P("Target: the baseline's 93.92 on the held-out seeds; do-nothing references as in Experiment 3 "
+            "(ramp 93.42, reverse ramp 93.57, wave 93.72).", "small")]
+rows = [["Family", *(fam.CONDITION_LABELS[c] for c in fam.CONDITIONS)]]
+for f in fam.FAMILIES:
+    cells = [fam.FAMILY_LABELS[f]]
+    for c in fam.CONDITIONS:
+        r = yfam.get(f"auto_yfam_{f}_bs2000{c}")
+        seeds = "not verified" if r and r.get("search_seeds") == 0 else f"{r.get('search_seeds', '?') if r else '?'} seeds"
+        cells.append("running" if r is None or "final_values" not in r else
+                     ", ".join(f"{v:g}" for v in r["final_values"].values())
+                     + f" ({seeds}; {r.get('stop', '?').replace('_', ' ')})")
+    rows.append(cells)
+story += [P("Final parameter values (fresh seeds behind the final mean, 'not verified' when the search stopped "
+            "before testing any candidate; why it stopped)", "h2"),
+          table(rows, [3.6 * cm] + [3.35 * cm] * 4)]
+if any("final_values" in r for r in yfam.values()):
+    yfam_path = os.path.join(REPO, "plots", "family_study_guided_lcb.png")
+    family_figure(yfam, "auto_yfam", yfam_path)
+    img = Image(yfam_path)
+    img.drawWidth, img.drawHeight = 17 * cm, 17 * cm * img.imageHeight / img.imageWidth
+    story += [keep([img, P("Figure 11. Applied conv LR of each family's final schedule (guided search, "
+                           "uncertainty-aware selection); the black line is the baseline's applied LR.", "small")])]
+story += observations("guided_lcb_observations.txt")
+
+
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
     out = []
