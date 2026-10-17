@@ -1108,6 +1108,22 @@ for k, r in look.items():
     rows.append([str(k + 1), "; ".join(f"{r['c'][o]:g}: {tr[o]:.2f} / " + (f"{rl[o]:.2f}" if o in rl else "-")
                                        for o in r["offsets"] if o != 0)])
 story += [P("Noise of one seed's comparison of two candidates", "h2"), table(rows, [2.0 * cm, 15.0 * cm])]
+abs_by_bs = {bs: las.summary(bs, "_abs") for bs in (2000, 500)}
+abs_by_bs = {bs: v for bs, v in abs_by_bs.items() if v[1]}
+if abs_by_bs:
+    abs_variants = ["c40_0.22", "a40_0.22", "a40_0.6", "a40_1", "rest_lin"]
+    rows = [["Batch size", *abs_variants]]
+    for bs, (_, look_abs) in abs_by_bs.items():
+        cells = [f"BS {bs}"]
+        for v in abs_variants:
+            regs = [r["rows"][v]["regret"] for k, r in look_abs.items() if v in r["rows"]]
+            cells.append(" / ".join(f"{x:.3f}" for x in regs) + (f" (mean {sum(regs) / len(regs):.3f})" if regs else ""))
+        rows.append(cells)
+    story += [P("A common cooldown level (second probe series, same plans and seeds): 1-seed regret per interval "
+                "(intervals 1-4) and mean, pp", "h2"),
+              table(rows, [2.0 * cm] + [3.0 * cm] * len(abs_variants)),
+              P("a40_m: one interval at m x the plan's value for the interval, the same for every candidate (a "
+                "candidate-relative cooldown, c40_m, also scales the cooldown with the candidate).", "small")]
 fig, axes = plt.subplots(len(look_by_bs), 5, figsize=(12, 2.6 * len(look_by_bs)), layout="constrained", sharey=True,
                          squeeze=False)
 styles12 = {"truth": ("#0b0b0b", "-"), "rest_lin": ("#2a78d6", "-"), "c40_0.22": ("#1baf7a", "--"),
