@@ -294,7 +294,7 @@ for length, r in runs.items():
 
 
 # Experiment 3: representation quality of schedule families.
-families = fam.load()
+families = fam.load("auto_gfam")
 fixed = report_data.fixed_runs()
 
 
@@ -357,34 +357,41 @@ for f in fam.FAMILIES:
     rows.append(cells)
 story += [P("Best parameter values (LR values in order; power: lr, p)", "h2"), table(rows, [3.6 * cm] + [3.35 * cm] * 4)]
 
-fig, axes = plt.subplots(2, 2, figsize=(10, 6.6), layout="constrained", sharey=True)
 fam_colors = {"intervals5": "#2a78d6", "linear": "#8c8b86", "power": "#eb6834", "knots2": "#1baf7a",
               "knots3": "#6250d6", "knots5": "#e34948"}
-steps = list(range(200))
-for ax, c in zip(axes.flat, fam.CONDITIONS):
-    ax.set_title(fam.CONDITION_LABELS[c], loc="left", fontsize=9.5)
-    ax.plot(steps, [0.22 * (1 - st / 200) for st in steps], color="#0b0b0b", linewidth=2.2,
-            label="target: baseline applied LR")
-    transform = tc.LR_TRANSFORMS.get(c.lstrip("_"))
-    for f in fam.FAMILIES:
-        r = families.get(f"auto_gfam_{f}_bs2000{c}")
-        if r is None or "final_values" not in r:
-            continue
-        lines = tc.family_schedule(tc.GLOBAL_FAMILIES[f], r["final_values"], 200)
-        applied = [tc.schedule_value_at_step(lines, st) * (tc.lr_transform_factor(transform, st, 200)
-                                                           if transform else 1.0) for st in steps]
-        ax.plot(steps, applied, color=fam_colors[f], linewidth=1.3, label=fam.FAMILY_LABELS[f])
-    ax.set_xlabel("training step")
-for ax in axes[:, 0]:
-    ax.set_ylabel("applied conv LR")
-handles = {}
-for ax in axes.flat:
-    for h, label in zip(*ax.get_legend_handles_labels()):
-        handles.setdefault(label, h)
-fig.legend(handles.values(), handles.keys(), loc="outside lower center", ncol=4, frameon=False, fontsize=8)
+
+
+def family_figure(results, prefix, path):
+    """Applied conv LR (spec x transform) of each family's best schedule, one panel per condition."""
+    fig, axes = plt.subplots(2, 2, figsize=(10, 6.6), layout="constrained", sharey=True)
+    steps = list(range(200))
+    for ax, c in zip(axes.flat, fam.CONDITIONS):
+        ax.set_title(fam.CONDITION_LABELS[c], loc="left", fontsize=9.5)
+        ax.plot(steps, [0.22 * (1 - st / 200) for st in steps], color="#0b0b0b", linewidth=2.2,
+                label="target: baseline applied LR")
+        transform = tc.LR_TRANSFORMS.get(c.lstrip("_"))
+        for f in fam.FAMILIES:
+            r = results.get(f"{prefix}_{f}_bs2000{c}")
+            if r is None or "final_values" not in r:
+                continue
+            lines = tc.family_schedule(tc.GLOBAL_FAMILIES[f], r["final_values"], 200)
+            applied = [tc.schedule_value_at_step(lines, st) * (tc.lr_transform_factor(transform, st, 200)
+                                                               if transform else 1.0) for st in steps]
+            ax.plot(steps, applied, color=fam_colors[f], linewidth=1.3, label=fam.FAMILY_LABELS[f])
+        ax.set_xlabel("training step")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("applied conv LR")
+    handles = {}
+    for ax in axes.flat:
+        for h, label in zip(*ax.get_legend_handles_labels()):
+            handles.setdefault(label, h)
+    fig.legend(handles.values(), handles.keys(), loc="outside lower center", ncol=4, frameon=False, fontsize=8)
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+
+
 fam_path = os.path.join(REPO, "plots", "family_study.png")
-fig.savefig(fam_path, dpi=140)
-plt.close(fig)
+family_figure(families, "auto_gfam", fam_path)
 fam_img = Image(fam_path)
 fam_img.drawWidth, fam_img.drawHeight = 17 * cm, 17 * cm * fam_img.imageHeight / fam_img.imageWidth
 story += [keep([fam_img, P("Figure 3. Applied conv LR (spec x transform) of each family's best schedule; "
@@ -835,6 +842,72 @@ story += [keep([img, P("Figure 8. The rule's pick per L (conv at three margins, 
 story += observations("largest_within_observations.txt")
 
 
+# Experiment 9: Experiment 3 redone with the noise-aware global_neighbour search (noisy_family).
+nfam = fam.load("auto_nfam")
+story += [
+    P("Experiment 9. Representation quality of schedule families, noise-aware search", "h1"),
+    P("Question", "h2"),
+    P("Experiment 3's search scored every candidate on one run (seed 0), so it climbed on seed noise and stopped "
+      "at schedules that were lucky on seed 0 (e.g. 5 constant intervals: 93.99 on seed 0, 93.62 held-out). With a "
+      "search that only moves to a neighbour that is statistically better given the seed noise, and adds seeds "
+      "until it can tell, how close does each family get?"),
+    P("Setup", "h2"),
+    table([
+        ["Item", "Value"],
+        ["As Experiment 3", "baseline_bs2000, conv only (the others on the baseline); the same families, conditions "
+                            "(no transform, ramp, reverse ramp, wave), grids (LR x0.6, p x0.8) and starts (the "
+                            "oracle projected onto the family); start and final retrained on held-out seeds 100-107"],
+        ["Search", "Global neighbour (noisy_family): each round compares the current schedule with all its "
+                   "neighbours (each parameter one grid step up or down; k = 2 for linear, 4 for power and 2 knots, "
+                   "6 for 3 knots, 10 for 5 intervals and 5 knots). Every point's score is its mean TTA over full "
+                   "runs on search seeds 0, 1, 2, ..."],
+        ["Decision", "d = neighbour mean - current mean, SE = 0.12 pp x sqrt(1/n_neighbour + 1/n_current) (the "
+                     "single-run SD of Experiment 6, runs treated as independent). One-sided 80% bounds, "
+                     "Bonferroni over the k neighbours: z = 1.28 / 1.64 / 1.83 / 2.05 for k = 2 / 4 / 6 / 10. "
+                     "Better: d - z SE &gt; 0. Ruled out: d + z SE &lt; 0. Otherwise undecided"],
+        ["Moves and seeds", "If any neighbour is better, move to the better one with the highest mean. Else run "
+                            "one more seed on the current schedule and on every undecided neighbour, and repeat. "
+                            "Stop when every neighbour is ruled out, or at 8 seeds per point (undecided neighbours "
+                            "then count as not better)"],
+    ], [3.3 * cm, 13.7 * cm]),
+]
+rows = [["Family", *(fam.CONDITION_LABELS[c] for c in fam.CONDITIONS)]]
+for f in fam.FAMILIES:
+    cells = [fam.FAMILY_LABELS[f]]
+    for c in fam.CONDITIONS:
+        r = nfam.get(f"auto_nfam_{f}_bs2000{c}")
+        old = families.get(f"auto_gfam_{f}_bs2000{c}")
+        if r is None or "final" not in r:
+            cells.append("running")
+        else:
+            cells.append(f"<b>{r['final'][0]:.2f}</b> (Exp. 3: {old['final'][0]:.2f}; start {r['start'][0]:.2f}; "
+                         f"{r.get('moves', '?')} moves, {r['evaluations']} runs)")
+    rows.append(cells)
+story += [P("Held-out TTA of the final schedule (Experiment 3's for comparison; the start; search cost)", "h2"),
+          table(rows, [3.6 * cm] + [3.35 * cm] * 4),
+          P("Target: the baseline's 93.92 on the held-out seeds; do-nothing references as in Experiment 3 "
+            "(ramp 93.42, reverse ramp 93.57, wave 93.72).", "small")]
+rows = [["Family", *(fam.CONDITION_LABELS[c] for c in fam.CONDITIONS)]]
+for f in fam.FAMILIES:
+    cells = [fam.FAMILY_LABELS[f]]
+    for c in fam.CONDITIONS:
+        r = nfam.get(f"auto_nfam_{f}_bs2000{c}")
+        cells.append("running" if r is None or "final_values" not in r else
+                     ", ".join(f"{v:g}" for v in r["final_values"].values())
+                     + f" ({r.get('search_seeds', '?')} seeds; {r.get('stop', '?').replace('_', ' ')})")
+    rows.append(cells)
+story += [P("Final parameter values (seeds behind the final mean; why the search stopped)", "h2"),
+          table(rows, [3.6 * cm] + [3.35 * cm] * 4)]
+if any("final_values" in r for r in nfam.values()):
+    nfam_path = os.path.join(REPO, "plots", "family_study_noisy.png")
+    family_figure(nfam, "auto_nfam", nfam_path)
+    img = Image(nfam_path)
+    img.drawWidth, img.drawHeight = 17 * cm, 17 * cm * img.imageHeight / img.imageWidth
+    story += [keep([img, P("Figure 9. Applied conv LR of each family's final schedule (noise-aware search); the black "
+                           "line is the baseline's applied LR.", "small")])]
+story += observations("noisy_family_observations.txt")
+
+
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
     out = []
@@ -863,3 +936,4 @@ SimpleDocTemplate(OUT, pagesize=A4, leftMargin=2 * cm, rightMargin=2 * cm, topMa
                   bottomMargin=1.8 * cm, title="Cooldown study").build(story, onFirstPage=footer,
                                                                        onLaterPages=footer)
 print(OUT)
+

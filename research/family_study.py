@@ -15,17 +15,24 @@ CONDITIONS = ("", "_ramp", "_rampdown", "_wave")
 CONDITION_LABELS = {"": "No transform", "_ramp": "Ramp", "_rampdown": "Reverse ramp", "_wave": "Wave"}
 
 
-def load():
+def load(prefix):
+    """Searches named <prefix>_<family>_bs2000<condition> (auto_gfam: Experiment 3, auto_nfam: 9)."""
     out = {}
     for path in sorted(glob.glob(os.path.join(REPO, "logs", "cifar_baseline_*.log"))):
         text = open(path, errors="replace").read()
-        m = re.search(r"^auto_result run=(auto_gfam_\S+)_seed0 .*?search_seconds=(\S+) evaluations=(\d+)",
+        m = re.search(rf"^auto_result run=({prefix}_\S+)_seed0 .*?search_seconds=(\S+) evaluations=(\d+)",
                       text, re.M)
         if not m:
             continue
         name = m.group(1)
         own = re.search(rf"^auto_result run={name}_seed0 .*?tta_val_acc=(\S+)", text, re.M)
         row = dict(seconds=float(m.group(2)), evaluations=int(m.group(3)), own=100 * float(own.group(1)))
+        stop = re.search(rf"^search_stop run={name}_seed0 reason=(\S+) moves=(\d+)", text, re.M)
+        if stop:
+            row["stop"], row["moves"] = stop.group(1), int(stop.group(2))
+        seeds = re.search(rf"^auto_result run={name}_seed0 .*?search_seeds=(\d+)", text, re.M)
+        if seeds:
+            row["search_seeds"] = int(seeds.group(1))
         for label, key in (("start", "start_heldout_result"), ("final", "heldout_result")):
             h = re.search(rf"^{key} run={name}_seed0 .*?tta_val_acc_mean=(\S+) tta_val_acc_std=(\S+)",
                           text, re.M)
