@@ -1697,6 +1697,14 @@ ics_compare_section(
      ["v33", "v29 whose second passes climb on a x0.6^0.5 = x0.775 grid, up to 2 steps (v29's range)"]],
     "ics_v32_v33_observations.txt")
 
+ics_compare_section(
+    ["v36", "v37", "v29"], 28, "How much of the 20-run budget does ICS v29 need?",
+    "The mandate allows at most 20 full runs of training per search. Does v29 still match the baseline with less?",
+    [["v36", "v29 with a budget of 10 full runs (each of its two searches gets 5, minus the 4-LR level scan)"],
+     ["v37", "v29 with a budget of 15 full runs"],
+     ["v29", "The algorithm, 20 full runs (search seeds 0-7)"]],
+    "budget_observations.txt")
+
 
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
