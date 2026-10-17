@@ -1047,6 +1047,20 @@ if any("final_values" in r for r in yfam.values()):
 story += observations("guided_lcb_observations.txt")
 
 
+# Introduction to the 2-day campaign (Experiments 12 on).
+story += [
+    P("The 2-day campaign: constant intervals with a cooldown search (Experiments 12 on)", "h1"),
+    P("Goal (set by the user on 2026-10-17): a search over constant-interval LR schedules with a cooldown "
+      "lookahead that matches the baseline's held-out TTA at batch sizes 2000, 500 and 125, under the transforms "
+      "(ramp, reverse ramp, wave) and with either conv's LR (other groups on the baseline) or all four LRs (from "
+      "1.0) searched, using at most 20 full runs' worth of training steps (every trained step counts; held-out "
+      "evaluation does not). Targets on held-out seeds 100-107: 93.92 (BS 2000), 94.00 (BS 500), 93.86 (BS 125); "
+      "one held-out mean has a standard error of about 0.045 pp, so 'matching' here means within about 0.1 pp."),
+    P("The searches are run_ics_search in train_cifar.py (configs ics_v&lt;N&gt;_&lt;a|b&gt;_bs&lt;BS&gt;[_transform], "
+      "a = conv only, b = 4 LRs); each version is run with 2 search seeds per cell. Experiments 12, 16, 17, 18 and 20 "
+      "are probes that shaped the versions; 13-15, 19 and 21 compare the versions."),
+]
+
 # Experiment 12: lookahead fidelity and noise for constant-interval decisions (2-day campaign).
 look_by_bs = {bs: las.summary(bs) for bs in (2000, 500, 125)}
 look_by_bs = {bs: v for bs, v in look_by_bs.items() if v[1]}
