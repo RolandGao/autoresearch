@@ -3549,6 +3549,13 @@ ICS_VERSIONS = {
                 replicates=[1, 1, 1, 1, 2], refine_side_steps=2, final_expand=False, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
                 final_shape="linear", refine_ratio=0.6 ** 0.5),
+    # v34: v29 scoring the 4-LR level scan right after interval 1 (no one-interval cooldown): the scan costs about 4 of
+    # each search's 10 full runs at BS 2000 and leaves the second passes almost no budget.
+    "v34": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="none", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
+                final_shape="linear"),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):

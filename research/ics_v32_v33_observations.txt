@@ -1,3 +1,6 @@
 v32 fails under the ramp: without a second pass, the shifted first passes leave the ramp's steep early decline unrefined (4 LRs: BS 2000 90.48, BS 500 92.46; conv only: BS 500 93.64, BS 125 93.54). Over its cells v32 is 0.097 pp short conv only and 0.55 pp with 4 LRs; v29's second pass, even when it can afford only its first interval, is needed.
 
 A finer second-pass grid does not recover the grid's cost: paired with v29 on the same search seeds (which share their first passes), v33 scores 0.011 +- 0.007 pp lower (45 pairs); conv only it is 0.018 pp short of the baseline on average (11 of 12 within 0.1 pp) against v29's 0.016. Averaging two searches already puts the committed values between grid points wherever the searches disagree, and a finer second-pass climb gets single-seed decisions over smaller differences. v29 stays the algorithm.
+
+Smoothing the committed values does not help either: replacing each interior value of v29's averaged 5-interval schedule by the log-space average 1/4, 1/2, 1/4 of it and its neighbours (endpoints kept; held-out probes of search seeds 0-3, 90 pairs) changes the held-out score by -0.016 +- 0.008 pp (38 of 90 higher). It helps without a transform (+0.032 pp; with 4 LRs at BS 2000 +0.108, to 93.85) and hurts under the wave (-0.074 pp; 4 LRs at BS 500 -0.151), whose optimum is genuinely non-monotone.
+
