@@ -3354,7 +3354,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         level_margin=0.01, level_refine=3, level_joint=False, short_fraction=5, pass_intervals=[], fine=["conv"],
         refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False, level_backoff=0,
         adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1, level_individual=2,
-        cooldown_mults=[], shift_groups="all",
+        cooldown_mults=[], shift_groups="all", ensemble_scope="last",
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3494,6 +3494,13 @@ ICS_VERSIONS = {
                 level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
                 replicates=[1, 1, 1, 1, 2], refine_side_steps=2, final_expand=True, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead"),
+    # Two independent half-budget searches (v24's passes, one-step refinement climbs, replicates only in the last
+    # interval), their schedules averaged: averaging two searches' schedules gained +0.07 pp (Experiment 17),
+    # while averaging only second passes did not (v18 vs v16). Conv only (the 4-LR level scan does not fit twice).
+    "v26": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=True, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all"),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -5831,8 +5838,8 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "level_scan", "level_lookahead", "level_rule", "level_margin", "fine", "tie", "max_side_steps",
                 "larger_within", "refine_start", "replicates", "level_refine", "level_joint", "short_fraction",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
-                "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "shift_groups", "budget",
-                "heldout_seeds"}
+                "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "shift_groups",
+                "ensemble_scope", "budget", "heldout_seeds"}
 
 
 def run_ics_search(run, model, config):
@@ -5909,6 +5916,8 @@ def run_ics_search(run, model, config):
       ensemble: the last pass is run this many times from the same plan, each run (member) after
         the first on its own data order and augmentation from its first searched interval on; the
         result is the members' geometric mean, interval by interval (decision noise averages out).
+        ensemble_scope "all" repeats every pass per member instead (independent searches on their own
+        data order, each capped at budget / ensemble).
       heldout_seeds: retrain the committed schedule on these seeds (evaluation only).
     Each interval climbs each climbed group in turn (smaller values first, then larger, moving
     while the score improves), commits the best and continues from its trained state. The
@@ -6136,11 +6145,23 @@ def run_ics_search(run, model, config):
     prev_length = None
     member = {"index": 0}
     members = []
-    schedule_passes = list(passes[:-1]) + [passes[-1]] * tuning["ensemble"]
+    scope = tuning["ensemble_scope"]
+    if scope not in ("last", "all"):
+        raise ValueError("ics ensemble_scope must be last or all")
+    whole = scope == "all"
+    budget_total = limit["steps"]
+    schedule_passes = (list(passes) * tuning["ensemble"] if whole
+                       else list(passes[:-1]) + [passes[-1]] * tuning["ensemble"])
     for p_run, pass_kind in enumerate(schedule_passes):
-        p = min(p_run, len(passes) - 1)  # Ensemble members are all the last pass.
-        member["index"] = p_run - (len(passes) - 1) if p_run >= len(passes) - 1 else 0
-        if member["index"] > 0:
+        if whole:  # Each member is a whole search on its own data order, with its share of the budget.
+            p, member["index"] = p_run % len(passes), p_run // len(passes)
+            if p == 0:
+                plan, pass_states, prev_length = None, [], None
+                limit["steps"] = budget_total * (member["index"] + 1) / tuning["ensemble"]
+        else:
+            p = min(p_run, len(passes) - 1)  # Ensemble members are all the last pass.
+            member["index"] = p_run - (len(passes) - 1) if p_run >= len(passes) - 1 else 0
+        if member["index"] > 0 and not whole:
             plan = {g: list(v) for g, v in plan_before_last.items()}  # Every member starts from the same plan.
         for g in groups:  # Relevel factors belong to one run of a pass.
             group_scale[g], scale_from[g] = 1.0, 0
@@ -6151,7 +6172,7 @@ def run_ics_search(run, model, config):
                 raise ValueError("ics pass_intervals may only double, with an even refine_start")
             plan = {g: expand(plan[g], tuning["refine_start"] // 2) for g in groups}
         replicates = list(tuning["replicates"]) if p == len(passes) - 1 else [1] * n
-        if p == 1 and tuning["plan_shift"] and member["index"] == 0:  # Only the first pass is biased.
+        if p == 1 and tuning["plan_shift"] and (member["index"] == 0 or whole):  # Only the first pass is biased.
             if tuning["shift_groups"] not in ("all", "lead"):
                 raise ValueError("ics shift_groups must be all or lead")
             plan = {g: ([grid(v, tuning["plan_shift"]) if v > 0 else v for v in plan[g][:-1]] + plan[g][-1:]
@@ -6248,7 +6269,7 @@ def run_ics_search(run, model, config):
                       train_steps=trainer.train_steps, **{g: current[g] for g in groups})
         if p == len(passes) - 1:
             members.append(({g: list(committed[g]) for g in groups}, state))
-        if member["index"] == 0:
+        if member["index"] == 0 or whole:
             plan = {g: list(committed[g]) for g in groups}
             pass_states.append(states)
         prev_length = length
