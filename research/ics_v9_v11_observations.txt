@@ -2,4 +2,4 @@ Keeping the plan's tail unscaled is what made the 5-interval search work: v9 (sc
 
 Conv only, v10 and v11 are within about 0.1 pp of the baseline on average: v10 is 0.113 pp short over the 12 cells (all three batch sizes, all four transforms), v11 0.111 pp over the 8 finished ones, with 5 of 24 and 4 of 12 cells within 0.1 pp. The ramp is the hardest cell at BS 500 (v10 93.72, v11 93.69, 0.28-0.30 short), and BS 125 is 0.09-0.16 short in every condition. v10 (replicated decisions, one-step climbs) and v11 (replicates only late, two-step climbs, cheaper: 15-19 vs 17-20 full runs) are equal within noise: v11 is better at BS 2000 (93.94 vs 93.89 without a transform, 93.88 vs 93.78 under the reverse ramp) and worse at BS 500 (93.92 vs 94.00 without, 93.81 vs 93.87 under the wave).
 
-With 4 LRs both stay 0.2-0.6 pp short (BS 2000: 93.26-93.75; Experiment 20 traces this to the head/bias levels), and v10 hits the budget in the ramp cells.
+With 4 LRs both stay 0.2-1.1 pp short (v10: 93.26-93.75 at BS 2000, 92.92-93.66 at BS 500; Experiment 20 traces this to the head/bias levels), and v10 hits the budget in the ramp cells.
