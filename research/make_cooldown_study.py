@@ -1530,6 +1530,22 @@ ics_compare_section(
      ["v24", "v19 whose shift moves only conv (4 LRs: head and the biases keep their scanned levels); conv only it "
              "is v19"]],
     "ics_v16_v23_observations.txt")
+ics_compare_section(
+    ["v19", "v24", "v25", "v26", "v27"], 23,
+    "ICS v25-v27: refining from interval 1, and averaging two independent half-budget searches",
+    "v24's misses are spread between search seeds (Experiment 22). Does refining every interval in the second pass "
+    "(v25), or running the whole search twice at half the budget from different data orders and averaging the two "
+    "schedules (v26; v27 with one shared 4-LR level scan), close the gap within the same 20-run budget?",
+    [["v19 / v24", "References (Experiment 22): v19 for conv only, v24 for 4 LRs"],
+     ["v25", "v24 with the second pass refining every interval from interval 1 (only interval 0 kept), replicates "
+             "only in the last interval"],
+     ["v26", "Two whole v24-style searches (short-cooldown pass 1, shifted plan, rest-of-run pass 2 climbing one grid "
+             "step, replicates only in the last interval), each with half the budget and its own data order; the two "
+             "5-interval schedules averaged (geometric mean) and expanded to 10 intervals. Steps are kept back so the "
+             "search always finishes within budget"],
+     ["v27", "v26 whose second search reuses the first one's 4-LR level scan (one scan, the rest of the budget split "
+             "evenly); conv only it is v26"]],
+    "ics_v25_v27_observations.txt")
 
 
 def attach_headings(flowables):
