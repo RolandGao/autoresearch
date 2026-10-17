@@ -3586,6 +3586,17 @@ class OverfitEvaluationTests(unittest.TestCase):
 
 
 class GlobalIntervalTests(unittest.TestCase):
+    def test_midpoint_linear_lines_give_back_a_linear_schedule(self):
+        means = [0.22 * (1 - (i + 0.5) / 10) for i in range(10)]
+        lines = train.midpoint_linear_lines(means, 20)
+        self.assertEqual(sum(line[0] for line in lines), 200)
+        for step in (0, 7, 55, 130, 199):
+            # hparam_at_step rounds to 2 significant figures.
+            self.assertAlmostEqual(train.hparam_at_step(lines, step), 0.22 * (1 - step / 200), delta=0.003)
+        # The end half-intervals are clipped at 0.
+        self.assertEqual(train.midpoint_linear_lines([0.1, 0.5], 4)[-1], (2, 0.5, 0.7))
+        self.assertEqual(train.midpoint_linear_lines([0.5, 0.01], 4)[-1], (2, 0.01, 0.0))
+
     def test_neighbours_move_one_nonzero_interval_one_grid_step(self):
         lines = [(3, 0.13), (2, 0.22, 0.0), (4, 0.0), (1, 0.0, 0.36)]
         neighbours = train.global_interval_neighbours(lines, 0.6)

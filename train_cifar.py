@@ -3355,6 +3355,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False, level_backoff=0,
         adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1, level_individual=2,
         cooldown_mults=[], shift_groups="all", ensemble_scope="last", budget_reserve=False, share_levels=False,
+        final_shape="constant",
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -5844,7 +5845,20 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "larger_within", "refine_start", "replicates", "level_refine", "level_joint", "short_fraction",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
                 "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "shift_groups",
-                "ensemble_scope", "budget_reserve", "share_levels", "budget", "heldout_seeds"}
+                "ensemble_scope", "budget_reserve", "share_levels", "final_shape", "budget", "heldout_seeds"}
+
+
+def midpoint_linear_lines(values, length):
+    """Piecewise linear through (interval midpoint, value) for equal intervals of length steps; the
+    first and last half-intervals continue the neighbouring slope, clipped at 0. The interval means
+    of a linear schedule give it back exactly."""
+    if len(values) < 2:
+        return [(length, values[0])]
+    half, rest = length // 2, length - length // 2
+    start = max(0.0, values[0] + (values[0] - values[1]) / 2)
+    end = max(0.0, values[-1] - (values[-2] - values[-1]) / 2)
+    return ([(half, start, values[0])] + [(length, a, b) for a, b in zip(values, values[1:])]
+            + [(rest, values[-1], end)])
 
 
 def run_ics_search(run, model, config):
@@ -5895,6 +5909,9 @@ def run_ics_search(run, model, config):
         level_joint: with "largest", the non-lead groups are first scanned together (one
         multiplier for all of them), then each alone at most level_individual x7.7 steps up from
         there (0: the joint level only).
+        final_shape: the committed schedule's form: "constant" intervals, or "linear" through the
+          interval midpoints (midpoint_linear_lines); a staircase of a smooth optimum loses up to
+          0.14 pp (Experiment 24).
         share_levels: with ensemble_scope "all", later members reuse the first member's scanned
           levels instead of scanning again; the rest of the budget is split evenly among members.
         level_backoff: x7.7 steps each non-lead group's level is then lowered (a safety margin: a
@@ -6310,7 +6327,12 @@ def run_ics_search(run, model, config):
     if tuning["final_expand"]:
         committed = {g: expand(committed[g], 0) for g in groups}
         length = total // len(committed[lead])
-    schedule = {g: [(length, v) for v in committed[g]] for g in groups}
+    if tuning["final_shape"] == "linear":
+        schedule = {g: midpoint_linear_lines(committed[g], length) for g in groups}
+    elif tuning["final_shape"] == "constant":
+        schedule = {g: [(length, v) for v in committed[g]] for g in groups}
+    else:
+        raise ValueError("ics final_shape must be constant or linear")
     log_event("auto_result", run=run, val_acc=0.0, tta_val_acc=final, search_seconds=seconds,
               evaluations=evaluations, train_steps=trainer.train_steps,
               budget_factor=trainer.train_steps / total, budget_hit=budget_hit)
