@@ -3356,7 +3356,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1, level_individual=2,
         cooldown_mults=[], shift_groups="all", ensemble_scope="last", budget_reserve=False, share_levels=False,
         final_shape="constant", relevel_groups=[], final_shift=0, refine_ratio=0.6,
-        level_groups=[],
+        level_groups=[], trend_start=False,
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3575,6 +3575,17 @@ ICS_VERSIONS = {
                 replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
                 final_shape="linear", budget=15),
+    # v38 / v39: v29 whose first-pass climbs start on the previous intervals' trend (Experiment 28), at 20 / 15 runs.
+    "v38": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
+                final_shape="linear", trend_start=True),
+    "v39": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
+                final_shape="linear", trend_start=True, budget=15),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -5914,7 +5925,7 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
                 "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "shift_groups",
                 "ensemble_scope", "budget_reserve", "share_levels", "final_shape", "relevel_groups", "final_shift",
-                "refine_ratio", "level_groups", "budget", "heldout_seeds"}
+                "refine_ratio", "level_groups", "trend_start", "budget", "heldout_seeds"}
 
 
 def midpoint_linear_lines(values, length):
@@ -5989,6 +6000,10 @@ def run_ics_search(run, model, config):
         short horizon accepts levels near a long-horizon edge it cannot see).
       refine_ratio: the grid ratio of the climbs from the second pass on (0.6 ** 0.5: a grid twice as
         fine, which contains the x0.6 grid; the x0.6 grid alone costs ~0.09 pp, Experiment 26).
+      trend_start: in the first pass, from interval 3 on, the lead's climb starts at the previous value times
+        the last two intervals' ratio (clipped to x0.36..x1.67) instead of the previous value: fewer
+        evaluations where the schedule keeps falling or rising, and a trend-following value when the
+        budget is out (Experiment 28).
       final_shift: x0.6 grid steps each member's result of the last pass is moved up (all but the
         last interval; tied groups keep their level and follow the lead's shifted profile): the
         plan shift for a search whose last pass is the biased short-cooldown pass.
@@ -6303,6 +6318,10 @@ def run_ics_search(run, model, config):
         for k in range(n):
             kind = pass_kind if k < n - 1 else "none"
             cache = {}
+            if p == 0 and k >= 2 and tuning["trend_start"] and committed[lead][k - 2] > 0:
+                # Start the climb where the last two intervals' trend points (at most x0.36 down, x1.67 up).
+                trend = min(max(committed[lead][k - 1] / committed[lead][k - 2], 0.36), 1 / 0.6)
+                current = dict(current, **{lead: snap_lr_to_grid(current[lead] * trend, 0.6)})
             if p > 0:
                 current = {g: plan[g][k] for g in groups}
                 if tuning["carry_offset"] and k >= max(tuning["refine_start"], 1) and k > 0 and k < n - 1:
