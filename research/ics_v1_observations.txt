@@ -1,0 +1,11 @@
+Targets (held-out seeds 100-107): baselines 93.92 (BS 2000), 94.00 and 93.86 (BS 500 and 125, from the post-campaign reruns; the table's own baseline runs replace these once they finish). One held-out mean has a standard error of about 0.045 pp, so differences below about 0.1 pp are not resolved.
+
+Conv only without a transform, v1 lands 0.1-0.2 pp short at every batch size: 93.82 (both search seeds) at BS 2000, 93.84 at BS 500 and 93.73 at BS 125, for 9.4-10 full runs of train steps. Its BS 2000 schedules (0.13, 0.13, 0.13, 0.047, 0.006 and 0.22, 0.13, 0.078, 0.047, 0.01) are one or two grid steps from C4 (93.95).
+
+Under transforms the rest-of-run linear lookahead fails: the ramp gives 93.15 (BS 2000) and 93.40 (BS 500), below the do-nothing 93.42 / 93.37, and the wave 93.54 / 93.50. The lookahead decays linearly in the spec schedule, so under a transform its applied shape is distorted: under the ramp the applied LR rises late in the lookahead, so high early candidates look bad and the early intervals stay at 0.13-0.22 where the compensating spec is about 0.9. The reverse ramp, which mostly needs smaller early values, is fine (93.80 / 93.88).
+
+From scratch with all four LRs (b), the level scan fails: 91.65-93.70 at BS 2000 and 92.93-93.58 at BS 500. Scored after one interval, head and norm_bias look flat (87.3% at levels 0.13, 1 and 7.7 in one search), so the scan leaves them near their start of 1.0, where a full run loses about 1 pp for head (Experiment 7). The search seed 1 run without a transform (92.01) kept head and norm_bias at 1.0.
+
+The search's own final score is optimistic by up to 0.2 pp at BS 500 and 125 (e.g. 94.06 own vs 93.92 held-out; 93.94 vs 93.76): its decisions are selected on one seed.
+
+v1 was stopped after these cells (the remaining transformed and 4-LR cells were cancelled) in favour of v2.
