@@ -3351,7 +3351,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         start={g: (pg[g]["lr_scheduler"][0][1] if scenario == "a" else 1.0) for g in groups},
         intervals=5, passes=["rest_lin"], cooldown_mult=0.36, ratio=0.6,
         level_scan=[] if scenario == "a" else list(groups), level_lookahead="short", level_rule="best",
-        level_margin=0.01, fine=["conv"],
+        level_margin=0.01, fine=["conv"], refine_start=0, replicates=[1, 1, 1, 1, 1],
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3369,6 +3369,15 @@ ICS_VERSIONS = {
     "v2": dict(passes=["short", "rest_plan"], cooldown_mult=0.22, level_lookahead="none"),
     # v2 with the largest-within-1pp level rule for head and the biases (from scratch).
     "v3": dict(passes=["short", "rest_plan"], cooldown_mult=0.22, level_lookahead="none", level_rule="largest"),
+    # v3 whose rest-of-run pass keeps interval 1 from the short pass (interval 1's rest-of-run
+    # candidates cost a full run each; the short cooldown already decides it well, Experiment 12).
+    "v4": dict(passes=["short", "rest_plan"], cooldown_mult=0.22, level_lookahead="none", level_rule="largest",
+               refine_start=1),
+    # v4 whose last pass scores the late intervals' candidates by the mean of 2 (interval 4) and 3
+    # (interval 5) continuations with fresh data order: those single-seed decisions are coin flips
+    # worth ~0.1 pp each (Experiment 12), and their lookaheads are short.
+    "v5": dict(passes=["short", "rest_plan"], cooldown_mult=0.22, level_lookahead="none", level_rule="largest",
+               refine_start=1, replicates=[1, 1, 1, 2, 3]),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -5695,7 +5704,7 @@ def run_guided_family_search(run, model, config):
 
 ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes", "cooldown_mult", "ratio",
                 "level_scan", "level_lookahead", "level_rule", "level_margin", "fine", "tie", "max_side_steps",
-                "larger_within", "budget", "heldout_seeds"}
+                "larger_within", "refine_start", "replicates", "budget", "heldout_seeds"}
 
 
 def run_ics_search(run, model, config):
@@ -5714,8 +5723,14 @@ def run_ics_search(run, model, config):
         value * ratio**j), "short" (one interval at cooldown_mult x value), or "rest_plan" (the
         rest of the run on the previous pass's schedule, each group's tail scaled by candidate /
         previous value; later passes only). The last interval is scored by the final metric.
-        Later passes start each interval's climb at the previous pass's value.
+        Later passes start each interval's climb at the previous pass's value, and keep the previous
+        pass's values (and trained states, at no cost) for the intervals before refine_start.
       cooldown_mult, ratio: parameters of "short" and "rest_geo".
+      replicates: per interval, how many continuations score a candidate in the last pass: the
+        first trains on the run's own data stream (its state is the one committed); each other
+        restores the pre-interval state, reseeds the data order and augmentation (a fresh epoch)
+        and trains interval + lookahead again; the score is their mean (decision noise / sqrt(R)
+        at R x the cost; worthwhile late, where lookaheads are short).
       level_scan: groups whose level is first scanned in the first pass's interval 0 on a x7.7
         grid (both neighbours first, then the better side while the score improves), each
         scored after interval 0 plus level_lookahead ("none": right after the interval, or
@@ -5791,24 +5806,32 @@ def run_ics_search(run, model, config):
         key = (kind, tuple(values[g] for g in groups))
         if key in cache:
             return cache[key][0]
-        cost = length + lookahead_steps(k, kind)
+        reps = replicates[k]
+        cost = reps * (length + lookahead_steps(k, kind))
         if trainer.train_steps + cost > limit["steps"]:
             budget_hit = True
             return None
-        trainer.restore(state)
-        sched = dict(base)
+        sched_head = dict(base)
+        sched_full = dict(base)
         for g in groups:
-            sched[f"{g}.initial_lr"] = [(length, v) for v in committed[g]] + [(length, values[g])] + [
+            sched_head[f"{g}.initial_lr"] = [(length, v) for v in committed[g]] + [(length, values[g])] + [
                 (length, 0.0)] * (n - 1 - k)
-        ok = trainer.train(sched, length)
-        after = trainer.snapshot()
-        steps = lookahead_steps(k, kind)
-        if ok and steps:
-            for g in groups:
-                sched[f"{g}.initial_lr"] = ([(length, v) for v in committed[g]] + [(length, values[g])]
-                                            + tail(g, values[g], k, kind))
-            ok = trainer.train(sched, steps)
-        value = trainer.score(metric) if ok else float("-inf")
+            sched_full[f"{g}.initial_lr"] = ([(length, v) for v in committed[g]] + [(length, values[g])]
+                                             + tail(g, values[g], k, kind))
+        scores, after = [], None
+        for r in range(reps):
+            trainer.restore(state)
+            if r > 0:  # Another continuation: reseed the data order and augmentation, fresh epoch.
+                torch.manual_seed(1_000_003 * TRAINING_SEED + 7_919 * k + 104_729 * r + 17)
+                trainer.stream.images = None
+            ok = trainer.train(sched_head, length)
+            if r == 0:
+                after = trainer.snapshot()
+            steps = lookahead_steps(k, kind)
+            if ok and steps:
+                ok = trainer.train(sched_full, steps)
+            scores.append(trainer.score(metric) if ok else float("-inf"))
+        value = sum(scores) / len(scores)
         evaluations += 1
         cache[key] = (value, after)
         print(f"  ics_eval interval={k} lookahead={kind} {hparam_text(values)} {metric}={format_log_value(value)} "
@@ -5890,9 +5913,13 @@ def run_ics_search(run, model, config):
             top = point
         return top
 
+    pass_states = []
+    replicates = [1] * n
     for p, pass_kind in enumerate(passes):
+        replicates = list(tuning["replicates"]) if p == len(passes) - 1 else [1] * n
         state = initial_state
         committed = {g: [] for g in groups}
+        states = []
         current = ({g: snap_lr_to_grid(tuning["start"][g], 0.6) for g in groups} if p == 0
                    else {g: plan[g][0] for g in groups})
         for k in range(n):
@@ -5900,6 +5927,14 @@ def run_ics_search(run, model, config):
             cache = {}
             if p > 0:
                 current = {g: plan[g][k] for g in groups}
+                if k < tuning["refine_start"]:  # Same prefix as the previous pass: reuse its state.
+                    state = pass_states[-1][k]
+                    states.append(state)
+                    for g in groups:
+                        committed[g].append(current[g])
+                    log_event("ics_interval", run=run, search_pass=p, interval=k, lookahead="kept",
+                              train_steps=trainer.train_steps, **{g: current[g] for g in groups})
+                    continue
             if p == 0 and k == 0 and tuning["level_scan"]:
                 level_kind = tuning["level_lookahead"] if n > 1 else "none"
                 level_cache = {}
@@ -5921,11 +5956,13 @@ def run_ics_search(run, model, config):
                 evaluate(k, current, kind, state, cache)
                 limit["steps"] = saved
             best_score, state = cache[key]
+            states.append(state)
             for g in groups:
                 committed[g].append(current[g])
             log_event("ics_interval", run=run, search_pass=p, interval=k, lookahead=kind, score=best_score,
                       train_steps=trainer.train_steps, **{g: current[g] for g in groups})
         plan = {g: list(committed[g]) for g in groups}
+        pass_states.append(states)
     trainer.restore(state)
     final = trainer.score(metric)
     seconds = time.perf_counter() - run_start
