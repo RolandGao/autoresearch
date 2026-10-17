@@ -4,3 +4,5 @@ A finer second-pass grid does not recover the grid's cost: paired with v29 on th
 
 Smoothing the committed values does not help either: replacing each interior value of v29's averaged 5-interval schedule by the log-space average 1/4, 1/2, 1/4 of it and its neighbours (endpoints kept; held-out probes of search seeds 0-3, 90 pairs) changes the held-out score by -0.016 +- 0.008 pp (38 of 90 higher). It helps without a transform (+0.032 pp; with 4 LRs at BS 2000 +0.108, to 93.85) and hurts under the wave (-0.074 pp; 4 LRs at BS 500 -0.151), whose optimum is genuinely non-monotone.
 
+A cheaper 4-LR level scan costs more than it saves (ICS v34: the level candidates scored right after interval 1, without the one-interval cooldown, to leave the second passes more budget): paired with v29 it scores 0.106 +- 0.042 pp lower (24 searches; 5 of 12 cells within 0.1 pp). Without the cooldown the scan picks the lower level (60 instead of 460) in 11 of 24 searches, at BS 125 and 500 where v29 matched (BS 125 under the ramp 93.57), while the BS 2000 misses stay (93.75 and 93.78). The cooldown is what lets the short horizon rank these levels.
+
