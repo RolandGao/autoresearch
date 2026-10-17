@@ -3308,7 +3308,7 @@ for transform in (None, "ramp", "rampdown", "wave"):
         config = copy.deepcopy(config)
         config["hparam_tuning"] = dict(
             algorithm="guided_family", metric="tta_val_acc", group="conv", family=copy.deepcopy(family),
-            noise_sd=0.0012, confidence=0.8, max_depth=3, max_candidates=3, max_seeds=8,
+            noise_sd=0.0012, confidence=0.8, max_depth=3, max_candidates=3, max_seeds=8, selection="raw",
             heldout_seeds=HELDOUT_SEEDS)
         RUN_CONFIGS[f"auto_xfam_{family_name}_bs2000{suffix}"] = config
         # Experiment 11: the guided search with uncertainty-aware candidate selection.
@@ -5447,7 +5447,7 @@ def run_guided_family_search(run, model, config):
 
     hparam_tuning: group, family (as in run_global_family_search), metric, noise_sd (the SD of
     one run's metric across seeds), confidence, max_depth, max_candidates, max_seeds,
-    heldout_seeds. Each round, from the current schedule (the anchor):
+    selection ("raw" or "lcb"), heldout_seeds. Each round, from the current schedule (the anchor):
       1. Explore: along each family parameter and direction, step the parameter one grid step
          at a time (LR values x0.6, power x0.8), one run each on seed 0, while the run is not
          clearly worse than the best run on that line (score >= best - z * noise_sd * sqrt(2),
@@ -5474,7 +5474,7 @@ def run_guided_family_search(run, model, config):
     run_start = time.perf_counter()
     tuning = config["hparam_tuning"]
     require_fields(tuning, {"algorithm", "metric", "group", "family", "noise_sd", "confidence", "max_depth",
-                            "max_candidates", "max_seeds", "heldout_seeds"}, "hparam_tuning")
+                            "max_candidates", "max_seeds", "selection", "heldout_seeds"}, "hparam_tuning")
     name = tuning["group"]
     family = tuning["family"]
     sigma = tuning["noise_sd"]
@@ -5540,7 +5540,9 @@ def run_guided_family_search(run, model, config):
             for point in undecided:
                 verify(point, verified(point)[1] + 1)
 
-    lcb = tuning.get("selection", "raw") == "lcb"
+    if tuning["selection"] not in ("raw", "lcb"):
+        raise ValueError("guided_family selection must be raw or lcb")
+    lcb = tuning["selection"] == "lcb"
     moves, rounds = 0, 0
     while True:
         rounds += 1
