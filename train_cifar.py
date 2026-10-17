@@ -3315,6 +3315,29 @@ for transform in (None, "ramp", "rampdown", "wave"):
         config = copy.deepcopy(config)
         config["hparam_tuning"]["selection"] = "lcb"
         RUN_CONFIGS[f"auto_yfam_{family_name}_bs2000{suffix}"] = config
+# Representation of constant intervals (2-day campaign): conv's schedule replaced by n constant
+# intervals, each at the oracle spec (the baseline's applied LR divided by the transform) a
+# fraction q of the way through the interval (the last interval at min(q, 0.95), since the
+# oracle reaches 0 at the end). q = 0.5 is about the interval mean, q = 1 the end value.
+for batch_size in (2000, 500, 125):
+    for transform in (None, "ramp", "rampdown", "wave"):
+        for n in (5, 10):
+            for q in (0.5, 0.75, 1.0):
+                config = copy.deepcopy(RUN_CONFIGS[f"baseline_bs{batch_size}"])
+                group = config["param_groups"]["conv"]
+                lines = group["lr_scheduler"]
+                total = sum(line[0] for line in lines)
+                spec = LR_TRANSFORMS[transform] if transform else None
+                values = []
+                for i in range(n):
+                    frac = min(q, 0.95) if i == n - 1 else q
+                    step = min(int(total * (i + frac) / n), total - 1)
+                    applied = schedule_value_at_step(lines, step)
+                    values.append(round_hparam(applied / (lr_transform_factor(spec, step, total) if spec else 1.0)))
+                group["lr_scheduler"] = [(total // n, v) for v in values]
+                if spec:
+                    group["lr_transform"] = copy.deepcopy(spec)
+                RUN_CONFIGS[f"rep_n{n}_q{round(100 * q)}_bs{batch_size}{'_' + transform if transform else ''}"] = config
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
