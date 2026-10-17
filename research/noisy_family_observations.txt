@@ -1,0 +1,13 @@
+Held-out means over 8 seeds have a standard error of about 0.045 pp, so differences below about 0.1 pp between cells are not resolved. Target: the baseline's 93.92.
+
+The search's own score is now honest. Its final score (the mean over the seeds the search ran it on) is 0.03 pp below the held-out score on average (SD 0.06 over the 24 searches); in Experiment 3 the seed-0 score was 0.15 pp above it (SD 0.15), the winner's curse. Example, 5 constant intervals without a transform: search 93.77, held-out 93.80 (Experiment 3: 93.99 on seed 0, 93.62 held-out).
+
+It does not make the start worse: no final schedule is worse than its start by more than 0.05 pp held-out (mean gain +0.14 pp over the 24 searches); in Experiment 3, 5 of 24 finals were worse than their start by more than 0.05 pp.
+
+It is conservative. It made 0-2 moves per search (Experiment 3: 0-6), and 17 of 24 searches stopped at the 8-seed cap with undecided neighbours: with 8 seeds, a move needs a measured gain of about 0.08-0.12 pp (z = 1.28-2.05 times 0.06 pp), so smaller true gains are left on the table. Against Experiment 3 the held-out results are +0.03 pp on average: better by more than 0.1 pp in 7 cells (e.g. 5 intervals 93.80 vs 93.62, linear and power under the reverse ramp 93.86 vs 93.59, 2 knots 94.03 vs 93.86), worse in 3 (power under the ramp 93.70 vs 93.95, 5 intervals under the wave 93.60 vs 93.82, 2 knots under the ramp 93.64 vs 93.77), where Experiment 3's longer single-seed walk happened to reach a better region (power, ramp: lr 0.36, p = 2, one and three grid steps from the start).
+
+5 constant intervals without a transform reach 93.80, still below C4's 93.95 (Experiment 5): the search stopped at 0.13, 0.13, 0.13, 0.078, 0.017, three grid steps from C4 (0.13, 0.13, 0.078, 0.047, 0.01), with neighbours still undecided at 8 seeds.
+
+Families: 5 knots is at the target in every condition (93.91-93.97) without moving, as its projected start already was. Linear decay cannot compensate the ramp (93.42, the do-nothing score), as in Experiment 3. The best family per condition: 2 knots 94.03 (no transform), 5 knots 93.91 (ramp, reverse ramp), 3 knots 94.06 (wave).
+
+Cost: 1198 training runs for the 24 searches (Experiment 3: 270), 524 s per search on average (Experiment 3: 114 s), plus 16 held-out runs each.
