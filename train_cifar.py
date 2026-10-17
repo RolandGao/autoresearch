@@ -3430,6 +3430,11 @@ ICS_VERSIONS = {
     "v14": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
                 level_refine=0, level_joint=True, level_backoff=1, refine_start=1, replicates=[1, 1, 1, 2, 3],
                 refine_side_steps=2, final_expand=True, adaptive_reps=True, relevel_steps=4, carry_offset=True),
+    # v11 with a two-interval cooldown in the first pass (a shorter horizon is more biased toward small LRs;
+    # at BS 125 v10/v14's one-interval pass 1 ended 1-3 grid steps low in the middle intervals).
+    "v15": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, short_fraction=2.5, level_lookahead="short",
+                level_rule="largest", level_refine=0, level_joint=True, level_backoff=1, refine_start=1,
+                replicates=[1, 1, 1, 2, 3], refine_side_steps=2, final_expand=True, adaptive_reps=True, relevel_steps=4),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -3442,7 +3447,7 @@ for version, overrides in ICS_VERSIONS.items():
                     extra = dict(refine_start=4)
                 if version in ("v9", "v10", "v12") and scenario == "b":  # The level scan's cost: replicate only late.
                     extra = dict(replicates=[1, 1, 1, 2, 3])
-                if version in ("v13", "v14") and scenario == "b":  # And the relevel candidates' cost.
+                if version in ("v13", "v14", "v15") and scenario == "b":  # And the relevel candidates' cost.
                     extra = dict(replicates=[1, 1, 1, 1, 2])
                 RUN_CONFIGS[f"ics_{version}_{scenario}_bs{batch_size}{'_' + transform if transform else ''}"] = (
                     ics_config(batch_size, scenario, transform, **{**overrides, **extra}))
@@ -5885,7 +5890,7 @@ def run_ics_search(run, model, config):
         steps = min(short_steps, remaining)
         return [(steps, tuning["cooldown_mult"] * value)] + ([(remaining - steps, 0.0)] if remaining > steps else [])
 
-    short_steps = total // tuning["short_fraction"]
+    short_steps = int(total // tuning["short_fraction"])
 
     def lookahead_steps(k, kind):
         remaining = total - (k + 1) * length
