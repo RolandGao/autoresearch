@@ -1271,6 +1271,8 @@ story += [
 rows = [["Cell", "Averaged", "Parents (seed 0 / 1)", "Gain over their mean", "Baseline"]]
 gains = []
 for name in sorted(avg_runs):
+    if not name.startswith("avg_"):
+        continue
     version = name.split("_")[1]
     rest = name[len(f"avg_{version}_"):]
     sc, bs = rest[0], int(rest.split("_bs")[1].split("_")[0])
