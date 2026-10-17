@@ -3514,6 +3514,18 @@ ICS_VERSIONS = {
                 replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
                 final_shape="linear"),
+    # v29: v28 whose second passes also refine interval 0 (the shifted interval 0 overshoots under the reverse
+    # ramp at BS 2000: 0.13 in all 4 search seeds, oracle 0.065).
+    "v29": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
+                final_shape="linear"),
+    # v30: one full-budget search (v25: interval 0 refined too) committed midpoint-linear without the expansion.
+    "v30": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=2, final_expand=False, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", budget_reserve=True, final_shape="linear"),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
