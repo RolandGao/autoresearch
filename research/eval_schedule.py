@@ -1,0 +1,38 @@
+"""Train given constant-interval schedules on held-out seeds (evaluation only).
+
+python research/eval_schedule.py --batch-size 2000 --transform ramp --groups conv \
+    --schedule '{"conv": [0.13, 0.13, 0.078, 0.047, 0.01]}' --name avg_v5_a_bs2000_ramp
+Each searched group's schedule becomes len(values) equal constant intervals (spec values); with
+--transform the transform applies to the listed groups, as in the ICS configs.
+"""
+import argparse
+import copy
+import json
+
+from common import base_config, emit, new_model, open_log, t
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--batch-size", type=int, required=True)
+parser.add_argument("--transform", default="")
+parser.add_argument("--groups", required=True, help="comma-separated groups the transform applies to")
+parser.add_argument("--schedule", required=True, help="JSON {group: [values per interval]}")
+parser.add_argument("--name", required=True)
+parser.add_argument("--seeds", default="100,101,102,103,104,105,106,107")
+args = parser.parse_args()
+log = open_log(f"eval_schedule_{args.name}", args, __file__)
+
+config = copy.deepcopy(base_config(args.batch_size))
+schedule = json.loads(args.schedule)
+total = sum(int(line[0]) for line in config["param_groups"]["conv"]["lr_scheduler"])
+for g, values in schedule.items():
+    config["param_groups"][g]["lr_scheduler"] = [[total // len(values), v] for v in values]
+if args.transform:
+    for g in args.groups.split(","):
+        config["param_groups"][g]["lr_transform"] = copy.deepcopy(t.LR_TRANSFORMS[args.transform])
+model = new_model()
+scores = []
+for seed in [int(s) for s in args.seeds.split(",")]:
+    scores.append(t.run_seeded(f"{args.name}.s{seed}", model, config, seed, debug=False)["tta_val_acc"])
+    emit(log, kind="seed", seed=seed, tta=scores[-1])
+mean = sum(scores) / len(scores)
+emit(log, kind="result", name=args.name, schedule=schedule, transform=args.transform, mean=mean, per_seed=scores)
