@@ -1,0 +1,120 @@
+# commit 59c98ee240f966600f3a1b87fa118f1f4efadf39
+# args {"batch_size": 500, "seed": 6, "plan": "0.11,0.085,0.058,0.033,0.0065", "offsets": "-2,-1,0,1,2", "mults": "0.22", "abs_mults": "0.22,0.6,1", "tag": "_abs"}
+# worker w3 gpu GPU-674f1551-42ba-5784-af27-9470e1cdc7b4
+# source
+# | """How noisy and how biased is a lookahead's comparison of interval candidates?
+# | 
+# | Constant-interval conv schedules (5 intervals), the other groups on the baseline. A plan (one
+# | constant conv LR per interval; default C4, which matches the baseline at BS 2000) is followed
+# | up to interval k; there, candidate constant LRs c = the plan's value moved by grid offsets
+# | (x0.6 grid) are trained for one interval from the same state, then scored by:
+# |   truth     the rest of the run on the plan (the final score the decision affects)
+# |   rest_lin  the rest of the run with conv decaying linearly from c to 0
+# |   c40_<m>   one interval (T/5 steps) with conv constant at m x c
+# |   l40       one interval with conv decaying linearly from c to 0
+# |   a40_<m>   one interval with conv constant at m x the plan's value for interval k (the same
+# |             cooldown for every candidate; only with --abs-mults)
+# | Every seed is its own run from initialization (data order and augmentation follow the seed), so
+# | the spread over seeds of a candidate's score, and of the difference between two candidates
+# | scored on the same seed, are the noise a single-seed search decision faces.
+# | """
+# | import argparse
+# | 
+# | from common import base_config, emit, new_model, open_log, t
+# | 
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--batch-size", type=int, required=True)
+# | parser.add_argument("--seed", type=int, required=True)
+# | parser.add_argument("--plan", required=True, help="comma-separated constant conv LR per interval")
+# | parser.add_argument("--offsets", default="-2,-1,0,1,2")
+# | parser.add_argument("--mults", default="0.6,0.36,0.22")
+# | parser.add_argument("--abs-mults", default="", help="common-level cooldown multipliers (of the plan's value)")
+# | parser.add_argument("--tag", default="", help="log name suffix (a separate probe series)")
+# | args = parser.parse_args()
+# | log = open_log(f"lookahead_noise{args.tag}_bs{args.batch_size}_s{args.seed}", args, __file__)
+# | 
+# | config = base_config(args.batch_size)
+# | plan = [float(v) for v in args.plan.split(",")]
+# | offsets = [int(o) for o in args.offsets.split(",")]
+# | mults = [float(m) for m in args.mults.split(",")]
+# | abs_mults = [float(m) for m in args.abs_mults.split(",")] if args.abs_mults else []
+# | model = new_model()
+# | t.TRAINING_SEED = args.seed
+# | trainer = t.SegmentTrainer(model, config)
+# | base = trainer.base_schedules
+# | total = trainer.total_steps
+# | length = total // len(plan)
+# | 
+# | 
+# | def conv_schedule(head, rest):
+# |     """Constant intervals for the given head values, then rest (a list of schedule lines)."""
+# |     return [(length, v) for v in head] + rest
+# | 
+# | 
+# | def run_with(conv_lines, steps):
+# |     sched = dict(base)
+# |     sched["conv.initial_lr"] = conv_lines
+# |     ok = trainer.train(sched, steps)
+# |     return trainer.score("tta_val_acc") if ok else 0.0
+# | 
+# | 
+# | start = trainer.snapshot()
+# | emit(log, kind="setup", plan=plan, total=total, length=length, seed=args.seed)
+# | prefix_state = start
+# | for k in range(len(plan)):
+# |     remaining = total - (k + 1) * length
+# |     for offset in offsets:
+# |         c = t.round_hparam(0.6 ** (t.lr_grid_index(plan[k], 0.6) - offset))
+# |         trainer.restore(prefix_state)
+# |         head = plan[:k] + [c]
+# |         run_with(conv_schedule(head, conv_schedule(plan[k + 1:], [])), length)
+# |         mid = trainer.snapshot()
+# |         scores = {}
+# |         scores["truth"] = run_with(conv_schedule(head, conv_schedule(plan[k + 1:], [])), remaining) if remaining \
+# |             else trainer.score("tta_val_acc")
+# |         if remaining:
+# |             trainer.restore(mid)
+# |             scores["rest_lin"] = run_with(conv_schedule(head, [(remaining, c, 0.0)]), remaining)
+# |             for m in mults:
+# |                 trainer.restore(mid)
+# |                 scores[f"c40_{m:g}"] = run_with(conv_schedule(head, [(length, m * c), (remaining - length, 0.0)]),
+# |                                                  length)
+# |             trainer.restore(mid)
+# |             scores["l40"] = run_with(conv_schedule(head, [(length, c, 0.0), (remaining - length, 0.0)]), length)
+# |             for m in abs_mults:
+# |                 trainer.restore(mid)
+# |                 scores[f"a40_{m:g}"] = run_with(conv_schedule(head, [(length, m * plan[k]), (remaining - length, 0.0)]),
+# |                                                 length)
+# |         emit(log, kind="eval", k=k, offset=offset, c=c, **scores)
+# |     trainer.restore(prefix_state)
+# |     run_with(conv_schedule(plan, []), length)
+# |     prefix_state = trainer.snapshot()
+# | emit(log, kind="done", train_steps=trainer.train_steps)
+
+{"kind": "setup", "plan": [0.11, 0.085, 0.058, 0.033, 0.0065], "total": 800, "length": 160, "seed": 6, "time": 1792240120.5}
+{"kind": "eval", "k": 0, "offset": -2, "c": 0.047, "truth": 0.939799964427948, "rest_lin": 0.936199963092804, "c40_0.22": 0.9056999683380127, "l40": 0.914199948310852, "a40_0.22": 0.9063999652862549, "a40_0.6": 0.885699987411499, "a40_1": 0.8608999848365784, "time": 1792240156.8}
+{"kind": "eval", "k": 0, "offset": -1, "c": 0.078, "truth": 0.9365999698638916, "rest_lin": 0.9395999908447266, "c40_0.22": 0.913100004196167, "l40": 0.918999969959259, "a40_0.22": 0.9139999747276306, "a40_0.6": 0.8916999697685242, "a40_1": 0.8562999963760376, "time": 1792240193.2}
+{"kind": "eval", "k": 0, "offset": 0, "c": 0.13, "truth": 0.9362999796867371, "rest_lin": 0.9373999834060669, "c40_0.22": 0.9127999544143677, "l40": 0.9172999858856201, "a40_0.22": 0.9129999876022339, "a40_0.6": 0.8919000029563904, "a40_1": 0.8622999787330627, "time": 1792240229.5}
+{"kind": "eval", "k": 0, "offset": 1, "c": 0.22, "truth": 0.9391999840736389, "rest_lin": 0.9328999519348145, "c40_0.22": 0.9007999897003174, "l40": 0.9049999713897705, "a40_0.22": 0.9054999947547913, "a40_0.6": 0.8937999606132507, "a40_1": 0.8580999970436096, "time": 1792240265.3}
+{"kind": "eval", "k": 0, "offset": 2, "c": 0.36, "truth": 0.9359999895095825, "rest_lin": 0.9199999570846558, "c40_0.22": 0.8763999938964844, "l40": 0.8865000009536743, "a40_0.22": 0.8883999586105347, "a40_0.6": 0.8794999718666077, "a40_1": 0.8586999773979187, "time": 1792240301.1}
+{"kind": "eval", "k": 1, "offset": -2, "c": 0.028, "truth": 0.9371999502182007, "rest_lin": 0.9365999698638916, "c40_0.22": 0.9286999702453613, "l40": 0.9296000003814697, "a40_0.22": 0.9250999689102173, "a40_0.6": 0.9055999517440796, "a40_1": 0.8795999884605408, "time": 1792240334.7}
+{"kind": "eval", "k": 1, "offset": -1, "c": 0.047, "truth": 0.9380999803543091, "rest_lin": 0.9389999508857727, "c40_0.22": 0.9298999905586243, "l40": 0.9314000010490417, "a40_0.22": 0.9280999898910522, "a40_0.6": 0.906499981880188, "a40_1": 0.8789999485015869, "time": 1792240365.7}
+{"kind": "eval", "k": 1, "offset": 0, "c": 0.078, "truth": 0.9358999729156494, "rest_lin": 0.9407999515533447, "c40_0.22": 0.9240999817848206, "l40": 0.9289000034332275, "a40_0.22": 0.9238999485969543, "a40_0.6": 0.9055999517440796, "a40_1": 0.8842999935150146, "time": 1792240396.9}
+{"kind": "eval", "k": 1, "offset": 1, "c": 0.13, "truth": 0.9405999779701233, "rest_lin": 0.9359999895095825, "c40_0.22": 0.91839998960495, "l40": 0.918999969959259, "a40_0.22": 0.9196999669075012, "a40_0.6": 0.9056999683380127, "a40_1": 0.8779999613761902, "time": 1792240428.4}
+{"kind": "eval", "k": 1, "offset": 2, "c": 0.22, "truth": 0.9333999752998352, "rest_lin": 0.9266999959945679, "c40_0.22": 0.898099958896637, "l40": 0.9062999486923218, "a40_0.22": 0.902899980545044, "a40_0.6": 0.8940999507904053, "a40_1": 0.8727999925613403, "time": 1792240459.9}
+{"kind": "eval", "k": 2, "offset": -2, "c": 0.017, "truth": 0.939300000667572, "rest_lin": 0.9398999810218811, "c40_0.22": 0.9319999814033508, "l40": 0.9351999759674072, "a40_0.22": 0.9307000041007996, "a40_0.6": 0.9193999767303467, "a40_1": 0.902899980545044, "time": 1792240489.1}
+{"kind": "eval", "k": 2, "offset": -1, "c": 0.028, "truth": 0.9393999576568604, "rest_lin": 0.9416999816894531, "c40_0.22": 0.9345999956130981, "l40": 0.9370999932289124, "a40_0.22": 0.9334999918937683, "a40_0.6": 0.9243999719619751, "a40_1": 0.9001999497413635, "time": 1792240515.4}
+{"kind": "eval", "k": 2, "offset": 0, "c": 0.047, "truth": 0.9381999969482422, "rest_lin": 0.9426999688148499, "c40_0.22": 0.9343000054359436, "l40": 0.936199963092804, "a40_0.22": 0.9330999851226807, "a40_0.6": 0.9210000038146973, "a40_1": 0.899399995803833, "time": 1792240541.6}
+{"kind": "eval", "k": 2, "offset": 1, "c": 0.078, "truth": 0.9388999938964844, "rest_lin": 0.9368999600410461, "c40_0.22": 0.9314999580383301, "l40": 0.9325999617576599, "a40_0.22": 0.9311999678611755, "a40_0.6": 0.9228999614715576, "a40_1": 0.9065999984741211, "time": 1792240568.2}
+{"kind": "eval", "k": 2, "offset": 2, "c": 0.13, "truth": 0.9309999942779541, "rest_lin": 0.9312999844551086, "c40_0.22": 0.9175999760627747, "l40": 0.9204999804496765, "a40_0.22": 0.9174000024795532, "a40_0.6": 0.9127999544143677, "a40_1": 0.9021999835968018, "time": 1792240594.9}
+{"kind": "eval", "k": 3, "offset": -2, "c": 0.01, "truth": 0.9371999502182007, "rest_lin": 0.9393999576568604, "c40_0.22": 0.9375999569892883, "l40": 0.9393999576568604, "a40_0.22": 0.9371999502182007, "a40_0.6": 0.9328999519348145, "a40_1": 0.9267999529838562, "time": 1792240619.6}
+{"kind": "eval", "k": 3, "offset": -1, "c": 0.017, "truth": 0.9393999576568604, "rest_lin": 0.9413999915122986, "c40_0.22": 0.9401999711990356, "l40": 0.9413999915122986, "a40_0.22": 0.9387999773025513, "a40_0.6": 0.9362999796867371, "a40_1": 0.9266999959945679, "time": 1792240641.2}
+{"kind": "eval", "k": 3, "offset": 0, "c": 0.028, "truth": 0.9378999471664429, "rest_lin": 0.9404999613761902, "c40_0.22": 0.9386999607086182, "l40": 0.9404999613761902, "a40_0.22": 0.9381999969482422, "a40_0.6": 0.934499979019165, "a40_1": 0.9268999695777893, "time": 1792240663.1}
+{"kind": "eval", "k": 3, "offset": 1, "c": 0.047, "truth": 0.9375, "rest_lin": 0.9404999613761902, "c40_0.22": 0.9376999735832214, "l40": 0.9404999613761902, "a40_0.22": 0.9370999932289124, "a40_0.6": 0.9339999556541443, "a40_1": 0.9279999732971191, "time": 1792240685.0}
+{"kind": "eval", "k": 3, "offset": 2, "c": 0.078, "truth": 0.9286999702453613, "rest_lin": 0.9350999593734741, "c40_0.22": 0.9325000047683716, "l40": 0.9350999593734741, "a40_0.22": 0.9297999739646912, "a40_0.6": 0.9321999549865723, "a40_1": 0.925599992275238, "time": 1792240706.8}
+{"kind": "eval", "k": 4, "offset": -2, "c": 0.0022, "truth": 0.9361000061035156, "time": 1792240712.6}
+{"kind": "eval", "k": 4, "offset": -1, "c": 0.0036, "truth": 0.9377999901771545, "time": 1792240715.7}
+{"kind": "eval", "k": 4, "offset": 0, "c": 0.006, "truth": 0.9378999471664429, "time": 1792240718.7}
+{"kind": "eval", "k": 4, "offset": 1, "c": 0.01, "truth": 0.9382999539375305, "time": 1792240721.8}
+{"kind": "eval", "k": 4, "offset": 2, "c": 0.017, "truth": 0.9376999735832214, "time": 1792240724.8}
+{"kind": "done", "train_steps": 36800, "time": 1792240727.6}
