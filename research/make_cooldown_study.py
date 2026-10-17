@@ -29,6 +29,7 @@ import importance_study as imp  # noqa: E402
 import family_study as fam  # noqa: E402
 import range_study as rng  # noqa: E402
 import seed_runs as sr  # noqa: E402
+import lookahead_study as las  # noqa: E402
 import report_data  # noqa: E402
 import train_cifar as tc  # noqa: E402
 
@@ -1043,6 +1044,76 @@ if any("final_values" in r for r in yfam.values()):
     story += [keep([img, P("Figure 11. Applied conv LR of each family's final schedule (guided search, "
                            "uncertainty-aware selection); the black line is the baseline's applied LR.", "small")])]
 story += observations("guided_lcb_observations.txt")
+
+
+# Experiment 12: lookahead fidelity and noise for constant-interval decisions (2-day campaign).
+plan12, look = las.summary(2000)
+story += [
+    P("Experiment 12. Which lookahead decides constant intervals like the final result, and how noisy is it?",
+      "h1"),
+    P("Question", "h2"),
+    P("An interval search commits each constant interval by scoring candidates with a lookahead from the same "
+      "trained state. Which lookahead ranks the candidates like their true effect on the final score, and how "
+      "noisy is one seed's comparison of two candidates scored from the same state?"),
+    P("Setup", "h2"),
+    table([
+        ["Item", "Value"],
+        ["Plan", f"BS 2000, conv as 5 constant intervals of 40 steps following C4 ({', '.join(f'{v:g}' for v in plan12)}; "
+                 "it matches the baseline, Experiment 5), the other groups on the baseline"],
+        ["Candidates", "At interval k, from the plan's trained state: the plan's value moved -2..+2 grid steps (x0.6), "
+                       "trained for the interval"],
+        ["Scores", "truth: the rest of the run on the plan (what the decision affects); rest_lin: the rest of the "
+                   "run with conv decaying linearly from the candidate to 0; c40_m: one interval (40 steps) at m x "
+                   "candidate (m = 0.6, 0.36, 0.22); l40: one interval decaying linearly to 0"],
+        ["Seeds", "8 (0-7); each seed is its own run from initialization, so the plan's state differs per seed"],
+        ["Decision quality", "1-seed hit: how often one seed's best candidate by the score is the candidate with "
+                             "the best 8-seed mean truth; regret: the mean, over seeds, of the mean truth lost by "
+                             "that pick (pp)"],
+    ], [3.3 * cm, 13.7 * cm]),
+]
+variants12 = ["truth", "rest_lin", "c40_0.22", "c40_0.36", "c40_0.6", "l40"]
+rows = [["Interval (best by truth)", *variants12]]
+for k, r in look.items():
+    cells = [f"{k + 1} ({r['c'][r['best']]:g})"]
+    for v in variants12:
+        row = r["rows"].get(v)
+        cells.append("-" if row is None else f"{r['c'][row['mean_pick']]:g}; {row['hit']:.2f}; {row['regret']:.3f}")
+    rows.append(cells)
+story += [P("8-seed pick; 1-seed hit rate; 1-seed regret (pp of final TTA)", "h2"),
+          table(rows, [3.4 * cm] + [2.27 * cm] * len(variants12))]
+rows = [["Interval", "Noise of a paired comparison (SD over seeds of candidate - plan value, pp): truth / rest_lin"]]
+for k, r in look.items():
+    tr = r["rows"]["truth"]["paired_sd"]
+    rl = r["rows"].get("rest_lin", {"paired_sd": {}})["paired_sd"]
+    rows.append([str(k + 1), "; ".join(f"{r['c'][o]:g}: {tr[o]:.2f} / {rl.get(o, float('nan')):.2f}"
+                                       for o in r["offsets"] if o != 0)])
+story += [P("Noise of one seed's comparison of two candidates", "h2"), table(rows, [2.0 * cm, 15.0 * cm])]
+fig, axes = plt.subplots(1, 5, figsize=(12, 2.9), layout="constrained", sharey=True)
+styles12 = {"truth": ("#0b0b0b", "-"), "rest_lin": ("#2a78d6", "-"), "c40_0.22": ("#1baf7a", "--"),
+            "c40_0.36": ("#eb6834", "--"), "l40": ("#6250d6", ":")}
+for ax, (k, r) in zip(axes, look.items()):
+    xs = [r["c"][o] for o in r["offsets"]]
+    for v, (color, ls) in styles12.items():
+        row = r["rows"].get(v)
+        if row is None:
+            continue
+        top = max(row["means"].values())
+        ax.plot(xs, [max(-1.5, row["means"][o] - top) for o in r["offsets"]], color=color, linestyle=ls,
+                marker="o", markersize=3, linewidth=1.3, label=v)
+    ax.set_xscale("log")
+    ax.set_title(f"interval {k + 1}", loc="left", fontsize=9)
+    ax.set_xlabel("candidate conv LR")
+axes[0].set_ylabel("8-seed mean minus its best (pp)")
+axes[-1].legend(frameon=False, fontsize=7, loc="lower left")
+la_path = os.path.join(REPO, "plots", "lookahead_fidelity.png")
+fig.savefig(la_path, dpi=140)
+plt.close(fig)
+img = Image(la_path)
+img.drawWidth, img.drawHeight = 17 * cm, 17 * cm * img.imageHeight / img.imageWidth
+story += [keep([img, P("Figure 12. Each score's 8-seed mean per candidate, relative to its own best (points below -1.5 "
+                       "drawn at -1.5). A lookahead decides like the truth when its curve peaks where the truth's does.",
+                       "small")])]
+story += observations("lookahead_fidelity_observations.txt")
 
 
 def attach_headings(flowables):
