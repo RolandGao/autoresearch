@@ -1058,8 +1058,46 @@ story += [
       "one held-out mean has a standard error of about 0.045 pp, so 'matching' here means within about 0.1 pp."),
     P("The searches are run_ics_search in train_cifar.py (configs ics_v&lt;N&gt;_&lt;a|b&gt;_bs&lt;BS&gt;[_transform], "
       "a = conv only, b = 4 LRs); each version is run with 2 search seeds per cell. Experiments 12, 16, 17, 18 and 20 "
-      "are probes that shaped the versions; 13-15, 19 and 21 compare the versions."),
+      "are probes that shaped the versions; 13-15, 19, 21 and 22 compare the versions."),
 ]
+FINAL_VERSION = "v19"
+final_data = ics.load(FINAL_VERSION)
+ics_refs = ics.references()
+story += [
+    P(f"Campaign summary: the current algorithm (ICS {FINAL_VERSION})", "h2"),
+    table([
+        ["Step", "What it does (budget at BS 2000; it scales with the run's length)"],
+        ["Representation", "Each searched LR is 5 constant intervals (spec values; a transform applies on top), on the "
+                           "x0.6 grid; the final schedule is expanded to 10 intervals (each interval's halves tilted a "
+                           "quarter of the way, in log, toward its neighbours; Experiment 18)"],
+        ["Levels (4 LRs only)", "In interval 1, from 1.0: conv on a x7.7 grid (best score), then head and both biases "
+                                "together on a x7.7 grid, keeping the largest level within 1 pp of the best, each "
+                                "scored after the interval plus one interval at 0.22 x the value (~4 runs). Later, "
+                                "head and the biases follow conv's interval-to-interval profile"],
+        ["Pass 1", "Each interval in order: climb conv from the previous interval's value (smaller values first, "
+                   "moving while the score improves); a candidate's score is the interval plus one interval at 0.22 "
+                   "x the candidate (~6 runs). This finds the schedule's shape cheaply, transform included, but is "
+                   "biased toward small LRs (Experiment 12)"],
+        ["Shift", "Pass 1's schedule, except its last interval, is moved one grid step up (the bias correction)"],
+        ["Pass 2", "From the initial state again: keep interval 1; climb each later interval up to 2 grid steps from "
+                   "the shifted plan, scoring a candidate by the interval plus the rest of the run on the plan (the "
+                   "plan's tail unscaled); intervals 4 and 5 average 2 and 3 continuations with fresh data order "
+                   "(~8 runs)"],
+        ["Budget", "Every trained step counts; at most 20 full runs (the searches use 15-20)"],
+    ], [3.3 * cm, 13.7 * cm]),
+]
+rows = [["Batch size", *(f"{ics.TRANSFORM_LABELS[tr]}" for tr in ics.TRANSFORMS)]]
+for bs in ics.BATCH_SIZES:
+    base = ics.target(ics_refs, bs)
+    for sc in ics.SCENARIOS:
+        cells = [f"BS {bs}, {ics.SCENARIO_LABELS[sc]} ({'-' if base is None else f'{base:.2f}'})"]
+        for tr in ics.TRANSFORMS:
+            held = [r["heldout"] for r in final_data.get((sc, bs, tr), {}).values() if "heldout" in r]
+            cells.append("-" if not held else f"<b>{sum(held) / len(held):.2f}</b> ({sum(held) / len(held) - base:+.2f}; "
+                         f"{len(held)} seeds)")
+        rows.append(cells)
+story += [P(f"Held-out TTA of ICS {FINAL_VERSION} (mean over search seeds; vs the baseline in brackets)", "h2"),
+          table(rows, [4.2 * cm] + [3.2 * cm] * 4)]
 
 # Experiment 12: lookahead fidelity and noise for constant-interval decisions (2-day campaign).
 look_by_bs = {bs: las.summary(bs, "") for bs in (2000, 500, 125)}
