@@ -3352,7 +3352,8 @@ def ics_config(batch_size, scenario, transform, **overrides):
         intervals=5, passes=["rest_lin"], cooldown_mult=0.36, ratio=0.6,
         level_scan=[] if scenario == "a" else list(groups), level_lookahead="short", level_rule="best",
         level_margin=0.01, level_refine=3, level_joint=False, short_fraction=5, pass_intervals=[], fine=["conv"],
-        refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False,
+        refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False, level_backoff=0,
+        adaptive_reps=False, relevel_steps=0, carry_offset=False,
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3413,6 +3414,22 @@ ICS_VERSIONS = {
     "v11": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
                 level_refine=0, level_joint=True, refine_start=1, replicates=[1, 1, 1, 2, 3], refine_side_steps=2,
                 final_expand=True),
+    # v10 with the 4-LR levels lowered one x7.7 step after the scan: "largest within 1 pp" at a short
+    # horizon accepted whiten_bias 27000 and, under the ramp, norm_bias 3500 (full runs lose ~1 pp there).
+    "v12": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_backoff=1, refine_start=1, replicates=[1, 2, 2, 2, 3],
+                refine_side_steps=1, final_expand=True, adaptive_reps=True),
+    # v12 whose last pass also tries each 4-LR non-lead group one x7.7 step lower (from interval 2 on,
+    # scored over the rest of the run): whiten_bias 3500 cost ~0.5 pp where 460 did not (v12 smoke).
+    "v13": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_backoff=1, refine_start=1, replicates=[1, 2, 2, 2, 3],
+                refine_side_steps=1, final_expand=True, adaptive_reps=True, relevel_steps=4),
+    # v11 (replicates late, 2-step climbs) whose second pass carries a correction forward: pass 1's short
+    # cooldown is biased low in the middle intervals by steps too small for one rest-of-run decision to
+    # resolve, but the shift found in one interval starts the next one's climb.
+    "v14": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_backoff=1, refine_start=1, replicates=[1, 1, 1, 2, 3],
+                refine_side_steps=2, final_expand=True, adaptive_reps=True, relevel_steps=4, carry_offset=True),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -3423,8 +3440,10 @@ for version, overrides in ICS_VERSIONS.items():
                     extra = dict(refine_start=5)
                 if version == "v8" and scenario == "b":
                     extra = dict(refine_start=4)
-                if version in ("v9", "v10") and scenario == "b":  # The level scan's cost: replicate only late.
+                if version in ("v9", "v10", "v12") and scenario == "b":  # The level scan's cost: replicate only late.
                     extra = dict(replicates=[1, 1, 1, 2, 3])
+                if version in ("v13", "v14") and scenario == "b":  # And the relevel candidates' cost.
+                    extra = dict(replicates=[1, 1, 1, 1, 2])
                 RUN_CONFIGS[f"ics_{version}_{scenario}_bs{batch_size}{'_' + transform if transform else ''}"] = (
                     ics_config(batch_size, scenario, transform, **{**overrides, **extra}))
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
@@ -5747,7 +5766,8 @@ def run_guided_family_search(run, model, config):
 ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes", "cooldown_mult", "ratio",
                 "level_scan", "level_lookahead", "level_rule", "level_margin", "fine", "tie", "max_side_steps",
                 "larger_within", "refine_start", "replicates", "level_refine", "level_joint", "short_fraction",
-                "pass_intervals", "refine_side_steps", "final_expand", "budget", "heldout_seeds"}
+                "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
+                "carry_offset", "budget", "heldout_seeds"}
 
 
 def run_ics_search(run, model, config):
@@ -5767,7 +5787,9 @@ def run_ics_search(run, model, config):
         rest of the run on the previous pass's schedule, each group's tail scaled by candidate /
         previous value; later passes only), or "rest_fixed" (the same, tail unscaled: a candidate
         changes only its interval). The last interval is scored by the final metric.
-        Later passes start each interval's climb at the previous pass's value, and keep the previous
+        Later passes start each interval's climb at the previous pass's value (with carry_offset,
+        times the lead's ratio of this pass's previous interval to the previous pass's: a
+        correction found in one interval carries to the next), and keep the previous
         pass's values (and trained states, at no cost) for the intervals before refine_start.
       pass_intervals: intervals per pass ([] = intervals for every pass); a pass with twice the
         previous pass's intervals starts from its plan expanded: each interval split into halves
@@ -5790,6 +5812,12 @@ def run_ics_search(run, model, config):
         level_refine: x0.6 steps tried upward after the "largest" rule's x7.7 probes (0 = none).
         level_joint: with "largest", the non-lead groups are first scanned together (one
         multiplier for all of them), then each alone at most two x7.7 steps up from there.
+        level_backoff: x7.7 steps each non-lead group's level is then lowered (a safety margin: a
+        short horizon accepts levels near a long-horizon edge it cannot see).
+      relevel_steps: with tie, in the last pass's first refined interval, each non-lead group's
+        whole remaining profile is also tried relevel_steps x0.6 grid steps lower (one candidate per
+        group, scored with the rest-of-run lookahead, its tail lowered too) and kept if it scores
+        higher: the long horizon decides what the level scan's short horizon cannot see.
         When level_lookahead is the first pass's lookahead, interval 0's climbs reuse the scan's
         evaluations.
       fine: groups climbed on the x0.6 grid in interval 0.
@@ -5804,7 +5832,9 @@ def run_ics_search(run, model, config):
         best (counters a lookahead's small-LR bias; 0 = off).
       budget: the search stops evaluating new candidates once its trained steps would exceed
         budget x the run's total steps (every trained step counts, discarded probes included);
-        an interval whose committed values were never trained is then trained anyway.
+        an interval whose committed values were never trained is then trained anyway. With
+        adaptive_reps, a candidate whose replicates would exceed the budget gets fewer replicates
+        (down to one) before being skipped.
       heldout_seeds: retrain the committed schedule on these seeds (evaluation only).
     Each interval climbs each climbed group in turn (smaller values first, then larger, moving
     while the score improves), commits the best and continues from its trained state. The
@@ -5850,7 +5880,7 @@ def run_ics_search(run, model, config):
         if kind == "rest_geo":
             return [(length, value * tuning["ratio"] ** (j + 1)) for j in range(n - 1 - k)]
         if kind in ("rest_plan", "rest_fixed"):
-            scale = value / plan[g][k] if plan[g][k] > 0 and kind == "rest_plan" else 1.0
+            scale = value / plan[g][k] if plan[g][k] > 0 and kind == "rest_plan" else tail_scale[g]
             return [(length, plan[g][j] * scale) for j in range(k + 1, n)]
         steps = min(short_steps, remaining)
         return [(steps, tuning["cooldown_mult"] * value)] + ([(remaining - steps, 0.0)] if remaining > steps else [])
@@ -5869,6 +5899,9 @@ def run_ics_search(run, model, config):
             return cache[key][0]
         reps = replicates[k]
         cost = reps * (length + lookahead_steps(k, kind))
+        while tuning["adaptive_reps"] and reps > 1 and trainer.train_steps + cost > limit["steps"]:
+            reps -= 1
+            cost = reps * (length + lookahead_steps(k, kind))
         if trainer.train_steps + cost > limit["steps"]:
             budget_hit = True
             return None
@@ -5899,11 +5932,16 @@ def run_ics_search(run, model, config):
               f"train_steps={trainer.train_steps}", flush=True)
         return value
 
+    group_scale = {g: 1.0 for g in groups}  # Relevel factors, from scale_from[g] on.
+    scale_from = {g: 0 for g in groups}
+    tail_scale = {g: 1.0 for g in groups}  # Temporary, while a relevel candidate is scored.
+
     def tied(k, values):
         """With tie, after interval 0 the other groups follow the lead's profile."""
         if not tuning["tie"] or k == 0:
             return values
-        return dict(values, **{g: round_hparam(committed[g][0] * values[lead] / committed[lead][0])
+        return dict(values, **{g: round_hparam(committed[g][0] * (group_scale[g] if k >= scale_from[g] else 1.0)
+                                               * values[lead] / committed[lead][0])
                                for g in groups[1:]})
 
     def climb(k, g, kind, state, cache, factor_steps, start, side_steps):
@@ -6016,6 +6054,9 @@ def run_ics_search(run, model, config):
             cache = {}
             if p > 0:
                 current = {g: plan[g][k] for g in groups}
+                if tuning["carry_offset"] and k >= max(tuning["refine_start"], 1) and k > 0 and k < n - 1:
+                    ratio = committed[lead][k - 1] / plan[lead][k - 1] if plan[lead][k - 1] > 0 else 1.0
+                    current = {g: snap_lr_to_grid(current[g] * ratio, 0.6) for g in groups}
                 if k < tuning["refine_start"]:  # Same prefix as the previous pass: reuse its state.
                     boundary = (k + 1) * length
                     state = (pass_states[-1][boundary // prev_length - 1] if boundary % prev_length == 0
@@ -6036,6 +6077,8 @@ def run_ics_search(run, model, config):
                     current = largest_level(k, others, level_kind, state, level_cache, current, None)
                     for g in others:
                         current = largest_level(k, g, level_kind, state, level_cache, current, 2)
+                    for g in others:
+                        current[g] = grid(current[g], -4 * tuning["level_backoff"])
                 else:
                     for g in tuning["level_scan"]:
                         # x10 = 0.6 ** -4.5: a level step is 4 grid steps (x7.7).
@@ -6049,6 +6092,22 @@ def run_ics_search(run, model, config):
             side = tuning["max_side_steps"] if p == 0 else tuning["refine_side_steps"]
             for g in climbed:
                 current = climb(k, g, kind, state, cache, 1, current, side)
+            if (tuning["relevel_steps"] and tuning["tie"] and p == len(passes) - 1 and p > 0
+                    and k == max(tuning["refine_start"], 1) and k < n - 1):
+                base_key = (kind, tuple(current[g] for g in groups))
+                base_score = cache[base_key][0] if base_key in cache else evaluate(k, current, kind, state, cache)
+                for g in groups[1:]:
+                    factor = 0.6 ** tuning["relevel_steps"]
+                    candidate = dict(current, **{g: round_hparam(current[g] * factor)})
+                    tail_scale[g] = factor
+                    value = evaluate(k, candidate, kind, state, cache) if base_score is not None else None
+                    tail_scale[g] = 1.0
+                    log_event("ics_relevel", run=run, interval=k, group=g, factor=factor, base=base_score, score=value)
+                    if value is not None and value > base_score:
+                        current, base_score = candidate, value
+                        group_scale[g] *= factor
+                        scale_from[g] = k
+                        plan[g] = plan[g][:k] + [v * factor for v in plan[g][k:]]
             key = (kind, tuple(current[g] for g in groups))
             if key not in cache:
                 evaluate(k, current, kind, state, cache)
