@@ -3355,7 +3355,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False, level_backoff=0,
         adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1, level_individual=2,
         cooldown_mults=[], shift_groups="all", ensemble_scope="last", budget_reserve=False, share_levels=False,
-        final_shape="constant", relevel_groups=[],
+        final_shape="constant", relevel_groups=[], final_shift=0,
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3534,6 +3534,14 @@ ICS_VERSIONS = {
                 replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
                 final_shape="linear", relevel_steps=-2, relevel_groups=["head"]),
+    # v32: three independent short-cooldown searches (one pass each, shifted one grid step up at the end), averaged
+    # and committed midpoint-linear. With 4 LRs v29's second passes get almost no budget (pass 1 + the level scan
+    # use it), so its result is in effect two shifted first passes averaged; a third member replaces the idle pass.
+    "v32": dict(passes=["short"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 1], final_expand=False, adaptive_reps=True, shift_groups="lead",
+                ensemble=3, ensemble_scope="all", budget_reserve=True, share_levels=True, final_shape="linear",
+                final_shift=1),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -5872,7 +5880,8 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "larger_within", "refine_start", "replicates", "level_refine", "level_joint", "short_fraction",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
                 "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "shift_groups",
-                "ensemble_scope", "budget_reserve", "share_levels", "final_shape", "relevel_groups", "budget", "heldout_seeds"}
+                "ensemble_scope", "budget_reserve", "share_levels", "final_shape", "relevel_groups", "final_shift",
+                "budget", "heldout_seeds"}
 
 
 def midpoint_linear_lines(values, length):
@@ -5943,6 +5952,9 @@ def run_ics_search(run, model, config):
           levels instead of scanning again; the rest of the budget is split evenly among members.
         level_backoff: x7.7 steps each non-lead group's level is then lowered (a safety margin: a
         short horizon accepts levels near a long-horizon edge it cannot see).
+      final_shift: x0.6 grid steps each member's result of the last pass is moved up (all but the
+        last interval; tied groups keep their level and follow the lead's shifted profile): the
+        plan shift for a search whose last pass is the biased short-cooldown pass.
       relevel_groups: the groups relevel_steps tries ([] = every non-lead group); a negative
         relevel_steps tries them higher.
       relevel_steps: with tie, in the last pass's first refined interval, each non-lead group's
@@ -6338,7 +6350,19 @@ def run_ics_search(run, model, config):
             log_event("ics_interval", run=run, search_pass=p, interval=k, lookahead=kind, score=best_score,
                       train_steps=trainer.train_steps, **{g: current[g] for g in groups})
         if p == len(passes) - 1:
-            members.append(({g: list(committed[g]) for g in groups}, state))
+            final = {g: list(committed[g]) for g in groups}
+            if tuning["final_shift"]:  # The pass's plan shift, applied to its own result (no further pass).
+                final[lead] = ([grid(v, tuning["final_shift"]) if v > 0 else v for v in final[lead][:-1]]
+                               + final[lead][-1:])
+                for g in groups[1:]:
+                    if tuning["tie"]:  # Tied groups keep their level and follow the shifted lead's profile.
+                        final[g] = [final[g][0]] + [round_hparam(final[g][0] * v / final[lead][0])
+                                                    for v in final[lead][1:]]
+                    elif tuning["shift_groups"] == "all":
+                        final[g] = ([grid(v, tuning["final_shift"]) if v > 0 else v for v in final[g][:-1]]
+                                    + final[g][-1:])
+                log_event("ics_final_shift", run=run, member=member["index"], **final)
+            members.append((final, state))
         if member["index"] == 0 or whole:
             plan = {g: list(committed[g]) for g in groups}
             pass_states.append(states)
