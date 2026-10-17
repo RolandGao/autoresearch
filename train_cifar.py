@@ -3349,8 +3349,9 @@ def ics_config(batch_size, scenario, transform, **overrides):
     tuning = dict(
         algorithm="ics", metric="tta_val_acc", groups=groups,
         start={g: (pg[g]["lr_scheduler"][0][1] if scenario == "a" else 1.0) for g in groups},
-        intervals=5, lookahead="rest_lin", cooldown_mult=0.36, ratio=0.6,
-        level_scan=[] if scenario == "a" else list(groups), level_lookahead="short", fine=["conv"],
+        intervals=5, passes=["rest_lin"], cooldown_mult=0.36, ratio=0.6,
+        level_scan=[] if scenario == "a" else list(groups), level_lookahead="short", level_rule="best",
+        level_margin=0.01, fine=["conv"],
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3360,7 +3361,15 @@ def ics_config(batch_size, scenario, transform, **overrides):
     return config
 
 
-ICS_VERSIONS = {"v1": {}}
+ICS_VERSIONS = {
+    "v1": {},
+    # Two passes: a one-interval cooldown (0.22 x candidate; local, so the transform's global shape
+    # does not distort it) finds the schedule's shape, then a rest-of-run pass whose lookahead is
+    # that schedule (tail scaled by candidate / plan value) refines each interval.
+    "v2": dict(passes=["short", "rest_plan"], cooldown_mult=0.22, level_lookahead="none"),
+    # v2 with the largest-within-1pp level rule for head and the biases (from scratch).
+    "v3": dict(passes=["short", "rest_plan"], cooldown_mult=0.22, level_lookahead="none", level_rule="largest"),
+}
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
         for scenario in ("a", "b"):
@@ -5684,9 +5693,9 @@ def run_guided_family_search(run, model, config):
     return dict(best_config=config, best_result=result, trials=[dict(run=run, config=config, result=result)])
 
 
-ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "lookahead", "cooldown_mult", "ratio",
-                "level_scan", "level_lookahead", "fine", "tie", "max_side_steps", "larger_within", "budget",
-                "heldout_seeds"}
+ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes", "cooldown_mult", "ratio",
+                "level_scan", "level_lookahead", "level_rule", "level_margin", "fine", "tie", "max_side_steps",
+                "larger_within", "budget", "heldout_seeds"}
 
 
 def run_ics_search(run, model, config):
@@ -5698,35 +5707,48 @@ def run_ics_search(run, model, config):
       start: {group: initial LR}; snapped to the x0.6 grid.
       intervals: n; every searched LR is constant within each of n equal intervals (spec values;
         an lr_transform applies on top).
-      lookahead: how a candidate for interval k is scored after training the interval:
+      passes: one lookahead per pass; each pass searches every interval in order from the initial
+        state. How a candidate for interval k is scored after training the interval:
         "rest_lin" (the rest of the run, each searched LR decaying linearly from its candidate
         value to 0), "rest_geo" (the rest of the run as constant intervals continuing
-        value * ratio**j), or "short" (one interval at cooldown_mult x value). The last
-        interval is scored by the final metric (no lookahead).
+        value * ratio**j), "short" (one interval at cooldown_mult x value), or "rest_plan" (the
+        rest of the run on the previous pass's schedule, each group's tail scaled by candidate /
+        previous value; later passes only). The last interval is scored by the final metric.
+        Later passes start each interval's climb at the previous pass's value.
       cooldown_mult, ratio: parameters of "short" and "rest_geo".
-      level_scan: groups whose level is first scanned in interval 0 on a x10 grid (climb from
-        start while the score improves), each scored after interval 0 plus level_lookahead
-        ("none": right after the interval, or "short").
-      fine: groups climbed on the x0.6 grid in interval 0 (with the main lookahead).
+      level_scan: groups whose level is first scanned in the first pass's interval 0 on a x7.7
+        grid (both neighbours first, then the better side while the score improves), each
+        scored after interval 0 plus level_lookahead ("none": right after the interval, or
+        "short"). level_rule "best" keeps the best-scoring level; "largest" keeps, for groups other
+        than the lead, the largest level scoring within level_margin of the best seen (probing up,
+        then down, on the x7.7 grid, then refining upward on the x0.6 grid): a short horizon cannot
+        see such LRs' long-horizon effect below their upper edge, where the full run prefers them.
+      fine: groups climbed on the x0.6 grid in interval 0.
       tie: groups other than the lead follow the lead's profile after interval 0 (value_k =
         value_0 x lead_k / lead_0); otherwise every group is climbed in every interval.
       max_side_steps: most x0.6 grid steps one climb direction may move.
       larger_within: after a climb, move up the grid while the score stays within this of the
-        best (counters the lookahead's small-LR bias; 0 = off).
+        best (counters a lookahead's small-LR bias; 0 = off).
       budget: the search stops evaluating new candidates once its trained steps would exceed
-        budget x the run's total steps (every trained step counts, discarded probes included).
+        budget x the run's total steps (every trained step counts, discarded probes included);
+        an interval whose committed values were never trained is then trained anyway.
       heldout_seeds: retrain the committed schedule on these seeds (evaluation only).
     Each interval climbs each climbed group in turn (smaller values first, then larger, moving
-    while the score improves; level scans look both ways first and climb the better side),
-    commits the best and continues from its trained state.
+    while the score improves), commits the best and continues from its trained state. The
+    result is the last pass's schedule.
     """
     run_start = time.perf_counter()
     tuning = config["hparam_tuning"]
     require_fields(tuning, ICS_REQUIRED, "hparam_tuning")
-    if tuning["lookahead"] not in ("rest_lin", "rest_geo", "short"):
-        raise ValueError("ics lookahead must be rest_lin, rest_geo or short")
+    passes = list(tuning["passes"])
+    if not passes or any(kind not in ("rest_lin", "rest_geo", "short", "rest_plan") for kind in passes):
+        raise ValueError("ics passes must be rest_lin, rest_geo, short or rest_plan")
+    if passes[0] == "rest_plan":
+        raise ValueError("ics rest_plan needs a previous pass")
     if tuning["level_lookahead"] not in ("none", "short"):
         raise ValueError("ics level_lookahead must be none or short")
+    if tuning["level_rule"] not in ("best", "largest"):
+        raise ValueError("ics level_rule must be best or largest")
     groups = list(tuning["groups"])
     lead = groups[0]
     metric = tuning["metric"]
@@ -5736,16 +5758,17 @@ def run_ics_search(run, model, config):
     total = trainer.total_steps
     n = tuning["intervals"]
     length = total // n
-    budget_steps = tuning["budget"] * total
-    current = {g: snap_lr_to_grid(tuning["start"][g], 0.6) for g in groups}
-    committed = {g: [] for g in groups}
+    limit = {"steps": tuning["budget"] * total}
+    initial_state = trainer.snapshot()
     evaluations = 0
     budget_hit = False
+    plan = None
+    committed = {g: [] for g in groups}
 
     def grid(value, steps):
         return round_hparam(0.6 ** (lr_grid_index(value, 0.6) - steps))
 
-    def tail(value, k, kind):
+    def tail(g, value, k, kind):
         remaining = total - (k + 1) * length
         if remaining == 0 or kind == "none":
             return [(remaining, 0.0)] if remaining else []
@@ -5753,6 +5776,9 @@ def run_ics_search(run, model, config):
             return [(remaining, value, 0.0)]
         if kind == "rest_geo":
             return [(length, value * tuning["ratio"] ** (j + 1)) for j in range(n - 1 - k)]
+        if kind == "rest_plan":
+            scale = value / plan[g][k] if plan[g][k] > 0 else 1.0
+            return [(length, plan[g][j] * scale) for j in range(k + 1, n)]
         return [(length, tuning["cooldown_mult"] * value)] + ([(remaining - length, 0.0)] if remaining > length else [])
 
     def lookahead_steps(k, kind):
@@ -5766,7 +5792,7 @@ def run_ics_search(run, model, config):
         if key in cache:
             return cache[key][0]
         cost = length + lookahead_steps(k, kind)
-        if trainer.train_steps + cost > budget_steps:
+        if trainer.train_steps + cost > limit["steps"]:
             budget_hit = True
             return None
         trainer.restore(state)
@@ -5780,7 +5806,7 @@ def run_ics_search(run, model, config):
         if ok and steps:
             for g in groups:
                 sched[f"{g}.initial_lr"] = ([(length, v) for v in committed[g]] + [(length, values[g])]
-                                            + tail(values[g], k, kind))
+                                            + tail(g, values[g], k, kind))
             ok = trainer.train(sched, steps)
         value = trainer.score(metric) if ok else float("-inf")
         evaluations += 1
@@ -5796,12 +5822,12 @@ def run_ics_search(run, model, config):
         return dict(values, **{g: round_hparam(committed[g][0] * values[lead] / committed[lead][0])
                                for g in groups[1:]})
 
-    def climb(k, g, kind, state, cache, factor_steps):
-        """Climb group g's value on its grid (factor_steps grid steps per move) from current."""
-        best = tied(k, dict(current))
+    def climb(k, g, kind, state, cache, factor_steps, start):
+        """Climb group g's value on its grid (factor_steps grid steps per move) from start."""
+        best = tied(k, dict(start))
         best_score = evaluate(k, best, kind, state, cache)
         if best_score is None:
-            return best, best_score
+            return best
         directions = (-1, 1)
         if factor_steps > 1:  # Level scan: look both ways first, then climb the better side.
             sides = {d: evaluate(k, tied(k, dict(best, **{g: grid(best[g], d * factor_steps)})), kind, state, cache)
@@ -5826,38 +5852,80 @@ def run_ics_search(run, model, config):
                 if value is None or value < best_score - tuning["larger_within"]:
                     break
                 point = candidate
-            if point != best:
-                best = point
-                best_score = cache[(kind, tuple(best[x] for x in groups))][0]
-        return best, best_score
+            best = point
+        return best
 
-    state = trainer.snapshot()
-    for k in range(n):
-        kind = tuning["lookahead"] if k < n - 1 else "none"
-        cache = {}
-        if k == 0 and tuning["level_scan"]:
-            level_kind = tuning["level_lookahead"] if n > 1 else "none"
-            level_cache = {}
-            for g in tuning["level_scan"]:
-                # x10 = 0.6 ** -4.5: a x10 level step is ~4.5 grid steps; use 4 grid steps (x7.7).
-                current = climb(k, g, level_kind, state, level_cache, 4)[0]
-        climbed = tuning["fine"] if k == 0 else (groups if not tuning["tie"] else [lead])
-        current = tied(k, current)
-        for g in climbed:
-            current = climb(k, g, kind, state, cache, 1)[0]
-        key = (kind, tuple(current[g] for g in groups))
-        if key not in cache:
-            evaluate(k, current, kind, state, cache)
-        if key not in cache:  # Out of budget before this point was trained: train it anyway.
-            budget_steps_saved = budget_steps
-            budget_steps = float("inf")
-            evaluate(k, current, kind, state, cache)
-            budget_steps = budget_steps_saved
-        best_score, state = cache[key]
-        for g in groups:
-            committed[g].append(current[g])
-        log_event("ics_interval", run=run, interval=k, lookahead=kind, score=best_score,
-                  train_steps=trainer.train_steps, **{g: current[g] for g in groups})
+    def largest_level(k, g, kind, state, cache, start):
+        """The largest level of g within level_margin of the best probed (x7.7 probes, x0.6 refine)."""
+        margin = tuning["level_margin"]
+        probes = []
+        best = None
+
+        def probe(point):
+            nonlocal best
+            value = evaluate(k, point, kind, state, cache)
+            if value is not None:
+                probes.append((point, value))
+                best = value if best is None else max(best, value)
+            return value
+
+        if probe(dict(start)) is None:
+            return dict(start)
+        for direction in (1, -1):
+            if direction == -1 and len(probes) > 2:
+                break  # Some larger level was accepted: no need to look below the start.
+            point = dict(start)
+            for _ in range(tuning["max_side_steps"]):
+                point = dict(point, **{g: grid(point[g], 4 * direction)})
+                value = probe(point)
+                if value is None or value < best - margin:
+                    break
+        top = max((pt for pt, v in probes if v >= best - margin), key=lambda pt: pt[g])
+        point = top
+        for _ in range(3):  # Refine upward between the accepted level and the next x7.7 probe.
+            point = dict(point, **{g: grid(point[g], 1)})
+            value = probe(point)
+            if value is None or value < best - margin:
+                break
+            top = point
+        return top
+
+    for p, pass_kind in enumerate(passes):
+        state = initial_state
+        committed = {g: [] for g in groups}
+        current = ({g: snap_lr_to_grid(tuning["start"][g], 0.6) for g in groups} if p == 0
+                   else {g: plan[g][0] for g in groups})
+        for k in range(n):
+            kind = pass_kind if k < n - 1 else "none"
+            cache = {}
+            if p > 0:
+                current = {g: plan[g][k] for g in groups}
+            if p == 0 and k == 0 and tuning["level_scan"]:
+                level_kind = tuning["level_lookahead"] if n > 1 else "none"
+                level_cache = {}
+                for g in tuning["level_scan"]:
+                    # x10 = 0.6 ** -4.5: a level step is 4 grid steps (x7.7).
+                    if tuning["level_rule"] == "largest" and g != lead:
+                        current = largest_level(k, g, level_kind, state, level_cache, current)
+                    else:
+                        current = climb(k, g, level_kind, state, level_cache, 4, current)
+            climbed = tuning["fine"] if k == 0 else (groups if not tuning["tie"] else [lead])
+            current = tied(k, current)
+            for g in climbed:
+                current = climb(k, g, kind, state, cache, 1, current)
+            key = (kind, tuple(current[g] for g in groups))
+            if key not in cache:
+                evaluate(k, current, kind, state, cache)
+            if key not in cache:  # Out of budget before this point was trained: train it anyway.
+                saved, limit["steps"] = limit["steps"], float("inf")
+                evaluate(k, current, kind, state, cache)
+                limit["steps"] = saved
+            best_score, state = cache[key]
+            for g in groups:
+                committed[g].append(current[g])
+            log_event("ics_interval", run=run, search_pass=p, interval=k, lookahead=kind, score=best_score,
+                      train_steps=trainer.train_steps, **{g: current[g] for g in groups})
+        plan = {g: list(committed[g]) for g in groups}
     trainer.restore(state)
     final = trainer.score(metric)
     seconds = time.perf_counter() - run_start
