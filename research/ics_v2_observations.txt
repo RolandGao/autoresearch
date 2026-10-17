@@ -1,0 +1,5 @@
+The short-cooldown first pass fixes v1's transform failure: under the ramp the held-out TTA rises from 93.15 (v1) to 93.72 at BS 2000 and from 93.40 to 93.61 at BS 500, because pass 1's local cooldown lets the early intervals rise (0.36-0.6 at BS 2000, where v1 stayed at 0.13-0.22) and pass 2 then judges candidates against a lookahead with the right, transform-shaped profile.
+
+It is still 0.1-0.5 pp short everywhere: 93.68-93.77 at BS 2000 (baseline 93.92), 93.61-93.88 at BS 500 (94.00) and 93.37-93.75 at BS 125 (93.86), for 15-20 full runs. At BS 125 it is worse than v1 without a transform (93.47 vs 93.73): pass 1 decays faster than v1's rest-of-run lookahead (0.028, 0.017, 0.006, ... vs 0.028, 0.028, 0.017, ...) and pass 2, starting each climb from pass 1's values, does not undo it.
+
+Search-seed spread is large (up to 0.31 pp between the two seeds of one cell), so single-seed decisions still dominate the error (Experiment 17).
