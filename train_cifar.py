@@ -3457,6 +3457,11 @@ ICS_VERSIONS = {
     "v19": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
                 level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
                 replicates=[1, 1, 1, 2, 3], refine_side_steps=2, final_expand=True, adaptive_reps=True, plan_shift=1),
+    # The combination: plan shift, two averaged second passes, joint-only 4-LR levels (v18 + v19).
+    "v20": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
+                replicates=[1, 1, 1, 1, 1], refine_side_steps=2, final_expand=True, adaptive_reps=True, plan_shift=1,
+                ensemble=2),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
