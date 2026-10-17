@@ -3354,7 +3354,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         level_margin=0.01, level_refine=3, level_joint=False, short_fraction=5, pass_intervals=[], fine=["conv"],
         refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False, level_backoff=0,
         adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1, level_individual=2,
-        cooldown_mults=[],
+        cooldown_mults=[], shift_groups="all",
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3481,6 +3481,12 @@ ICS_VERSIONS = {
                 level_rule="largest", level_refine=0, level_joint=True, level_individual=0, level_backoff=0,
                 refine_start=1, replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=True,
                 adaptive_reps=True, plan_shift=1),
+    # v19 whose plan shift moves only conv: shifting the tied head/bias levels too pushed them toward their
+    # blow-up edge (4 LRs under the reverse ramp, 92.4-93.4; Experiment 22).
+    "v24": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
+                replicates=[1, 1, 1, 2, 3], refine_side_steps=2, final_expand=True, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead"),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -5818,7 +5824,8 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "level_scan", "level_lookahead", "level_rule", "level_margin", "fine", "tie", "max_side_steps",
                 "larger_within", "refine_start", "replicates", "level_refine", "level_joint", "short_fraction",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
-                "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "budget", "heldout_seeds"}
+                "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "shift_groups", "budget",
+                "heldout_seeds"}
 
 
 def run_ics_search(run, model, config):
@@ -5843,7 +5850,8 @@ def run_ics_search(run, model, config):
         times the lead's ratio of this pass's previous interval to the previous pass's: a
         correction found in one interval carries to the next; with plan_shift, the previous pass's
         values except the last interval's are first moved plan_shift x0.6 grid steps, a correction
-        for the short cooldown's small-LR bias), and keep the previous
+        for the short cooldown's small-LR bias; shift_groups "lead" shifts only the lead, so tied
+        groups keep their scanned levels), and keep the previous
         pass's values (and trained states, at no cost) for the intervals before refine_start.
       pass_intervals: intervals per pass ([] = intervals for every pass); a pass with twice the
         previous pass's intervals starts from its plan expanded: each interval split into halves
@@ -6137,7 +6145,10 @@ def run_ics_search(run, model, config):
             plan = {g: expand(plan[g], tuning["refine_start"] // 2) for g in groups}
         replicates = list(tuning["replicates"]) if p == len(passes) - 1 else [1] * n
         if p == 1 and tuning["plan_shift"] and member["index"] == 0:  # Only the first pass is biased.
-            plan = {g: [grid(v, tuning["plan_shift"]) if v > 0 else v for v in plan[g][:-1]] + plan[g][-1:]
+            if tuning["shift_groups"] not in ("all", "lead"):
+                raise ValueError("ics shift_groups must be all or lead")
+            plan = {g: ([grid(v, tuning["plan_shift"]) if v > 0 else v for v in plan[g][:-1]] + plan[g][-1:]
+                        if g == lead or tuning["shift_groups"] == "all" else plan[g])
                     for g in groups}
         if p == len(passes) - 1 and member["index"] == 0:
             plan_before_last = {g: list(v) for g, v in (plan or {}).items()} if plan else None
