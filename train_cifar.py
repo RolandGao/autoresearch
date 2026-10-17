@@ -3303,6 +3303,14 @@ for transform in (None, "ramp", "rampdown", "wave"):
             algorithm="noisy_family", metric="tta_val_acc", group="conv", family=copy.deepcopy(family),
             noise_sd=0.0012, confidence=0.8, max_seeds=8, heldout_seeds=HELDOUT_SEEDS)
         RUN_CONFIGS[f"auto_nfam_{family_name}_bs2000{suffix}"] = config
+        # Experiment 10: the guided search (guided_family): deep single-seed exploration along each
+        # parameter, a quadratic fit per parameter, joint moves, and a gate on fresh seeds.
+        config = copy.deepcopy(config)
+        config["hparam_tuning"] = dict(
+            algorithm="guided_family", metric="tta_val_acc", group="conv", family=copy.deepcopy(family),
+            noise_sd=0.0012, confidence=0.8, max_depth=3, max_candidates=3, max_seeds=8,
+            heldout_seeds=HELDOUT_SEEDS)
+        RUN_CONFIGS[f"auto_xfam_{family_name}_bs2000{suffix}"] = config
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -3570,9 +3578,10 @@ def validate_tuning_config(tuning):
         "auto",
         "global_family",
         "noisy_family",
+        "guided_family",
     ):
         raise ValueError("hparam_tuning requires a known algorithm")
-    if tuning["algorithm"] in ("auto", "global_family", "noisy_family"):
+    if tuning["algorithm"] in ("auto", "global_family", "noisy_family", "guided_family"):
         return  # These searches validate their own fields.
     required = {"algorithm", "metric", "params"}
     if tuning["algorithm"] in (
@@ -5427,6 +5436,163 @@ def run_noisy_family_search(run, model, config):
     return dict(best_config=config, best_result=result, trials=[dict(run=run, config=config, result=result)])
 
 
+def run_guided_family_search(run, model, config):
+    """Guided global_neighbour search over a parameterized schedule family for one group:
+    cheap deep exploration, a smooth fit along each parameter, and a significance gate on fresh
+    seeds.
+
+    hparam_tuning: group, family (as in run_global_family_search), metric, noise_sd (the SD of
+    one run's metric across seeds), confidence, max_depth, max_candidates, max_seeds,
+    heldout_seeds. Each round, from the current schedule (the anchor):
+      1. Explore: along each family parameter and direction, step the parameter one grid step
+         at a time (LR values x0.6, power x0.8), one run each on seed 0, while the run is not
+         clearly worse than the best run on that line (score >= best - z * noise_sd * sqrt(2),
+         z one-sided at confidence), up to max_depth steps.
+      2. Fit: along each parameter, a least-squares quadratic in the grid offset through all of
+         that line's seed-0 runs (the anchor's included); the predicted gain of an offset is the
+         fit there minus the fit at the anchor.
+      3. Propose: each parameter moved alone to its best fitted offset, and the joint move of
+         every parameter with a positive predicted gain (predicted gain = their sum); keep the
+         max_candidates largest predicted gains.
+      4. Verify on fresh seeds 1, 2, ...: as in run_noisy_family_search, a candidate is better
+         when the lower confidence bound of (its mean - the anchor's mean) is above 0 and is
+         ruled out when the upper bound is below 0 (Bonferroni over the candidates); otherwise
+         one more seed for the anchor and the undecided candidates, up to max_seeds.
+    Move to the better candidate with the highest mean; stop when no candidate is predicted to
+    gain or none proves better. The start (family_initial) and the final schedule are then
+    retrained on the held-out seeds.
+    """
+    run_start = time.perf_counter()
+    tuning = config["hparam_tuning"]
+    require_fields(tuning, {"algorithm", "metric", "group", "family", "noise_sd", "confidence", "max_depth",
+                            "max_candidates", "max_seeds", "heldout_seeds"}, "hparam_tuning")
+    name = tuning["group"]
+    family = tuning["family"]
+    sigma = tuning["noise_sd"]
+    max_seeds = tuning["max_seeds"]
+    total = sum(int(line[0]) for line in config["param_groups"][name]["lr_scheduler"])
+    log_config(run, config, label="base_config")
+    start = family_initial(family, config["param_groups"][name], total)
+    factors = {key: (0.8 if key == "power" else 0.6) for key in start}
+    anchor = {key: snap_lr_to_grid(v, factors[key]) for key, v in start.items()}
+    snapped = dict(anchor)
+    runs = {}  # (point key, seed) -> metric
+    z_line = NormalDist().inv_cdf(tuning["confidence"])
+
+    def key_of(values):
+        return tuple(values[k] for k in factors)
+
+    def score(values, seed):
+        cache_key = (key_of(values), seed)
+        if cache_key not in runs:
+            candidate = copy.deepcopy(dict(config, hparam_tuning=None))
+            candidate["param_groups"][name]["lr_scheduler"] = [
+                list(line) for line in family_schedule(family, values, total)]
+            value = run_seeded(f"{run}.s{seed}", model, candidate, seed, debug=False)[tuning["metric"]]
+            runs[cache_key] = value if isfinite(value) else 0.0
+            print(f"  family_eval {hparam_text(values)} seed={seed} {tuning['metric']}={format_log_value(runs[cache_key])}",
+                  flush=True)
+        return runs[cache_key]
+
+    def verified(values):
+        out = [runs[(key_of(values), seed)] for seed in range(1, max_seeds + 1) if (key_of(values), seed) in runs]
+        return sum(out) / len(out) if out else float("-inf"), len(out)
+
+    def verify(values, n):
+        for seed in range(1, min(n, max_seeds) + 1):
+            score(values, seed)
+
+    def moved(values, k, offset):
+        return dict(values, **{k: round_hparam(factors[k] ** (lr_grid_index(values[k], factors[k]) - offset))})
+
+    moves, rounds = 0, 0
+    while True:
+        rounds += 1
+        base = score(anchor, 0)
+        candidates = []
+        joint, joint_gain = dict(anchor), 0.0
+        for k in factors:
+            line = {0: base}
+            for direction in (1, -1):
+                best = base
+                for step in range(1, tuning["max_depth"] + 1):
+                    point = moved(anchor, k, direction * step)
+                    if not (isfinite(point[k]) and point[k] > 0):
+                        break
+                    value = score(point, 0)
+                    line[direction * step] = value
+                    if value < best - z_line * sigma * 2 ** 0.5:
+                        break
+                    best = max(best, value)
+            offsets = sorted(line)
+            fit = np.polyfit(offsets, [line[o] for o in offsets], 2)
+            fitted = {o: float(np.polyval(fit, o)) for o in offsets}
+            best_offset = max(offsets, key=lambda o: fitted[o])
+            gain = fitted[best_offset] - fitted[0]
+            log_event("guided_line", run=run, parameter=k, offsets=offsets, seed0=[line[o] for o in offsets],
+                      fitted=[fitted[o] for o in offsets], best_offset=best_offset, predicted_gain=gain)
+            if best_offset != 0 and gain > 0:
+                candidates.append((gain, moved(anchor, k, best_offset)))
+                joint, joint_gain = moved(joint, k, best_offset), joint_gain + gain
+        if sum(1 for gain, _ in candidates) >= 2:
+            candidates.append((joint_gain, joint))
+        candidates = sorted(candidates, key=lambda item: -item[0])[:tuning["max_candidates"]]
+        if not candidates:
+            reason = "no_predicted_gain"
+            break
+        z = NormalDist().inv_cdf(1 - (1 - tuning["confidence"]) / len(candidates))
+        points = [point for _, point in candidates]
+        verify(anchor, 1)
+        for point in points:
+            verify(point, 1)
+        while True:
+            m_a, n_a = verified(anchor)
+            stats = []
+            for point in points:
+                m, n = verified(point)
+                stats.append((point, m - m_a, sigma * (1 / n_a + 1 / n) ** 0.5, n))
+            better = [point for point, d, se, _ in stats if d - z * se > 0]
+            undecided = [point for point, d, se, _ in stats if d + z * se >= 0 and d - z * se <= 0]
+            log_event("guided_round", run=run, **anchor, mean=m_a, seeds=n_a, z=z, candidates=len(points),
+                      better=len(better), undecided=len(undecided),
+                      predicted=[gain for gain, _ in candidates],
+                      verified=[d for _, d, _, _ in stats])
+            if better or not undecided:
+                break
+            if n_a >= max_seeds and all(n >= max_seeds for point, _, _, n in stats if point in undecided):
+                break
+            verify(anchor, n_a + 1)
+            for point in undecided:
+                verify(point, verified(point)[1] + 1)
+        if not better:
+            reason = "none_proved_better"
+            break
+        anchor, moves = max(better, key=lambda point: verified(point)[0]), moves + 1
+        m, n = verified(anchor)
+        log_event("search_path", run=run, **anchor, score=m, seeds=n, reason="better")
+    m, n = verified(anchor)
+    evaluations = len(runs)
+    seconds = time.perf_counter() - run_start
+    log_event("search_stop", run=run, reason=reason, moves=moves)
+    log_event("auto_result", run=run, val_acc=0.0, tta_val_acc=m, search_seconds=seconds,
+              evaluations=evaluations, train_steps=evaluations * total, search_seeds=n)
+    for label, values in (("start", snapped), ("final", anchor)):
+        print(f"  {label} {name}.initial_lr: {json.dumps(values)}", flush=True)
+        candidate = copy.deepcopy(dict(config, hparam_tuning=None))
+        candidate["param_groups"][name]["lr_scheduler"] = [list(line) for line in family_schedule(family, values, total)]
+        held_start = time.perf_counter()
+        held = [run_seeded(f"{run}.{label}{seed}", model, candidate, seed, debug=False)["tta_val_acc"]
+                for seed in tuning["heldout_seeds"]]
+        avg = sum(held) / len(held)
+        sd = (sum((v - avg) ** 2 for v in held) / (len(held) - 1)) ** 0.5 if len(held) > 1 else 0.0
+        log_event("heldout_result" if label == "final" else "start_heldout_result", run=run,
+                  seeds=tuning["heldout_seeds"], tta_val_acc_mean=avg, tta_val_acc_std=sd, per_seed=held,
+                  seconds=time.perf_counter() - held_start)
+    result = dict(val_acc=0.0, tta_val_acc=m, seconds=seconds, evaluations=evaluations, best=anchor,
+                  start=snapped)
+    return dict(best_config=config, best_result=result, trials=[dict(run=run, config=config, result=result)])
+
+
 def heldout_evaluation(run, model, config, result, seeds):
     """Retrain an interval search's committed LR schedules on held-out seeds. Logs
     search_result (cost) and heldout_result lines in the format of run_auto_search."""
@@ -5476,6 +5642,8 @@ def run_experiment(run, model, config):
         return run_global_family_search(run, model, config)
     if tuning is not None and tuning["algorithm"] == "noisy_family":
         return run_noisy_family_search(run, model, config)
+    if tuning is not None and tuning["algorithm"] == "guided_family":
+        return run_guided_family_search(run, model, config)
     if tuning is not None and tuning["algorithm"] in ("interval", "interval2", "global_neighbour"):
         result = run_interval_search(run, model, config, debug=debug)
         if tuning.get("heldout_seeds"):
