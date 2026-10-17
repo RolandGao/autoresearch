@@ -1,0 +1,5 @@
+Expansion closes the representation gap: the 5-interval oracle staircases gain 0.14-0.25 pp and reach the baseline (BS 500: 93.85 -> 94.03, ramp 93.75 -> 94.00; BS 125: 93.80 -> 93.95, wave 93.78 -> 93.96), as high as the 10-interval staircases of Experiment 16.
+
+Searched schedules gain less but rarely lose: v5's BS 500 seed 1 goes from 93.89 to 94.00 and seed 0 from 93.83 to 93.90, v2's BS 2000 seed 1 from 93.62 to 93.83; the few losses are 0.02 pp. A searched schedule's errors are not the staircase's coarseness, which expansion fixes, but its decisions, which it does not.
+
+So the search can stay at 5 intervals (half the decisions of a 10-interval search, so less decision noise and lower cost: 10-interval searches tried in development, ICS v7 and v8, scored 93.64-93.83 on 2 held-out seeds) and expand its result for free.

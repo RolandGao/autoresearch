@@ -1,0 +1,5 @@
+Ten constant intervals can represent the baseline at BS 500 and 125; five cannot quite. With n = 10 and q = 0.75 the staircase scores 94.00 / 94.05 / 93.88 / 93.89 at BS 500 (no transform / ramp / reverse ramp / wave; baseline 94.00) and 93.81 / 93.90 / 93.86 / 93.95 at BS 125 (baseline 93.86). With n = 5 the best projection (q = 0.75) scores 93.75-93.91 at BS 500 and 93.72-93.84 at BS 125, 0.1-0.25 pp short.
+
+The interval value should sit a bit past the interval's middle: q = 0.75 beats the end value (q = 1) in all 8 BS 500 / 125 cells with n = 5, by 0.07-0.29 pp (BS 500 reverse ramp: 93.91 vs 93.62). At BS 2000 the 5-interval schedule C4, near the end values, matched the baseline (93.95, Experiment 5).
+
+The q = 0.5 (interval mean) and BS 2000 rows are still running.

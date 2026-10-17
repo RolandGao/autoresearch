@@ -1285,6 +1285,50 @@ if gains:
                 f"({sum(g > 0 for g in gains)} positive).", "small")]
 story += observations("averaging_observations.txt")
 
+# Experiment 18: expanding 5-interval schedules to 10 intervals.
+exp_rows = [["5-interval schedule", "As 5 intervals", "Expanded to 10", "Gain", "Baseline"]]
+exp_gains = []
+for name, (mean, sched) in sorted(avg_runs.items()):
+    if not name.startswith("exp_"):
+        continue
+    src = name[4:]
+    bs = int(src.split("bs")[1].split("_")[0])
+    if src.startswith("rep_"):
+        parent, label = ics_refs.get(src), f"oracle staircase q 0.75, BS {bs}"
+    elif src.startswith("avg_"):
+        parent, label = avg_runs.get(src, (None,))[0], f"averaged {src.split('_')[1]}, BS {bs}"
+    else:
+        version, seed = src.split("_")[0], int(src.split("_s")[-1])
+        parent = ics.load(version).get(("a", bs, ""), {}).get(seed, {}).get("heldout")
+        label = f"{version} seed {seed}, BS {bs}"
+    tr = src.split(f"bs{bs}")[1].split("_s")[0] if not src[-3:-1] == "_s" else src.split(f"bs{bs}")[1][:-3]
+    label += f", {ics.TRANSFORM_LABELS.get(tr, tr.lstrip('_'))}"
+    if parent is None:
+        continue
+    exp_gains.append(mean - parent)
+    base = ics.target(ics_refs, bs)
+    exp_rows.append([label, f"{parent:.2f}", f"<b>{mean:.2f}</b>", f"{mean - parent:+.2f}", "-" if base is None else f"{base:.2f}"])
+story += [
+    P("Experiment 18. Expanding 5-interval schedules to 10 intervals", "h1"),
+    P("Question", "h2"),
+    P("Ten intervals represent the baseline at BS 500 and 125 where five fall short (Experiment 16), but a 10-interval "
+      "search makes twice the noisy decisions. Does a 5-interval schedule, expanded to 10 intervals by a fixed rule, "
+      "score like a 10-interval one?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Expansion", "Each interval's value v is split into two halves: v x (previous / v)^(1/4) and v x (next / "
+                         "v)^(1/4) (the first interval's first half stays v; the last interval's second half "
+                         "continues the decay, v x (v / previous)^(1/4)). A quarter of the way, in log, toward each "
+                         "neighbour: the staircase becomes twice as fine and follows the trend"],
+           ["Schedules", "5-interval oracle staircases (q = 0.75, Experiment 16), searched schedules (ICS v2, v5) "
+                         "and averaged ones (Experiment 17); held-out seeds 100-107"]], [3.3 * cm, 13.7 * cm]),
+]
+if exp_gains:
+    story += [P("Held-out TTA", "h2"), table(exp_rows, [5.6 * cm, 2.6 * cm, 2.8 * cm, 2.0 * cm, 2.4 * cm]),
+              P(f"Mean gain {sum(exp_gains) / len(exp_gains):+.3f} pp over {len(exp_gains)} schedules "
+                f"({sum(g > 0 for g in exp_gains)} positive).", "small")]
+story += observations("expand_observations.txt")
+
 
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
@@ -1305,7 +1349,7 @@ def footer(canvas, doc):
     canvas.saveState()
     canvas.setFont("Helvetica", 7.5)
     canvas.setFillColor(MUTED)
-    canvas.drawString(2 * cm, 1.2 * cm, "Interval search experiments (batch size 2000)")
+    canvas.drawString(2 * cm, 1.2 * cm, "Interval search experiments")
     canvas.drawRightString(A4[0] - 2 * cm, 1.2 * cm, f"page {doc.page}")
     canvas.restoreState()
 
