@@ -3403,6 +3403,16 @@ ICS_VERSIONS = {
     "v9": dict(passes=["short", "rest_plan"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
                level_refine=0, level_joint=True, refine_start=1, replicates=[1, 2, 2, 2, 3], refine_side_steps=1,
                final_expand=True),
+    # v9 whose rest-of-run lookahead keeps the plan's tail unscaled: a candidate changes only its own
+    # interval, so a too-low plan's middle can rise without raising the end of the run with it.
+    "v10": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, refine_start=1, replicates=[1, 2, 2, 2, 3], refine_side_steps=1,
+                final_expand=True),
+    # v10 with the replicates only where lookaheads are short (v5 vs v2 showed no gain from them) and
+    # a wider second-pass climb (up to 2 grid steps from pass 1's value), which v10 at BS 125 needed.
+    "v11": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, refine_start=1, replicates=[1, 1, 1, 2, 3], refine_side_steps=2,
+                final_expand=True),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -3413,7 +3423,7 @@ for version, overrides in ICS_VERSIONS.items():
                     extra = dict(refine_start=5)
                 if version == "v8" and scenario == "b":
                     extra = dict(refine_start=4)
-                if version == "v9" and scenario == "b":  # The level scan's cost: replicate only late.
+                if version in ("v9", "v10") and scenario == "b":  # The level scan's cost: replicate only late.
                     extra = dict(replicates=[1, 1, 1, 2, 3])
                 RUN_CONFIGS[f"ics_{version}_{scenario}_bs{batch_size}{'_' + transform if transform else ''}"] = (
                     ics_config(batch_size, scenario, transform, **{**overrides, **extra}))
@@ -5755,7 +5765,8 @@ def run_ics_search(run, model, config):
         value to 0), "rest_geo" (the rest of the run as constant intervals continuing
         value * ratio**j), "short" (one interval at cooldown_mult x value), or "rest_plan" (the
         rest of the run on the previous pass's schedule, each group's tail scaled by candidate /
-        previous value; later passes only). The last interval is scored by the final metric.
+        previous value; later passes only), or "rest_fixed" (the same, tail unscaled: a candidate
+        changes only its interval). The last interval is scored by the final metric.
         Later passes start each interval's climb at the previous pass's value, and keep the previous
         pass's values (and trained states, at no cost) for the intervals before refine_start.
       pass_intervals: intervals per pass ([] = intervals for every pass); a pass with twice the
@@ -5803,9 +5814,9 @@ def run_ics_search(run, model, config):
     tuning = config["hparam_tuning"]
     require_fields(tuning, ICS_REQUIRED, "hparam_tuning")
     passes = list(tuning["passes"])
-    if not passes or any(kind not in ("rest_lin", "rest_geo", "short", "rest_plan") for kind in passes):
-        raise ValueError("ics passes must be rest_lin, rest_geo, short or rest_plan")
-    if passes[0] == "rest_plan":
+    if not passes or any(kind not in ("rest_lin", "rest_geo", "short", "rest_plan", "rest_fixed") for kind in passes):
+        raise ValueError("ics passes must be rest_lin, rest_geo, short, rest_plan or rest_fixed")
+    if passes[0] in ("rest_plan", "rest_fixed"):
         raise ValueError("ics rest_plan needs a previous pass")
     if tuning["level_lookahead"] not in ("none", "short"):
         raise ValueError("ics level_lookahead must be none or short")
@@ -5838,8 +5849,8 @@ def run_ics_search(run, model, config):
             return [(remaining, value, 0.0)]
         if kind == "rest_geo":
             return [(length, value * tuning["ratio"] ** (j + 1)) for j in range(n - 1 - k)]
-        if kind == "rest_plan":
-            scale = value / plan[g][k] if plan[g][k] > 0 else 1.0
+        if kind in ("rest_plan", "rest_fixed"):
+            scale = value / plan[g][k] if plan[g][k] > 0 and kind == "rest_plan" else 1.0
             return [(length, plan[g][j] * scale) for j in range(k + 1, n)]
         steps = min(short_steps, remaining)
         return [(steps, tuning["cooldown_mult"] * value)] + ([(remaining - steps, 0.0)] if remaining > steps else [])
