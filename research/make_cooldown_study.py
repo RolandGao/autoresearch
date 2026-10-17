@@ -1423,6 +1423,23 @@ story += [
     P("Held-out TTA (baseline 93.92)", "h2"), table(rows, [9.0 * cm, 4.0 * cm, 4.0 * cm]),
 ]
 story += observations("diag_b_observations.txt")
+ics_compare_section(
+    ["v11", "v14", "v15", "v16", "v17"], 21, "ICS v14-v17: fixing the first pass's bias and the second pass's noise",
+    "v11's remaining error has two visible causes: the first pass's short cooldown is biased toward small LRs (one "
+    "grid step in the middle intervals, more under the ramp and at BS 125; Experiment 12) and the second pass's "
+    "single-seed decisions are too noisy to undo it. Which fix helps?",
+    [["v11 (reference)", "Short-cooldown pass 1; rest-of-run pass 2 on pass 1's schedule, tail unscaled, climbs up to 2 "
+                         "grid steps, replicates only in intervals 4-5; expanded to 10 intervals"],
+     ["v14", "v11 + the second pass carries its correction forward: an interval's climb starts at pass 1's value "
+             "times the previous interval's pass-2 / pass-1 ratio"],
+     ["v15", "v11 with a two-interval cooldown in pass 1 (a longer horizon, less biased in principle)"],
+     ["v16", "v11 + pass 1's schedule shifted one grid step up (all but the last interval) before pass 2"],
+     ["v17", "v11 with pass 2 run twice from pass 1's schedule (different data order, no replicates), the two "
+             "schedules averaged (geometric mean)"],
+     ["4 LRs", "v14-v17 also lower the head/bias levels one x7.7 step after the scan and try each one step lower "
+               "again in pass 2 (v13's relevel); v17 runs conv only (two second passes do not fit with the level "
+               "scan)"]],
+    "ics_v14_v17_observations.txt")
 
 
 def attach_headings(flowables):
