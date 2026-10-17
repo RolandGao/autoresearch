@@ -2,4 +2,8 @@ Refining the first interval closes BS 2000. On search seeds 0-1, v29 is within 0
 
 v30's single full-budget search is weaker conv only: 0.039 pp short on average (11 of 12 within 0.1 pp), lowest at BS 125 under the ramp (93.78). With the linear commit, two half-budget searches averaged beat one search with twice the budget per decision.
 
-v29's search seeds 2-3 are running; this conclusion stands only if they agree.
+v30's single search is also weaker with 4 LRs (0.088 pp short on its 8 finished cells, 4 within 0.1 pp; BS 500 93.78 under the ramp and 93.75 with the wave).
+
+v29's two 4-LR misses are level errors, in opposite directions (held-out probes of its two linear schedules per cell, seeds 0 / 1, research/eval_schedule.py). At BS 2000 without a transform (searched 93.70 / 93.71), head is too low: the common level of head and the biases is 460 while the baseline's head starts at 1300, and head x2.78 scores 93.84 / 93.78; all three groups x1.67 score 93.79 / 93.79, and conv's searched schedule with the other groups on the baseline 93.80 / 93.75. At BS 500 under the reverse ramp (93.92 / 93.81) the common level sits one x0.6 step below divergence: x1.67 scores 92.39 / 92.17, x2.78 diverges (41 / 48), while x0.6 scores 94.04 / 93.96 and norm_bias alone x0.22 94.04 / 93.97. The "largest level within 1 pp" rule lands next to the stability edge under the reverse ramp (the transform multiplies the start by 4), and a single common level cannot give head (baseline 1300 at BS 2000) and the biases (99 and 36) their own.
+
+v29's search seeds 2-3 are running; the conclusion on v29 stands only if they agree.
