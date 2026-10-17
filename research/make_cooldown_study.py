@@ -1189,6 +1189,34 @@ ics_section(
                 "searched groups"],
      ["Evaluation", "2 search seeds (0, 1) per cell; each committed schedule retrained on held-out seeds 100-107"]],
     "ics_v1_observations.txt")
+ics_section(
+    "v2", 14, "ICS v2: a short-cooldown pass, then a rest-of-run pass on its plan",
+    "v1's rest-of-run linear lookahead is defined on the spec schedule, so under a transform its applied shape is "
+    "distorted and it misjudges early intervals (v1 under the ramp: 93.11-93.19, below doing nothing). Does a first "
+    "pass with a short, local cooldown, whose schedule then serves as the second pass's lookahead, fix that?",
+    [["Pass 1", "Every interval in order: climb conv from the previous interval's value, each candidate scored after "
+                "the interval plus one interval at 0.22 x its value (the least biased short cooldown, Experiment 12; "
+                "local, so a transform's global shape does not distort it)"],
+     ["Pass 2", "From the initial state again: each interval's climb starts at pass 1's value; a candidate is scored "
+                "after the rest of the run on pass 1's schedule, its tail scaled by candidate / pass-1 value "
+                "(rest_plan); the last interval by the final TTA"],
+     ["Other", "As v1 (5 constant intervals, x0.6 grid, budget 20 full runs, 2 search seeds, held-out seeds "
+               "100-107); conv only: v2's 4-LR variant is replaced by v3/v4 (level rule)"]],
+    "ics_v2_observations.txt")
+ics_section(
+    "v5", 15, "ICS v5: v2 plus kept first interval and replicated late decisions",
+    "The late intervals' decisions are worth ~0.1 pp each and one seed gets them wrong about half the time "
+    "(Experiment 12), while the first interval's rest-of-run candidates cost a full run each. Does keeping pass 1's "
+    "first interval and scoring the late candidates by several continuations close the remaining gap within budget?",
+    [["As v2", "Pass 1 with the 0.22 x short cooldown, pass 2 with the rest_plan lookahead"],
+     ["Kept interval", "Pass 2 keeps pass 1's first interval (value and trained state, at no cost)"],
+     ["Replicates", "In pass 2, a candidate for interval 4 is scored by the mean of 2 continuations and for interval "
+                    "5 of 3: the first on the run's own data stream (its state is committed), the others restore the "
+                    "pre-interval state, reseed the data order and augmentation (fresh epoch) and train interval + "
+                    "lookahead again"],
+     ["4 LRs", "Levels: x7.7 scan right after interval 1 (conv: best score; head and biases: largest within 1 pp of "
+               "the best), then as conv only with the other groups tied to conv's profile"]],
+    "ics_v5_observations.txt")
 
 
 def attach_headings(flowables):
