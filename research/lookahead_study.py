@@ -4,7 +4,7 @@ paired single-seed comparison), and the decision quality of picking a candidate 
 on one seed: how often it picks the candidate with the best mean truth, and the mean regret in
 truth (pp) of its pick.
 
-python research/lookahead_study.py <batch_size>
+python research/lookahead_study.py <batch_size> [tag, e.g. _abs]
 """
 import glob
 import json
@@ -16,10 +16,10 @@ from collections import defaultdict
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def load(batch_size):
+def load(batch_size, tag):
     data = defaultdict(dict)  # (k, offset) -> seed -> scores
     plan = None
-    for path in glob.glob(os.path.join(REPO, "logs", f"research_lookahead_noise_bs{batch_size}_s*.log")):
+    for path in glob.glob(os.path.join(REPO, "logs", f"research_lookahead_noise{tag}_bs{batch_size}_s*.log")):
         seed = None
         for line in open(path):
             if not line.startswith("{"):
@@ -34,15 +34,16 @@ def load(batch_size):
     return plan, data
 
 
-def summary(batch_size):
-    plan, data = load(batch_size)
+def summary(batch_size, tag):
+    plan, data = load(batch_size, tag)
     out = {}
     for k in sorted({k for k, _ in data}):
         offsets = sorted(o for kk, o in data if kk == k)
         seeds = sorted(set.intersection(*(set(data[(k, o)]) for o in offsets)))
         if not seeds:
             continue
-        variants = [v for v in data[(k, offsets[0])][seeds[0]] if v != "c"]
+        variants = [v for v in data[(k, offsets[0])][seeds[0]] if v != "c"
+                    and all(v in data[(k, o)][s] for o in offsets for s in seeds)]
         truth_mean = {o: statistics.mean(data[(k, o)][s]["truth"] for s in seeds) for o in offsets}
         best = max(offsets, key=lambda o: truth_mean[o])
         rows = {}
@@ -60,7 +61,7 @@ def summary(batch_size):
 
 
 if __name__ == "__main__":
-    plan, out = summary(int(sys.argv[1]))
+    plan, out = summary(int(sys.argv[1]), sys.argv[2] if len(sys.argv) > 2 else "")
     print("plan", plan)
     for k, r in out.items():
         print(f"\ninterval {k}: seeds {len(r['seeds'])}, candidates {[r['c'][o] for o in r['offsets']]}, "

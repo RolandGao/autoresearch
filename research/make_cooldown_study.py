@@ -1062,7 +1062,7 @@ story += [
 ]
 
 # Experiment 12: lookahead fidelity and noise for constant-interval decisions (2-day campaign).
-look_by_bs = {bs: las.summary(bs) for bs in (2000, 500, 125)}
+look_by_bs = {bs: las.summary(bs, "") for bs in (2000, 500, 125)}
 look_by_bs = {bs: v for bs, v in look_by_bs.items() if v[1]}
 story += [
     P("Experiment 12. Which lookahead decides constant intervals like the final result, and how noisy is it?",
