@@ -3354,6 +3354,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         level_margin=0.01, level_refine=3, level_joint=False, short_fraction=5, pass_intervals=[], fine=["conv"],
         refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False, level_backoff=0,
         adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1, level_individual=2,
+        cooldown_mults=[],
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3462,6 +3463,24 @@ ICS_VERSIONS = {
                 level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
                 replicates=[1, 1, 1, 1, 1], refine_side_steps=2, final_expand=True, adaptive_reps=True, plan_shift=1,
                 ensemble=2),
+    # v19 whose first pass scores candidates with a cooldown at a common level (0.22 x the interval's starting
+    # value) instead of 0.22 x each candidate, which penalizes larger candidates twice; no plan shift.
+    "v21": dict(passes=["short_abs", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
+                replicates=[1, 1, 1, 2, 3], refine_side_steps=2, final_expand=True, adaptive_reps=True),
+    # v21 whose common cooldown level follows the schedule's decay: 0.6 x the interval's starting value early
+    # (where the schedule decays slowly; 0.22 is biased low there), 0.22 x it in the fourth interval.
+    "v22": dict(passes=["short_abs", "rest_fixed"], cooldown_mult=0.22, cooldown_mults=[0.6, 0.6, 0.6, 0.22, 0.22],
+                level_lookahead="short", level_rule="largest", level_refine=0, level_joint=True, level_individual=0,
+                level_backoff=0, refine_start=1, replicates=[1, 1, 1, 2, 3], refine_side_steps=2, final_expand=True,
+                adaptive_reps=True),
+    # v19 with a third pass: the rest-of-run refinement repeated on the second pass's (better) plan, which a
+    # transform-shaped bias left by the first pass needs; both refinement passes climb one grid step at most,
+    # and only the last one replicates (its last interval), to fit the budget.
+    "v23": dict(passes=["short", "rest_fixed", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short",
+                level_rule="largest", level_refine=0, level_joint=True, level_individual=0, level_backoff=0,
+                refine_start=1, replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=True,
+                adaptive_reps=True, plan_shift=1),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -5799,7 +5818,7 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "level_scan", "level_lookahead", "level_rule", "level_margin", "fine", "tie", "max_side_steps",
                 "larger_within", "refine_start", "replicates", "level_refine", "level_joint", "short_fraction",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
-                "carry_offset", "plan_shift", "ensemble", "level_individual", "budget", "heldout_seeds"}
+                "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "budget", "heldout_seeds"}
 
 
 def run_ics_search(run, model, config):
@@ -5818,7 +5837,8 @@ def run_ics_search(run, model, config):
         value * ratio**j), "short" (one interval at cooldown_mult x value), or "rest_plan" (the
         rest of the run on the previous pass's schedule, each group's tail scaled by candidate /
         previous value; later passes only), or "rest_fixed" (the same, tail unscaled: a candidate
-        changes only its interval). The last interval is scored by the final metric.
+        changes only its interval), or "short_abs" (like "short", but at cooldown_mult x the value
+        the interval's climb started from: the same cooldown for every candidate of the interval). The last interval is scored by the final metric.
         Later passes start each interval's climb at the previous pass's value (with carry_offset,
         times the lead's ratio of this pass's previous interval to the previous pass's: a
         correction found in one interval carries to the next; with plan_shift, the previous pass's
@@ -5829,7 +5849,8 @@ def run_ics_search(run, model, config):
         previous pass's intervals starts from its plan expanded: each interval split into halves
         tilted a quarter of the way (in log) toward the neighbouring interval's value, except the
         first refine_start // 2 intervals, kept flat so their trained states can be reused.
-      cooldown_mult, ratio: parameters of "short" and "rest_geo"; short_fraction: "short"'s length
+      cooldown_mult, ratio: parameters of "short" and "rest_geo" (cooldown_mults, if not empty: one
+        cooldown multiplier per interval instead); short_fraction: "short"'s length
         is total // short_fraction steps (5 = a fifth of the run, whatever the interval count).
       replicates: per interval, how many continuations score a candidate in the last pass: the
         first trains on the run's own data stream (its state is the one committed); each other
@@ -5882,8 +5903,9 @@ def run_ics_search(run, model, config):
     tuning = config["hparam_tuning"]
     require_fields(tuning, ICS_REQUIRED, "hparam_tuning")
     passes = list(tuning["passes"])
-    if not passes or any(kind not in ("rest_lin", "rest_geo", "short", "rest_plan", "rest_fixed") for kind in passes):
-        raise ValueError("ics passes must be rest_lin, rest_geo, short, rest_plan or rest_fixed")
+    if not passes or any(kind not in ("rest_lin", "rest_geo", "short", "short_abs", "rest_plan", "rest_fixed")
+                         for kind in passes):
+        raise ValueError("ics passes must be rest_lin, rest_geo, short, short_abs, rest_plan or rest_fixed")
     if passes[0] in ("rest_plan", "rest_fixed"):
         raise ValueError("ics rest_plan needs a previous pass")
     if tuning["level_lookahead"] not in ("none", "short"):
@@ -5921,13 +5943,17 @@ def run_ics_search(run, model, config):
             scale = value / plan[g][k] if plan[g][k] > 0 and kind == "rest_plan" else tail_scale[g]
             return [(length, plan[g][j] * scale) for j in range(k + 1, n)]
         steps = min(short_steps, remaining)
-        return [(steps, tuning["cooldown_mult"] * value)] + ([(remaining - steps, 0.0)] if remaining > steps else [])
+        mult = tuning["cooldown_mults"][k] if tuning["cooldown_mults"] else tuning["cooldown_mult"]
+        level = mult * (short_ref[g] if kind == "short_abs" else value)
+        return [(steps, level)] + ([(remaining - steps, 0.0)] if remaining > steps else [])
 
     short_steps = int(total // tuning["short_fraction"])
 
+    short_ref = {}  # short_abs: each group's value when the interval's climb started.
+
     def lookahead_steps(k, kind):
         remaining = total - (k + 1) * length
-        return 0 if kind == "none" else (min(short_steps, remaining) if kind == "short" else remaining)
+        return 0 if kind == "none" else (min(short_steps, remaining) if kind in ("short", "short_abs") else remaining)
 
     def evaluate(k, values, kind, state, cache):
         """Train interval k at values (group -> LR) from state, then the lookahead; cached."""
@@ -6110,7 +6136,7 @@ def run_ics_search(run, model, config):
                 raise ValueError("ics pass_intervals may only double, with an even refine_start")
             plan = {g: expand(plan[g], tuning["refine_start"] // 2) for g in groups}
         replicates = list(tuning["replicates"]) if p == len(passes) - 1 else [1] * n
-        if p > 0 and tuning["plan_shift"] and member["index"] == 0:
+        if p == 1 and tuning["plan_shift"] and member["index"] == 0:  # Only the first pass is biased.
             plan = {g: [grid(v, tuning["plan_shift"]) if v > 0 else v for v in plan[g][:-1]] + plan[g][-1:]
                     for g in groups}
         if p == len(passes) - 1 and member["index"] == 0:
@@ -6130,7 +6156,7 @@ def run_ics_search(run, model, config):
                     current = {g: snap_lr_to_grid(current[g] * ratio, 0.6) for g in groups}
                 if k < tuning["refine_start"]:  # Same prefix as the previous pass: reuse its state.
                     boundary = (k + 1) * length
-                    if tuning["plan_shift"]:  # Shifted values: train the kept interval (no lookahead).
+                    if tuning["plan_shift"] and p == 1:  # Shifted values: train the kept interval.
                         current = tied(k, current)
                         saved, limit["steps"] = limit["steps"], float("inf")
                         evaluate(k, current, "none", state, cache)
@@ -6168,6 +6194,7 @@ def run_ics_search(run, model, config):
                                             tuning["max_side_steps"])
             climbed = tuning["fine"] if k == 0 else (groups if not tuning["tie"] else [lead])
             current = tied(k, current)
+            short_ref.update(current)
             side = tuning["max_side_steps"] if p == 0 else tuning["refine_side_steps"]
             for g in climbed:
                 current = climb(k, g, kind, state, cache, 1, current, side)
