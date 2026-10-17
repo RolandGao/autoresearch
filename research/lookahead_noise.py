@@ -25,8 +25,9 @@ parser.add_argument("--plan", required=True, help="comma-separated constant conv
 parser.add_argument("--offsets", default="-2,-1,0,1,2")
 parser.add_argument("--mults", default="0.6,0.36,0.22")
 parser.add_argument("--abs-mults", default="", help="common-level cooldown multipliers (of the plan's value)")
+parser.add_argument("--tag", default="", help="log name suffix (a separate probe series)")
 args = parser.parse_args()
-log = open_log(f"lookahead_noise_bs{args.batch_size}_s{args.seed}", args, __file__)
+log = open_log(f"lookahead_noise{args.tag}_bs{args.batch_size}_s{args.seed}", args, __file__)
 
 config = base_config(args.batch_size)
 plan = [float(v) for v in args.plan.split(",")]
