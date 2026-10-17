@@ -19,6 +19,7 @@ from bisect import bisect_left, bisect_right
 from datetime import datetime, timezone
 from itertools import product
 from math import ceil, isfinite, log, pi, sin
+from statistics import NormalDist
 from types import SimpleNamespace
 
 timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%fZ")
@@ -3295,6 +3296,13 @@ for transform in (None, "ramp", "rampdown", "wave"):
             algorithm="global_family", metric="tta_val_acc", group="conv",
             family=copy.deepcopy(family), max_side_steps=20, heldout_seeds=HELDOUT_SEEDS)
         RUN_CONFIGS[f"auto_gfam_{family_name}_bs2000{suffix}"] = config
+        # Experiment 9: the same, searched by the noise-aware global_neighbour search
+        # (noisy_family; noise_sd = the baseline's single-run TTA SD across seeds, Experiment 6).
+        config = copy.deepcopy(config)
+        config["hparam_tuning"] = dict(
+            algorithm="noisy_family", metric="tta_val_acc", group="conv", family=copy.deepcopy(family),
+            noise_sd=0.0012, confidence=0.8, max_seeds=8, heldout_seeds=HELDOUT_SEEDS)
+        RUN_CONFIGS[f"auto_nfam_{family_name}_bs2000{suffix}"] = config
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -3561,9 +3569,10 @@ def validate_tuning_config(tuning):
         "global_interval",
         "auto",
         "global_family",
+        "noisy_family",
     ):
         raise ValueError("hparam_tuning requires a known algorithm")
-    if tuning["algorithm"] in ("auto", "global_family"):
+    if tuning["algorithm"] in ("auto", "global_family", "noisy_family"):
         return  # These searches validate their own fields.
     required = {"algorithm", "metric", "params"}
     if tuning["algorithm"] in (
@@ -5295,6 +5304,129 @@ def run_global_family_search(run, model, config):
     return dict(best_config=config, best_result=result, trials=[dict(run=run, config=config, result=result)])
 
 
+def run_noisy_family_search(run, model, config):
+    """Noise-aware global_neighbour search over a parameterized schedule family for one group.
+
+    hparam_tuning: group, family (as in run_global_family_search), metric, noise_sd (the SD of
+    one run's metric across seeds), confidence, max_seeds, heldout_seeds. Each round compares the
+    current schedule with all of its neighbours (every family parameter one grid step up or
+    down; LR values x0.6, power x0.8), each scored by its mean metric over full training runs on
+    search seeds 0, 1, ... A neighbour is better when the lower confidence bound of (its mean -
+    the current mean) is above 0, and cannot be better when the upper bound is below 0; the
+    standard error is noise_sd * sqrt(1/n_neighbour + 1/n_current) and the bounds are one-sided
+    at confidence, Bonferroni-corrected over the neighbours. If some neighbours are better, move
+    to the one with the highest mean. Otherwise run one more seed on the current schedule and on
+    every neighbour that may still be better, and repeat; stop when no neighbour may be better,
+    or when they all reached max_seeds (undecided neighbours then count as not better). The
+    start (family_initial) and the final schedule are then retrained on the held-out seeds.
+    """
+    run_start = time.perf_counter()
+    tuning = config["hparam_tuning"]
+    require_fields(tuning, {"algorithm", "metric", "group", "family", "noise_sd", "confidence",
+                            "max_seeds", "heldout_seeds"}, "hparam_tuning")
+    name = tuning["group"]
+    family = tuning["family"]
+    sigma = tuning["noise_sd"]
+    max_seeds = tuning["max_seeds"]
+    total = config["param_groups"][name]["lr_scheduler"]
+    total = sum(int(line[0]) for line in total)
+    log_config(run, config, label="base_config")
+    start = family_initial(family, config["param_groups"][name], total)
+    factors = {key: (0.8 if key == "power" else 0.6) for key in start}
+    current = {key: snap_lr_to_grid(v, factors[key]) for key, v in start.items()}
+    snapped = dict(current)
+    scores = {}
+
+    def key_of(values):
+        return tuple(values[k] for k in factors)
+
+    def ensure(values, n):
+        runs = scores.setdefault(key_of(values), [])
+        while len(runs) < min(n, max_seeds):
+            seed = len(runs)
+            candidate = copy.deepcopy(dict(config, hparam_tuning=None))
+            candidate["param_groups"][name]["lr_scheduler"] = [
+                list(line) for line in family_schedule(family, values, total)]
+            value = run_seeded(f"{run}.s{seed}", model, candidate, seed, debug=False)[tuning["metric"]]
+            runs.append(value if isfinite(value) else 0.0)
+            print(f"  family_eval {hparam_text(values)} seed={seed} {tuning['metric']}={format_log_value(runs[-1])}",
+                  flush=True)
+        return runs
+
+    def mean(values):
+        runs = scores[key_of(values)]
+        return sum(runs) / len(runs), len(runs)
+
+    def neighbours(values):
+        out = []
+        for k, f in factors.items():
+            index = lr_grid_index(values[k], f)
+            for step in (1, -1):
+                value = round_hparam(f ** (index - step))
+                if isfinite(value) and value > 0 and value != values[k]:
+                    out.append(dict(values, **{k: value}))
+        return out
+
+    ensure(current, 1)
+    moves = 0
+    while True:
+        nbrs = neighbours(current)
+        z = NormalDist().inv_cdf(1 - (1 - tuning["confidence"]) / len(nbrs))
+        for y in nbrs:
+            ensure(y, 1)
+        open_set = list(nbrs)
+        while True:
+            m_x, n_x = mean(current)
+            stats = []
+            for y in nbrs:
+                m_y, n_y = mean(y)
+                se = sigma * (1 / n_x + 1 / n_y) ** 0.5
+                stats.append((y, m_y - m_x, se, n_y))
+            better = [(y, d) for y, d, se, _ in stats if d - z * se > 0]
+            open_set = [y for y, d, se, _ in stats if d + z * se >= 0]
+            log_event("noisy_round", run=run, **current, mean=m_x, seeds=n_x, z=z,
+                      better=len(better), open=len(open_set))
+            if better:
+                y = max(better, key=lambda item: mean(item[0])[0])[0]
+                current, moves = y, moves + 1
+                m, n = mean(current)
+                log_event("search_path", run=run, **current, score=m, seeds=n, reason="better")
+                break
+            if not open_set:
+                reason = "none_can_be_better"
+                break
+            added = len(scores[key_of(current)])
+            ensure(current, n_x + 1)
+            for y in open_set:
+                ensure(y, mean(y)[1] + 1)
+            if len(scores[key_of(current)]) == added and all(mean(y)[1] >= max_seeds for y in open_set):
+                reason = "max_seeds"
+                break
+        if not better:
+            break
+    m, n = mean(current)
+    evaluations = sum(len(v) for v in scores.values())
+    seconds = time.perf_counter() - run_start
+    log_event("search_stop", run=run, reason=reason, moves=moves)
+    log_event("auto_result", run=run, val_acc=0.0, tta_val_acc=m, search_seconds=seconds,
+              evaluations=evaluations, train_steps=evaluations * total, search_seeds=n)
+    for label, values in (("start", snapped), ("final", current)):
+        print(f"  {label} {name}.initial_lr: {json.dumps(values)}", flush=True)
+        candidate = copy.deepcopy(dict(config, hparam_tuning=None))
+        candidate["param_groups"][name]["lr_scheduler"] = [list(line) for line in family_schedule(family, values, total)]
+        held_start = time.perf_counter()
+        held = [run_seeded(f"{run}.{label}{seed}", model, candidate, seed, debug=False)["tta_val_acc"]
+                for seed in tuning["heldout_seeds"]]
+        avg = sum(held) / len(held)
+        sd = (sum((v - avg) ** 2 for v in held) / (len(held) - 1)) ** 0.5 if len(held) > 1 else 0.0
+        log_event("heldout_result" if label == "final" else "start_heldout_result", run=run,
+                  seeds=tuning["heldout_seeds"], tta_val_acc_mean=avg, tta_val_acc_std=sd, per_seed=held,
+                  seconds=time.perf_counter() - held_start)
+    result = dict(val_acc=0.0, tta_val_acc=m, seconds=seconds, evaluations=evaluations, best=current,
+                  start=snapped)
+    return dict(best_config=config, best_result=result, trials=[dict(run=run, config=config, result=result)])
+
+
 def heldout_evaluation(run, model, config, result, seeds):
     """Retrain an interval search's committed LR schedules on held-out seeds. Logs
     search_result (cost) and heldout_result lines in the format of run_auto_search."""
@@ -5342,6 +5474,8 @@ def run_experiment(run, model, config):
         return run_auto_search(run, model, config)
     if tuning is not None and tuning["algorithm"] == "global_family":
         return run_global_family_search(run, model, config)
+    if tuning is not None and tuning["algorithm"] == "noisy_family":
+        return run_noisy_family_search(run, model, config)
     if tuning is not None and tuning["algorithm"] in ("interval", "interval2", "global_neighbour"):
         result = run_interval_search(run, model, config, debug=debug)
         if tuning.get("heldout_seeds"):
