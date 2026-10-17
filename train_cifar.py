@@ -3311,6 +3311,10 @@ for transform in (None, "ramp", "rampdown", "wave"):
             noise_sd=0.0012, confidence=0.8, max_depth=3, max_candidates=3, max_seeds=8,
             heldout_seeds=HELDOUT_SEEDS)
         RUN_CONFIGS[f"auto_xfam_{family_name}_bs2000{suffix}"] = config
+        # Experiment 11: the guided search with uncertainty-aware candidate selection.
+        config = copy.deepcopy(config)
+        config["hparam_tuning"]["selection"] = "lcb"
+        RUN_CONFIGS[f"auto_yfam_{family_name}_bs2000{suffix}"] = config
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
@@ -5454,6 +5458,11 @@ def run_guided_family_search(run, model, config):
       3. Propose: each parameter moved alone to its best fitted offset, and the joint move of
          every parameter with a positive predicted gain (predicted gain = their sum); keep the
          max_candidates largest predicted gains.
+         With selection = "lcb" (Experiment 11) instead: each parameter's offset (other than the
+         anchor's) maximizes the fit's lower confidence bound, gain - z * SE (SE from the
+         regression with noise_sd per run), single-parameter moves with a positive gain are
+         ranked by that bound, the joint move only combines parameters whose bound is above 0,
+         and it is verified only if none of the max_candidates best single moves proves better.
       4. Verify on fresh seeds 1, 2, ...: as in run_noisy_family_search, a candidate is better
          when the lower confidence bound of (its mean - the anchor's mean) is above 0 and is
          ruled out when the upper bound is below 0 (Bonferroni over the candidates); otherwise
@@ -5505,12 +5514,38 @@ def run_guided_family_search(run, model, config):
     def moved(values, k, offset):
         return dict(values, **{k: round_hparam(factors[k] ** (lr_grid_index(values[k], factors[k]) - offset))})
 
+    def race(candidates, stage):
+        """Verify candidates against the anchor on fresh seeds; return those proven better."""
+        z = NormalDist().inv_cdf(1 - (1 - tuning["confidence"]) / len(candidates))
+        points = [point for _, point in candidates]
+        verify(anchor, 1)
+        for point in points:
+            verify(point, 1)
+        while True:
+            m_a, n_a = verified(anchor)
+            stats = []
+            for point in points:
+                m, n = verified(point)
+                stats.append((point, m - m_a, sigma * (1 / n_a + 1 / n) ** 0.5, n))
+            better = [point for point, d, se, _ in stats if d - z * se > 0]
+            undecided = [point for point, d, se, _ in stats if d + z * se >= 0 and d - z * se <= 0]
+            log_event("guided_round", run=run, **anchor, stage=stage, mean=m_a, seeds=n_a, z=z,
+                      candidates=len(points), better=len(better), undecided=len(undecided),
+                      predicted=[gain for gain, _ in candidates], verified=[d for _, d, _, _ in stats])
+            if better or not undecided:
+                return better
+            if n_a >= max_seeds and all(n >= max_seeds for point, _, _, n in stats if point in undecided):
+                return better
+            verify(anchor, n_a + 1)
+            for point in undecided:
+                verify(point, verified(point)[1] + 1)
+
+    lcb = tuning.get("selection", "raw") == "lcb"
     moves, rounds = 0, 0
     while True:
         rounds += 1
         base = score(anchor, 0)
-        candidates = []
-        joint, joint_gain = dict(anchor), 0.0
+        singles, positive = [], []
         for k in factors:
             line = {0: base}
             for direction in (1, -1):
@@ -5525,45 +5560,46 @@ def run_guided_family_search(run, model, config):
                         break
                     best = max(best, value)
             offsets = sorted(line)
-            fit = np.polyfit(offsets, [line[o] for o in offsets], 2)
-            fitted = {o: float(np.polyval(fit, o)) for o in offsets}
-            best_offset = max(offsets, key=lambda o: fitted[o])
-            gain = fitted[best_offset] - fitted[0]
+            design = np.array([[o * o, o, 1.0] for o in offsets])
+            coef = np.linalg.lstsq(design, np.array([line[o] for o in offsets]), rcond=None)[0]
+            cov = sigma ** 2 * np.linalg.pinv(design.T @ design)
+            gains = {}
+            for o in offsets:  # Fit at o minus fit at the anchor, and its standard error.
+                c = np.array([o * o, o, 0.0])
+                gains[o] = (float(c @ coef), float(max(c @ cov @ c, 0.0)) ** 0.5)
+            if lcb:  # The offset with the best lower bound: noisy extrapolations rank low.
+                best_offset = max((o for o in offsets if o != 0), key=lambda o: gains[o][0] - z_line * gains[o][1])
+            else:
+                best_offset = max(offsets, key=lambda o: gains[o][0])
+            gain, gain_se = gains[best_offset]
+            bound = gain - z_line * gain_se
             log_event("guided_line", run=run, parameter=k, offsets=offsets, seed0=[line[o] for o in offsets],
-                      fitted=[fitted[o] for o in offsets], best_offset=best_offset, predicted_gain=gain)
+                      fitted=[gains[o][0] for o in offsets], fitted_se=[gains[o][1] for o in offsets],
+                      best_offset=best_offset, predicted_gain=gain, predicted_se=gain_se, lower_bound=bound)
             if best_offset != 0 and gain > 0:
-                candidates.append((gain, moved(anchor, k, best_offset)))
-                joint, joint_gain = moved(joint, k, best_offset), joint_gain + gain
-        if sum(1 for gain, _ in candidates) >= 2:
-            candidates.append((joint_gain, joint))
-        candidates = sorted(candidates, key=lambda item: -item[0])[:tuning["max_candidates"]]
-        if not candidates:
+                singles.append((bound if lcb else gain, gain, moved(anchor, k, best_offset)))
+                if not lcb or bound > 0:
+                    positive.append((k, best_offset, gain))
+        joint = None
+        if len(positive) >= 2:
+            joint_point = dict(anchor)
+            for k, offset, _ in positive:
+                joint_point = moved(joint_point, k, offset)
+            joint = (sum(gain for _, _, gain in positive), joint_point)
+        ranked = sorted(singles, key=lambda item: -item[0])
+        if lcb:  # Single-parameter moves first; the joint move only if none of them proves better.
+            stages = [[(gain, point) for _, gain, point in ranked[:tuning["max_candidates"]]], [joint] if joint else []]
+        else:
+            pool = [(gain, point) for _, gain, point in ranked] + ([joint] if joint else [])
+            stages = [sorted(pool, key=lambda item: -item[0])[:tuning["max_candidates"]]]
+        stages = [stage for stage in stages if stage]
+        if not stages:
             reason = "no_predicted_gain"
             break
-        z = NormalDist().inv_cdf(1 - (1 - tuning["confidence"]) / len(candidates))
-        points = [point for _, point in candidates]
-        verify(anchor, 1)
-        for point in points:
-            verify(point, 1)
-        while True:
-            m_a, n_a = verified(anchor)
-            stats = []
-            for point in points:
-                m, n = verified(point)
-                stats.append((point, m - m_a, sigma * (1 / n_a + 1 / n) ** 0.5, n))
-            better = [point for point, d, se, _ in stats if d - z * se > 0]
-            undecided = [point for point, d, se, _ in stats if d + z * se >= 0 and d - z * se <= 0]
-            log_event("guided_round", run=run, **anchor, mean=m_a, seeds=n_a, z=z, candidates=len(points),
-                      better=len(better), undecided=len(undecided),
-                      predicted=[gain for gain, _ in candidates],
-                      verified=[d for _, d, _, _ in stats])
-            if better or not undecided:
+        for stage, candidates in enumerate(stages):
+            better = race(candidates, stage)
+            if better:
                 break
-            if n_a >= max_seeds and all(n >= max_seeds for point, _, _, n in stats if point in undecided):
-                break
-            verify(anchor, n_a + 1)
-            for point in undecided:
-                verify(point, verified(point)[1] + 1)
         if not better:
             reason = "none_proved_better"
             break
