@@ -8,6 +8,8 @@ up to interval k; there, candidate constant LRs c = the plan's value moved by gr
   rest_lin  the rest of the run with conv decaying linearly from c to 0
   c40_<m>   one interval (T/5 steps) with conv constant at m x c
   l40       one interval with conv decaying linearly from c to 0
+  a40_<m>   one interval with conv constant at m x the plan's value for interval k (the same
+            cooldown for every candidate; only with --abs-mults)
 Every seed is its own run from initialization (data order and augmentation follow the seed), so
 the spread over seeds of a candidate's score, and of the difference between two candidates
 scored on the same seed, are the noise a single-seed search decision faces.
@@ -22,6 +24,7 @@ parser.add_argument("--seed", type=int, required=True)
 parser.add_argument("--plan", required=True, help="comma-separated constant conv LR per interval")
 parser.add_argument("--offsets", default="-2,-1,0,1,2")
 parser.add_argument("--mults", default="0.6,0.36,0.22")
+parser.add_argument("--abs-mults", default="", help="common-level cooldown multipliers (of the plan's value)")
 args = parser.parse_args()
 log = open_log(f"lookahead_noise_bs{args.batch_size}_s{args.seed}", args, __file__)
 
@@ -29,6 +32,7 @@ config = base_config(args.batch_size)
 plan = [float(v) for v in args.plan.split(",")]
 offsets = [int(o) for o in args.offsets.split(",")]
 mults = [float(m) for m in args.mults.split(",")]
+abs_mults = [float(m) for m in args.abs_mults.split(",")] if args.abs_mults else []
 model = new_model()
 t.TRAINING_SEED = args.seed
 trainer = t.SegmentTrainer(model, config)
@@ -72,6 +76,10 @@ for k in range(len(plan)):
                                                  length)
             trainer.restore(mid)
             scores["l40"] = run_with(conv_schedule(head, [(length, c, 0.0), (remaining - length, 0.0)]), length)
+            for m in abs_mults:
+                trainer.restore(mid)
+                scores[f"a40_{m:g}"] = run_with(conv_schedule(head, [(length, m * plan[k]), (remaining - length, 0.0)]),
+                                                length)
         emit(log, kind="eval", k=k, offset=offset, c=c, **scores)
     trainer.restore(prefix_state)
     run_with(conv_schedule(plan, []), length)
