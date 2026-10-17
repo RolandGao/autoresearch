@@ -1,6 +1,7 @@
 #!/bin/bash
 # Commit code, research scripts, writeup and finished logs, and push to master
 # (the main checkout gets them by pulling master). Usage: research/sync.sh "<message>"
+# SYNC_DATA_ONLY=1 commits only logs and research/*.txt (plus whatever the caller staged).
 # Logs of still-running processes are skipped (no trailing completion marker yet is fine:
 # only logs whose writer pid is gone are committed).
 set -u
@@ -14,8 +15,11 @@ for f in logs/*.log; do
   fi
   git add "$f"
 done
-git add train_cifar.py test_train_cifar.py research/*.py research/*.sh 2>/dev/null
-[ -f interval_search_writeup.txt ] && git add interval_search_writeup.txt
+if [ -z "${SYNC_DATA_ONLY:-}" ]; then  # Data-only mode (the PDF watcher) leaves code to manual commits.
+  git add train_cifar.py test_train_cifar.py research/*.py research/*.sh 2>/dev/null
+  [ -f interval_search_writeup.txt ] && git add interval_search_writeup.txt
+fi
+git add research/*.txt 2>/dev/null
 if git diff --cached --quiet; then
   echo "nothing to commit"
 else

@@ -30,6 +30,7 @@ import family_study as fam  # noqa: E402
 import range_study as rng  # noqa: E402
 import seed_runs as sr  # noqa: E402
 import lookahead_study as las  # noqa: E402
+import ics_study as ics  # noqa: E402
 import report_data  # noqa: E402
 import train_cifar as tc  # noqa: E402
 
@@ -1116,6 +1117,78 @@ story += [keep([img, P("Figure 12. Each score's 8-seed mean per candidate, relat
                        "drawn at -1.5). A lookahead decides like the truth when its curve peaks where the truth's does.",
                        "small")])]
 story += observations("lookahead_fidelity_observations.txt")
+
+
+# The 2-day campaign's ICS experiments (run_ics_search): one section per version.
+ics_refs = ics.references()
+
+
+def ics_section(version, number, title, question, setup_rows, obs_file):
+    data = ics.load(version)
+    story.extend([P(f"Experiment {number}. {title}", "h1"), P("Question", "h2"), P(question), P("Setup", "h2"),
+                  table([["Item", "Value"], *setup_rows], [3.3 * cm, 13.7 * cm])])
+    rows = [["Batch size, scenario (baseline)", *(ics.TRANSFORM_LABELS[t] for t in ics.TRANSFORMS)]]
+    matched = total_cells = 0
+    for bs in ics.BATCH_SIZES:
+        base = ics.target(ics_refs, bs)
+        for sc in ics.SCENARIOS:
+            cells = [f"BS {bs}, {ics.SCENARIO_LABELS[sc]} ({base:.2f})" if base else f"BS {bs}, {ics.SCENARIO_LABELS[sc]}"]
+            for tr in ics.TRANSFORMS:
+                seeds = data.get((sc, bs, tr), {})
+                held = [r["heldout"] for r in seeds.values() if "heldout" in r]
+                if not held:
+                    cells.append("running")
+                    continue
+                mean = sum(held) / len(held)
+                cost = max(r["cost"] for r in seeds.values())
+                dn = ics.do_nothing(ics_refs, sc, bs, tr)
+                delta = f"{mean - base:+.2f}" if base else "?"
+                if base:
+                    total_cells += 1
+                    matched += mean >= base - 0.1
+                cells.append(f"<b>{mean:.2f}</b> ({delta}; {'/'.join(f'{h:.2f}' for h in held)}); "
+                             f"{cost:.1f}x{'*' if any(r['budget_hit'] for r in seeds.values()) else ''}"
+                             + (f"; do-nothing {dn:.2f}" if dn and tr else ""))
+            rows.append(cells)
+    story.extend([P("Held-out TTA (mean over search seeds; vs the baseline; per search seed); cost in full runs", "h2"),
+                  table(rows, [3.4 * cm] + [3.4 * cm] * 4),
+                  P(f"Cells within 0.1 pp of the baseline (about 2 SE of an 8-seed mean) or above: {matched} of "
+                    f"{total_cells} finished. * = the search hit its step budget. Do-nothing: the baseline schedule "
+                    "kept under the transform.", "small")])
+    rows = [["Cell", "Committed schedules (search seed 0)"]]
+    for bs in ics.BATCH_SIZES:
+        for sc in ics.SCENARIOS:
+            for tr in ics.TRANSFORMS:
+                r = data.get((sc, bs, tr), {}).get(0)
+                if r and r["schedules"]:
+                    rows.append([f"BS {bs}, {ics.SCENARIO_LABELS[sc]}, {ics.TRANSFORM_LABELS[tr]}",
+                                 "; ".join(f"{g}: {', '.join(f'{v:g}' for v in vals)}"
+                                           for g, vals in r["schedules"].items())])
+    if len(rows) > 1:
+        story.extend([P("Committed schedules (search seed 0)", "h2"), table(rows, [4.6 * cm, 12.4 * cm])])
+    story.extend(observations(obs_file))
+
+
+ics_section(
+    "v1", 13, "ICS v1: constant intervals with a rest-of-run lookahead, all batch sizes and transforms",
+    "Does the interval-cooldown search, with the lookahead Experiment 12 found faithful, match the baseline at batch "
+    "sizes 2000, 500 and 125, with and without transforms, searching conv only or all four LRs, within 20 full runs?",
+    [["Representation", "Each searched LR: 5 constant intervals (spec values; the transform applies on top), on the "
+                        "x0.6 grid"],
+     ["Per interval", "Climb the lead LR (conv) from the previous interval's value, smaller values first, moving "
+                      "while the score improves. A candidate's score: train the interval from the committed state, "
+                      "then the rest of the run with every searched LR decaying linearly from its candidate value to "
+                      "0 (rest_lin); the last interval is scored by the final TTA. Commit the best and continue from "
+                      "its trained state"],
+     ["Conv only (a)", "conv from its baseline initial LR; head, norm_bias, whiten_bias on the baseline"],
+     ["4 LRs (b)", "All four from 1.0. Interval 1: each LR's level is scanned on a x7.7 grid (both neighbours first, "
+                   "then the better side while improving), scored after the interval plus one interval at 0.36 x the "
+                   "value; then conv is refined on the x0.6 grid with rest_lin. Later intervals: conv is climbed and "
+                   "the other three follow its profile (value_k = value_1 x conv_k / conv_1)"],
+     ["Budget", "At most 20 full runs of train steps (every trained step counts); the transform applies to the "
+                "searched groups"],
+     ["Evaluation", "2 search seeds (0, 1) per cell; each committed schedule retrained on held-out seeds 100-107"]],
+    "ics_v1_observations.txt")
 
 
 def attach_headings(flowables):
