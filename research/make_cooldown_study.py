@@ -670,7 +670,7 @@ if brange["center"] is not None:
         z = mc.standard_normal((400000, k))
         return float(np.quantile((z[:, 1:] - z[:, :1]).max(axis=1), 0.95))
 
-    conf, rows = {}, [["LR", "Probed points k", "Cutoff c (pp)", "Best observed", "95% set (initial LR)",
+    conf, conf_range, rows = {}, {}, [["LR", "Probed points k", "Cutoff c (pp)", "Best observed", "95% set (initial LR)",
                        "Points in set"]]
     for g in rng.GROUPS:
         initial = base_cfg["param_groups"][g]["lr_scheduler"][0][1]
@@ -683,6 +683,7 @@ if brange["center"] is not None:
             unstopped = brange["stop"][g].get(side, 0) is None
             ends.append(unstopped and abs(edge) >= 19)  # Reaches the probe limit: not bounded there.
         conf[g] = (c, best, members)
+        conf_range[g] = (probe[members[0]][0], probe[members[-1]][0], ends[0], ends[1])
         low = f"(open) {probe[members[0]][0]:g}" if ends[0] else f"{probe[members[0]][0]:g}"
         high = f"{probe[members[-1]][0]:g} (open)" if ends[1] else f"{probe[members[-1]][0]:g}"
         gaps = "" if members == list(range(members[0], members[-1] + 1)) else ", with gaps"
@@ -754,6 +755,23 @@ story += [
 ]
 rule_rows = [["L (steps)", "Center TTA", *rng.GROUPS]]
 picks = {}
+
+
+def versus_reference(g, value):
+    """Where a pick lies relative to Experiment 7's full-run 95% range for the best initial LR."""
+    lo, hi, open_lo, open_hi = conf_range[g]
+    if value > hi * 1.001 and not open_hi:
+        return "above"
+    if value < lo * 0.999 and not open_lo:
+        return "below"
+    return "in"
+
+
+def range_text(g):
+    lo, hi, open_lo, open_hi = conf_range[g]
+    return f"{'(open) ' if open_lo else ''}{lo:g} - {hi:g}{' (open)' if open_hi else ''}"
+
+
 for length, r in ranges.items():
     center_tta = 100 * r["center"]["tta"]
     cells = [str(length), f"{center_tta:.2f}"]
@@ -764,49 +782,56 @@ for length, r in ranges.items():
             value = r["center"]["values"][g] if offset == 0 else r["probe"][g][offset][0]
             picks[(length, g, margin)] = (value, offset, limit)
         value, offset, limit = picks[(length, g, 2.0)]
-        cells.append(f"{value:g} ({offset:+d}){'*' if limit else ''}")
+        cells.append(f"{value:g} ({offset:+d}){'*' if limit else ''}, {versus_reference(g, value)}")
     rule_rows.append(cells)
-story += [P("Picks with the code's margin (2 pp): LR (grid steps from the center)", "h2"),
-          table(rule_rows, [2.0 * cm, 2.2 * cm, 3.2 * cm, 3.2 * cm, 3.2 * cm, 3.2 * cm]),
+rule_rows.append(["Exp. 7", "full run", *(range_text(g) for g in rng.GROUPS)])
+story += [P("Picks with the code's margin (2 pp): LR (grid steps from the center), and where it lies relative to "
+            "Experiment 7's full-run 95% range for the best initial LR (last row)", "h2"),
+          table(rule_rows, [1.8 * cm, 1.8 * cm, 3.1 * cm, 3.3 * cm, 3.5 * cm, 3.5 * cm]),
           P("* the upward probe reached the 20-step limit without falling out of the margin, so the pick is the "
-            "probe limit.", "small")]
+            "probe limit. in / above / below: inside, above or below the Experiment 7 range ((open): that end of "
+            "the range is not bounded by the data). Experiment 7 is a different context (full 200-step runs, the "
+            "other LRs on the baseline schedules), the target a short-horizon pick should predict.", "small")]
 rows = [["L (steps)", *(f"conv, margin {m:g} pp" for m in MARGINS)]]
 for length in ranges:
-    rows.append([str(length), *(f"{picks[(length, 'conv', m)][0]:g}" for m in MARGINS)])
+    rows.append([str(length), *(f"{picks[(length, 'conv', m)][0]:g}, {versus_reference('conv', picks[(length, 'conv', m)][0])}"
+                                for m in MARGINS)])
+rows.append(["Exp. 7", *([range_text("conv")] * len(MARGINS))])
 story += [P("Conv pick by margin", "h2"), table(rows, [2.6 * cm] + [4.0 * cm] * len(MARGINS))]
-fig, axes = plt.subplots(1, 2, figsize=(10, 3.6), layout="constrained")
+fig, axes = plt.subplots(2, 2, figsize=(10, 6.4), layout="constrained")
 lengths = list(ranges)
-ax = axes[0]
-for margin, style in zip(MARGINS, ("-", "--", ":")):
-    ax.plot(lengths, [picks[(n, "conv", margin)][0] for n in lengths], color=colors_g["conv"], linestyle=style,
-            marker="o", markersize=4, linewidth=1.3, label=f"margin {margin:g} pp")
-ax.plot(lengths, [ranges[n]["center"]["values"]["conv"] for n in lengths], color="#8c8b86", marker="s",
-        markersize=3.5, linewidth=1.0, label="Experiment 2 center (best)")
-ax.set_xscale("log")
-ax.set_yscale("log")
-ax.set_xticks(lengths, [str(n) for n in lengths])
-ax.set_xlabel("main interval length L (steps)")
-ax.set_ylabel("conv LR")
-ax.set_title("conv", loc="left", fontsize=9.5)
-ax.legend(frameon=False, fontsize=7.5)
-ax = axes[1]
-for g in rng.GROUPS[1:]:
-    ax.plot(lengths, [picks[(n, g, 2.0)][0] for n in lengths], color=colors_g[g], marker="o", markersize=4,
-            linewidth=1.3, label=g)
-ax.set_xscale("log")
-ax.set_yscale("log")
-ax.set_xticks(lengths, [str(n) for n in lengths])
-ax.set_xlabel("main interval length L (steps)")
-ax.set_ylabel("picked LR (margin 2 pp)")
-ax.set_title("head, norm_bias, whiten_bias", loc="left", fontsize=9.5)
-ax.legend(frameon=False, fontsize=7.5)
+for ax, g in zip(axes.flat, rng.GROUPS):
+    lo, hi, open_lo, open_hi = conf_range[g]
+    values = ([picks[(n, g, m)][0] for n in lengths for m in MARGINS] + [lo, hi]
+              + [ranges[n]["center"]["values"][g] for n in lengths])
+    ymin, ymax = min(values) / 3, max(values) * 3
+    ax.axhspan(ymin if open_lo else lo, ymax if open_hi else hi, color=colors_g[g], alpha=0.12, linewidth=0,
+               label="Exp. 7 full-run 95% range")
+    if g == "conv":
+        for margin, style in zip(MARGINS, ("-", "--", ":")):
+            ax.plot(lengths, [picks[(n, g, margin)][0] for n in lengths], color=colors_g[g], linestyle=style,
+                    marker="o", markersize=4, linewidth=1.3, label=f"pick, margin {margin:g} pp")
+    else:
+        ax.plot(lengths, [picks[(n, g, 2.0)][0] for n in lengths], color=colors_g[g], marker="o", markersize=4,
+                linewidth=1.3, label="pick, margin 2 pp")
+    ax.plot(lengths, [ranges[n]["center"]["values"][g] for n in lengths], color="#8c8b86", marker="s",
+            markersize=3.5, linewidth=1.0, label="Exp. 2 center (best score)")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_ylim(ymin, ymax)
+    ax.set_xticks(lengths, [str(n) for n in lengths])
+    ax.set_xlabel("main interval length L (steps)")
+    ax.set_ylabel(f"{g} LR")
+    ax.set_title(g + (" (range open below)" if open_lo else ""), loc="left", fontsize=9.5)
+    ax.legend(frameon=False, fontsize=7)
 rule_path = os.path.join(REPO, "plots", "largest_within.png")
 fig.savefig(rule_path, dpi=140)
 plt.close(fig)
 img = Image(rule_path)
 img.drawWidth, img.drawHeight = 17 * cm, 17 * cm * img.imageHeight / img.imageWidth
-story += [keep([img, P("Figure 8. The rule's pick per L. Left: conv at three margins, with Experiment 2's "
-                       "best-score center. Right: the other LRs at the code's margin.", "small")])]
+story += [keep([img, P("Figure 8. The rule's pick per L (conv at three margins, the others at the code's 2 pp), "
+                       "Experiment 2's best-score center, and the shaded reference: Experiment 7's full-run 95% "
+                       "range for the best initial LR.", "small")])]
 story += observations("largest_within_observations.txt")
 
 
