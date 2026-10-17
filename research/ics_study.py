@@ -68,3 +68,15 @@ def do_nothing(refs, scenario, batch_size, transform):
     if not transform:
         return refs.get(f"baseline_bs{batch_size}")
     return refs.get(f"transformed_{scenario}{transform}_bs{batch_size}")
+
+
+def averaged():
+    """{name: (mean held-out TTA, schedule)} of research/eval_schedule.py runs (avg_* = the geometric
+    mean, interval by interval, of two search seeds' committed schedules)."""
+    out = {}
+    for path in glob.glob(os.path.join(REPO, "logs", "research_eval_schedule_*.log")):
+        for line in open(path):
+            if line.startswith("{") and '"result"' in line:
+                r = json.loads(line)
+                out[r["name"]] = (100 * r["mean"], r["schedule"])
+    return out

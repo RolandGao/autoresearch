@@ -1247,6 +1247,44 @@ for bs in ics.BATCH_SIZES:
 story += [P("Held-out TTA of the oracle staircases", "h2"), table(rows, [4.0 * cm, 4.3 * cm, 4.3 * cm, 4.4 * cm])]
 story += observations("rep_observations.txt")
 
+# Experiment 17: averaging two searches' schedules.
+avg_runs = ics.averaged()
+story += [
+    P("Experiment 17. Averaging two searches' schedules", "h1"),
+    P("Question", "h2"),
+    P("Two search seeds of the same ICS version often commit different schedules, one or two grid steps apart in a "
+      "few intervals, and score 0.1-0.4 pp apart. Their decision errors are partly independent; does the geometric "
+      "mean of the two schedules, interval by interval, score better than the two do on average?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Schedules", "For each finished cell of ICS v1, v2 and v5 (conv only): the geometric mean of search seeds "
+                         "0 and 1's committed conv values, interval by interval (rounded to 2 significant figures, "
+                         "not snapped to the grid)"],
+           ["Runs", "Plain training runs on held-out seeds 100-107"]], [3.3 * cm, 13.7 * cm]),
+]
+rows = [["Cell", "Averaged", "Parents (seed 0 / 1)", "Gain over their mean", "Baseline"]]
+gains = []
+for name in sorted(avg_runs):
+    version = name.split("_")[1]
+    rest = name[len(f"avg_{version}_"):]
+    sc, bs = rest[0], int(rest.split("_bs")[1].split("_")[0])
+    tr = rest.split(f"bs{bs}")[1]
+    parents = ics.load(version).get((sc, bs, tr), {})
+    held = [parents[s]["heldout"] for s in sorted(parents) if "heldout" in parents[s]]
+    if len(held) < 2:
+        continue
+    mean = sum(held) / len(held)
+    gains.append(avg_runs[name][0] - mean)
+    base = ics.target(ics_refs, bs)
+    rows.append([f"{version}, BS {bs}, {ics.TRANSFORM_LABELS[tr]}", f"<b>{avg_runs[name][0]:.2f}</b>",
+                 " / ".join(f"{h:.2f}" for h in held), f"{avg_runs[name][0] - mean:+.2f}",
+                 "-" if base is None else f"{base:.2f}"])
+if gains:
+    story += [P("Held-out TTA", "h2"), table(rows, [4.6 * cm, 2.2 * cm, 3.6 * cm, 3.4 * cm, 3.2 * cm]),
+              P(f"Mean gain over the parents' mean: {sum(gains) / len(gains):+.3f} pp over {len(gains)} cells "
+                f"({sum(g > 0 for g in gains)} positive).", "small")]
+story += observations("averaging_observations.txt")
+
 
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
