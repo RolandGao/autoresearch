@@ -1470,6 +1470,21 @@ ics_compare_section(
                "again in pass 2 (v13's relevel); v17 runs conv only (two second passes do not fit with the level "
                "scan)"]],
     "ics_v14_v17_observations.txt")
+ics_compare_section(
+    ["v16", "v18", "v19", "v23"], 22, "ICS v16-v23: the shifted plan, with an ensemble, joint 4-LR levels or a third pass",
+    "Starting from v16 (the best of Experiment 21), does averaging two second passes (v18), a simpler and cheaper 4-LR "
+    "level rule (v19) or a third rest-of-run pass (v23) close the remaining gap, and does the result hold over four "
+    "search seeds?",
+    [["v16", "Short-cooldown pass 1, its plan shifted one grid step up (all but the last interval), rest-of-run pass 2 "
+             "(tail unscaled, climbs up to 2 grid steps, replicates in intervals 4-5), expanded to 10 intervals. 4 "
+             "LRs: joint x7.7 level scan of head and the biases, each alone at most two steps up, one step back, and "
+             "one step lower again in pass 2 if that scores higher"],
+     ["v18", "v16 with pass 2 run twice (different data order, no replicates) and the two schedules averaged"],
+     ["v19", "Conv only: as v16. 4 LRs: the joint level only (no individual climbs, no back-off, no relevel), "
+             "then shifted with the plan; 4 search seeds (0-3)"],
+     ["v23", "v19 with a third pass repeating pass 2 on pass 2's schedule; passes 2-3 climb one grid step at most, "
+             "only pass 3 replicates (its last interval)"]],
+    "ics_v16_v23_observations.txt")
 
 
 def attach_headings(flowables):
