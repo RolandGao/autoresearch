@@ -1218,6 +1218,35 @@ ics_section(
                "the best), then as conv only with the other groups tied to conv's profile"]],
     "ics_v5_observations.txt")
 
+# Experiment 16: representation of constant intervals (rep_* fixed runs, seeds 100-107).
+story += [
+    P("Experiment 16. How well do constant intervals represent the baseline?", "h1"),
+    P("Question", "h2"),
+    P("Before asking a search to find a constant-interval schedule, can such a schedule match the baseline at all, "
+      "at each batch size and under each transform, with 5 or 10 intervals?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Schedules", "conv's schedule replaced by n equal constant intervals, each at the oracle spec (the "
+                         "baseline's applied LR divided by the transform) a fraction q of the way through the "
+                         "interval; the last interval at min(q, 0.95) (the oracle reaches 0 at the end). q = 0.5 is "
+                         "about the interval mean, q = 1 the end value. Exact values (no grid); the other groups on "
+                         "the baseline"],
+           ["Runs", "Plain training runs on held-out seeds 100-107 (one standard error about 0.045 pp)"]],
+          [3.3 * cm, 13.7 * cm]),
+]
+rows = [["Batch size, transform", "n = 5: q 0.5 / 0.75 / 1", "n = 10: q 0.5 / 0.75 / 1", "Baseline (do-nothing)"]]
+for bs in ics.BATCH_SIZES:
+    for tr in ics.TRANSFORMS:
+        def rep(n):
+            vals = [ics_refs.get(f"rep_n{n}_q{q}_bs{bs}{tr}") for q in (50, 75, 100)]
+            return " / ".join("-" if v is None else f"{v:.2f}" for v in vals)
+        base = ics.target(ics_refs, bs)
+        dn = ics.do_nothing(ics_refs, "a", bs, tr)
+        rows.append([f"BS {bs}, {ics.TRANSFORM_LABELS[tr]}", rep(5), rep(10),
+                     ("-" if base is None else f"{base:.2f}") + ("" if not tr or dn is None else f" ({dn:.2f})")])
+story += [P("Held-out TTA of the oracle staircases", "h2"), table(rows, [4.0 * cm, 4.3 * cm, 4.3 * cm, 4.4 * cm])]
+story += observations("rep_observations.txt")
+
 
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
