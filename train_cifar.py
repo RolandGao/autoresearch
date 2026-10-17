@@ -3487,6 +3487,13 @@ ICS_VERSIONS = {
                 level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
                 replicates=[1, 1, 1, 2, 3], refine_side_steps=2, final_expand=True, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead"),
+    # v24 whose second pass also refines the first interval with the rest-of-run lookahead (kept from pass 1 +
+    # shift so far, where the shift helps under the ramp but hurts under the reverse ramp); replicates only in
+    # the last interval, to pay for it.
+    "v25": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=2, final_expand=True, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead"),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
