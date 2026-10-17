@@ -3353,7 +3353,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         level_scan=[] if scenario == "a" else list(groups), level_lookahead="short", level_rule="best",
         level_margin=0.01, level_refine=3, level_joint=False, short_fraction=5, pass_intervals=[], fine=["conv"],
         refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False, level_backoff=0,
-        adaptive_reps=False, relevel_steps=0, carry_offset=False,
+        adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0,
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3435,6 +3435,12 @@ ICS_VERSIONS = {
     "v15": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, short_fraction=2.5, level_lookahead="short",
                 level_rule="largest", level_refine=0, level_joint=True, level_backoff=1, refine_start=1,
                 replicates=[1, 1, 1, 2, 3], refine_side_steps=2, final_expand=True, adaptive_reps=True, relevel_steps=4),
+    # v11 whose second pass starts from pass 1's plan moved one grid step up (all but the last interval):
+    # the short cooldown is biased low, by one step in most intervals under the ramp and in the middle
+    # intervals elsewhere (Experiment 12), more than the second pass's noisy decisions undo.
+    "v16": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_backoff=1, refine_start=1, replicates=[1, 1, 1, 2, 3],
+                refine_side_steps=2, final_expand=True, adaptive_reps=True, relevel_steps=4, plan_shift=1),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -3447,7 +3453,7 @@ for version, overrides in ICS_VERSIONS.items():
                     extra = dict(refine_start=4)
                 if version in ("v9", "v10", "v12") and scenario == "b":  # The level scan's cost: replicate only late.
                     extra = dict(replicates=[1, 1, 1, 2, 3])
-                if version in ("v13", "v14", "v15") and scenario == "b":  # And the relevel candidates' cost.
+                if version in ("v13", "v14", "v15", "v16") and scenario == "b":  # And the relevel candidates' cost.
                     extra = dict(replicates=[1, 1, 1, 1, 2])
                 RUN_CONFIGS[f"ics_{version}_{scenario}_bs{batch_size}{'_' + transform if transform else ''}"] = (
                     ics_config(batch_size, scenario, transform, **{**overrides, **extra}))
@@ -5772,7 +5778,7 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "level_scan", "level_lookahead", "level_rule", "level_margin", "fine", "tie", "max_side_steps",
                 "larger_within", "refine_start", "replicates", "level_refine", "level_joint", "short_fraction",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
-                "carry_offset", "budget", "heldout_seeds"}
+                "carry_offset", "plan_shift", "budget", "heldout_seeds"}
 
 
 def run_ics_search(run, model, config):
@@ -5794,7 +5800,9 @@ def run_ics_search(run, model, config):
         changes only its interval). The last interval is scored by the final metric.
         Later passes start each interval's climb at the previous pass's value (with carry_offset,
         times the lead's ratio of this pass's previous interval to the previous pass's: a
-        correction found in one interval carries to the next), and keep the previous
+        correction found in one interval carries to the next; with plan_shift, the previous pass's
+        values except the last interval's are first moved plan_shift x0.6 grid steps, a correction
+        for the short cooldown's small-LR bias), and keep the previous
         pass's values (and trained states, at no cost) for the intervals before refine_start.
       pass_intervals: intervals per pass ([] = intervals for every pass); a pass with twice the
         previous pass's intervals starts from its plan expanded: each interval split into halves
@@ -6049,6 +6057,9 @@ def run_ics_search(run, model, config):
                 raise ValueError("ics pass_intervals may only double, with an even refine_start")
             plan = {g: expand(plan[g], tuning["refine_start"] // 2) for g in groups}
         replicates = list(tuning["replicates"]) if p == len(passes) - 1 else [1] * n
+        if p > 0 and tuning["plan_shift"]:
+            plan = {g: [grid(v, tuning["plan_shift"]) if v > 0 else v for v in plan[g][:-1]] + plan[g][-1:]
+                    for g in groups}
         state = initial_state
         committed = {g: [] for g in groups}
         states = []
@@ -6064,8 +6075,15 @@ def run_ics_search(run, model, config):
                     current = {g: snap_lr_to_grid(current[g] * ratio, 0.6) for g in groups}
                 if k < tuning["refine_start"]:  # Same prefix as the previous pass: reuse its state.
                     boundary = (k + 1) * length
-                    state = (pass_states[-1][boundary // prev_length - 1] if boundary % prev_length == 0
-                             else None)  # Mid-way through a previous interval: the next kept one ends it.
+                    if tuning["plan_shift"]:  # Shifted values: train the kept interval (no lookahead).
+                        current = tied(k, current)
+                        saved, limit["steps"] = limit["steps"], float("inf")
+                        evaluate(k, current, "none", state, cache)
+                        limit["steps"] = saved
+                        state = cache[("none", tuple(current[g] for g in groups))][1]
+                    else:
+                        state = (pass_states[-1][boundary // prev_length - 1] if boundary % prev_length == 0
+                                 else None)  # Mid-way through a previous interval: the next kept one ends it.
                     states.append(state)
                     for g in groups:
                         committed[g].append(current[g])
