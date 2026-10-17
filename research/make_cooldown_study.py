@@ -1513,7 +1513,8 @@ ics_compare_section(
                "scan)"]],
     "ics_v14_v17_observations.txt")
 ics_compare_section(
-    ["v16", "v18", "v19", "v23"], 22, "ICS v16-v23: the shifted plan, with an ensemble, joint 4-LR levels or a third pass",
+    ["v16", "v18", "v19", "v23", "v24"], 22,
+    "ICS v16-v24: the shifted plan, with an ensemble, joint 4-LR levels or a third pass",
     "Starting from v16 (the best of Experiment 21), does averaging two second passes (v18), a simpler and cheaper 4-LR "
     "level rule (v19) or a third rest-of-run pass (v23) close the remaining gap, and does the result hold over four "
     "search seeds?",
@@ -1525,7 +1526,9 @@ ics_compare_section(
      ["v19", "Conv only: as v16. 4 LRs: the joint level only (no individual climbs, no back-off, no relevel), "
              "then shifted with the plan; 4 search seeds (0-3)"],
      ["v23", "v19 with a third pass repeating pass 2 on pass 2's schedule; passes 2-3 climb one grid step at most, "
-             "only pass 3 replicates (its last interval)"]],
+             "only pass 3 replicates (its last interval)"],
+     ["v24", "v19 whose shift moves only conv (4 LRs: head and the biases keep their scanned levels); conv only it "
+             "is v19"]],
     "ics_v16_v23_observations.txt")
 
 
