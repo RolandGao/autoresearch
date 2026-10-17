@@ -3353,7 +3353,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         level_scan=[] if scenario == "a" else list(groups), level_lookahead="short", level_rule="best",
         level_margin=0.01, level_refine=3, level_joint=False, short_fraction=5, pass_intervals=[], fine=["conv"],
         refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False, level_backoff=0,
-        adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1,
+        adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1, level_individual=2,
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3451,6 +3451,12 @@ ICS_VERSIONS = {
     "v18": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
                 level_refine=0, level_joint=True, level_backoff=1, refine_start=1, replicates=[1, 1, 1, 1, 1],
                 refine_side_steps=2, final_expand=True, adaptive_reps=True, relevel_steps=4, ensemble=2, plan_shift=1),
+    # v16 whose 4-LR levels are the joint level only (no individual climbs, no back-off, no relevel): with the
+    # plan shift that lands head, norm_bias and whiten_bias at ~770, near or inside every group's full-run
+    # optimum at all three batch sizes (research/level_horizon.py), and saves ~4 full runs for the replicates.
+    "v19": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
+                replicates=[1, 1, 1, 2, 3], refine_side_steps=2, final_expand=True, adaptive_reps=True, plan_shift=1),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -5788,7 +5794,7 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "level_scan", "level_lookahead", "level_rule", "level_margin", "fine", "tie", "max_side_steps",
                 "larger_within", "refine_start", "replicates", "level_refine", "level_joint", "short_fraction",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
-                "carry_offset", "plan_shift", "ensemble", "budget", "heldout_seeds"}
+                "carry_offset", "plan_shift", "ensemble", "level_individual", "budget", "heldout_seeds"}
 
 
 def run_ics_search(run, model, config):
@@ -5834,7 +5840,8 @@ def run_ics_search(run, model, config):
         see such LRs' long-horizon effect below their upper edge, where the full run prefers them.
         level_refine: x0.6 steps tried upward after the "largest" rule's x7.7 probes (0 = none).
         level_joint: with "largest", the non-lead groups are first scanned together (one
-        multiplier for all of them), then each alone at most two x7.7 steps up from there.
+        multiplier for all of them), then each alone at most level_individual x7.7 steps up from
+        there (0: the joint level only).
         level_backoff: x7.7 steps each non-lead group's level is then lowered (a safety margin: a
         short horizon accepts levels near a long-horizon edge it cannot see).
       relevel_steps: with tie, in the last pass's first refined interval, each non-lead group's
@@ -5953,7 +5960,13 @@ def run_ics_search(run, model, config):
             scores.append(trainer.score(metric) if ok else float("-inf"))
         value = sum(scores) / len(scores)
         evaluations += 1
-        cache[key] = (value, after)
+        best = cache.get("_best")  # Only the best candidate so far keeps its trained state (memory).
+        if best is None or value > cache[best][0]:
+            if best is not None:
+                cache[best] = (cache[best][0], None)
+            cache[key], cache["_best"] = (value, after), key
+        else:
+            cache[key] = (value, None)
         print(f"  ics_eval interval={k} lookahead={kind} {hparam_text(values)} {metric}={format_log_value(value)} "
               f"train_steps={trainer.train_steps}", flush=True)
         return value
@@ -5961,6 +5974,19 @@ def run_ics_search(run, model, config):
     group_scale = {g: 1.0 for g in groups}  # Relevel factors, from scale_from[g] on.
     scale_from = {g: 0 for g in groups}
     tail_scale = {g: 1.0 for g in groups}  # Temporary, while a relevel candidate is scored.
+
+    def train_interval(k, values, state):
+        """Train interval k at values from state (the committed point's state was not kept)."""
+        trainer.restore(state)
+        if member["index"] > 0:  # The same reseed as the member's r = 0 evaluations.
+            torch.manual_seed(1_000_003 * TRAINING_SEED + 7_919 * k + 1_299_709 * member["index"] + 17)
+            trainer.stream.images = None
+        sched = dict(base)
+        for g in groups:
+            sched[f"{g}.initial_lr"] = [(length, v) for v in committed[g]] + [(length, values[g])] + [
+                (length, 0.0)] * (n - 1 - k)
+        trainer.train(sched, length)
+        return trainer.snapshot()
 
     def tied(k, values):
         """With tie, after interval 0 the other groups follow the lead's profile."""
@@ -6122,8 +6148,9 @@ def run_ics_search(run, model, config):
                     if lead in tuning["level_scan"]:
                         current = climb(k, lead, level_kind, state, level_cache, 4, current, tuning["max_side_steps"])
                     current = largest_level(k, others, level_kind, state, level_cache, current, None)
-                    for g in others:
-                        current = largest_level(k, g, level_kind, state, level_cache, current, 2)
+                    for g in others if tuning["level_individual"] else ():
+                        current = largest_level(k, g, level_kind, state, level_cache, current,
+                                                tuning["level_individual"])
                     for g in others:
                         current[g] = grid(current[g], -4 * tuning["level_backoff"])
                 else:
@@ -6162,7 +6189,8 @@ def run_ics_search(run, model, config):
                 saved, limit["steps"] = limit["steps"], float("inf")
                 evaluate(k, current, kind, state, cache)
                 limit["steps"] = saved
-            best_score, state = cache[key]
+            best_score, kept_state = cache[key]
+            state = kept_state if kept_state is not None else train_interval(k, current, state)
             states.append(state)
             for g in groups:
                 committed[g].append(current[g])
