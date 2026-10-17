@@ -1655,6 +1655,49 @@ ics_compare_section(
     "ics_v28_v30_observations.txt")
 
 
+# Experiment 26: the committed representation's ceiling (oracle schedules as v29 commits them) and the grid.
+rows = [["Cell (baseline)", "Oracle linear (10)", "Oracle linear (5)", "Oracle linear (5), x0.6 grid",
+         f"ICS {FINAL_VERSION}"]]
+grid_cost = []
+v29_cells = ics.load(FINAL_VERSION)
+for bs in ics.BATCH_SIZES:
+    for tr in ics.TRANSFORMS:
+        cell = f"a_bs{bs}{tr}"
+        vals = [(probe_runs.get(f"{prefix}_oracle_{cell}") or [None])[0] for prefix in ("lin", "lin5", "lin5g")]
+        held = [r["heldout"] for r in v29_cells.get(("a", bs, tr), {}).values() if "heldout" in r]
+        vals.append(sum(held) / len(held) if held else None)
+        if vals[1] is not None and vals[2] is not None:
+            grid_cost.append(vals[1] - vals[2])
+        rows.append([f"BS {bs}, {ics.TRANSFORM_LABELS[tr]} ({ics.target(ics_refs, bs):.2f})",
+                     *("-" if v is None else f"{v:.2f}" for v in vals)])
+story += [
+    P("Experiment 26. What does the committed representation allow, and what does the grid cost?", "h1"),
+    P("Question", "h2"),
+    P("With the linear commit, ICS v29 matches the baseline in most cells but stays about 0.1 pp short at BS 2000. "
+      "Is that the search, or the representation it commits: 5 values on the x0.6 grid, joined linearly?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Schedules", "Conv only: the oracle (baseline conv schedule divided by the transform) reduced to its 10 or "
+                         "5 interval means (2 significant figures), and the 5 means snapped to the x0.6 grid (what a "
+                         "single search can commit), each joined linearly through the interval midpoints"],
+           ["Runs", "research/eval_schedule.py on held-out seeds 100-107; ICS v29 = mean over its search seeds"]],
+          [3.3 * cm, 13.7 * cm]),
+    P("Held-out TTA, conv only", "h2"), table(rows, [4.4 * cm] + [3.15 * cm] * 4),
+    P(f"Snapping the 5 interval means to the x0.6 grid costs {sum(grid_cost) / max(len(grid_cost), 1):.3f} pp on "
+      f"average over the {len(grid_cost)} cells.", "small"),
+]
+story += observations("grid_observations.txt")
+ics_compare_section(
+    ["v29", "v32", "v33"], 27, "ICS v32-v33: a third search instead of the second pass, and a finer second-pass grid",
+    "With 4 LRs v29's second passes get almost no budget; would a third independent first pass use it better (v32)? "
+    "And does a second pass climbing on a grid twice as fine recover what the x0.6 grid costs (v33, Experiment 26)?",
+    [["v29", "Reference (campaign summary)"],
+     ["v32", "Three independent short-cooldown searches (one pass each, a third of the budget after the shared 4-LR "
+             "level scan), each shifted one grid step up at the end, averaged and committed linearly"],
+     ["v33", "v29 whose second passes climb on a x0.6^0.5 = x0.775 grid, up to 2 steps (v29's range)"]],
+    "ics_v32_v33_observations.txt")
+
+
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
     out = []
