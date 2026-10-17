@@ -1,0 +1,9 @@
+Conv: L = 1 predicts L = 40 only roughly, and always too large. With the code's 2 pp margin the picks are 0.36 / 0.6 / 0.13 / 0.22 / 0.13 (L = 1 / 2 / 5 / 10 / 40): L = 1 is 2 grid steps (x2.8) above L = 40 and L = 2 is 3 steps above, while L = 5 and 10 are within one step of it. With 1 or 0.5 pp margins the picks shrink and agree more: 0.22 at L = 1 against 0.078 at L = 5-40 (one step apart).
+
+Part of this is the margin's scale: it is absolute, but the score scale is not (the centers score 25.43 at L = 1 and 84.60 at L = 40), so 2 pp is a far looser criterion at L = 1, and the rule walks further up. At every L the pick sits 1-2 grid steps above that L's best-score center (L = 1: 0.13 -> 0.36; L = 40: 0.078 -> 0.13), so the 2-step gap between L = 1 and L = 40 is one step from the centers (0.13 vs 0.078) and one from the rule (+2 vs +1 steps above them).
+
+For reference, the full-run 95% set for the best conv initial LR is 0.13-0.22 (Experiment 7, baseline context): the picks at L = 5, 10 and 40 fall inside it, L = 1's 0.36 just outside (excluded there by 0.01 pp) and L = 2's 0.6 well outside.
+
+Head, norm_bias and whiten_bias: L = 1 does not predict L = 40. The picks move by up to a factor of 100 between L with no trend (head 770 / 460 / 170 / 36 / 3500, norm_bias 21 / 770 / 5900 / 2100 / 1300); twice the upward probe hit the 20-step limit. These LRs are flat below an upper edge (Experiment 4), so the rule picks near that edge, which moves with L and with the other LRs. whiten_bias is the most stable (2100-9800, within 3 grid steps).
+
+Caveat: in each L the other three LRs sit at that L's own Experiment 2 center, which differs between L (e.g. head 60 at L = 1, 0.006 at L = 5, 2100 at L = 40), so the comparison across L is not in a fixed context. Running the rule from a common start at every L would remove that confound; it needs new runs.

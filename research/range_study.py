@@ -36,3 +36,24 @@ def load(length):
 
 def all_lengths():
     return {length: load(length) for length in LENGTHS}
+
+
+def largest_within(probe, center_tta, margin, max_side):
+    """train_cifar.directional_search's initial_lr_search on recorded probes (TTA in %): from the
+    center, step up, then down, until a score falls below the best so far minus margin (or after
+    max_side steps); return the largest offset scoring within margin of the best, and whether a
+    side ended at the probe limit. None if the probes end before the rule would stop."""
+    points = {**probe, 0: (None, center_tta)}
+    probes, best, at_limit = [(0, center_tta)], center_tta, False
+    for direction in (1, -1):
+        for k in range(1, max_side + 1):
+            offset = direction * k
+            if offset not in points:
+                return None
+            probes.append((offset, points[offset][1]))
+            if points[offset][1] < best - margin:
+                break
+            best = max(best, points[offset][1])
+        else:
+            at_limit = at_limit or direction == 1
+    return max(o for o, s in probes if s >= best - margin), at_limit

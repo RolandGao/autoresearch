@@ -733,6 +733,82 @@ if brange["center"] is not None:
                            f"best - c, dashed); points below {low_y} are drawn at {low_y}.", "small")])]
 story += observations("baseline_range_observations.txt")
 
+# Experiment 8: the interval search's first-interval rule (largest LR within a margin of the best),
+# applied to Experiment 4's probes.
+MARGINS = (2.0, 1.0, 0.5)
+story += [
+    P("Experiment 8. Largest LR within the margin, per L (from Experiment 4)", "h1"),
+    P("Question", "h2"),
+    P("The interval search picks each LR in its first interval as the largest LR scoring within a margin of the "
+      "best (directional_search with initial_lr_search, initial_dropoff_margin = 0.02). Applied at main interval "
+      "lengths L = 1, 2, 5, 10, 40 from scratch, does the pick at L = 1 predict the pick at L = 40?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Data", "Experiment 4's probes (no new runs): for each L, one LR at a time on the 0.6^k grid around "
+                    "Experiment 2's center, the other three LRs at the center, TTA right after L steps, seed 0. "
+                    "The probes extend past every point where the rule stops"],
+           ["Rule", "As in train_cifar.py: from the center, step up while the score stays within the margin of the "
+                    "best so far, then down the same way (at most 20 steps per side); pick the largest LR within "
+                    "the margin of the best. Margin 0.02 TTA = 2 pp (the code's value); 1 and 0.5 pp shown too"]],
+          [3.3 * cm, 13.7 * cm]),
+]
+rule_rows = [["L (steps)", "Center TTA", *rng.GROUPS]]
+picks = {}
+for length, r in ranges.items():
+    center_tta = 100 * r["center"]["tta"]
+    cells = [str(length), f"{center_tta:.2f}"]
+    for g in rng.GROUPS:
+        for margin in MARGINS:
+            out = rng.largest_within(r["probe"][g], center_tta, margin, 20)
+            offset, limit = out
+            value = r["center"]["values"][g] if offset == 0 else r["probe"][g][offset][0]
+            picks[(length, g, margin)] = (value, offset, limit)
+        value, offset, limit = picks[(length, g, 2.0)]
+        cells.append(f"{value:g} ({offset:+d}){'*' if limit else ''}")
+    rule_rows.append(cells)
+story += [P("Picks with the code's margin (2 pp): LR (grid steps from the center)", "h2"),
+          table(rule_rows, [2.0 * cm, 2.2 * cm, 3.2 * cm, 3.2 * cm, 3.2 * cm, 3.2 * cm]),
+          P("* the upward probe reached the 20-step limit without falling out of the margin, so the pick is the "
+            "probe limit.", "small")]
+rows = [["L (steps)", *(f"conv, margin {m:g} pp" for m in MARGINS)]]
+for length in ranges:
+    rows.append([str(length), *(f"{picks[(length, 'conv', m)][0]:g}" for m in MARGINS)])
+story += [P("Conv pick by margin", "h2"), table(rows, [2.6 * cm] + [4.0 * cm] * len(MARGINS))]
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.6), layout="constrained")
+lengths = list(ranges)
+ax = axes[0]
+for margin, style in zip(MARGINS, ("-", "--", ":")):
+    ax.plot(lengths, [picks[(n, "conv", margin)][0] for n in lengths], color=colors_g["conv"], linestyle=style,
+            marker="o", markersize=4, linewidth=1.3, label=f"margin {margin:g} pp")
+ax.plot(lengths, [ranges[n]["center"]["values"]["conv"] for n in lengths], color="#8c8b86", marker="s",
+        markersize=3.5, linewidth=1.0, label="Experiment 2 center (best)")
+ax.set_xscale("log")
+ax.set_yscale("log")
+ax.set_xticks(lengths, [str(n) for n in lengths])
+ax.set_xlabel("main interval length L (steps)")
+ax.set_ylabel("conv LR")
+ax.set_title("conv", loc="left", fontsize=9.5)
+ax.legend(frameon=False, fontsize=7.5)
+ax = axes[1]
+for g in rng.GROUPS[1:]:
+    ax.plot(lengths, [picks[(n, g, 2.0)][0] for n in lengths], color=colors_g[g], marker="o", markersize=4,
+            linewidth=1.3, label=g)
+ax.set_xscale("log")
+ax.set_yscale("log")
+ax.set_xticks(lengths, [str(n) for n in lengths])
+ax.set_xlabel("main interval length L (steps)")
+ax.set_ylabel("picked LR (margin 2 pp)")
+ax.set_title("head, norm_bias, whiten_bias", loc="left", fontsize=9.5)
+ax.legend(frameon=False, fontsize=7.5)
+rule_path = os.path.join(REPO, "plots", "largest_within.png")
+fig.savefig(rule_path, dpi=140)
+plt.close(fig)
+img = Image(rule_path)
+img.drawWidth, img.drawHeight = 17 * cm, 17 * cm * img.imageHeight / img.imageWidth
+story += [keep([img, P("Figure 8. The rule's pick per L. Left: conv at three margins, with Experiment 2's "
+                       "best-score center. Right: the other LRs at the code's margin.", "small")])]
+story += observations("largest_within_observations.txt")
+
 
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
