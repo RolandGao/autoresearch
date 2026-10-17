@@ -1,0 +1,69 @@
+# commit 50f53bf133aa7141caf3548b75bd7ef8b9a9333b
+# args {"batch_size": 500, "transform": "wave", "groups": "conv", "schedule": "{\"conv\": [0.1, 0.064, 0.049, 0.049, 0.058, 0.072, 0.079, 0.064, 0.035, 0.0088]}", "name": "lin_oracle_a_bs500_wave", "seeds": "100,101,102,103,104,105,106,107", "shape": "linear"}
+# worker w0 gpu GPU-f2a7af26-a16e-a65c-4a2f-3d61efdbf9d1
+# source
+# | """Train given constant-interval schedules on held-out seeds (evaluation only).
+# | 
+# | python research/eval_schedule.py --batch-size 2000 --transform ramp --groups conv \
+# |     --schedule '{"conv": [0.13, 0.13, 0.078, 0.047, 0.01]}' --name avg_v5_a_bs2000_ramp
+# | Each searched group's schedule becomes len(values) equal constant intervals (spec values); with
+# | --transform the transform applies to the listed groups, as in the ICS configs.
+# | """
+# | import argparse
+# | import copy
+# | import json
+# | 
+# | from common import base_config, emit, new_model, open_log, t
+# | 
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--batch-size", type=int, required=True)
+# | parser.add_argument("--transform", default="")
+# | parser.add_argument("--groups", required=True, help="comma-separated groups the transform applies to")
+# | parser.add_argument("--schedule", required=True, help="JSON {group: [values per interval]}")
+# | parser.add_argument("--name", required=True)
+# | parser.add_argument("--seeds", default="100,101,102,103,104,105,106,107")
+# | parser.add_argument("--shape", default="constant", choices=["constant", "linear"],
+# |                     help="linear: piecewise linear through the interval midpoints, the end half-intervals "
+# |                          "extrapolated (clipped at 0); a linear schedule's interval means give it back exactly")
+# | args = parser.parse_args()
+# | log = open_log(f"eval_schedule_{args.name}", args, __file__)
+# | 
+# | config = copy.deepcopy(base_config(args.batch_size))
+# | schedule = json.loads(args.schedule)
+# | total = sum(int(line[0]) for line in config["param_groups"]["conv"]["lr_scheduler"])
+# | 
+# | 
+# | def linear_lines(values, length):
+# |     """Piecewise linear through (interval midpoint, value); the first and last half-intervals continue
+# |     the neighbouring slope, clipped at 0."""
+# |     half, rest = length // 2, length - length // 2
+# |     start = max(0.0, values[0] + (values[0] - values[1]) / 2)
+# |     end = max(0.0, values[-1] - (values[-2] - values[-1]) / 2)
+# |     return ([[half, start, values[0]]] + [[length, a, b] for a, b in zip(values, values[1:])]
+# |             + [[rest, values[-1], end]])
+# | 
+# | 
+# | for g, values in schedule.items():
+# |     length = total // len(values)
+# |     config["param_groups"][g]["lr_scheduler"] = (linear_lines(values, length) if args.shape == "linear"
+# |                                                  else [[length, v] for v in values])
+# | if args.transform:
+# |     for g in args.groups.split(","):
+# |         config["param_groups"][g]["lr_transform"] = copy.deepcopy(t.LR_TRANSFORMS[args.transform])
+# | model = new_model()
+# | scores = []
+# | for seed in [int(s) for s in args.seeds.split(",")]:
+# |     scores.append(t.run_seeded(f"{args.name}.s{seed}", model, config, seed, debug=False)["tta_val_acc"])
+# |     emit(log, kind="seed", seed=seed, tta=scores[-1])
+# | mean = sum(scores) / len(scores)
+# | emit(log, kind="result", name=args.name, schedule=schedule, transform=args.transform, shape=args.shape, mean=mean, per_seed=scores)
+
+{"kind": "seed", "seed": 100, "tta": 0.9389999508857727, "time": 1792247971.7}
+{"kind": "seed", "seed": 101, "tta": 0.9411999583244324, "time": 1792247984.3}
+{"kind": "seed", "seed": 102, "tta": 0.9401999711990356, "time": 1792247996.8}
+{"kind": "seed", "seed": 103, "tta": 0.9405999779701233, "time": 1792248009.3}
+{"kind": "seed", "seed": 104, "tta": 0.9414999485015869, "time": 1792248021.8}
+{"kind": "seed", "seed": 105, "tta": 0.9398999810218811, "time": 1792248034.3}
+{"kind": "seed", "seed": 106, "tta": 0.9396999478340149, "time": 1792248046.8}
+{"kind": "seed", "seed": 107, "tta": 0.9389999508857727, "time": 1792248059.3}
+{"kind": "result", "name": "lin_oracle_a_bs500_wave", "schedule": {"conv": [0.1, 0.064, 0.049, 0.049, 0.058, 0.072, 0.079, 0.064, 0.035, 0.0088]}, "transform": "wave", "shape": "linear", "mean": 0.9401374608278275, "per_seed": [0.9389999508857727, 0.9411999583244324, 0.9401999711990356, 0.9405999779701233, 0.9414999485015869, 0.9398999810218811, 0.9396999478340149, 0.9389999508857727], "time": 1792248059.3}

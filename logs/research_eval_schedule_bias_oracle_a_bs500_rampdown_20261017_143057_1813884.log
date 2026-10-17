@@ -1,0 +1,52 @@
+# commit 216dee41047035ea9c6bac257c99359117031e97
+# args {"batch_size": 500, "transform": "rampdown", "groups": "conv", "schedule": "{\"conv\": [0.036, 0.042, 0.048, 0.056, 0.062, 0.067, 0.069, 0.065, 0.051, 0.022]}", "name": "bias_oracle_a_bs500_rampdown", "seeds": "100,101,102,103,104,105,106,107"}
+# worker w0 gpu GPU-f2a7af26-a16e-a65c-4a2f-3d61efdbf9d1
+# source
+# | """Train given constant-interval schedules on held-out seeds (evaluation only).
+# | 
+# | python research/eval_schedule.py --batch-size 2000 --transform ramp --groups conv \
+# |     --schedule '{"conv": [0.13, 0.13, 0.078, 0.047, 0.01]}' --name avg_v5_a_bs2000_ramp
+# | Each searched group's schedule becomes len(values) equal constant intervals (spec values); with
+# | --transform the transform applies to the listed groups, as in the ICS configs.
+# | """
+# | import argparse
+# | import copy
+# | import json
+# | 
+# | from common import base_config, emit, new_model, open_log, t
+# | 
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--batch-size", type=int, required=True)
+# | parser.add_argument("--transform", default="")
+# | parser.add_argument("--groups", required=True, help="comma-separated groups the transform applies to")
+# | parser.add_argument("--schedule", required=True, help="JSON {group: [values per interval]}")
+# | parser.add_argument("--name", required=True)
+# | parser.add_argument("--seeds", default="100,101,102,103,104,105,106,107")
+# | args = parser.parse_args()
+# | log = open_log(f"eval_schedule_{args.name}", args, __file__)
+# | 
+# | config = copy.deepcopy(base_config(args.batch_size))
+# | schedule = json.loads(args.schedule)
+# | total = sum(int(line[0]) for line in config["param_groups"]["conv"]["lr_scheduler"])
+# | for g, values in schedule.items():
+# |     config["param_groups"][g]["lr_scheduler"] = [[total // len(values), v] for v in values]
+# | if args.transform:
+# |     for g in args.groups.split(","):
+# |         config["param_groups"][g]["lr_transform"] = copy.deepcopy(t.LR_TRANSFORMS[args.transform])
+# | model = new_model()
+# | scores = []
+# | for seed in [int(s) for s in args.seeds.split(",")]:
+# |     scores.append(t.run_seeded(f"{args.name}.s{seed}", model, config, seed, debug=False)["tta_val_acc"])
+# |     emit(log, kind="seed", seed=seed, tta=scores[-1])
+# | mean = sum(scores) / len(scores)
+# | emit(log, kind="result", name=args.name, schedule=schedule, transform=args.transform, mean=mean, per_seed=scores)
+
+{"kind": "seed", "seed": 100, "tta": 0.9411999583244324, "time": 1792247471.3}
+{"kind": "seed", "seed": 101, "tta": 0.9406999945640564, "time": 1792247483.9}
+{"kind": "seed", "seed": 102, "tta": 0.9402999877929688, "time": 1792247496.4}
+{"kind": "seed", "seed": 103, "tta": 0.939300000667572, "time": 1792247508.9}
+{"kind": "seed", "seed": 104, "tta": 0.9422999620437622, "time": 1792247521.5}
+{"kind": "seed", "seed": 105, "tta": 0.9391999840736389, "time": 1792247534.0}
+{"kind": "seed", "seed": 106, "tta": 0.9407999515533447, "time": 1792247546.5}
+{"kind": "seed", "seed": 107, "tta": 0.9376999735832214, "time": 1792247559.0}
+{"kind": "result", "name": "bias_oracle_a_bs500_rampdown", "schedule": {"conv": [0.036, 0.042, 0.048, 0.056, 0.062, 0.067, 0.069, 0.065, 0.051, 0.022]}, "transform": "rampdown", "mean": 0.9401874765753746, "per_seed": [0.9411999583244324, 0.9406999945640564, 0.9402999877929688, 0.939300000667572, 0.9422999620437622, 0.9391999840736389, 0.9407999515533447, 0.9376999735832214], "time": 1792247559.0}
