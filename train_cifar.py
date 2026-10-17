@@ -3354,7 +3354,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         level_margin=0.01, level_refine=3, level_joint=False, short_fraction=5, pass_intervals=[], fine=["conv"],
         refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False, level_backoff=0,
         adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1, level_individual=2,
-        cooldown_mults=[], shift_groups="all", ensemble_scope="last", budget_reserve=False,
+        cooldown_mults=[], shift_groups="all", ensemble_scope="last", budget_reserve=False, share_levels=False,
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3501,6 +3501,11 @@ ICS_VERSIONS = {
                 level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
                 replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=True, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True),
+    # v27: v26 whose members share the first member's 4-LR level scan (conv only it is v26).
+    "v27": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=True, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -5839,7 +5844,7 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "larger_within", "refine_start", "replicates", "level_refine", "level_joint", "short_fraction",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
                 "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "shift_groups",
-                "ensemble_scope", "budget_reserve", "budget", "heldout_seeds"}
+                "ensemble_scope", "budget_reserve", "share_levels", "budget", "heldout_seeds"}
 
 
 def run_ics_search(run, model, config):
@@ -5890,6 +5895,8 @@ def run_ics_search(run, model, config):
         level_joint: with "largest", the non-lead groups are first scanned together (one
         multiplier for all of them), then each alone at most level_individual x7.7 steps up from
         there (0: the joint level only).
+        share_levels: with ensemble_scope "all", later members reuse the first member's scanned
+          levels instead of scanning again; the rest of the budget is split evenly among members.
         level_backoff: x7.7 steps each non-lead group's level is then lowered (a safety margin: a
         short horizon accepts levels near a long-horizon edge it cannot see).
       relevel_steps: with tie, in the last pass's first refined interval, each non-lead group's
@@ -6150,7 +6157,7 @@ def run_ics_search(run, model, config):
     pass_states = []
     replicates = [1] * n
     prev_length = None
-    member = {"index": 0, "passes_left": 0}
+    member = {"index": 0, "passes_left": 0, "level_steps": 0, "levels": None}
     members = []
     scope = tuning["ensemble_scope"]
     if scope not in ("last", "all"):
@@ -6164,7 +6171,8 @@ def run_ics_search(run, model, config):
             p, member["index"] = p_run % len(passes), p_run // len(passes)
             if p == 0:
                 plan, pass_states, prev_length = None, [], None
-                limit["steps"] = budget_total * (member["index"] + 1) / tuning["ensemble"]
+                shared = member["level_steps"]  # A shared level scan is paid once, by the first member.
+                limit["steps"] = shared + (budget_total - shared) * (member["index"] + 1) / tuning["ensemble"]
         else:
             p = min(p_run, len(passes) - 1)  # Ensemble members are all the last pass.
             member["index"] = p_run - (len(passes) - 1) if p_run >= len(passes) - 1 else 0
@@ -6218,7 +6226,9 @@ def run_ics_search(run, model, config):
                     log_event("ics_interval", run=run, search_pass=p, interval=k, lookahead="kept",
                               train_steps=trainer.train_steps, **{g: current[g] for g in groups})
                     continue
-            if p == 0 and k == 0 and tuning["level_scan"]:
+            if p == 0 and k == 0 and tuning["level_scan"] and member["levels"] is not None:
+                current = dict(current, **member["levels"])  # Shared: the first member's scanned levels.
+            elif p == 0 and k == 0 and tuning["level_scan"]:
                 level_kind = tuning["level_lookahead"] if n > 1 else "none"
                 level_cache = cache if level_kind == kind else {}
                 others = tuple(g for g in tuning["level_scan"] if g != lead)
@@ -6239,6 +6249,10 @@ def run_ics_search(run, model, config):
                         else:
                             current = climb(k, g, level_kind, state, level_cache, 4, current,
                                             tuning["max_side_steps"])
+                if tuning["share_levels"] and whole:
+                    member["levels"] = {g: current[g] for g in tuning["level_scan"]}
+                    member["level_steps"] = trainer.train_steps
+                    limit["steps"] = member["level_steps"] + (budget_total - member["level_steps"]) / tuning["ensemble"]
             climbed = tuning["fine"] if k == 0 else (groups if not tuning["tie"] else [lead])
             current = tied(k, current)
             short_ref.update(current)
