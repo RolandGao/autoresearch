@@ -3354,7 +3354,7 @@ def ics_config(batch_size, scenario, transform, **overrides):
         level_margin=0.01, level_refine=3, level_joint=False, short_fraction=5, pass_intervals=[], fine=["conv"],
         refine_start=0, replicates=[1, 1, 1, 1, 1], refine_side_steps=20, final_expand=False, level_backoff=0,
         adaptive_reps=False, relevel_steps=0, carry_offset=False, plan_shift=0, ensemble=1, level_individual=2,
-        cooldown_mults=[], shift_groups="all", ensemble_scope="last",
+        cooldown_mults=[], shift_groups="all", ensemble_scope="last", budget_reserve=False,
         tie=scenario == "b", max_side_steps=20, larger_within=0.0, budget=20, heldout_seeds=HELDOUT_SEEDS)
     tuning.update(overrides)
     config["hparam_tuning"] = tuning
@@ -3500,7 +3500,7 @@ ICS_VERSIONS = {
     "v26": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
                 level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
                 replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=True, adaptive_reps=True, plan_shift=1,
-                shift_groups="lead", ensemble=2, ensemble_scope="all"),
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -5839,7 +5839,7 @@ ICS_REQUIRED = {"algorithm", "metric", "groups", "start", "intervals", "passes",
                 "larger_within", "refine_start", "replicates", "level_refine", "level_joint", "short_fraction",
                 "pass_intervals", "refine_side_steps", "final_expand", "level_backoff", "adaptive_reps", "relevel_steps",
                 "carry_offset", "plan_shift", "ensemble", "level_individual", "cooldown_mults", "shift_groups",
-                "ensemble_scope", "budget", "heldout_seeds"}
+                "ensemble_scope", "budget_reserve", "budget", "heldout_seeds"}
 
 
 def run_ics_search(run, model, config):
@@ -5979,6 +5979,13 @@ def run_ics_search(run, model, config):
         remaining = total - (k + 1) * length
         return 0 if kind == "none" else (min(short_steps, remaining) if kind in ("short", "short_abs") else remaining)
 
+    def reserve(k):
+        """Steps kept back so the run stays within budget: the rest of this pass at one training per
+        interval, plus one full run per later pass of this search (only with budget_reserve)."""
+        if not tuning["budget_reserve"]:
+            return 0
+        return (n - 1 - k) * length + total * member["passes_left"]
+
     def evaluate(k, values, kind, state, cache):
         """Train interval k at values (group -> LR) from state, then the lookahead; cached."""
         nonlocal evaluations, budget_hit
@@ -5987,10 +5994,10 @@ def run_ics_search(run, model, config):
             return cache[key][0]
         reps = replicates[k]
         cost = reps * (length + lookahead_steps(k, kind))
-        while tuning["adaptive_reps"] and reps > 1 and trainer.train_steps + cost > limit["steps"]:
+        while tuning["adaptive_reps"] and reps > 1 and trainer.train_steps + cost + reserve(k) > limit["steps"]:
             reps -= 1
             cost = reps * (length + lookahead_steps(k, kind))
-        if trainer.train_steps + cost > limit["steps"]:
+        if trainer.train_steps + cost + reserve(k) > limit["steps"]:
             budget_hit = True
             return None
         sched_head = dict(base)
@@ -6143,7 +6150,7 @@ def run_ics_search(run, model, config):
     pass_states = []
     replicates = [1] * n
     prev_length = None
-    member = {"index": 0}
+    member = {"index": 0, "passes_left": 0}
     members = []
     scope = tuning["ensemble_scope"]
     if scope not in ("last", "all"):
@@ -6163,6 +6170,7 @@ def run_ics_search(run, model, config):
             member["index"] = p_run - (len(passes) - 1) if p_run >= len(passes) - 1 else 0
         if member["index"] > 0 and not whole:
             plan = {g: list(v) for g, v in plan_before_last.items()}  # Every member starts from the same plan.
+        member["passes_left"] = (len(passes) - 1 - p) if whole else (len(schedule_passes) - 1 - p_run)
         for g in groups:  # Relevel factors belong to one run of a pass.
             group_scale[g], scale_from[g] = 1.0, 0
         n = pass_counts[p]
@@ -6256,6 +6264,8 @@ def run_ics_search(run, model, config):
             key = (kind, tuple(current[g] for g in groups))
             if key not in cache:
                 evaluate(k, current, kind, state, cache)
+            if key not in cache and tuning["budget_reserve"]:  # Out of budget: train the interval only.
+                cache[key] = (None, None)
             if key not in cache:  # Out of budget before this point was trained: train it anyway.
                 saved, limit["steps"] = limit["steps"], float("inf")
                 evaluate(k, current, kind, state, cache)
