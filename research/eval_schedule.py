@@ -18,14 +18,31 @@ parser.add_argument("--groups", required=True, help="comma-separated groups the 
 parser.add_argument("--schedule", required=True, help="JSON {group: [values per interval]}")
 parser.add_argument("--name", required=True)
 parser.add_argument("--seeds", default="100,101,102,103,104,105,106,107")
+parser.add_argument("--shape", default="constant", choices=["constant", "linear"],
+                    help="linear: piecewise linear through the interval midpoints, the end half-intervals "
+                         "extrapolated (clipped at 0); a linear schedule's interval means give it back exactly")
 args = parser.parse_args()
 log = open_log(f"eval_schedule_{args.name}", args, __file__)
 
 config = copy.deepcopy(base_config(args.batch_size))
 schedule = json.loads(args.schedule)
 total = sum(int(line[0]) for line in config["param_groups"]["conv"]["lr_scheduler"])
+
+
+def linear_lines(values, length):
+    """Piecewise linear through (interval midpoint, value); the first and last half-intervals continue
+    the neighbouring slope, clipped at 0."""
+    half, rest = length // 2, length - length // 2
+    start = max(0.0, values[0] + (values[0] - values[1]) / 2)
+    end = max(0.0, values[-1] - (values[-2] - values[-1]) / 2)
+    return ([[half, start, values[0]]] + [[length, a, b] for a, b in zip(values, values[1:])]
+            + [[rest, values[-1], end]])
+
+
 for g, values in schedule.items():
-    config["param_groups"][g]["lr_scheduler"] = [[total // len(values), v] for v in values]
+    length = total // len(values)
+    config["param_groups"][g]["lr_scheduler"] = (linear_lines(values, length) if args.shape == "linear"
+                                                 else [[length, v] for v in values])
 if args.transform:
     for g in args.groups.split(","):
         config["param_groups"][g]["lr_transform"] = copy.deepcopy(t.LR_TRANSFORMS[args.transform])
@@ -35,4 +52,4 @@ for seed in [int(s) for s in args.seeds.split(",")]:
     scores.append(t.run_seeded(f"{args.name}.s{seed}", model, config, seed, debug=False)["tta_val_acc"])
     emit(log, kind="seed", seed=seed, tta=scores[-1])
 mean = sum(scores) / len(scores)
-emit(log, kind="result", name=args.name, schedule=schedule, transform=args.transform, mean=mean, per_seed=scores)
+emit(log, kind="result", name=args.name, schedule=schedule, transform=args.transform, shape=args.shape, mean=mean, per_seed=scores)
