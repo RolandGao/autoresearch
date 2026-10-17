@@ -3507,6 +3507,13 @@ ICS_VERSIONS = {
                 level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
                 replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=True, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True),
+    # v28: v27 committing the averaged 5-interval schedule as a piecewise-linear schedule through the interval
+    # midpoints instead of expanding it to 10 constant intervals (Experiment 24).
+    "v28": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=1,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
+                final_shape="linear"),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
