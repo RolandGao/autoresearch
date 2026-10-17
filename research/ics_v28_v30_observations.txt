@@ -1,0 +1,5 @@
+Refining the first interval closes BS 2000. On search seeds 0-1, v29 is within 0.1 pp of the baseline in 22 of 24 cells: conv only in all 12 (0.007 pp short on average, worst 0.09; BS 2000 93.84 / 93.90 / 93.86 / 93.96 without a transform / ramp / reverse ramp / wave, against v28's 93.80-93.82 on seeds 2-3), with 4 LRs in 10 of 12 (0.001 pp above on average). The reverse-ramp cell with 4 LRs at BS 2000 goes from 93.57 (v28) to 93.91. The two misses are with 4 LRs: BS 2000 without a transform (93.71) and BS 500 under the reverse ramp (93.86).
+
+v30's single full-budget search is weaker conv only: 0.039 pp short on average (11 of 12 within 0.1 pp), lowest at BS 125 under the ramp (93.78). With the linear commit, two half-budget searches averaged beat one search with twice the budget per decision.
+
+v29's search seeds 2-3 are running; this conclusion stands only if they agree.
