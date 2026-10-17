@@ -1085,7 +1085,7 @@ rows = [["Interval", "Noise of a paired comparison (SD over seeds of candidate -
 for k, r in look.items():
     tr = r["rows"]["truth"]["paired_sd"]
     rl = r["rows"].get("rest_lin", {"paired_sd": {}})["paired_sd"]
-    rows.append([str(k + 1), "; ".join(f"{r['c'][o]:g}: {tr[o]:.2f} / {rl.get(o, float('nan')):.2f}"
+    rows.append([str(k + 1), "; ".join(f"{r['c'][o]:g}: {tr[o]:.2f} / " + (f"{rl[o]:.2f}" if o in rl else "-")
                                        for o in r["offsets"] if o != 0)])
 story += [P("Noise of one seed's comparison of two candidates", "h2"), table(rows, [2.0 * cm, 15.0 * cm])]
 fig, axes = plt.subplots(1, 5, figsize=(12, 2.9), layout="constrained", sharey=True)
@@ -1101,6 +1101,8 @@ for ax, (k, r) in zip(axes, look.items()):
         ax.plot(xs, [max(-1.5, row["means"][o] - top) for o in r["offsets"]], color=color, linestyle=ls,
                 marker="o", markersize=3, linewidth=1.3, label=v)
     ax.set_xscale("log")
+    ax.minorticks_off()
+    ax.set_xticks(xs, [f"{x:g}" for x in xs], rotation=45, fontsize=7)
     ax.set_title(f"interval {k + 1}", loc="left", fontsize=9)
     ax.set_xlabel("candidate conv LR")
 axes[0].set_ylabel("8-seed mean minus its best (pp)")

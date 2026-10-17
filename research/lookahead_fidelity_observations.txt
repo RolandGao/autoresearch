@@ -1,0 +1,7 @@
+The rest-of-run linear lookahead decides like the truth: its 8-seed pick is the truth's best in intervals 2-4 (interval 5 has no lookahead), and in interval 1 it picks 0.13 where the truth ties 0.13 and 0.22 (93.83 both). One seed's pick by it loses 0.001-0.050 pp of final TTA per interval, about what one seed's pick by the truth itself loses (0.009-0.039): the truth is flat near its optimum, so a neighbouring pick costs little.
+
+One-interval (40-step) lookaheads are biased toward small LRs once training is under way: in interval 2 every one of them picks 0.047-0.078 where the truth peaks at 0.13 (regret 0.08-0.29 pp per seed), and c40_0.6 picks 1-2 grid steps below the truth's best in intervals 2-4. The mildest cooldown, c40_0.22, is the least biased (regret 0.03-0.08 pp from interval 2 on) but still loses to rest_lin in intervals 2 and 3.
+
+Scoring candidates from the same trained state does not cancel the seed noise: one seed's difference between two candidates' truths has an SD of 0.12-0.27 pp in intervals 1-2, as large as two independent full runs (0.17), falling to 0.06-0.17 pp in intervals 4-5 as fewer steps remain. Differences of 0.05-0.1 pp between neighbouring candidates are therefore not resolved by one seed, but they also cost little.
+
+Cost at BS 2000: rest_lin costs the rest of the run per candidate (200, 160, 120, 80, 40 steps for intervals 1-5), so about 3 candidates per interval cost 1800 steps = 9 x a run for one searched LR, within the campaign's 20x budget.
