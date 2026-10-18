@@ -1709,6 +1709,15 @@ ics_compare_section(
      ["v29", "The algorithm, 20 full runs (search seeds 0-7)"]],
     "budget_observations.txt")
 
+ics_compare_section(
+    ["v40", "v29", "v41"], 29, "How many constant intervals should ICS v29 search?",
+    "With the linear commit, 5 values are enough to represent the oracle (Experiment 26). Would 4 intervals (fewer "
+    "decisions, each with more budget) or 8 (finer shape, more decisions on the same budget) do better?",
+    [["v40", "v29 with 4 intervals (the last decision averaged over 2 continuations)"],
+     ["v29", "5 intervals (search seeds 0-7)"],
+     ["v41", "v29 with 8 intervals (6 does not divide the runs' step counts)"]],
+    "intervals_observations.txt")
+
 
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
