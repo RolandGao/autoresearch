@@ -6,3 +6,5 @@ Scoring the second pass's candidates with the rest of the run decaying linearly 
 
 A milder first-pass cooldown (v45: 0.36 x the candidate instead of 0.22) is worse everywhere: paired with v29, -0.058 +- 0.020 pp conv only and -0.070 +- 0.036 pp with 4 LRs on the 24 standard cells, and -0.18 / -0.36 pp under the held-back transforms (inverted wave conv only 93.40 / 93.53 / 93.57). The cooldown and the one-grid-step plan shift are tuned as a pair; softening one breaks it.
 
+An unbiased first pass does not fix it either. v46, one full-budget search whose first pass scores candidates with the rest of the run decaying linearly from them (rest_lin, no plan shift), then v29's second pass, is worse everywhere: paired with v29, -0.093 +- 0.031 pp conv only and -0.17 +- 0.08 pp with 4 LRs on the 24 standard cells (6 and 8 of 12 within 0.1 pp), and -0.17 / -0.86 pp under the held-back transforms. A rest-of-run lookahead costs several times a short one per candidate, so the first pass makes fewer, coarser decisions; the bias it removes is smaller than what it loses. The inverted wave remains v29's known failure.
+
