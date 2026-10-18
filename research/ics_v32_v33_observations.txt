@@ -10,3 +10,5 @@ Scanning head's level apart from the biases' (ICS v35) fixes v29's two misses an
 
 Lowering the common level does not help on average either: v29's committed 4-LR schedules with head and both biases x0.6 score -0.007 +- 0.016 pp against the searched ones (held-out probes of search seeds 0-3, 44 pairs, 21 higher), and ICS v42 (v29 with the joint level lowered one x0.6 step after the scan, so conv is searched at the lower level too) is 0.029 pp short of the baseline (9 of 12 cells within 0.1 pp; v29: 0.012 pp, 10 of 12). It fixes BS 500 under the reverse ramp (94.02) and gains at BS 125 without a transform (94.02) but loses about as much elsewhere (BS 2000 with the wave 93.67, BS 125 under the ramp 93.90); the two BS 2000 misses stay (93.73, 93.81).
 
+Tying head and the biases to conv's profile is right: with conv as searched but the other three groups decaying linearly from their committed level to 0 (the baseline's shape), the held-out score drops by 0.154 +- 0.045 pp (48 probes of search seeds 0-3, 12 higher), most under the ramp (BS 500 92.94, BS 125 93.59), where following conv's profile is what compensates the transform for the other groups too.
+

@@ -1107,7 +1107,8 @@ for bs in ics.BATCH_SIZES:
 story += [P(f"Held-out TTA of ICS {FINAL_VERSION} (mean over search seeds; vs the baseline in brackets)", "h2"),
           table(rows, [4.2 * cm] + [3.2 * cm] * 4),
           P("Previous summaries: v24 (4 LRs) and v19 (conv only), 10 constant intervals, one search; see Experiments "
-            "22-25 for the steps between.", "small")]
+            "22-25 for the steps between.", "small")
+story += observations("campaign_status_observations.txt")
 
 # Experiment 12: lookahead fidelity and noise for constant-interval decisions (2-day campaign).
 look_by_bs = {bs: las.summary(bs, "") for bs in (2000, 500, 125)}
