@@ -3608,6 +3608,13 @@ ICS_VERSIONS = {
                 replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
                 final_shape="linear", level_backoff=0.25),
+    # v43: v29 whose second-pass climbs may move up to 2 grid steps (v29: 1). Under the inverted wave (held back
+    # while v29 was developed) pass 1 leaves interval 2 1.5-2 steps below the oracle and v29 cannot recover it.
+    "v43": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 2], final_expand=False, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
+                final_shape="linear", refine_side_steps=2),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -3628,8 +3635,9 @@ for version, overrides in ICS_VERSIONS.items():
 for batch_size in (2000, 500, 125):
     for scenario in ("a", "b"):
         for transform in ("waveinv", "ramp8"):
-            RUN_CONFIGS[f"ics_v29_{scenario}_bs{batch_size}_{transform}"] = ics_config(
-                batch_size, scenario, transform, **ICS_VERSIONS["v29"])
+            for version in ("v29", "v43"):
+                RUN_CONFIGS[f"ics_{version}_{scenario}_bs{batch_size}_{transform}"] = ics_config(
+                    batch_size, scenario, transform, **ICS_VERSIONS[version])
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
