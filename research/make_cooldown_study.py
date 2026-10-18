@@ -4,6 +4,7 @@ python research/make_cooldown_study.py"""
 import glob
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -1717,6 +1718,51 @@ ics_compare_section(
      ["v29", "5 intervals (search seeds 0-7)"],
      ["v41", "v29 with 8 intervals (6 does not divide the runs' step counts)"]],
     "intervals_observations.txt")
+
+
+# Experiment 30: v29's committed schedules and the baselines on fresh seeds (200-207).
+fresh_base = {}
+for path in glob.glob(os.path.join(REPO, "logs", "cifar_baseline_*.log")):
+    for line in open(path, errors="replace"):
+        if line.startswith("seed_summary run=baseline_bs") and "seeds=[200, 201, 202, 203, 204, 205, 206, 207]" in line:
+            m = re.search(r"run=baseline_bs(\d+) .*?tta_val_acc_mean=(\S+)", line)
+            fresh_base[int(m.group(1))] = 100 * float(m.group(2))
+v29_runs = ics.load("v29")
+rows = [["Cell", "Baseline 200-207", "v29 200-207", "diff", "v29 100-107 (same searches)", "diff"]]
+fresh_diff = {"a": [], "b": []}
+for bs in ics.BATCH_SIZES:
+    for sc in ics.SCENARIOS:
+        for tr in ics.TRANSFORMS:
+            cell = f"{sc}_bs{bs}{tr}"
+            fresh = [probe_runs[f"fresh_v29_{cell}_s{seed}"][0] for seed in range(4)
+                     if f"fresh_v29_{cell}_s{seed}" in probe_runs]
+            held = [v29_runs[(sc, bs, tr)][seed]["heldout"] for seed in range(4)
+                    if seed in v29_runs.get((sc, bs, tr), {}) and "heldout" in v29_runs[(sc, bs, tr)][seed]]
+            if not fresh or bs not in fresh_base or not held:
+                continue
+            f, h = sum(fresh) / len(fresh), sum(held) / len(held)
+            fresh_diff[sc].append(f - fresh_base[bs])
+            rows.append([f"BS {bs}, {ics.SCENARIO_LABELS[sc]}, {ics.TRANSFORM_LABELS[tr]}", f"{fresh_base[bs]:.2f}",
+                         f"<b>{f:.2f}</b>" if f >= fresh_base[bs] - 0.1 else f"{f:.2f}", f"{f - fresh_base[bs]:+.2f}",
+                         f"{h:.2f}", f"{h - ics.target(ics_refs, bs):+.2f}"])
+story += [
+    P("Experiment 30. Does ICS v29 hold on fresh seeds?", "h1"),
+    P("Question", "h2"),
+    P("Every version was scored on the same held-out seeds 100-107, and v29 was picked as the best of about 30. "
+      "Do its committed schedules still match the baseline on seeds that played no part in that choice?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Schedules", "v29's committed schedules from search seeds 0-3 (linear through the 5 averaged values), "
+                         "all 24 cells; the three baselines"],
+           ["Runs", "Seeds 200-207 (research/eval_schedule.py; the baselines via train_cifar.py)"]],
+          [3.3 * cm, 13.7 * cm]),
+    P("Held-out TTA on seeds 200-207 (mean over search seeds 0-3), and the same searches on seeds 100-107", "h2"),
+    table(rows, [5.2 * cm, 2.3 * cm, 2.3 * cm, 1.5 * cm, 3.2 * cm, 1.5 * cm]),
+    P("Mean difference to the fresh baseline: " + "; ".join(
+        f"{ics.SCENARIO_LABELS[sc]} {sum(x) / len(x):+.3f} pp ({sum(v >= -0.1 for v in x)} of {len(x)} within 0.1 pp)"
+        for sc, x in fresh_diff.items() if x) + ".", "small"),
+]
+story += observations("fresh_observations.txt")
 
 
 def attach_headings(flowables):
