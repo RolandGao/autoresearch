@@ -2866,6 +2866,9 @@ LR_TRANSFORMS = {
     "ramp": dict(kind="ramp", factor=4.0),
     "wave": dict(kind="wave", factor=2.0, phase=0.0),
     "rampdown": dict(kind="ramp", factor=0.25),  # The reverse ramp: x4 -> x0.25.
+    # Held back while ICS was developed (a generality check of the final algorithm, Experiment 31):
+    "waveinv": dict(kind="wave", factor=2.0, phase=0.5),  # The wave inverted: down first, then up.
+    "ramp8": dict(kind="ramp", factor=8.0),  # A steeper ramp: x1/8 -> x8.
 }
 TRAINED_LR_GROUPS = ("conv", "head", "norm_bias", "whiten_bias")
 
@@ -3621,6 +3624,12 @@ for version, overrides in ICS_VERSIONS.items():
                     extra = dict(replicates=[1, 1, 1, 1, 2])
                 RUN_CONFIGS[f"ics_{version}_{scenario}_bs{batch_size}{'_' + transform if transform else ''}"] = (
                     ics_config(batch_size, scenario, transform, **{**overrides, **extra}))
+# The final algorithm under transforms it was not developed on.
+for batch_size in (2000, 500, 125):
+    for scenario in ("a", "b"):
+        for transform in ("waveinv", "ramp8"):
+            RUN_CONFIGS[f"ics_v29_{scenario}_bs{batch_size}_{transform}"] = ics_config(
+                batch_size, scenario, transform, **ICS_VERSIONS["v29"])
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
 for tag, names in (("wb1", ("whiten_bias",)), ("nb1", ("norm_bias",)), ("nb1wb1", ("norm_bias", "whiten_bias"))):
     config = copy.deepcopy(RUN_CONFIGS["baseline_bs2000"])
