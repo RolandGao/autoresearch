@@ -1,0 +1,69 @@
+# commit 9e0386fce2e4bd74f9f3ac34bf531f5af1bad956
+# args {"batch_size": 125, "transform": "rampdown", "groups": "conv,head,norm_bias,whiten_bias", "schedule": "{\"conv\": [0.013, 0.01, 0.013, 0.017, 0.0046], \"head\": [60.0, 46.0, 59.0, 77.0, 22.0], \"norm_bias\": [60.0, 46.0, 59.0, 77.0, 22.0], \"whiten_bias\": [60.0, 46.0, 59.0, 77.0, 22.0]}", "name": "fresh_v29_b_bs125_rampdown_s6", "seeds": "200,201,202,203,204,205,206,207", "shape": "linear"}
+# worker w7 gpu GPU-71986cb1-2ece-f97a-a920-2c1d33f0af7c
+# source
+# | """Train given constant-interval schedules on held-out seeds (evaluation only).
+# | 
+# | python research/eval_schedule.py --batch-size 2000 --transform ramp --groups conv \
+# |     --schedule '{"conv": [0.13, 0.13, 0.078, 0.047, 0.01]}' --name avg_v5_a_bs2000_ramp
+# | Each searched group's schedule becomes len(values) equal constant intervals (spec values); with
+# | --transform the transform applies to the listed groups, as in the ICS configs.
+# | """
+# | import argparse
+# | import copy
+# | import json
+# | 
+# | from common import base_config, emit, new_model, open_log, t
+# | 
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--batch-size", type=int, required=True)
+# | parser.add_argument("--transform", default="")
+# | parser.add_argument("--groups", required=True, help="comma-separated groups the transform applies to")
+# | parser.add_argument("--schedule", required=True, help="JSON {group: [values per interval]}")
+# | parser.add_argument("--name", required=True)
+# | parser.add_argument("--seeds", default="100,101,102,103,104,105,106,107")
+# | parser.add_argument("--shape", default="constant", choices=["constant", "linear"],
+# |                     help="linear: piecewise linear through the interval midpoints, the end half-intervals "
+# |                          "extrapolated (clipped at 0); a linear schedule's interval means give it back exactly")
+# | args = parser.parse_args()
+# | log = open_log(f"eval_schedule_{args.name}", args, __file__)
+# | 
+# | config = copy.deepcopy(base_config(args.batch_size))
+# | schedule = json.loads(args.schedule)
+# | total = sum(int(line[0]) for line in config["param_groups"]["conv"]["lr_scheduler"])
+# | 
+# | 
+# | def linear_lines(values, length):
+# |     """Piecewise linear through (interval midpoint, value); the first and last half-intervals continue
+# |     the neighbouring slope, clipped at 0."""
+# |     half, rest = length // 2, length - length // 2
+# |     start = max(0.0, values[0] + (values[0] - values[1]) / 2)
+# |     end = max(0.0, values[-1] - (values[-2] - values[-1]) / 2)
+# |     return ([[half, start, values[0]]] + [[length, a, b] for a, b in zip(values, values[1:])]
+# |             + [[rest, values[-1], end]])
+# | 
+# | 
+# | for g, values in schedule.items():
+# |     length = total // len(values)
+# |     config["param_groups"][g]["lr_scheduler"] = (linear_lines(values, length) if args.shape == "linear"
+# |                                                  else [[length, v] for v in values])
+# | if args.transform:
+# |     for g in args.groups.split(","):
+# |         config["param_groups"][g]["lr_transform"] = copy.deepcopy(t.LR_TRANSFORMS[args.transform])
+# | model = new_model()
+# | scores = []
+# | for seed in [int(s) for s in args.seeds.split(",")]:
+# |     scores.append(t.run_seeded(f"{args.name}.s{seed}", model, config, seed, debug=False)["tta_val_acc"])
+# |     emit(log, kind="seed", seed=seed, tta=scores[-1])
+# | mean = sum(scores) / len(scores)
+# | emit(log, kind="result", name=args.name, schedule=schedule, transform=args.transform, shape=args.shape, mean=mean, per_seed=scores)
+
+{"kind": "seed", "seed": 200, "tta": 0.9373999834060669, "time": 1792298280.5}
+{"kind": "seed", "seed": 201, "tta": 0.9419999718666077, "time": 1792298298.5}
+{"kind": "seed", "seed": 202, "tta": 0.9411999583244324, "time": 1792298316.5}
+{"kind": "seed", "seed": 203, "tta": 0.9413999915122986, "time": 1792298334.6}
+{"kind": "seed", "seed": 204, "tta": 0.9407999515533447, "time": 1792298352.6}
+{"kind": "seed", "seed": 205, "tta": 0.9408999681472778, "time": 1792298370.6}
+{"kind": "seed", "seed": 206, "tta": 0.9391999840736389, "time": 1792298388.7}
+{"kind": "seed", "seed": 207, "tta": 0.9405999779701233, "time": 1792298406.7}
+{"kind": "result", "name": "fresh_v29_b_bs125_rampdown_s6", "schedule": {"conv": [0.013, 0.01, 0.013, 0.017, 0.0046], "head": [60.0, 46.0, 59.0, 77.0, 22.0], "norm_bias": [60.0, 46.0, 59.0, 77.0, 22.0], "whiten_bias": [60.0, 46.0, 59.0, 77.0, 22.0]}, "transform": "rampdown", "shape": "linear", "mean": 0.9404374733567238, "per_seed": [0.9373999834060669, 0.9419999718666077, 0.9411999583244324, 0.9413999915122986, 0.9407999515533447, 0.9408999681472778, 0.9391999840736389, 0.9405999779701233], "time": 1792298406.7}
