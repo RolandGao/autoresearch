@@ -3615,6 +3615,13 @@ ICS_VERSIONS = {
                 replicates=[1, 1, 1, 1, 2], final_expand=False, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
                 final_shape="linear", refine_side_steps=2),
+    # v44: v29 whose second pass scores a candidate with the rest of the run decaying linearly from it (rest_lin): the
+    # tail moves with the candidate, so an interval held too low against a low plan tail can rise (Experiment 31).
+    "v44": dict(passes=["short", "rest_lin"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, level_backoff=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
+                final_shape="linear"),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
@@ -3635,7 +3642,7 @@ for version, overrides in ICS_VERSIONS.items():
 for batch_size in (2000, 500, 125):
     for scenario in ("a", "b"):
         for transform in ("waveinv", "ramp8"):
-            for version in ("v29", "v43"):
+            for version in ("v29", "v43", "v44"):
                 RUN_CONFIGS[f"ics_{version}_{scenario}_bs{batch_size}_{transform}"] = ics_config(
                     batch_size, scenario, transform, **ICS_VERSIONS[version])
 # How much do far-off bias LRs cost? baseline_bs2000 with the bias LR(s) scaled to 1.
