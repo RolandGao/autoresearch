@@ -4,3 +4,5 @@ The representation is not the problem: the oracle's 5 interval means joined line
 
 Scoring the second pass's candidates with the rest of the run decaying linearly from the candidate (v44, so the tail rises with it) does not fix it either: under the held-back transforms it scores as v29 (paired -0.002 +- 0.005 pp conv only, +0.000 with 4 LRs), and on the 24 standard cells it is a wash (conv only +0.017 +- 0.009 pp, 12 of 12 within 0.1 pp; 4 LRs -0.010 +- 0.011 pp, 9 of 12). The inverted wave's loss is made in the first pass, whose short cooldown sets interval 2 too low in the trough; a uniform larger correction of that bias loses elsewhere (Experiment 24). v29 stays the algorithm; the inverted wave is its known failure case.
 
+A milder first-pass cooldown (v45: 0.36 x the candidate instead of 0.22) is worse everywhere: paired with v29, -0.058 +- 0.020 pp conv only and -0.070 +- 0.036 pp with 4 LRs on the 24 standard cells, and -0.18 / -0.36 pp under the held-back transforms (inverted wave conv only 93.40 / 93.53 / 93.57). The cooldown and the one-grid-step plan shift are tuned as a pair; softening one breaks it.
+
