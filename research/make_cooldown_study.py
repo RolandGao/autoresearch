@@ -1734,9 +1734,9 @@ for bs in ics.BATCH_SIZES:
     for sc in ics.SCENARIOS:
         for tr in ics.TRANSFORMS:
             cell = f"{sc}_bs{bs}{tr}"
-            fresh = [probe_runs[f"fresh_v29_{cell}_s{seed}"][0] for seed in range(4)
-                     if f"fresh_v29_{cell}_s{seed}" in probe_runs]
-            held = [v29_runs[(sc, bs, tr)][seed]["heldout"] for seed in range(4)
+            searches = [seed for seed in range(8) if f"fresh_v29_{cell}_s{seed}" in probe_runs]
+            fresh = [probe_runs[f"fresh_v29_{cell}_s{seed}"][0] for seed in searches]
+            held = [v29_runs[(sc, bs, tr)][seed]["heldout"] for seed in searches
                     if seed in v29_runs.get((sc, bs, tr), {}) and "heldout" in v29_runs[(sc, bs, tr)][seed]]
             if not fresh or bs not in fresh_base or not held:
                 continue
@@ -1752,11 +1752,12 @@ story += [
       "Do its committed schedules still match the baseline on seeds that played no part in that choice?"),
     P("Setup", "h2"),
     table([["Item", "Value"],
-           ["Schedules", "v29's committed schedules from search seeds 0-3 (linear through the 5 averaged values), "
+           ["Schedules", "v29's committed schedules from its search seeds (linear through the 5 averaged values), "
                          "all 24 cells; the three baselines"],
            ["Runs", "Seeds 200-207 (research/eval_schedule.py; the baselines via train_cifar.py)"]],
           [3.3 * cm, 13.7 * cm]),
-    P("Held-out TTA on seeds 200-207 (mean over search seeds 0-3), and the same searches on seeds 100-107", "h2"),
+    P("Held-out TTA on seeds 200-207 (mean over the search seeds evaluated), and the same searches on seeds 100-107",
+      "h2"),
     table(rows, [5.2 * cm, 2.3 * cm, 2.3 * cm, 1.5 * cm, 3.2 * cm, 1.5 * cm]),
     P("Mean difference to the fresh baseline: " + "; ".join(
         f"{ics.SCENARIO_LABELS[sc]} {sum(x) / len(x):+.3f} pp ({sum(v >= -0.1 for v in x)} of {len(x)} within 0.1 pp)"
