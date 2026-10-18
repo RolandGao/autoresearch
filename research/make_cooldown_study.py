@@ -1698,10 +1698,14 @@ ics_compare_section(
     "ics_v32_v33_observations.txt")
 
 ics_compare_section(
-    ["v36", "v37", "v29"], 28, "How much of the 20-run budget does ICS v29 need?",
-    "The mandate allows at most 20 full runs of training per search. Does v29 still match the baseline with less?",
+    ["v36", "v37", "v39", "v38", "v29"], 28, "How much of the 20-run budget does ICS v29 need?",
+    "The mandate allows at most 20 full runs of training per search. Does v29 still match the baseline with less, "
+    "and does starting each first-pass climb on the previous intervals' trend make it robust to a smaller budget?",
     [["v36", "v29 with a budget of 10 full runs (each of its two searches gets 5, minus the 4-LR level scan)"],
      ["v37", "v29 with a budget of 15 full runs"],
+     ["v39", "v37 whose first-pass climbs start at the previous value times the last two intervals' ratio "
+             "(trend_start; clipped to x0.36..x1.67), 15 full runs"],
+     ["v38", "v29 with trend_start, 20 full runs"],
      ["v29", "The algorithm, 20 full runs (search seeds 0-7)"]],
     "budget_observations.txt")
 
