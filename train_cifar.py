@@ -3598,6 +3598,13 @@ ICS_VERSIONS = {
                 refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
                 shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
                 final_shape="linear", intervals=8, replicates=[1, 1, 1, 1, 1, 1, 1, 2]),
+    # v42: v29 with the joint 4-LR level lowered one x0.6 step after the scan (level_backoff 0.25 of a x7.7 step): the
+    # "largest within 1 pp" level sits one x0.6 step below divergence under the reverse ramp (Experiment 25).
+    "v42": dict(passes=["short", "rest_fixed"], cooldown_mult=0.22, level_lookahead="short", level_rule="largest",
+                level_refine=0, level_joint=True, level_individual=0, refine_start=0,
+                replicates=[1, 1, 1, 1, 2], refine_side_steps=1, final_expand=False, adaptive_reps=True, plan_shift=1,
+                shift_groups="lead", ensemble=2, ensemble_scope="all", budget_reserve=True, share_levels=True,
+                final_shape="linear", level_backoff=0.25),
 }
 for version, overrides in ICS_VERSIONS.items():
     for batch_size in (2000, 500, 125):
