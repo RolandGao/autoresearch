@@ -1767,6 +1767,53 @@ story += [
 story += observations("fresh_observations.txt")
 
 
+# Experiment 31: transforms held back while ICS was developed (the inverted wave and a steeper ramp).
+unseen = {v: ics.load(v) for v in ("v29", "v43")}
+UNSEEN = (("_waveinv", "inverted wave"), ("_ramp8", "ramp x1/8 -> x8"))
+rows = [["Cell (baseline)", "Do-nothing", "Oracle linear (5)", "Oracle (5), x0.6 grid", "v29", "v43"]]
+unseen_diff = {v: [] for v in unseen}
+for tr, label in UNSEEN:
+    for bs in ics.BATCH_SIZES:
+        for sc in ics.SCENARIOS:
+            base = ics.target(ics_refs, bs)
+            dn = ics_refs.get(f"transformed_{sc}{tr}_bs{bs}")
+            cells = [f"BS {bs}, {ics.SCENARIO_LABELS[sc]}, {label} ({base:.2f})", "-" if dn is None else f"{dn:.2f}"]
+            for prefix in ("lin5", "lin5g"):
+                o = probe_runs.get(f"{prefix}_oracle_a_bs{bs}{tr}") if sc == "a" else None
+                cells.append("-" if o is None else f"{o[0]:.2f}")
+            for v, runs in unseen.items():
+                held = [r["heldout"] for r in runs.get((sc, bs, tr), {}).values() if "heldout" in r]
+                if held:
+                    mean = sum(held) / len(held)
+                    unseen_diff[v].append(mean - base)
+                    cells.append(f"<b>{mean:.2f}</b> ({len(held)})" if mean >= base - 0.1 else f"{mean:.2f} ({len(held)})")
+                else:
+                    cells.append("-")
+            rows.append(cells)
+story += [
+    P("Experiment 31. Does ICS v29 generalize to transforms it was not developed on?", "h1"),
+    P("Question", "h2"),
+    P("v29 was developed on three transforms (ramp, reverse ramp, wave). Does it match the baseline under two "
+      "transforms held back until it was final: the wave inverted (x0.52 early, x1.93 at 70-80% of the run) and a "
+      "steeper ramp (x1/8 rising to x8)?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Transforms", "waveinv: 2 ** sin(2 pi (x + 0.5)); ramp8: 8 ** (2x - 1), x = step / steps; applied to the "
+                          "searched groups as before"],
+           ["Runs", "v29 unchanged, search seeds 0-1, budget 20, held-out seeds 100-107; do-nothing = the baseline "
+                    "schedules under the transform; oracle = the baseline conv schedule divided by the transform, "
+                    "its 5 interval means joined linearly (conv only)"],
+           ["v43", "v29 whose second-pass climbs may move 2 grid steps (developed after seeing v29 fail under the "
+                   "inverted wave, so the inverted wave is no longer unseen for it)"]], [3.3 * cm, 13.7 * cm]),
+    P("Held-out TTA (mean over search seeds; bold = within 0.1 pp of the baseline or above)", "h2"),
+    table(rows, [5.6 * cm, 1.9 * cm, 2.4 * cm, 2.4 * cm, 2.3 * cm, 2.3 * cm]),
+    P("Mean difference to the baseline: " + "; ".join(
+        f"{v} {sum(x) / len(x):+.3f} pp ({sum(d >= -0.1 for d in x)} of {len(x)} within 0.1 pp)"
+        for v, x in unseen_diff.items() if x) + ".", "small"),
+]
+story += observations("unseen_observations.txt")
+
+
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
     out = []
