@@ -1,0 +1,110 @@
+find out how sensitive each hparam is. search the sensitive ones first. 
+find out whether cooldown can be simplified. 
+determine the granularity. 
+figure out how to deal with the noise. 
+how to use the least compute while maintaing the best result
+we want one search algorithm that works out sensitivity, cooldown, granularity and noise for itself, with no prior knowledge of the dataset or the hparams.
+You previously answered the five questions i had about designing the best interval search algorithm. 
+I have a few comments, then, i want you to do experiments by yourself to find the truth.
+first experiment using bs 2000 and use bs 500 and 125 as validation of the algorithm. 
+do not change the fact that we always evaluate on the test set. this is intentional.
+screening seems good, but perhaps we dont need the full run to determine this? what if we just overfit one step or a few steps and just use that?
+cooldown: I think constant interval for cooldown is not a bad idea. linear decay from the chosen main lr has the disadvantage that a high main lr might not have proper cooldown.
+we have two settings we are interested in.
+one is that we have a good baseline of hparam schedulers and we search a few of them while keeping the other ones fixed (for ex, search conv lr while fixing the other lrs.)
+the other is that we start from scratch without knowledge of any hparam schedulers. 
+work on both scenarios
+if we have a good baseline, i think the nonsearched hparams might need cooldown as well cuz otherwise it's not a proper cooldown for the model. and it's unclear to me whether all the nonserached hparams can use thesame cooldown_mult. the searched hparam may or may not need its own cooldown_mult. you have to figure this out.
+if we are searching all the hparams, it is pretty costly, find ways ot reduce the cost while keeping the good result. 
+even though cifar10's lr schedulers are just linear decay, you cannot assume that linear decay is always the best for a general algorithm. for example, our interval search algorithm should work even when we add an arbitrary transformation on top of the specified scheduler before applying it for real; we can artificially do this for cifar 10 so that the best lr scheduler is not linear. this is why global search might not always be the best. 
+but im open to a combination of interval search and global search, for example, the global interval search. 
+the cost of our hparam search algorithm is the total amount of time taken.
+20/20 interval length seems good enough, but you can also try others.
+the muon lr seems to have just one local optima which is also the global optima, but the other head or bias lrs might have some local optimas that are not global optima, which makes it harder for me to reason about this. larger step size might not work cuz it's noisy no mater the step size, but then the actual value actually matters for the final score i think. 
+maybe the noisier ones need global search??
+your goal is to work on this for the next 12 hours. do not stop. regularly commit to github and the logs shoudl be visible to github. use all the free gpus for this. our goal is to find a general hparam search algorithm that uses the least compute while matching the baseline's tta val. this algorithm shoudl survive simple hparam transformations on top (aka artificially make the best lr scheduler not linear decay) and survive bs changing to 500 or 125.
+good luck! and do a writeup into some .txt file as well. visible to github.
+
+Understood: you want one search algorithm that works out sensitivity, cooldown, granularity and noise for itself, with no prior knowledge of the dataset or the hparams. The design below makes all five measured quantities rather than tuning knobs. The CIFAR results only serve as evidence for which mechanisms are needed.
+
+The core idea: measure noise first, and express everything in units of it
+
+Every decision compares proxy scores, so the one quantity everything else depends on is σ, the noise of a score difference. Since reruns are bit-exact, noise comes only from the seed (data order and augmentation), and σ can be measured directly. At each decision point, run the current config's proxy on 2 different data orders and keep a running pooled estimate.
+
+Sensitivity, granularity, when to move and when to stop then all become ratios to σ.
+
+1. Sensitivity → screening, then freezing
+
+- Screening: at the first decision, and again every K decisions, probe each hparam with one wide step each way: ×10^±1 for LR-like (positive, log-scale) parameters, a matching step in log(1−m) for momentum-like ones.
+- Sensitivity: S_p = the largest |score change| ÷ σ.
+- Freezing: S_p < ~1 means the parameter can't be resolved, so it stays at its current value until the next screening.
+- Ordering: active parameters are searched in decreasing S_p.
+
+Screening costs 2 runs per parameter, and freezing stops compute going into noise. On CIFAR this would have kept conv LR and frozen nearly everything else.
+
+2. Cooldown → a fixed rule, not a search
+
+The cooldown's only job is to make a score at step t predict the final score. Fixed rule: after the candidate's main segment, scale every group's LR by a linear ramp from 1 to 0 over C steps, with C = the interval length.
+- This removes the nested main/cooldown search loop.
+- It has no hparams except C.
+- It works for any number of groups.
+
+Evidence: no cooldown fails, any cooldown fixes it, and searching the cooldown (interval2) didn't help.
+
+The real obstacle is short-horizon bias. Even with a cooldown, a short lookahead always favours a lower LR: interval search cut conv LR every interval and never beat fixed linear
+decay. This is a known effect (Wu et al. 2018, "short-horizon bias"). Two
+- Search a scale on a decaying base shape (a multiplier on "decay to 0 over the remaining steps") instead of a constant LR per segment, so a candidate isn't rewarded just for
+  decaying early.
+- Lengthen the lookahead as the remaining budget shrinks. The proxy scores the cooldown endpoint, which is closest to what the final run produces.
+
+3. Granularity → set by curvature and noise
+
+- Grid step: start coarse, at the screening step. Refine (halve the log-step) once the best value is bracketed, meaning both neighbours score lower.
+  - Fit a quadratic through the probes. Missing the peak by h/2 costs c·(he.
+  - Stop refining once that cost is below σ, so the useful step size is h* ≈ 2√(σ/c).
+  - A flat parameter gets a huge h*, which is the same as freezing it, so re one mechanism.
+- Interval length: adjust it adaptively, like step-size control in an ODE solver.
+  - If a decision didn't move the config by more than noise, double the in
+  - If it moved two or more grid steps, halve it.
+  - Every decision is a chance to drift on noise; on CIFAR the median best06 pp against 0.17 pp noise. Fewer decisions means less drift.
+
+4. Noise → statistical decisions
+
+- Hysteresis: keep the current value unless a challenger beats it by more
+- Fit, don't pick: take the peak of the quadratic through the probes instead of the raw best point. It uses every evaluation.
+- Racing: add seeds only to candidates whose interval overlaps the leader'uccessive halving), up to a cap. Replication goes only where a decision isclose and matters.
+- Separate selection from reporting: score candidates on a held-out split, on.
+
+5. Least compute
+
+Compute comes from the pieces above, not from a separate knob:
+- Screening costs 2 runs per parameter.
+- Frozen parameters cost nothing.
+- The fixed cooldown has no inner search.
+- Refinement stops at the noise floor.
+- Racing spends extra seeds only on close calls.
+- Intervals lengthen as decisions stabilise.
+
+Per decision the cost is about 2 noise replicates plus about 3 probes per , the algorithm could evaluate a candidate only when the chance it beatsthe leader by more than a tolerance is meaningful (an expected-improvement test).
+
+Putting it together
+
+init: θ = initial config, per-param log-step h_p = wide, interval L = T/5, σ = unknown
+loop until T steps committed:
+  σ ← pooled estimate from the current config's proxy on 2 data orders
+  if first decision or K decisions since last screen: screen all params, f
+  for p in active params by S_p:
+      probe θ·e^{±h_p} with proxy = train L steps + linear-to-0 cooldown o
+      race close calls (extra seeds), fit quadratic, move only if gain > 2σ
+      refine h_p if c·(h_p/2)² > σ
+  commit θ for L steps; L ← 2L if nothing moved beyond noise, L/2 if θ moved ≥ 2 steps
+The same machinery works offline: as a full-run global search, it is globaacing and refinement.
+
+How to show it's general
+
+- Tasks: at least CIFAR (several batch sizes), nanoGPT track 3, and one ta
+- Matched compute: compare against the defaults, a fixed-grid global search, and the current interval search.
+- Honest scoring: held-out seeds and held-out data.
+- Bad starts: start from deliberately bad values (LRs off by 10× in both directions). A prior-free algorithm has to recover from those, and that test separates real generality     from good defaults.
+                                                                                                                                                                                  Short-horizon bias (section 2) is the riskiest assumption, so I'd test it : implement the fixed cooldown, scale-on-decaying-base candidates,hysteresis and screening as a new algorithm in train_cifar.py. Then compare it against global_neighbour and the defaults at BS 2000/500/125 on held-out seeds, starting from both good and 10×-off values. Say the word and I'll build it.
+                                                                                                                                                                                 result: proposed a general search algorithm for your five questions. It me probes to rank and freeze hparams, uses a fixed linear-to-0 cooldowninstead of a cooldown search, sets grid and interval sizes from curvature and noise, and decides with margin tests and racing. Short-horizon bias is the main open risk; nothing is implemented yet.
