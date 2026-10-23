@@ -28,8 +28,12 @@ def load(batch_size, tag):
             if r["kind"] == "setup":
                 seed, plan = r["seed"], r["plan"]
             elif r["kind"] == "eval":
-                data[(r["k"], r["offset"])][seed] = {key: 100 * v for key, v in r.items()
-                                                     if key not in ("kind", "k", "offset", "c", "time")}
+                scores = {key: 100 * v for key, v in r.items() if key not in ("kind", "k", "offset", "c", "time")}
+                cooldowns = {float(key[4:]): v for key, v in scores.items() if key.startswith("c40_")}
+                if len(cooldowns) > 3:  # a grid of cooldown multipliers: c40_search = the best one on this seed
+                    scores["m_search"] = max(cooldowns, key=cooldowns.get)
+                    scores["c40_search"] = cooldowns[scores["m_search"]]
+                data[(r["k"], r["offset"])][seed] = scores
                 data[(r["k"], r["offset"])][seed]["c"] = r["c"]
     return plan, data
 
@@ -42,7 +46,7 @@ def summary(batch_size, tag):
         seeds = sorted(set.intersection(*(set(data[(k, o)]) for o in offsets)))
         if not seeds:
             continue
-        variants = [v for v in data[(k, offsets[0])][seeds[0]] if v != "c"
+        variants = [v for v in data[(k, offsets[0])][seeds[0]] if v not in ("c", "m_search")
                     and all(v in data[(k, o)][s] for o in offsets for s in seeds)]
         truth_mean = {o: statistics.mean(data[(k, o)][s]["truth"] for s in seeds) for o in offsets}
         best = max(offsets, key=lambda o: truth_mean[o])
