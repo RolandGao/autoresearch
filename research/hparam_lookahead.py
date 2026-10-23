@@ -19,8 +19,14 @@ coordinate search that moves a multiplier to its best neighbour among k+-1, k+-2
 the score, until every multiplier beats its k+-1 and k+-2 (lr grid protocol). Groups whose baseline
 mean over interval k is 0 have nothing to scale and are not searched. Every evaluated point is logged
 (kind=probe), and the searched multipliers with each eval.
+--transform applies a train_cifar.LR_TRANSFORMS multiplier to all four groups' applied LRs (as in the
+4-LR scenario); the plan is then the oracle (each group's baseline divided by the multiplier, one value
+per step), so its applied LRs are the baseline run's, and candidates/cooldowns are specified values
+that the transform multiplies. Whitening bias in intervals where the plan is 0 uses the grid value
+nearest its plan value at step 0.
 """
 import argparse
+import copy
 
 from common import base_config, emit, new_model, open_log, t
 
@@ -32,20 +38,32 @@ parser.add_argument("--groups", default=",".join(GROUPS))
 parser.add_argument("--intervals", type=int, default=5)
 parser.add_argument("--offsets", default="-2,-1,0,1,2")
 parser.add_argument("--start-mult", type=float, default=0.22)
+parser.add_argument("--transform", default="none", choices=["none", *t.LR_TRANSFORMS])
 parser.add_argument("--tag", default="")
 args = parser.parse_args()
 log = open_log(f"hparam_lookahead{args.tag}_bs{args.batch_size}_s{args.seed}", args, __file__)
 
 config = base_config(args.batch_size)
+if args.transform != "none":
+    raw = copy.deepcopy(t.RUN_CONFIGS[f"baseline_bs{args.batch_size}"])
+    for g in GROUPS:
+        raw["param_groups"][g]["lr_transform"] = copy.deepcopy(t.LR_TRANSFORMS[args.transform])
+    config = t.normalize_config(raw, key=None)
 offsets = [int(o) for o in args.offsets.split(",")]
 model = new_model()
 t.TRAINING_SEED = args.seed
 trainer = t.SegmentTrainer(model, config)
-base = trainer.base_schedules
+base = dict(trainer.base_schedules)
 total = trainer.total_steps
 length = total // args.intervals
 assert length * args.intervals == total
 key = {g: f"{g}.initial_lr" for g in GROUPS}
+configured = {g: base[key[g]] for g in GROUPS}
+if args.transform != "none":
+    spec = t.LR_TRANSFORMS[args.transform]
+    for g in GROUPS:
+        base[key[g]] = [(1, t.schedule_value_at_step(configured[g], s) / t.lr_transform_factor(spec, s, total))
+                        for s in range(total)]
 
 
 def value_at(g, step):
@@ -97,7 +115,7 @@ def neighbour_search(names, score):
 
 
 emit(log, kind="setup", seed=args.seed, total=total, length=length, groups=args.groups.split(","),
-     baseline={g: base[key[g]] for g in GROUPS})
+     transform=args.transform, baseline=configured)
 start = trainer.snapshot()
 for g in args.groups.split(","):
     for k in range(args.intervals):
@@ -106,7 +124,7 @@ for g in args.groups.split(","):
         trainer.train(dict(base), s0)
         prefix_state = trainer.snapshot()
         center = mean_over(g, s0, length)
-        center_index = t.lr_grid_index(center if center > 0 else 36.0, 0.6)
+        center_index = t.lr_grid_index(center if center > 0 else value_at(g, 0), 0.6)
         others = [o for o in GROUPS if o != g]
         other_mean = {o: mean_over(o, s0, length) for o in others}
         for offset in offsets:

@@ -3,7 +3,7 @@ mean score over seeds, which candidate the lookahead's mean picks against the tr
 quality of picking by the lookahead on one seed (hit rate, mean regret in truth, pp). Also the searched
 cooldown multipliers (how often each value is chosen).
 
-python research/hparam_lookahead_study.py [batch_size]
+python research/hparam_lookahead_study.py [batch_size] [transform]
 """
 import glob
 import json
@@ -16,7 +16,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VARIANTS = ("truth", "lin_main", "lin_all", "s_main", "s_tied", "s_each")
 
 
-def load(batch_size=2000):
+def load(batch_size=2000, transform="none"):
     data = defaultdict(dict)  # (group, k, offset) -> seed -> record
     for path in glob.glob(os.path.join(REPO, "logs", f"research_hparam_lookahead_*_bs{batch_size}_s*.log")):
         seed = None
@@ -26,6 +26,8 @@ def load(batch_size=2000):
             r = json.loads(line)
             if r["kind"] == "setup":
                 seed = r["seed"]
+                if r.get("transform", "none") != transform:
+                    break
             elif r["kind"] == "eval":
                 rec = {v: 100 * r[v] for v in VARIANTS if v in r}
                 rec.update(c=r["c"], searched=r.get("searched", {}))
@@ -33,8 +35,8 @@ def load(batch_size=2000):
     return data
 
 
-def summary(batch_size=2000):
-    data = load(batch_size)
+def summary(batch_size=2000, transform="none"):
+    data = load(batch_size, transform)
     out = {}
     for g, k in sorted({(g, k) for g, k, _ in data}):
         offsets = sorted(o for gg, kk, o in data if (gg, kk) == (g, k))
@@ -61,7 +63,8 @@ def summary(batch_size=2000):
 
 
 if __name__ == "__main__":
-    for (g, k), r in summary(int(sys.argv[1]) if len(sys.argv) > 1 else 2000).items():
+    for (g, k), r in summary(int(sys.argv[1]) if len(sys.argv) > 1 else 2000,
+                             sys.argv[2] if len(sys.argv) > 2 else "none").items():
         print(f"\n{g} interval {k + 1}: {len(r['seeds'])} seeds, candidates {[r['c'][o] for o in r['offsets']]}, "
               f"best by mean truth {r['c'][r['best']]}")
         for v, row in r["rows"].items():
