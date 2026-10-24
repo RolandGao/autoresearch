@@ -2,6 +2,7 @@
 
 A. research/hparam_lookahead.py (for paper Section 3): one-interval lookaheads for each of the four LRs.
 B. research/joint_search.py: joint 3^5 - 1 neighbourhood search of the 5-constant-interval conv schedule.
+B2. research/plan_refine_search.py: the same schedule class refined interval by interval (ICS pass 2).
 Every number is read from the logs; a lookahead cell appears once all its candidates are logged, a joint
 search is marked "running" until it converges.
 
@@ -9,6 +10,7 @@ python research/make_lookahead_joint_report.py
 """
 import glob
 import json
+import math
 import os
 import sys
 from collections import Counter
@@ -62,7 +64,7 @@ PT = timezone(timedelta(hours=-7))
 # ------------------------------------------------------------------ data
 def queue_state():
     q = os.path.join(REPO, "queue")
-    count = {d: [f for f in os.listdir(os.path.join(q, d)) if f[:4] in ("020_", "021_")] if os.path.isdir(os.path.join(q, d))
+    count = {d: [f for f in os.listdir(os.path.join(q, d)) if f[:4] in ("020_", "021_", "022_")] if os.path.isdir(os.path.join(q, d))
              else [] for d in ("pending", "running", "done", "failed")}
     return count
 
@@ -100,7 +102,34 @@ def load_shapes():
     return cells
 
 
+def load_refine():
+    """research/plan_refine_search.py logs per transform (newest wins): setup, evals, commits, done."""
+    runs = {}
+    for path in sorted(glob.glob(os.path.join(REPO, "logs", "research_plan_refine_*_bs2000_s0_*.log"))):
+        name = os.path.basename(path)[len("research_plan_refine_"):].split("_bs2000")[0]
+        r = dict(evals=[], commits=[], done=None, setup=None)
+        for line in open(path):
+            if line.startswith("{"):
+                rec = json.loads(line)
+                if rec["kind"] in ("setup", "done"):
+                    r[rec["kind"]] = rec
+                else:
+                    r[rec["kind"] + "s"].append(rec)
+        if r["setup"] is not None:
+            runs[name] = r
+    return runs
+
+
+def box_best(r, plan):
+    """The best schedule the joint search evaluated within one grid step of plan in every interval."""
+    def index(v):
+        return round(math.log(v) / math.log(0.6))
+    box = [e for e in r["evals"] if all(abs(index(a) - index(b)) <= 1 for a, b in zip(e["values"], plan))]
+    return max(box, key=lambda e: e["score"]), len(box)
+
+
 shapes = load_shapes()
+refine = load_refine()
 look = {tr: {cell: r for cell, r in hl.summary(2000, tr).items() if len(r["offsets"]) == 5}  # complete cells only
         for tr in TRANSFORMS}
 joint = load_joint()
@@ -234,6 +263,34 @@ def fig_joint(path):
     axes[1, 0].set_ylabel("best score so far (%)")
     h, lab = axes[0, 0].get_legend_handles_labels()
     fig.legend(h, lab, frameon=False, fontsize=7, loc="outside lower center", ncol=3)
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+
+
+def fig_refine(path):
+    sys.path.insert(0, REPO)
+    import train_cifar as t  # noqa: E402
+    fig, axes = plt.subplots(1, 6, figsize=(8.0, 2.2), layout="constrained", squeeze=False)
+    for j, tr in enumerate(TRANSFORMS):
+        ax = axes[0, j]
+        ax.set_title(tr, fontsize=7.5)
+        if tr not in refine or refine[tr]["done"] is None or tr not in joint:
+            ax.text(0.5, 0.5, "not done", transform=ax.transAxes, ha="center", va="center", color=MUTED)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            continue
+        spec = refine[tr]["setup"]["transform"]
+        f = [1.0 if spec is None else t.lr_transform_factor(spec, s + 0.5, 200) for s in range(200)]
+        ax.plot(range(200), [0.22 * (1 - s / 200) for s in range(200)], color=INK, lw=1.4, label="baseline")
+        for values, color, ls, label in ((refine[tr]["setup"]["plan"], MUTED, "--", "plan (start)"),
+                                         (refine[tr]["done"]["values"], ORANGE, "-", "interval refinement"),
+                                         (best_eval(joint[tr])["values"], BLUE, "-", "joint search")):
+            ax.plot(range(200), [values[min(s // 40, 4)] * f[s] for s in range(200)], color=color, ls=ls, lw=1.2,
+                    label=label)
+        ax.set_xlabel("step", fontsize=6.5)
+    axes[0, 0].set_ylabel("applied conv LR")
+    h, lab = axes[0, 0].get_legend_handles_labels()
+    fig.legend(h, lab, frameon=False, fontsize=7, loc="outside lower center", ncol=4)
     fig.savefig(path, dpi=200)
     plt.close(fig)
 
@@ -446,6 +503,41 @@ if joint:
     story.append(figure(path, "<b>Figure 2.</b> Top: applied conv LR of the start and the best evaluated schedule "
                               "against the baseline. Bottom: best score among the full runs so far (dotted: "
                               "baseline, seed 0)."))
+
+story += [
+    P("<b>Interval-by-interval refinement (ICS pass 2) on the same plan.</b> Same schedule class, transforms and "
+      "seed; the plan is the joint search's start (no shift). For each interval in order, the first included, from "
+      "the state after the intervals already committed: score the plan's value, then one grid step smaller and, only "
+      "if that is not better, one grid step larger; a candidate's score is the interval at the candidate plus the "
+      "rest of the run on the plan (a full run's TTA). The best is committed. No two-continuation average for the "
+      "last interval; the result is the last committed score (no replay). The joint search's first iteration "
+      "trained every schedule within one grid step of the same plan, so its best there (\"best in the box\") "
+      "is what a perfect one-step search could reach (research/plan_refine_search.py)."),
+]
+rows = [["Transform", "do nothing", "plan", "refinement (score)", "rank in box", "best in &plusmn;1 box (score)",
+         "joint search (score)", "runs: refine / joint"]]
+for tr in TRANSFORMS:
+    r, jr = refine.get(tr), joint.get(tr)
+    if r is None or r["done"] is None or jr is None:
+        rows.append([TLABEL[tr]] + ["&ndash;"] * 6 + ["running" if r else "queued"])
+        continue
+    d, jb = r["done"], best_eval(jr)
+    bb, nbox = box_best(jr, d["plan"])
+    rank = 1 + sum(1 for e in jr["evals"] if e["score"] > d["score"]
+                   and all(abs(round(math.log(a / b) / math.log(0.6))) <= 1 for a, b in zip(e["values"], d["plan"])))
+    rows.append([TLABEL[tr], f"{100 * jr['setup']['do_nothing']:.2f}",
+                 f"{100 * jr['moves'][0]['score']:.2f}", f"{sched(d['values'])} ({100 * d['score']:.2f})",
+                 f"{rank} / {nbox}", f"{sched(bb['values'])} ({100 * bb['score']:.2f})",
+                 f"{sched(jb['values'])} ({100 * jb['score']:.2f})", f"{d['runs']:.1f} / {len(jr['evals'])}"])
+story += table(rows, [2.2 * cm, 1.3 * cm, 1.1 * cm, 3.4 * cm, 1.3 * cm, 3.4 * cm, 3.4 * cm, 1.6 * cm],
+               "<b>Table 2b.</b> Interval refinement against the joint search (TTA %, seed 0). Rank in box = the "
+               "refinement's rank among the 243 schedules within one grid step of the plan (all trained by the joint "
+               "search). Runs = training steps / 200; the refinement re-scores the committed value at each interval.")
+if refine:
+    path = os.path.join(PLOTS, "refine.png")
+    fig_refine(path)
+    story.append(figure(path, "<b>Figure 2b.</b> Applied conv LR: baseline, plan, the interval refinement's schedule "
+                              "and the joint search's winner."))
 
 
 def footer(canvas, doc):
