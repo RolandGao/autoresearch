@@ -1,0 +1,128 @@
+# commit c52633703d0d1fbb7563a22198681a780bca3e16 (dirty: M research/plan_refine_search.py)
+# args {"batch_size": 2000, "transform": "wave", "seed": 0, "intervals": 5, "climb": true}
+# worker hl4 gpu GPU-e22b198e-446b-483a-274f-5bb92791af13
+# source
+# | """The 5-constant-interval conv schedule refined interval by interval (ICS pass 2), against the joint search.
+# | 
+# | Same setting as research/joint_search.py: conv LR only (the other groups on the baseline), conv's specified
+# | schedule = 5 constant intervals on the x0.6 grid, under a transform of conv's applied LR, one search seed.
+# | Plan = joint_search.py's start: the oracle (baseline conv LR divided by the transform) reduced to its 5
+# | interval means, snapped to the grid (no shift). For each interval k in order, interval 0 included, from the
+# | state after the committed intervals 0..k-1: score the plan's value, then one grid step smaller and, only if
+# | that is not better, one grid step larger (ICS pass 2's climb, refine_side_steps=1); a candidate's score is
+# | interval k at the candidate followed by the rest of the run on the plan (ICS rest_fixed lookahead), so every
+# | score is a full run's tta_val_acc. The best is committed and its state kept. No averaged continuations for
+# | the last interval. The committed schedule's score is its own last search score (no replay).
+# | --climb: score both one-step neighbours of the plan's value, then keep stepping toward the better one while
+# | the score improves (no step limit); logs as plan_climb_*.
+# | 
+# | python research/plan_refine_search.py --transform ramp --seed 0
+# | """
+# | import argparse
+# | import copy
+# | 
+# | from common import emit, new_model, open_log, t
+# | 
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--batch-size", type=int, default=2000)
+# | parser.add_argument("--transform", default="none", choices=["none", *t.LR_TRANSFORMS])
+# | parser.add_argument("--seed", type=int, default=0)
+# | parser.add_argument("--intervals", type=int, default=5)
+# | parser.add_argument("--climb", action="store_true",
+# |                     help="score both one-step neighbours, then keep stepping toward the better one while it improves")
+# | args = parser.parse_args()
+# | log = open_log(f"plan_{'climb' if args.climb else 'refine'}_{args.transform}_bs{args.batch_size}_s{args.seed}", args,
+# |                __file__)
+# | 
+# | raw = copy.deepcopy(t.RUN_CONFIGS[f"baseline_bs{args.batch_size}"])
+# | if args.transform != "none":
+# |     raw["param_groups"]["conv"]["lr_transform"] = copy.deepcopy(t.LR_TRANSFORMS[args.transform])
+# | config = t.normalize_config(raw, key=None)
+# | model = new_model()
+# | t.TRAINING_SEED = args.seed
+# | trainer = t.SegmentTrainer(model, config)
+# | base = trainer.base_schedules
+# | total = trainer.total_steps
+# | n = args.intervals
+# | length = total // n
+# | assert length * n == total
+# | transform = config["param_groups"]["conv"].get("lr_transform")
+# | 
+# | 
+# | def factor(step):
+# |     return 1.0 if transform is None else t.lr_transform_factor(transform, step, total)
+# | 
+# | 
+# | def grid(index):
+# |     return t.round_hparam(0.6 ** index)
+# | 
+# | 
+# | oracle = [t.schedule_value_at_step(base["conv.initial_lr"], s) / factor(s) for s in range(total)]
+# | plan = [t.lr_grid_index(sum(oracle[i * length:(i + 1) * length]) / length, 0.6) for i in range(n)]
+# | emit(log, kind="setup", seed=args.seed, total=total, length=length, transform=transform,
+# |      plan=[grid(i) for i in plan])
+# | 
+# | committed = []
+# | state = trainer.snapshot()
+# | for k in range(n):
+# |     scores, states = {}, {}
+# | 
+# |     def evaluate(index):
+# |         """Interval k at grid index `index` from the committed prefix, then the plan to the end."""
+# |         if index not in scores:
+# |             trainer.restore(state)
+# |             sched = dict(base)
+# |             sched["conv.initial_lr"] = [(length, grid(i)) for i in committed + [index] + plan[k + 1:]]
+# |             ok = trainer.train(sched, length)
+# |             states[index] = trainer.snapshot() if ok else None
+# |             if ok and k < n - 1:
+# |                 ok = trainer.train(sched, total - (k + 1) * length)
+# |             scores[index] = 100 * trainer.score("tta_val_acc") if ok else 0.0
+# |             emit(log, kind="eval", interval=k, value=grid(index), offset=index - plan[k],
+# |                  values=[grid(i) for i in committed + [index] + plan[k + 1:]], score=scores[index] / 100,
+# |                  train_steps=trainer.train_steps)
+# |         return scores[index]
+# | 
+# |     best = plan[k]
+# |     evaluate(best)
+# |     if args.climb:  # both neighbours first, then climb the better side, unbounded
+# |         direction = max((1, -1), key=lambda d: evaluate(plan[k] + d))
+# |         while evaluate(best + direction) > scores[best]:
+# |             best += direction
+# |     else:
+# |         for direction in (1, -1):  # grid index +1 = one step smaller: smaller first, as in ICS's climb
+# |             if evaluate(plan[k] + direction) > scores[best]:
+# |                 best = plan[k] + direction
+# |                 break
+# |     committed.append(best)
+# |     state = states[best]
+# |     emit(log, kind="commit", interval=k, value=grid(best), offset=best - plan[k], score=scores[best] / 100,
+# |          tried={grid(i): s / 100 for i, s in scores.items()}, train_steps=trainer.train_steps)
+# | emit(log, kind="done", values=[grid(i) for i in committed], score=scores[committed[-1]] / 100,
+# |      plan=[grid(i) for i in plan], train_steps=trainer.train_steps, runs=trainer.train_steps / total)
+
+{"kind": "setup", "seed": 0, "total": 200, "length": 40, "transform": {"kind": "wave", "factor": 2.0, "phase": 0.0}, "plan": [0.13, 0.078, 0.13, 0.13, 0.047], "time": 1792821885.5}
+{"kind": "eval", "interval": 0, "value": 0.13, "offset": 0, "values": [0.13, 0.078, 0.13, 0.13, 0.047], "score": 0.9318999648094177, "train_steps": 200, "time": 1792821896.4}
+{"kind": "eval", "interval": 0, "value": 0.078, "offset": 1, "values": [0.078, 0.078, 0.13, 0.13, 0.047], "score": 0.9332000017166138, "train_steps": 400, "time": 1792821906.6}
+{"kind": "eval", "interval": 0, "value": 0.22, "offset": -1, "values": [0.22, 0.078, 0.13, 0.13, 0.047], "score": 0.9336999654769897, "train_steps": 600, "time": 1792821916.9}
+{"kind": "eval", "interval": 0, "value": 0.36, "offset": -2, "values": [0.36, 0.078, 0.13, 0.13, 0.047], "score": 0.9296000003814697, "train_steps": 800, "time": 1792821927.2}
+{"kind": "commit", "interval": 0, "value": 0.22, "offset": -1, "score": 0.9336999654769897, "tried": {"0.13": 0.9318999648094177, "0.078": 0.9332000017166138, "0.22": 0.9336999654769897, "0.36": 0.9296000003814697}, "train_steps": 800, "time": 1792821927.2}
+{"kind": "eval", "interval": 1, "value": 0.078, "offset": 0, "values": [0.22, 0.078, 0.13, 0.13, 0.047], "score": 0.9336999654769897, "train_steps": 960, "time": 1792821935.5}
+{"kind": "eval", "interval": 1, "value": 0.047, "offset": 1, "values": [0.22, 0.047, 0.13, 0.13, 0.047], "score": 0.9282999634742737, "train_steps": 1120, "time": 1792821943.9}
+{"kind": "eval", "interval": 1, "value": 0.13, "offset": -1, "values": [0.22, 0.13, 0.13, 0.13, 0.047], "score": 0.9309999942779541, "train_steps": 1280, "time": 1792821952.3}
+{"kind": "commit", "interval": 1, "value": 0.078, "offset": 0, "score": 0.9336999654769897, "tried": {"0.078": 0.9336999654769897, "0.047": 0.9282999634742737, "0.13": 0.9309999942779541}, "train_steps": 1280, "time": 1792821952.3}
+{"kind": "eval", "interval": 2, "value": 0.13, "offset": 0, "values": [0.22, 0.078, 0.13, 0.13, 0.047], "score": 0.9336999654769897, "train_steps": 1400, "time": 1792821958.6}
+{"kind": "eval", "interval": 2, "value": 0.078, "offset": 1, "values": [0.22, 0.078, 0.078, 0.13, 0.047], "score": 0.9296000003814697, "train_steps": 1520, "time": 1792821965.0}
+{"kind": "eval", "interval": 2, "value": 0.22, "offset": -1, "values": [0.22, 0.078, 0.22, 0.13, 0.047], "score": 0.9280999898910522, "train_steps": 1640, "time": 1792821971.4}
+{"kind": "commit", "interval": 2, "value": 0.13, "offset": 0, "score": 0.9336999654769897, "tried": {"0.13": 0.9336999654769897, "0.078": 0.9296000003814697, "0.22": 0.9280999898910522}, "train_steps": 1640, "time": 1792821971.4}
+{"kind": "eval", "interval": 3, "value": 0.13, "offset": 0, "values": [0.22, 0.078, 0.13, 0.13, 0.047], "score": 0.9336999654769897, "train_steps": 1720, "time": 1792821975.8}
+{"kind": "eval", "interval": 3, "value": 0.078, "offset": 1, "values": [0.22, 0.078, 0.13, 0.078, 0.047], "score": 0.9318999648094177, "train_steps": 1800, "time": 1792821980.1}
+{"kind": "eval", "interval": 3, "value": 0.22, "offset": -1, "values": [0.22, 0.078, 0.13, 0.22, 0.047], "score": 0.9296000003814697, "train_steps": 1880, "time": 1792821984.5}
+{"kind": "commit", "interval": 3, "value": 0.13, "offset": 0, "score": 0.9336999654769897, "tried": {"0.13": 0.9336999654769897, "0.078": 0.9318999648094177, "0.22": 0.9296000003814697}, "train_steps": 1880, "time": 1792821984.5}
+{"kind": "eval", "interval": 4, "value": 0.047, "offset": 0, "values": [0.22, 0.078, 0.13, 0.13, 0.047], "score": 0.9336999654769897, "train_steps": 1920, "time": 1792821986.9}
+{"kind": "eval", "interval": 4, "value": 0.028, "offset": 1, "values": [0.22, 0.078, 0.13, 0.13, 0.028], "score": 0.9366999864578247, "train_steps": 1960, "time": 1792821989.2}
+{"kind": "eval", "interval": 4, "value": 0.078, "offset": -1, "values": [0.22, 0.078, 0.13, 0.13, 0.078], "score": 0.9195999503135681, "train_steps": 2000, "time": 1792821991.6}
+{"kind": "eval", "interval": 4, "value": 0.017, "offset": 2, "values": [0.22, 0.078, 0.13, 0.13, 0.017], "score": 0.9383999705314636, "train_steps": 2040, "time": 1792821993.9}
+{"kind": "eval", "interval": 4, "value": 0.01, "offset": 3, "values": [0.22, 0.078, 0.13, 0.13, 0.01], "score": 0.9368000030517578, "train_steps": 2080, "time": 1792821996.3}
+{"kind": "commit", "interval": 4, "value": 0.017, "offset": 2, "score": 0.9383999705314636, "tried": {"0.047": 0.9336999654769897, "0.028": 0.9366999864578247, "0.078": 0.9195999503135681, "0.017": 0.9383999705314636, "0.01": 0.9368000030517578}, "train_steps": 2080, "time": 1792821996.3}
+{"kind": "done", "values": [0.22, 0.078, 0.13, 0.13, 0.017], "score": 0.9383999705314636, "plan": [0.13, 0.078, 0.13, 0.13, 0.047], "train_steps": 2080, "runs": 10.4, "time": 1792821996.3}

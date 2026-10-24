@@ -2022,49 +2022,66 @@ story += [
 ] + lj_image("shapes_conv_k1.png")
 story += observations("cooldown_shapes_observations.txt")
 
-refine_rows = [["Transform", "Do-nothing", "Plan (start)", "Interval refinement", "Rank in box", "Best in &plusmn;1 box",
-                "Joint search (Exp. 33)", "Runs"]]
+REFINE_VARIANTS = (("plan_refine", "One step, 1 pass"), ("plan2_refine", "One step, 2 passes"),
+                   ("plan_climb", "Both sides + climb, 1 pass"), ("plan2_climb", "Both sides + climb, 2 passes"))
+
+
+def refine_done(kind, tr):
+    paths = sorted(glob.glob(os.path.join(REPO, "logs", f"research_{kind}_{tr}_bs2000_s0_*.log")))
+    done = [json.loads(x) for x in open(paths[-1]) if x.startswith('{"kind": "done"')] if paths else []
+    return done[0] if done else None
+
+
+refine_rows = [["Transform", "Do-nothing", "Plan"] + [label for _, label in REFINE_VARIANTS]
+               + ["Best in &plusmn;1 box", "Joint search (Exp. 33)"]]
+sched_rows = [["Transform"] + [label for _, label in REFINE_VARIANTS] + ["Joint search (Exp. 33)"]]
 for tr, label in LJ_TRANSFORMS:
-    paths = sorted(glob.glob(os.path.join(REPO, "logs", f"research_plan_refine_{tr}_bs2000_s0_*.log")))
     jpaths = sorted(glob.glob(os.path.join(REPO, "logs", f"research_joint_search_{tr}_bs2000_s0_*.log")))
-    if not paths or not jpaths or tr not in joint_runs:
+    ds = [refine_done(kind, tr) for kind, _ in REFINE_VARIANTS]
+    if not jpaths or tr not in joint_runs or ds[0] is None:
         continue
-    done = [json.loads(x) for x in open(paths[-1]) if x.startswith('{"kind": "done"')]
-    if not done:
-        continue
-    d, r = done[0], joint_runs[tr]
+    r = joint_runs[tr]
     evals = [json.loads(x) for x in open(jpaths[-1]) if x.startswith('{"kind": "eval"')]
-    box = [e for e in evals if all(abs(round(math.log(a / b) / math.log(0.6))) <= 1 for a, b in zip(e["values"], d["plan"]))]
+    box = [e for e in evals
+           if all(abs(round(math.log(a / b) / math.log(0.6))) <= 1 for a, b in zip(e["values"], ds[0]["plan"]))]
     bb = max(box, key=lambda e: e["score"])
-    rank = 1 + sum(1 for e in box if e["score"] > d["score"])
-    refine_rows.append([label, f"{100 * r['setup']['do_nothing']:.2f}",
-                        f"{100 * r['moves'][0]['score']:.2f}",
-                        "<b>" + ", ".join(f"{v:g}" for v in d["values"]) + f" ({100 * d['score']:.2f})</b>",
-                        f"{rank} / {len(box)}", ", ".join(f"{v:g}" for v in bb["values"]) + f" ({100 * bb['score']:.2f})",
-                        ", ".join(f"{v:g}" for v in r["done"]["values"]) + f" ({100 * r['done']['score']:.2f})",
-                        f"{d['runs']:.1f} / {r['done']['evaluations']}"])
+    refine_rows.append([label, f"{100 * r['setup']['do_nothing']:.2f}", f"{100 * r['moves'][0]['score']:.2f}"]
+                       + ["&ndash;" if d is None else f"<b>{100 * d['score']:.2f}</b> ({d['runs']:.1f})" for d in ds]
+                       + [f"{100 * bb['score']:.2f}", f"{100 * r['done']['score']:.2f} ({r['done']['evaluations']})"])
+    sched_rows.append([label] + ["&ndash;" if d is None else ", ".join(f"{v:g}" for v in d["values"]) for d in ds]
+                      + [", ".join(f"{v:g}" for v in r["done"]["values"])])
 story += [
     P("Experiment 35. 5-constant-interval conv schedule: interval-by-interval refinement against the joint search",
       "h1"),
     P("Question", "h2"),
     P("Experiment 33's exhaustive joint search used 414-744 full runs. How close does ICS's second pass get, refining "
-      "one interval at a time with at most one grid step either side of the plan, from the same start?"),
+      "one interval at a time around the plan, from the same start? Does a wider candidate rule (both sides, then an "
+      "unbounded climb) or a second refinement pass close the gap?"),
     P("Setup", "h2"),
     table([["Item", "Value"],
            ["Schedule", "As Experiment 33: conv only, 5 constant intervals of 40 steps on the x0.6 grid, the transform "
                         "on conv's applied LR"],
            ["Plan", "Experiment 33's start column (oracle interval means snapped to the grid), no shift"],
-           ["Search", "For each interval in order, interval 0 included, from the state after the committed intervals: "
-                      "the plan's value, then one grid step smaller and, only if that is not better, one step larger "
-                      "(ICS pass 2's climb). Score: the interval at the candidate plus the rest of the run on the plan "
-                      "(a full run's TTA). Commit the best. No two-continuation average for the last interval"],
-           ["Runs", "BS 2000, seed 0, all six transforms (research/plan_refine_search.py). Result = the last committed "
-                    "score (no replay). Best in box = the best of the 243 schedules within one grid step of the plan, "
-                    "all trained in Experiment 33's first iteration"]],
+           ["Pass", "For each interval in order, interval 0 included, from the state after the committed intervals, "
+                    "score candidates by the interval at the candidate plus the rest of the run on the plan (a full "
+                    "run's TTA) and commit the best. No two-continuation average for the last interval"],
+           ["One step", "The plan's value, then one grid step smaller and, only if that is not better, one step "
+                        "larger (ICS pass 2's climb, at most one step)"],
+           ["Both sides + climb", "The plan's value and both one-step neighbours; if the better neighbour beats the "
+                                  "plan, keep stepping that way while the score improves (no step limit)"],
+           ["2 passes", "A second pass from initialisation whose plan (candidates' centre and lookahead tail) is the "
+                        "first pass's committed schedule; it starts from the first pass's result, so it cannot end "
+                        "lower"],
+           ["Runs", "BS 2000, seed 0, all six transforms (research/plan_refine_search.py; --climb, --passes 2). "
+                    "Result = the last committed score (no replay). Best in box = the best of the 243 schedules within "
+                    "one grid step of the plan, all trained in Experiment 33's first iteration"]],
           [3.3 * cm, 13.7 * cm]),
-    P("Result (TTA, seed 0; runs = refinement training steps / 200, against the joint search's full runs)", "h2"),
-    table(refine_rows, [2.3 * cm, 1.3 * cm, 1.2 * cm, 3.0 * cm, 1.3 * cm, 3.0 * cm, 3.0 * cm, 1.9 * cm]),
-    P("Applied conv LR: baseline, plan, refinement and joint winner", "h2"),
+    P("Result (TTA, seed 0; in brackets: full runs = training steps / 200, a 2-pass search's including its first "
+      "pass; the joint search's: schedules trained)", "h2"),
+    table(refine_rows, [2.2 * cm, 1.4 * cm, 1.1 * cm] + [2.0 * cm] * 4 + [1.5 * cm, 2.0 * cm]),
+    P("Committed schedules (conv LR per interval)", "h2"),
+    table(sched_rows, [2.2 * cm] + [2.96 * cm] * 5),
+    P("Applied conv LR: baseline, plan, the 2-pass refinements and the joint winner", "h2"),
 ] + lj_image("refine.png")
 story += observations("plan_refine_observations.txt")
 

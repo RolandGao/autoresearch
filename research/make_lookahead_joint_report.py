@@ -64,7 +64,7 @@ PT = timezone(timedelta(hours=-7))
 # ------------------------------------------------------------------ data
 def queue_state():
     q = os.path.join(REPO, "queue")
-    count = {d: [f for f in os.listdir(os.path.join(q, d)) if f[:4] in ("020_", "021_", "022_")] if os.path.isdir(os.path.join(q, d))
+    count = {d: [f for f in os.listdir(os.path.join(q, d)) if f[:4] in ("020_", "021_", "022_", "023_", "024_")] if os.path.isdir(os.path.join(q, d))
              else [] for d in ("pending", "running", "done", "failed")}
     return count
 
@@ -102,12 +102,13 @@ def load_shapes():
     return cells
 
 
-def load_refine():
-    """research/plan_refine_search.py logs per transform (newest wins): setup, evals, commits, done."""
+def load_refine(kind):
+    """research/plan_refine_search.py logs per transform (newest wins): setup, evals, commits, pass_dones, done.
+    kind: plan_refine (one step, smaller first), plan_climb (--climb: both sides, then unbounded), plan2_* (2 passes)."""
     runs = {}
-    for path in sorted(glob.glob(os.path.join(REPO, "logs", "research_plan_refine_*_bs2000_s0_*.log"))):
-        name = os.path.basename(path)[len("research_plan_refine_"):].split("_bs2000")[0]
-        r = dict(evals=[], commits=[], done=None, setup=None)
+    for path in sorted(glob.glob(os.path.join(REPO, "logs", f"research_{kind}_*_bs2000_s0_*.log"))):
+        name = os.path.basename(path)[len(f"research_{kind}_"):].split("_bs2000")[0]
+        r = dict(evals=[], commits=[], pass_dones=[], done=None, setup=None)
         for line in open(path):
             if line.startswith("{"):
                 rec = json.loads(line)
@@ -129,7 +130,10 @@ def box_best(r, plan):
 
 
 shapes = load_shapes()
-refine = load_refine()
+VARIANTS = (("plan_refine", "one step, 1 pass"), ("plan2_refine", "one step, 2 passes"),
+            ("plan_climb", "both sides + climb, 1 pass"), ("plan2_climb", "both sides + climb, 2 passes"))
+variants = {kind: load_refine(kind) for kind, _ in VARIANTS}
+refine = variants["plan_refine"]
 look = {tr: {cell: r for cell, r in hl.summary(2000, tr).items() if len(r["offsets"]) == 5}  # complete cells only
         for tr in TRANSFORMS}
 joint = load_joint()
@@ -282,15 +286,25 @@ def fig_refine(path):
         spec = refine[tr]["setup"]["transform"]
         f = [1.0 if spec is None else t.lr_transform_factor(spec, s + 0.5, 200) for s in range(200)]
         ax.plot(range(200), [0.22 * (1 - s / 200) for s in range(200)], color=INK, lw=1.4, label="baseline")
-        for values, color, ls, label in ((refine[tr]["setup"]["plan"], MUTED, "--", "plan (start)"),
-                                         (refine[tr]["done"]["values"], ORANGE, "-", "interval refinement"),
-                                         (best_eval(joint[tr])["values"], BLUE, "-", "joint search")):
+        lines = [(refine[tr]["setup"]["plan"], MUTED, "--", "plan (start)")]
+        for kinds, color, label in ((("plan2_refine", "plan_refine"), ORANGE, "one step"),
+                                    (("plan2_climb", "plan_climb"), AQUA, "both sides + climb")):
+            for kind in kinds:  # the most passes finished
+                r = variants[kind].get(tr)
+                if r is not None and r["done"] is not None:
+                    lines.append((r["done"]["values"], color, "-", f"{label} (best finished)"))
+                    break
+        for values, color, ls, label in lines + [
+                (best_eval(joint[tr])["values"], BLUE, "-", "joint search")]:
             ax.plot(range(200), [values[min(s // 40, 4)] * f[s] for s in range(200)], color=color, ls=ls, lw=1.2,
                     label=label)
         ax.set_xlabel("step", fontsize=6.5)
     axes[0, 0].set_ylabel("applied conv LR")
-    h, lab = axes[0, 0].get_legend_handles_labels()
-    fig.legend(h, lab, frameon=False, fontsize=7, loc="outside lower center", ncol=4)
+    handles = {}
+    for ax in axes[0]:  # every label any panel has (variants finish at different times)
+        for h, lab in zip(*ax.get_legend_handles_labels()):
+            handles.setdefault(lab, h)
+    fig.legend(list(handles.values()), list(handles), frameon=False, fontsize=7, loc="outside lower center", ncol=5)
     fig.savefig(path, dpi=200)
     plt.close(fig)
 
@@ -512,27 +526,41 @@ story += [
       "rest of the run on the plan (a full run's TTA). The best is committed. No two-continuation average for the "
       "last interval; the result is the last committed score (no replay). The joint search's first iteration "
       "trained every schedule within one grid step of the same plan, so its best there (\"best in the box\") "
-      "is what a perfect one-step search could reach (research/plan_refine_search.py)."),
+      "is what a perfect one-step search could reach (research/plan_refine_search.py). <b>Both sides + climb</b> "
+      "(--climb): score the plan's value and both one-step neighbours, then keep stepping toward the better "
+      "neighbour while the score improves, with no step limit; otherwise identical. <b>2 passes</b> (--passes 2): "
+      "a second pass from initialisation whose plan, both the candidates' centre and the lookahead tail, is the "
+      "first pass's committed schedule (it starts from the first pass's result, so it cannot end lower)."),
 ]
-rows = [["Transform", "do nothing", "plan", "refinement (score)", "rank in box", "best in &plusmn;1 box (score)",
-         "joint search (score)", "runs: refine / joint"]]
-for tr in TRANSFORMS:
-    r, jr = refine.get(tr), joint.get(tr)
-    if r is None or r["done"] is None or jr is None:
-        rows.append([TLABEL[tr]] + ["&ndash;"] * 6 + ["running" if r else "queued"])
-        continue
-    d, jb = r["done"], best_eval(jr)
-    bb, nbox = box_best(jr, d["plan"])
-    rank = 1 + sum(1 for e in jr["evals"] if e["score"] > d["score"]
-                   and all(abs(round(math.log(a / b) / math.log(0.6))) <= 1 for a, b in zip(e["values"], d["plan"])))
-    rows.append([TLABEL[tr], f"{100 * jr['setup']['do_nothing']:.2f}",
-                 f"{100 * jr['moves'][0]['score']:.2f}", f"{sched(d['values'])} ({100 * d['score']:.2f})",
-                 f"{rank} / {nbox}", f"{sched(bb['values'])} ({100 * bb['score']:.2f})",
-                 f"{sched(jb['values'])} ({100 * jb['score']:.2f})", f"{d['runs']:.1f} / {len(jr['evals'])}"])
-story += table(rows, [2.2 * cm, 1.3 * cm, 1.1 * cm, 3.4 * cm, 1.3 * cm, 3.4 * cm, 3.4 * cm, 1.6 * cm],
-               "<b>Table 2b.</b> Interval refinement against the joint search (TTA %, seed 0). Rank in box = the "
-               "refinement's rank among the 243 schedules within one grid step of the plan (all trained by the joint "
-               "search). Runs = training steps / 200; the refinement re-scores the committed value at each interval.")
+def refine_cell(r, with_schedule):
+    if r is None:
+        return "queued"
+    if r["done"] is None:
+        return f"running (pass {len(r['pass_dones']) + 1}, interval {len(r['commits']) % 5 + 1})"
+    d = r["done"]
+    score = f"<b>{100 * d['score']:.2f}</b> ({d['runs']:.1f} runs)"
+    return f"{sched(d['values'])}: {score}" if with_schedule else score
+
+
+done_tr = [tr for tr in TRANSFORMS if tr in joint and tr in refine and refine[tr]["done"] is not None]
+rows = [["Transform", "do nothing", "plan"] + [label for _, label in VARIANTS] + ["best in &plusmn;1 box",
+                                                                                 "joint search"]]
+for tr in done_tr:
+    jr = joint[tr]
+    bb, _ = box_best(jr, refine[tr]["done"]["plan"])
+    rows.append([TLABEL[tr], f"{100 * jr['setup']['do_nothing']:.2f}", f"{100 * jr['moves'][0]['score']:.2f}"]
+                + [refine_cell(variants[kind].get(tr), False) for kind, _ in VARIANTS]
+                + [f"{100 * bb['score']:.2f}", f"{100 * best_eval(jr)['score']:.2f} ({len(jr['evals'])} runs)"])
+story += table(rows, [2.0 * cm, 1.2 * cm, 1.0 * cm] + [2.0 * cm] * 4 + [1.5 * cm, 2.0 * cm],
+               "<b>Table 2b.</b> Interval refinement against the joint search (TTA %, seed 0). Best in box = the best "
+               "of the 243 schedules within one grid step of the plan (all trained by the joint search). Runs = "
+               "training steps / 200 (a 2-pass search's runs include its first pass); the refinement re-scores the "
+               "committed value at each interval.")
+rows = [["Transform"] + [label for _, label in VARIANTS] + ["joint search"]]
+for tr in done_tr:
+    rows.append([TLABEL[tr]] + [refine_cell(variants[kind].get(tr), True).split(":")[0]
+                                for kind, _ in VARIANTS] + [sched(best_eval(joint[tr])["values"])])
+story += table(rows, [2.0 * cm] + [3.0 * cm] * 5, "<b>Table 2c.</b> The committed schedules (conv LR per interval).")
 if refine:
     path = os.path.join(PLOTS, "refine.png")
     fig_refine(path)
