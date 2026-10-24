@@ -62,7 +62,7 @@ PT = timezone(timedelta(hours=-7))
 # ------------------------------------------------------------------ data
 def queue_state():
     q = os.path.join(REPO, "queue")
-    count = {d: [f for f in os.listdir(os.path.join(q, d)) if f.startswith("020_s0")] if os.path.isdir(os.path.join(q, d))
+    count = {d: [f for f in os.listdir(os.path.join(q, d)) if f[:4] in ("020_", "021_")] if os.path.isdir(os.path.join(q, d))
              else [] for d in ("pending", "running", "done", "failed")}
     return count
 
@@ -89,6 +89,18 @@ def load_joint():
     return runs
 
 
+def load_shapes():
+    cells = {}  # (length, offset) -> eval record (newest log wins)
+    for path in sorted(glob.glob(os.path.join(REPO, "logs", "research_cooldown_shapes_conv_k1_L*_bs2000_s0_*.log"))):
+        for line in open(path):
+            if line.startswith("{"):
+                rec = json.loads(line)
+                if rec["kind"] == "eval":
+                    cells[(rec["length"], rec["offset"])] = rec
+    return cells
+
+
+shapes = load_shapes()
 look = {tr: {cell: r for cell, r in hl.summary(2000, tr).items() if len(r["offsets"]) == 5}  # complete cells only
         for tr in TRANSFORMS}
 joint = load_joint()
@@ -132,6 +144,54 @@ def fig_lookahead(tr, path):
         if len(h) > len(handles):
             handles, labels = h, lab
     fig.legend(handles, labels, frameon=False, fontsize=7, loc="outside lower center", ncol=3)
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+
+
+SHAPES = {  # variant: (color, linestyle, marker, label)
+    "truth": (INK, "-", "o", "truth"),
+    "lin_main": (BLUE, "--", "v", "linear to 0, conv only (old)"),
+    "lin_all": (ORANGE, "--", "^", "linear to 0, all LRs (old)"),
+    "s_main": (AQUA, "--", "s", "searched m, conv only (old)"),
+    "s_tied": (YELLOW, "--", "D", "searched m + tied m others (old)"),
+    "s_each": (MAGENTA, "--", "P", "searched m each LR (old)"),
+    "pow": (BLUE, "-", "o", "power (1-t)^p, p searched"),
+    "exp": (ORANGE, "-", "o", "exponential q^t, q searched"),
+    "powc": (AQUA, "-", "o", "power to end q, p and q searched"),
+}
+LENGTHS = (20, 40, 60, 80)
+OFFSETS = (-2, -1, 0, 1, 2)
+
+
+def shape_cell(length):
+    """{offset: record} if all candidates finished at this cooldown length, else None."""
+    cell = {o: shapes.get((length, o)) for o in OFFSETS}
+    return None if None in cell.values() else cell
+
+
+def fig_shapes(path):
+    fig, axes = plt.subplots(1, 4, figsize=(8.0, 3.1), sharey=True, layout="constrained")
+    for ax, length in zip(axes, LENGTHS):
+        ax.set_title(f"cooldown {length} steps")
+        cell = shape_cell(length)
+        if cell is None:
+            ax.text(0.5, 0.5, "not finished", transform=ax.transAxes, ha="center", va="center", color=MUTED)
+            ax.set_xticks([])
+            continue
+        order = sorted(OFFSETS, key=lambda o: cell[o]["c"])
+        xs = [cell[o]["c"] for o in order]
+        for v, (color, ls, marker, label) in SHAPES.items():
+            top = max(cell[o][v] for o in order)
+            ax.plot(xs, [max(-1.0, 100 * (cell[o][v] - top)) for o in order], color=color, ls=ls, marker=marker,
+                    lw=1.8 if v == "truth" else 1.2, markersize=3.2, label=label)
+        ax.set_xscale("log")
+        ax.minorticks_off()
+        ax.set_xticks(xs, [f"{x:g}" for x in xs], fontsize=6.5)
+        ax.set_xlabel("candidate conv LR")
+        ax.set_ylim(-1.05, 0.08)
+    axes[0].set_ylabel("score - its best (pp)")
+    handles, labels = max((ax.get_legend_handles_labels() for ax in axes), key=lambda hl_: len(hl_[0]))
+    fig.legend(handles, labels, frameon=False, fontsize=6.8, loc="outside lower center", ncol=3)
     fig.savefig(path, dpi=200)
     plt.close(fig)
 
@@ -223,13 +283,13 @@ def sched(values):
 now = datetime.now(timezone.utc)
 q = queue_state()
 header = [
-    P("Per-LR lookaheads and the joint 5-interval search: live results", "title"),
+    P("Interval-2 cooldowns, joint 5-interval search and per-LR lookaheads: live results", "title"),
     P(f"Updated {now.astimezone(PT):%Y-%m-%d %H:%M} PDT ({now:%H:%M} UTC). BS 2000, CIFAR-10 airbench, score = TTA "
       f"test accuracy, one training seed (0). Jobs: {len(q['done'])} done, {len(q['running'])} running, "
       f"{len(q['pending'])} pending, {len(q['failed'])} failed.", "note"),
 ]
 story_b = [
-    P("B. Which one-interval lookahead ranks interval candidates like the truth?", "h1"),
+    P("3. Which one-interval lookahead ranks interval candidates like the truth?", "h1"),
     P("<b>Setup.</b> The plan is the baseline run itself, split into 5 intervals of 40 steps. Under a transform, "
       "the multiplier applies to all four LR groups, and the plan is the oracle (each group's baseline divided by "
       "the multiplier), so the plan's applied LRs are the baseline's. For a main LR and interval k, the plan is "
@@ -251,10 +311,10 @@ for tr in TRANSFORMS:
     if not out:
         continue
     story = story_b
-    story.append(P(f"B.{TRANSFORMS.index(tr) + 1} {TLABEL[tr]}", "h2"))
+    story.append(P(f"3.{TRANSFORMS.index(tr) + 1} {TLABEL[tr]}", "h2"))
     path = os.path.join(PLOTS, f"lookahead_{tr}.png")
     fig_lookahead(tr, path)
-    story.append(figure(path, f"<b>Figure B{TRANSFORMS.index(tr) + 1}.</b> {TLABEL[tr]}: each score per candidate "
+    story.append(figure(path, f"<b>Figure 3.{TRANSFORMS.index(tr) + 1}.</b> {TLABEL[tr]}: each score per candidate "
                               "minus its own best (clipped at -1 pp); rows are the main LR, columns the interval."))
     rows = [["LR, interval", "truth best"] + [LOOKS[v][3] for v in LOOKS if v != "truth"]]
     for (g, k), r in sorted(out.items(), key=lambda kv: (GROUPS.index(kv[0][0]), kv[0][1])):
@@ -273,7 +333,7 @@ for tr in TRANSFORMS:
             cells.append(f"<b>{txt}</b>" if row["mean_pick"] == r["best"] else txt)
         rows.append(cells)
     story += table(rows, [2.5 * cm, 1.4 * cm] + [2.62 * cm] * 5,
-                   f"<b>Table B{TRANSFORMS.index(tr) + 1}.</b> Candidate each lookahead picks and, in brackets, the "
+                   f"<b>Table 3.{TRANSFORMS.index(tr) + 1}.</b> Candidate each lookahead picks and, in brackets, the "
                    "truth it loses against the truth's best (pp); bold = the truth's pick.")
     data = hl.load(2000, tr)
     counts = [["Main LR", "searched m, main only", "main + tied: main m", "main + tied: others' m",
@@ -299,13 +359,62 @@ for tr in TRANSFORMS:
                          ", ".join(f"{m:g}: {x}" for m, x in c.most_common(4) if m != 0.22))
         counts.append(cells)
     story += table(counts, [2.3 * cm] + [3.67 * cm] * 4,
-                   f"<b>Table B{TRANSFORMS.index(tr) + 1}m.</b> Searched cooldown multipliers over all candidates of "
+                   f"<b>Table 3.{TRANSFORMS.index(tr) + 1}m.</b> Searched cooldown multipliers over all candidates of "
                    "intervals 1-4: how often 0.22 is chosen, and the most common other values.")
 if waiting:
     story_b.append(P("Not finished yet (no complete interval cell): " + "; ".join(waiting) + "."))
 
+story_c = [
+    P("1. Conv interval 2: more cooldown shapes and lengths", "h1"),
+    P("<b>Setup.</b> The one cell of Section 3 where every cooldown failed: no transform, conv, interval 2 (steps "
+      "40-80), candidates 0.047-0.36, where the truth peaks at 0.13 and every one-interval cooldown picked 0.078. "
+      "Each candidate is trained for the interval from the plan's state and scored after a cooldown of 20, 40, 60 "
+      "or 80 steps (t = i / length, i = 0 .. length-1), with the other LRs on the plan unless stated. Old shapes as "
+      "in Section 3; new, conv only: <b>power</b> c (1-t)^p (p = 1 is linear to 0), <b>exponential</b> c q^t (from "
+      "c to q c), <b>power to end q</b> c (q + (1-q)(1-t)^p). p is searched on the 0.6^k grid from 1, q and m from "
+      "0.22, each unbounded, moving while a k&plusmn;1 or k&plusmn;2 neighbour is better. The truth is recomputed in "
+      "every job. One seed (0)."),
+]
+done_lengths = [length for length in LENGTHS if shape_cell(length)]
+if shapes:
+    path = os.path.join(PLOTS, "shapes_conv_k1.png")
+    fig_shapes(path)
+    story_c.append(figure(path, "<b>Figure 1.</b> Score per candidate minus its own best (clipped at -1 pp), per "
+                                "cooldown length; a cooldown decides like the truth when it peaks where the truth "
+                                "does. Dashed: the Section 3 shapes; solid: the new ones."))
+if done_lengths:
+    rows = [["Cooldown"] + [f"{length} steps" for length in done_lengths]]
+    for v, (_, _, _, label) in SHAPES.items():
+        cells = [label]
+        for length in done_lengths:
+            cell = shape_cell(length)
+            truth_best = max(OFFSETS, key=lambda o: cell[o]["truth"])
+            pick = max(OFFSETS, key=lambda o: cell[o][v])
+            txt = f"{cell[pick]['c']:g} ({100 * (cell[truth_best]['truth'] - cell[pick]['truth']):.2f})"
+            cells.append(f"<b>{txt}</b>" if pick == truth_best else txt)
+        rows.append(cells)
+    truths = "; ".join(f"{length} steps: " + ", ".join(
+        f"{shape_cell(length)[o]['c']:g} {100 * shape_cell(length)[o]['truth']:.2f}"
+        for o in sorted(OFFSETS, key=lambda o: shape_cell(length)[o]["c"])) for length in done_lengths)
+    story_c += table(rows, [5.0 * cm] + [2.6 * cm] * len(done_lengths),
+                     "<b>Table 1.</b> Candidate each cooldown picks and, in brackets, the truth it loses against the "
+                     f"truth's best (pp); bold = the truth's pick. Truth per candidate (recomputed per job): {truths}.")
+    rows = [["Shape, length"] + [f"c = {shape_cell(done_lengths[0])[o]['c']:g}"
+                                 for o in sorted(OFFSETS, key=lambda o: shape_cell(done_lengths[0])[o]["c"])]]
+    for v in ("s_main", "pow", "exp", "powc"):
+        for length in done_lengths:
+            cell = shape_cell(length)
+            rows.append([f"{SHAPES[v][3]}, {length}"] + [
+                ", ".join(f"{name}={val:g}" for name, val in cell[o]["searched"][v].items())
+                for o in sorted(OFFSETS, key=lambda o: cell[o]["c"])])
+    story_c += table(rows, [5.0 * cm] + [2.4 * cm] * 5, "<b>Table 1p.</b> Searched cooldown parameters per candidate.")
+running_lengths = [length for length in LENGTHS if length not in done_lengths]
+if running_lengths:
+    story_c.append(P("Not finished yet: cooldowns of " + ", ".join(map(str, running_lengths)) + " steps ("
+                     f"{sum(1 for k in shapes if k[0] in running_lengths)} of {5 * len(running_lengths)} candidates "
+                     "done)."))
 story = story_a = [
-    P("A. Capacity of the 5-constant-interval conv schedule: joint neighbourhood search", "h1"),
+    P("2. Capacity of the 5-constant-interval conv schedule: joint neighbourhood search", "h1"),
     P("<b>Setup.</b> Conv LR only (the other groups on the baseline); conv's specified schedule is 5 constant "
       "intervals on the x0.6 grid, and the transform multiplies conv's applied LR. One search seed (0). Each "
       "iteration trains all 3^5 - 1 = 242 joint neighbours (every interval -1, 0 or +1 grid step) as full runs, "
@@ -327,14 +436,14 @@ for tr in TRANSFORMS:
                  f"{sched(best['values'])} ({100 * best['score']:.2f})", delta, str(len(r["moves"]) - 1),
                  str(len(r["evals"])), "converged" if r["done"] else "running"])
 story += table(rows, [2.5 * cm, 1.4 * cm, 3.6 * cm, 3.6 * cm, 1.5 * cm, 1.3 * cm, 1.1 * cm, 1.5 * cm],
-               "<b>Table A.</b> Joint search per transform. Baseline (no transform, seed 0): " +
+               "<b>Table 2.</b> Joint search per transform. Baseline (no transform, seed 0): " +
                ("&ndash;" if baseline_s0 is None else f"{baseline_s0:.2f}") +
                ". Iterations = moves made so far; best evaluated = the best full run so far (the schedule the "
                "search moves to next); a running search's best is final only once it converges.")
 if joint:
     path = os.path.join(PLOTS, "joint.png")
     fig_joint(path)
-    story.append(figure(path, "<b>Figure A.</b> Top: applied conv LR of the start and the best evaluated schedule "
+    story.append(figure(path, "<b>Figure 2.</b> Top: applied conv LR of the start and the best evaluated schedule "
                               "against the baseline. Bottom: best score among the full runs so far (dotted: "
                               "baseline, seed 0)."))
 
@@ -350,5 +459,5 @@ def footer(canvas, doc):
 doc = SimpleDocTemplate(OUT, pagesize=A4, leftMargin=2.0 * cm, rightMargin=2.0 * cm, topMargin=1.6 * cm,
                         bottomMargin=1.8 * cm, title="Per-LR lookaheads and joint 5-interval search",
                         author="Roland Gao")
-doc.build(header + story_a + [PageBreak()] + story_b, onFirstPage=footer, onLaterPages=footer)
+doc.build(header + story_c + [PageBreak()] + story_a + [PageBreak()] + story_b, onFirstPage=footer, onLaterPages=footer)
 print(f"wrote {OUT}: {doc.page} pages")
