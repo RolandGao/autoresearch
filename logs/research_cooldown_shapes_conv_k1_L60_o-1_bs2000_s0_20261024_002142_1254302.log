@@ -1,0 +1,158 @@
+# commit fd719dfcb46ad3c6c05e0eabfeb917c376b104fd
+# args {"batch_size": 2000, "seed": 0, "group": "conv", "k": 1, "offset": -1, "length": 60, "intervals": 5}
+# worker hl0 gpu GPU-abdb574f-e51e-f279-bf50-64e17f83b241
+# source
+# | """More cooldown shapes and lengths for one lookahead cell (default: conv, interval 2, BS 2000, no transform),
+# | where every one-interval cooldown of research/hparam_lookahead.py picked 0.078 against the truth's 0.13.
+# | 
+# | Same plan and candidates as hparam_lookahead.py: the baseline run is followed up to interval k, conv is set
+# | to the constant candidate c (x0.6 grid around the baseline's interval mean, moved by --offset) for one
+# | interval, then scored by a cooldown of --length steps (t = i / length, i = 0 .. length-1; other groups on
+# | the baseline unless stated):
+# |   lin_main   c (1 - t)                                  (= pow with p = 1)
+# |   lin_all    lin_main, and every other group linear from its baseline value to 0
+# |   s_main     m c constant, m searched
+# |   s_tied     m c, the other three at m_o x their baseline mean over interval k (one tied m_o)
+# |   s_each     every group at its own searched m (others: x their baseline mean over interval k)
+# |   pow        c (1 - t)^p, p searched
+# |   exp        c q^t (from c to q c), q searched
+# |   powc       c (q + (1 - q)(1 - t)^p), p and q searched jointly
+# | and truth = the rest of the run on the plan. Searches: 0.6^k grid (2 significant figures), unbounded
+# | coordinate search moving each parameter to its best of k+-1, k+-2 while that improves (lr grid protocol);
+# | p starts at 1, every multiplier at 0.22. Every probe is logged.
+# | 
+# | python research/cooldown_shapes.py --offset 0 --length 40
+# | """
+# | import argparse
+# | 
+# | from common import base_config, emit, new_model, open_log, t
+# | 
+# | GROUPS = ("conv", "head", "norm_bias", "whiten_bias")
+# | parser = argparse.ArgumentParser()
+# | parser.add_argument("--batch-size", type=int, default=2000)
+# | parser.add_argument("--seed", type=int, default=0)
+# | parser.add_argument("--group", default="conv")
+# | parser.add_argument("--k", type=int, default=1)
+# | parser.add_argument("--offset", type=int, required=True)
+# | parser.add_argument("--length", type=int, required=True)
+# | parser.add_argument("--intervals", type=int, default=5)
+# | args = parser.parse_args()
+# | log = open_log(f"cooldown_shapes_{args.group}_k{args.k}_L{args.length}_o{args.offset}_bs{args.batch_size}_s{args.seed}",
+# |                args, __file__)
+# | 
+# | model = new_model()
+# | t.TRAINING_SEED = args.seed
+# | trainer = t.SegmentTrainer(model, base_config(args.batch_size))
+# | base = dict(trainer.base_schedules)
+# | total = trainer.total_steps
+# | interval = total // args.intervals
+# | g, L = args.group, args.length
+# | s0, s1 = args.k * interval, (args.k + 1) * interval
+# | assert s1 + L <= total
+# | key = {o: f"{o}.initial_lr" for o in GROUPS}
+# | others = [o for o in GROUPS if o != g]
+# | 
+# | 
+# | def value_at(o, step):
+# |     return t.schedule_value_at_step(base[key[o]], step)
+# | 
+# | 
+# | def mean_over(o, start, steps):
+# |     return sum(value_at(o, s) for s in range(start, start + steps)) / steps
+# | 
+# | 
+# | def window(lines, start, new, n):
+# |     """lines with [start, start + n) replaced by the lines new (covering n steps)."""
+# |     return t.slice_schedule(lines, 0, start) + new + t.slice_schedule(lines, start + n, total)
+# | 
+# | 
+# | def grid(index):
+# |     return t.round_hparam(0.6 ** index)
+# | 
+# | 
+# | def run_with(lines_by_group, steps):
+# |     sched = dict(base)
+# |     for o, lines in lines_by_group.items():
+# |         sched[key[o]] = lines
+# |     ok = trainer.train(sched, steps)
+# |     return 100 * trainer.score("tta_val_acc") if ok else 0.0
+# | 
+# | 
+# | def neighbour_search(start, score):
+# |     """Coordinate search over grid indices, unbounded; start: {name: value}. Returns (best, score, probes)."""
+# |     names = list(start)
+# |     cache = {}
+# | 
+# |     def evaluate(point):
+# |         if point not in cache:
+# |             cache[point] = score(dict(zip(names, (grid(i) for i in point))))
+# |         return cache[point]
+# | 
+# |     current = tuple(t.lr_grid_index(start[n], 0.6) for n in names)
+# |     current_score = evaluate(current)
+# |     while True:
+# |         moved = False
+# |         for j in range(len(names)):
+# |             options = [current[:j] + (current[j] + d,) + current[j + 1:] for d in (-2, -1, 1, 2)]
+# |             best = max(options, key=evaluate)
+# |             if evaluate(best) > current_score:
+# |                 current, current_score, moved = best, evaluate(best), True
+# |         if not moved:
+# |             probes = [dict(zip(names, (grid(i) for i in p)), score=s) for p, s in cache.items()]
+# |             return dict(zip(names, (grid(i) for i in current))), current_score, probes
+# | 
+# | 
+# | trainer.train(dict(base), s0)
+# | center = mean_over(g, s0, interval)
+# | c = grid(t.lr_grid_index(center, 0.6) - args.offset)
+# | main_lines = window(base[key[g]], s0, [(interval, c)], interval)
+# | run_with({g: main_lines}, interval)
+# | mid = trainer.snapshot()
+# | other_mean = {o: mean_over(o, s0, interval) for o in others}
+# | live = [o for o in others if other_mean[o] > 0]
+# | emit(log, kind="setup", seed=args.seed, group=g, k=args.k, offset=args.offset, c=c, center=center, length=L,
+# |      other_mean=other_mean)
+# | scores, searched = {"truth": run_with({g: main_lines}, total - s1)}, {}
+# | 
+# | 
+# | def cooldown(main_shape, other_lines=None):
+# |     """main_shape(t) = multiplier of c at fraction t of the cooldown; other_lines: {group: lines over L steps}."""
+# |     trainer.restore(mid)
+# |     lines = {g: window(main_lines, s1, [(1, c * main_shape(i / L)) for i in range(L)], L)}
+# |     for o, new in (other_lines or {}).items():
+# |         lines[o] = window(base[key[o]], s1, new, L)
+# |     return run_with(lines, L)
+# | 
+# | 
+# | def constant(mults):
+# |     return cooldown(lambda _: mults[g], {o: [(L, mults[o] * other_mean[o])] for o in others if o in mults})
+# | 
+# | 
+# | scores["lin_main"] = cooldown(lambda x: 1 - x)
+# | scores["lin_all"] = cooldown(lambda x: 1 - x, {o: [(L, value_at(o, s1), 0.0)] for o in others})
+# | searches = {
+# |     "s_main": ({g: 0.22}, constant),
+# |     "s_tied": (dict({g: 0.22}, others=0.22) if live else {g: 0.22},
+# |                lambda m: constant(dict({g: m[g]}, **{o: m.get("others", 1.0) for o in live}))),
+# |     "s_each": ({o: 0.22 for o in [g] + live}, constant),
+# |     "pow": ({"p": 1.0}, lambda m: cooldown(lambda x: (1 - x) ** m["p"])),
+# |     "exp": ({"q": 0.22}, lambda m: cooldown(lambda x: m["q"] ** x)),
+# |     "powc": ({"p": 1.0, "q": 0.22}, lambda m: cooldown(lambda x: m["q"] + (1 - m["q"]) * (1 - x) ** m["p"])),
+# | }
+# | for name, (start, fn) in searches.items():
+# |     best, best_score, probes = neighbour_search(start, fn)
+# |     scores[name], searched[name] = best_score, best
+# |     emit(log, kind="probe", variant=name, probes=probes)
+# | emit(log, kind="eval", group=g, k=args.k, offset=args.offset, c=c, center=center, length=L,
+# |      **{n: v / 100 for n, v in scores.items()}, searched=searched)
+# | emit(log, kind="done", train_steps=trainer.train_steps)
+
+{"kind": "setup", "seed": 0, "group": "conv", "k": 1, "offset": -1, "c": 0.078, "center": 0.15455000000000002, "length": 60, "other_mean": {"head": 913.25, "norm_bias": 69.5475, "whiten_bias": 7.56}, "time": 1792801308.1}
+{"kind": "probe", "variant": "s_main", "probes": [{"conv": 0.22, "score": 93.00999641418457}, {"conv": 0.6, "score": 92.5599992275238}, {"conv": 0.36, "score": 92.9099977016449}, {"conv": 0.13, "score": 92.91999936103821}, {"conv": 0.078, "score": 92.77999997138977}], "time": 1792801339.6}
+{"kind": "probe", "variant": "s_tied", "probes": [{"conv": 0.22, "others": 0.22, "score": 93.14999580383301}, {"conv": 0.6, "others": 0.22, "score": 92.47999787330627}, {"conv": 0.36, "others": 0.22, "score": 92.97999739646912}, {"conv": 0.13, "others": 0.22, "score": 92.89999604225159}, {"conv": 0.078, "others": 0.22, "score": 92.69999861717224}, {"conv": 0.22, "others": 0.6, "score": 93.01999807357788}, {"conv": 0.22, "others": 0.36, "score": 93.04999709129333}, {"conv": 0.22, "others": 0.13, "score": 93.11999678611755}, {"conv": 0.22, "others": 0.078, "score": 93.09999942779541}], "time": 1792801372.3}
+{"kind": "probe", "variant": "s_each", "probes": [{"conv": 0.22, "head": 0.22, "norm_bias": 0.22, "whiten_bias": 0.22, "score": 93.14999580383301}, {"conv": 0.6, "head": 0.22, "norm_bias": 0.22, "whiten_bias": 0.22, "score": 92.47999787330627}, {"conv": 0.36, "head": 0.22, "norm_bias": 0.22, "whiten_bias": 0.22, "score": 92.97999739646912}, {"conv": 0.13, "head": 0.22, "norm_bias": 0.22, "whiten_bias": 0.22, "score": 92.89999604225159}, {"conv": 0.078, "head": 0.22, "norm_bias": 0.22, "whiten_bias": 0.22, "score": 92.69999861717224}, {"conv": 0.22, "head": 0.6, "norm_bias": 0.22, "whiten_bias": 0.22, "score": 93.04999709129333}, {"conv": 0.22, "head": 0.36, "norm_bias": 0.22, "whiten_bias": 0.22, "score": 93.10999512672424}, {"conv": 0.22, "head": 0.13, "norm_bias": 0.22, "whiten_bias": 0.22, "score": 93.07999610900879}, {"conv": 0.22, "head": 0.078, "norm_bias": 0.22, "whiten_bias": 0.22, "score": 93.0899977684021}, {"conv": 0.22, "head": 0.22, "norm_bias": 0.6, "whiten_bias": 0.22, "score": 93.04999709129333}, {"conv": 0.22, "head": 0.22, "norm_bias": 0.36, "whiten_bias": 0.22, "score": 93.07000041007996}, {"conv": 0.22, "head": 0.22, "norm_bias": 0.13, "whiten_bias": 0.22, "score": 93.14000010490417}, {"conv": 0.22, "head": 0.22, "norm_bias": 0.078, "whiten_bias": 0.22, "score": 93.09999942779541}, {"conv": 0.22, "head": 0.22, "norm_bias": 0.22, "whiten_bias": 0.6, "score": 93.0899977684021}, {"conv": 0.22, "head": 0.22, "norm_bias": 0.22, "whiten_bias": 0.36, "score": 93.14000010490417}, {"conv": 0.22, "head": 0.22, "norm_bias": 0.22, "whiten_bias": 0.13, "score": 93.12999844551086}, {"conv": 0.22, "head": 0.22, "norm_bias": 0.22, "whiten_bias": 0.078, "score": 93.07999610900879}], "time": 1792801434.0}
+{"kind": "probe", "variant": "pow", "probes": [{"p": 1.0, "score": 93.35999488830566}, {"p": 2.8, "score": 93.14000010490417}, {"p": 1.7, "score": 93.23999881744385}, {"p": 0.6, "score": 93.36999654769897}, {"p": 0.36, "score": 92.98999905586243}, {"p": 0.22, "score": 92.76999831199646}], "time": 1792801455.8}
+{"kind": "probe", "variant": "exp", "probes": [{"q": 0.22, "score": 93.25999617576599}, {"q": 0.6, "score": 92.46999621391296}, {"q": 0.36, "score": 92.85999536514282}, {"q": 0.13, "score": 93.34999918937683}, {"q": 0.078, "score": 93.25999617576599}, {"q": 0.047, "score": 93.2699978351593}], "time": 1792801477.6}
+{"kind": "probe", "variant": "powc", "probes": [{"p": 1.0, "q": 0.22, "score": 93.2099997997284}, {"p": 2.8, "q": 0.22, "score": 93.32000017166138}, {"p": 1.7, "q": 0.22, "score": 93.29999685287476}, {"p": 0.6, "q": 0.22, "score": 93.05999875068665}, {"p": 0.36, "q": 0.22, "score": 92.69999861717224}, {"p": 2.8, "q": 0.6, "score": 92.51999855041504}, {"p": 2.8, "q": 0.36, "score": 93.05999875068665}, {"p": 2.8, "q": 0.13, "score": 93.3899998664856}, {"p": 2.8, "q": 0.078, "score": 93.2099997997284}, {"p": 7.7, "q": 0.13, "score": 93.07999610900879}, {"p": 4.6, "q": 0.13, "score": 93.21999549865723}, {"p": 1.7, "q": 0.13, "score": 93.25000047683716}, {"p": 1.0, "q": 0.13, "score": 93.48999857902527}, {"p": 1.0, "q": 0.36, "score": 92.93999671936035}, {"p": 1.0, "q": 0.078, "score": 93.41999888420105}, {"p": 1.0, "q": 0.047, "score": 93.45999956130981}, {"p": 0.6, "q": 0.13, "score": 93.11999678611755}, {"p": 0.36, "q": 0.13, "score": 92.76999831199646}], "time": 1792801542.9}
+{"kind": "eval", "group": "conv", "k": 1, "offset": -1, "c": 0.078, "center": 0.15455000000000002, "length": 60, "truth": 0.9383999705314636, "lin_main": 0.9335999488830566, "lin_all": 0.9341999888420105, "s_main": 0.9300999641418457, "s_tied": 0.9314999580383301, "s_each": 0.9314999580383301, "pow": 0.9336999654769897, "exp": 0.9334999918937683, "powc": 0.9348999857902527, "searched": {"s_main": {"conv": 0.22}, "s_tied": {"conv": 0.22, "others": 0.22}, "s_each": {"conv": 0.22, "head": 0.22, "norm_bias": 0.22, "whiten_bias": 0.22}, "pow": {"p": 0.6}, "exp": {"q": 0.13}, "powc": {"p": 1.0, "q": 0.13}}, "time": 1792801542.9}
+{"kind": "done", "train_steps": 3980, "time": 1792801542.9}
