@@ -1814,6 +1814,215 @@ story += [
 story += observations("unseen_observations.txt")
 
 
+# Experiments 32-34 (2026-10-23/24): per-LR one-interval lookaheads, the joint 5-interval conv search, and more
+# cooldown shapes for conv interval 2. Figures are the ones of lookahead_joint_study.pdf
+# (research/make_lookahead_joint_report.py writes them to plots/lookahead_joint/).
+import math  # noqa: E402
+from collections import Counter  # noqa: E402
+
+import hparam_lookahead_study as hls  # noqa: E402
+
+LJ_PLOTS = os.path.join(REPO, "plots", "lookahead_joint")
+LJ_TRANSFORMS = (("none", "none"), ("ramp", "ramp"), ("rampdown", "reverse ramp"), ("wave", "wave"),
+                 ("waveinv", "inverted wave"), ("ramp8", "ramp x1/8 -> x8"))
+LJ_GROUPS = (("conv", "conv"), ("head", "head"), ("norm_bias", "norm bias"), ("whiten_bias", "whitening bias"))
+LJ_LOOKS = (("lin_main", "linear to 0, main LR"), ("lin_all", "linear to 0, all LRs"),
+            ("s_main", "searched m, main LR"), ("s_tied", "searched m main + tied m others"),
+            ("s_each", "searched m each LR"))
+
+
+def lj_image(name, width=17 * cm):
+    path = os.path.join(LJ_PLOTS, name)
+    if not os.path.exists(path):
+        return []
+    img = Image(path)
+    img.drawWidth, img.drawHeight = width, width * img.imageHeight / img.imageWidth
+    return [keep([img, Spacer(1, 4)])]
+
+
+def grid_steps(truth_value, pick_value):
+    """How many x0.6 grid steps the pick lies below the truth's best (negative: above)."""
+    return round(math.log(truth_value / pick_value) / math.log(1 / 0.6))
+
+
+lj = {tr: {cell: r for cell, r in hls.summary(2000, tr).items() if len(r["offsets"]) == 5 and cell[1] < 4}
+      for tr, _ in LJ_TRANSFORMS}
+conv_rows = [["Transform, interval", "Truth's best (range, pp)"] + [label for _, label in LJ_LOOKS]]
+for tr, label in LJ_TRANSFORMS:
+    for k in range(4):
+        r = lj[tr].get(("conv", k))
+        if r is None:
+            continue
+        best = r["c"][r["best"]]
+        truth = r["rows"]["truth"]["means"]
+        cells = [f"{label}, {k + 1}", f"{best:g} ({max(truth.values()) - min(truth.values()):.2f})"]
+        for v, _ in LJ_LOOKS:
+            row = r["rows"][v]
+            pick = r["c"][row["mean_pick"]]
+            txt = f"{pick:g} ({row['regret']:.2f})"
+            cells.append(f"<b>{txt}</b>" if row["mean_pick"] == r["best"] else txt)
+        conv_rows.append(cells)
+agg_rows = [["LR", "Truth range (pp)"] + [label for _, label in LJ_LOOKS]]
+for g, glabel in LJ_GROUPS:
+    rs = [lj[tr][(g, k)] for tr, _ in LJ_TRANSFORMS for k in range(4) if (g, k) in lj[tr]]
+    if not rs:
+        continue
+    ranges = [max(r["rows"]["truth"]["means"].values()) - min(r["rows"]["truth"]["means"].values()) for r in rs]
+    cells = [f"{glabel} ({len(rs)} cells)", f"{sum(ranges) / len(ranges):.2f}"]
+    for v, _ in LJ_LOOKS:
+        hits = sum(r["rows"][v]["mean_pick"] == r["best"] for r in rs)
+        regret = sum(r["rows"][v]["regret"] for r in rs) / len(rs)
+        bias = sum(grid_steps(r["c"][r["best"]], r["c"][r["rows"][v]["mean_pick"]]) for r in rs) / len(rs)
+        cells.append(f"{hits}/{len(rs)}, {regret:.3f}, {bias:+.2f}")
+    agg_rows.append(cells)
+mult_rows = [["Main LR", "s_main: m", "s_tied: main m", "s_tied: others' m", "s_each: main m"]]
+for g, glabel in LJ_GROUPS:
+    counts = {key: Counter() for key in ("sm", "tm", "to", "em")}
+    for tr, _ in LJ_TRANSFORMS:
+        for (gg, k, o), seeds in hls.load(2000, tr).items():
+            if gg != g or (g, k) not in lj[tr]:
+                continue
+            for rec in seeds.values():
+                m = rec["searched"]
+                counts["sm"][m["s_main"][g]] += 1
+                counts["tm"][m["s_tied"][g]] += 1
+                if "others" in m["s_tied"]:
+                    counts["to"][m["s_tied"]["others"]] += 1
+                counts["em"][m["s_each"][g]] += 1
+    cells = [glabel]
+    for key in ("sm", "tm", "to", "em"):
+        c, n = counts[key], sum(counts[key].values())
+        cells.append("-" if not n else f"0.22: {c[0.22]}/{n}; " + ", ".join(
+            f"{m:g}: {x}" for m, x in c.most_common(4) if m != 0.22))
+    mult_rows.append(cells)
+story += [
+    P("Experiment 32. Which one-interval lookahead ranks interval candidates like the final result, for each LR?",
+      "h1"),
+    P("Question", "h2"),
+    P("Experiment 12 compared lookaheads for conv on a 5-interval constant plan. With the baseline run itself as the "
+      "plan, and for each of the four LRs: does one interval of cooldown after a candidate interval pick the "
+      "candidate that the rest of the run on the plan (the truth) picks, when the cooldown is linear to zero or a "
+      "searched constant, applied to the main LR alone or to all LRs?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Plan", "The BS 2000 baseline run (every LR on its configured linear decay), 5 intervals of 40 steps. "
+                    "Under a transform (applied to all four LRs), the plan is the oracle: each LR's baseline "
+                    "divided by the transform, step by step"],
+           ["Candidates", "For main LR g and interval k (1-4): g constant at c on the x0.6 grid, c = the grid value "
+                          "nearest the plan's mean of g over interval k and 1, 2 grid steps either side (whitening "
+                          "bias, 0 in the plan from step 75: around its step-0 plan value); trained for the interval "
+                          "from the plan's state"],
+           ["Truth", "The final score with the rest of the run on the plan"],
+           ["Lookaheads (one interval)", "lin_main: g linear from c to 0, the others on the plan; lin_all: every LR "
+                                         "linear to 0 (the others from their plan value); s_main: g at m c; s_tied: "
+                                         "g at m c, the other three at m_o x their plan mean over interval k (one "
+                                         "tied m_o); s_each: every LR at its own m"],
+           ["m search", "0.6^k grid (2 significant figures), unbounded, from 0.22; coordinate search moving each m "
+                        "to its best k+-1 / k+-2 neighbour while that improves; every probe logged"],
+           ["Runs", "Seed 0 (one seed), BS 2000, transforms none, ramp, reverse ramp, wave, inverted wave, ramp "
+                    "x1/8 -> x8 (research/hparam_lookahead.py; analysis research/hparam_lookahead_study.py)"]],
+          [3.3 * cm, 13.7 * cm]),
+    P("Conv: the truth's best candidate and each lookahead's pick (in brackets: the truth the pick loses, pp; "
+      "bold = the truth's pick)", "h2"),
+    table(conv_rows, [2.9 * cm, 2.3 * cm] + [2.36 * cm] * 5),
+    P("All LRs, over the 6 transforms x intervals 1-4: picks equal to the truth's, mean truth lost (pp), and mean "
+      "grid steps by which the pick lies below the truth's best (positive = too small)", "h2"),
+    table(agg_rows, [2.9 * cm, 2.3 * cm] + [2.36 * cm] * 5),
+    P("Searched multipliers over all candidates (how often 0.22, then the most common others)", "h2"),
+    table(mult_rows, [2.6 * cm] + [3.6 * cm] * 4),
+    P("No transform, all LRs (score minus its own best per candidate; rows = main LR, columns = interval)", "h2"),
+] + lj_image("lookahead_none.png")
+story += observations("hparam_lookahead_observations.txt")
+
+joint_runs = {}
+for path in sorted(glob.glob(os.path.join(REPO, "logs", "research_joint_search_*_bs2000_s0_*.log"))):
+    name = os.path.basename(path)[len("research_joint_search_"):].split("_bs2000")[0]
+    recs = [json.loads(x) for x in open(path) if x.startswith("{")]
+    done = [x for x in recs if x["kind"] == "done"]
+    if done:
+        joint_runs[name] = dict(setup=next(x for x in recs if x["kind"] == "setup"), done=done[0],
+                                moves=[x for x in recs if x["kind"] == "move"])
+joint_base = 100 * joint_runs["none"]["setup"]["baseline"] if "none" in joint_runs else None
+joint_rows = [["Transform", "Do-nothing", "Start (grid oracle)", "Converged", "vs baseline", "Moves, runs"]]
+for tr, label in LJ_TRANSFORMS:
+    r = joint_runs.get(tr)
+    if r is None:
+        continue
+    start, end = r["moves"][0], r["done"]
+    joint_rows.append([label, f"{100 * r['setup']['do_nothing']:.2f}",
+                       ", ".join(f"{v:g}" for v in start["values"]) + f" ({100 * start['score']:.2f})",
+                       "<b>" + ", ".join(f"{v:g}" for v in end["values"]) + f" ({100 * end['score']:.2f})</b>",
+                       f"{100 * end['score'] - joint_base:+.2f}", f"{len(r['moves']) - 1}, {end['evaluations']}"])
+story += [
+    P("Experiment 33. Capacity of the 5-constant-interval conv schedule: joint neighbourhood search", "h1"),
+    P("Question", "h2"),
+    P("How well can 5 constant intervals of the conv LR on the x0.6 grid do, under each transform, when the "
+      "schedule is searched jointly with full runs rather than interval by interval?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Schedule", "Conv only (the other LRs on the baseline); conv's specified schedule = 5 constant intervals "
+                        "of 40 steps on the x0.6 grid; the transform multiplies conv's applied LR"],
+           ["Search", "Start: the oracle (baseline / transform) reduced to its 5 interval means, snapped to the grid. "
+                      "Each iteration trains all 3^5 - 1 = 242 joint neighbours (every interval -1, 0 or +1 grid "
+                      "step) as full runs, moves to the best if it beats the current schedule, and repeats until "
+                      "none does; each schedule is trained once (cached)"],
+           ["Runs", "BS 2000, seed 0 (search and score), all six transforms (research/joint_search.py). The result "
+                    "is the winner's search score (no replay); baseline and do-nothing are single runs on seed 0"]],
+          [3.3 * cm, 13.7 * cm]),
+    P("Result (TTA, seed 0; baseline " + ("-" if joint_base is None else f"{joint_base:.2f}") + ")", "h2"),
+    table(joint_rows, [2.5 * cm, 1.8 * cm, 4.2 * cm, 4.6 * cm, 1.7 * cm, 2.2 * cm]),
+    P("Applied conv LR of the start and the best schedule against the baseline (top), best score over the runs "
+      "(bottom; dotted: baseline)", "h2"),
+] + lj_image("joint.png")
+story += observations("joint_search_observations.txt")
+
+shape_cells = {}
+for path in sorted(glob.glob(os.path.join(REPO, "logs", "research_cooldown_shapes_conv_k1_L*_bs2000_s0_*.log"))):
+    for x in open(path):
+        if x.startswith("{"):
+            rec = json.loads(x)
+            if rec["kind"] == "eval":
+                shape_cells[(rec["length"], rec["offset"])] = rec
+SHAPE_LOOKS = LJ_LOOKS + (("pow", "power (1-t)^p"), ("exp", "exponential q^t"), ("powc", "power to end q"))
+shape_lengths = [L for L in (20, 40, 60, 80) if all((L, o) in shape_cells for o in range(-2, 3))]
+shape_rows = [["Cooldown"] + [f"{L} steps" for L in shape_lengths]]
+for v, label in (("truth", "truth"),) + SHAPE_LOOKS:
+    cells = [label]
+    for L in shape_lengths:
+        recs = [shape_cells[(L, o)] for o in range(-2, 3)]
+        best = max(recs, key=lambda r: r["truth"])
+        pick = max(recs, key=lambda r: r[v])
+        second = max((r for r in recs if r is not pick), key=lambda r: r[v])
+        txt = f"{pick['c']:g} ({100 * (best['truth'] - pick['truth']):.2f}; by {100 * (pick[v] - second[v]):.2f})"
+        cells.append(f"<b>{txt}</b>" if pick is best else txt)
+    shape_rows.append(cells)
+truth_line = ", ".join(f"{r['c']:g}: {100 * r['truth']:.2f}" for r in sorted(
+    (shape_cells[(shape_lengths[0], o)] for o in range(-2, 3)), key=lambda r: r["c"])) if shape_lengths else "-"
+story += [
+    P("Experiment 34. Conv interval 2: other cooldown shapes and lengths", "h1"),
+    P("Question", "h2"),
+    P("In Experiment 32 (no transform), every one-interval lookahead picks 0.078 for conv in interval 2, where the "
+      "truth peaks at 0.13. Does a different cooldown shape, or a longer or shorter cooldown, pick 0.13?"),
+    P("Setup", "h2"),
+    table([["Item", "Value"],
+           ["Cell", "Experiment 32's no-transform conv interval 2 (steps 40-80): candidates 0.047-0.36, seed 0, "
+                    "BS 2000; the truth is recomputed in every job"],
+           ["New shapes (conv only)", "power c (1-t)^p, p searched (p = 1 is linear to 0); exponential c q^t (from c "
+                                      "to q c), q searched; power to end q: c (q + (1-q)(1-t)^p), p and q searched "
+                                      "jointly; t = i / length over the cooldown's steps"],
+           ["Old shapes", "the five of Experiment 32"],
+           ["Lengths", "20, 40, 60 and 80 steps, for every shape, starting at step 80"],
+           ["Search", "p from 1, q and m from 0.22, 0.6^k grid, unbounded k+-1 / k+-2 coordinate search "
+                      "(research/cooldown_shapes.py)"]],
+          [3.3 * cm, 13.7 * cm]),
+    P(f"Pick per cooldown and length (truth lost by the pick, pp; margin of the pick over the cooldown's "
+      f"second-best candidate, pp); bold = the truth's pick. Truth: {truth_line}", "h2"),
+    table(shape_rows, [4.4 * cm] + [3.15 * cm] * len(shape_lengths)),
+    P("Score per candidate minus its own best, per cooldown length (dashed: Experiment 32's shapes)", "h2"),
+] + lj_image("shapes_conv_k1.png")
+story += observations("cooldown_shapes_observations.txt")
+
+
 def attach_headings(flowables):
     """Keep each subheading on the same page as the table / figure that follows it."""
     out = []

@@ -1,5 +1,5 @@
 """Build cooldown_study_paper.pdf: an 8-page technical report of the interval-cooldown-search study.
-The full record (31 experiments) is cooldown_study.pdf; "Exp. N" below refers to its experiments.
+The full record (34 experiments) is cooldown_study.pdf; "Exp. N" below refers to its experiments.
 Every table and figure is computed from the logs, except the paired probe effects quoted from the
 full study (marked with their experiment number).
 
@@ -28,6 +28,7 @@ from reportlab.platypus import (Image, KeepTogether, Paragraph, SimpleDocTemplat
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "research"))
 import ics_study as ics  # noqa: E402
+import hparam_lookahead_study as hls  # noqa: E402
 import lookahead_study as las  # noqa: E402
 
 OUT = os.path.join(REPO, "cooldown_study_paper.pdf")
@@ -130,27 +131,27 @@ def fig_schedules(path):
 
 
 def fig_lookahead(path):
-    _, look = las.summary(2000, "")
-    styles = {"truth": (INK, "-", "truth (rest of run on the plan)"), "rest_lin": (BLUE, "-", "rest of run, linear to 0"),
-              "c40_0.22": (AQUA, "--", "one interval at 0.22 x"), "c40_0.6": (ORANGE, "--", "one interval at 0.6 x")}
-    fig, axes = plt.subplots(1, 4, figsize=(8.0, 2.45), sharey=True, layout="constrained")
-    for ax, k in zip(axes, sorted(look)[:4]):
-        r = look[k]
+    look = hls.summary(2000, "none")
+    styles = {"truth": (INK, "-", "o", "truth (rest of run on the plan)"),
+              "lin_main": (BLUE, "--", "v", "linear to 0, conv only"), "lin_all": (ORANGE, "--", "^", "linear to 0, all LRs"),
+              "s_main": (AQUA, "-", "s", "searched m, conv only"),
+              "s_tied": (YELLOW, "-", "D", "searched m conv + tied m others"),
+              "s_each": ("#e87ba4", "-", "P", "searched m each LR")}
+    fig, axes = plt.subplots(1, 4, figsize=(8.0, 2.65), sharey=True, layout="constrained")
+    for k, ax in enumerate(axes):
+        r = look[("conv", k)]
         xs = [r["c"][o] for o in r["offsets"]]
-        for v, (color, ls, label) in styles.items():
-            row = r["rows"].get(v)
-            if row is None:
-                continue
-            top = max(row["means"].values())
-            ax.plot(xs, [max(-1.0, row["means"][o] - top) for o in r["offsets"]], color=color, ls=ls, lw=1.4,
-                    marker="o", markersize=3, label=label)
+        for v, (color, ls, marker, label) in styles.items():
+            top = max(r["rows"][v]["means"].values())
+            ax.plot(xs, [max(-1.0, r["rows"][v]["means"][o] - top) for o in r["offsets"]], color=color, ls=ls,
+                    lw=1.8 if v == "truth" else 1.2, marker=marker, markersize=3, label=label)
         ax.set_xscale("log")
         ax.minorticks_off()
         ax.set_xticks(xs, [f"{x:g}" for x in xs], fontsize=6.5)
         ax.set_title(f"interval {k + 1}")
         ax.set_xlabel("candidate conv LR")
-    axes[0].set_ylabel("mean score - its best (pp)")
-    fig.legend(*axes[0].get_legend_handles_labels(), frameon=False, fontsize=7, loc="outside lower center", ncol=4)
+    axes[0].set_ylabel("score - its best (pp)")
+    fig.legend(*axes[0].get_legend_handles_labels(), frameon=False, fontsize=7, loc="outside lower center", ncol=3)
     fig.savefig(path, dpi=220)
     plt.close(fig)
 
@@ -405,7 +406,7 @@ story = [
     P("Interval Cooldown Search: Recovering Tuned Learning-Rate Schedules within Twenty Training Runs", "title"),
     P("Roland Gao", "author"),
     P("Technical report, October 2026. Experiments designed by the author; runs and analysis carried out with "
-      "Claude (Anthropic). Full experimental record: cooldown_study.pdf (31 experiments, cited as Exp. N).", "note"),
+      "Claude (Anthropic). Full experimental record: cooldown_study.pdf (34 experiments, cited as Exp. N).", "note"),
     P("<b>Abstract.</b> We ask how to search a learning-rate (LR) schedule online, within the training cost of 20 "
       "ordinary runs, such that the result matches a hand-tuned schedule. The test bed is airbench on CIFAR-10 at "
       "three batch sizes (2000, 500, 125), searching either the convolutional LR or all four LR groups, under "
@@ -470,23 +471,33 @@ story = [
       "the other groups a level and conv's profile."),
 
     P("3&nbsp;&nbsp;What decides an interval", "h1"),
-    P("We take a 5-interval constant schedule that matches the baseline (BS 2000: 0.13, 0.13, 0.078, 0.047, 0.01, "
-      "held-out 93.95) and, at each interval, train candidates two grid steps either side of its value (grid ratio "
-      "x0.6) from the plan's trained state, on 8 seeds. The <i>truth</i> of a candidate is the final score when the "
-      "run continues on the plan. We compare lookaheads that score a candidate after its interval plus: the rest of "
-      "the run decaying linearly to zero (rest-of-run), or one more interval at m times the candidate (a short "
-      "cooldown, m = 0.22, 0.36, 0.6; Exp. 12)."),
+    P("We take the baseline run itself as the plan (BS 2000, 5 intervals of 40 steps) and, for each LR and each "
+      "interval, replace that LR by a constant candidate on the x0.6 grid (the grid value nearest the plan's mean "
+      "over the interval, and two grid steps either side), trained for the interval from the plan's state. The "
+      "<i>truth</i> of a candidate is the final score when the run continues on the plan. A lookahead scores the "
+      "candidate after one more interval of cooldown: linear to zero, for the searched LR alone or for all four; or "
+      "constant at m times the candidate, with m searched on the 0.6<super>k</super> grid, for the searched LR "
+      "alone, with one tied m for the other three LRs (at m times their plan mean), or with an m per LR. We run every "
+      "transform, on one seed (Exp. 32)."),
     figure(paths["lookahead"],
-           "<b>Figure 1.</b> Mean score per candidate (8 seeds, BS 2000) relative to each score's own best; a "
-           "lookahead decides like the truth when its curve peaks where the truth's does. From interval 2 on, the "
-           "short cooldowns peak one or two grid steps below the truth; the rest-of-run lookahead tracks it."),
-    P("<b>Short lookaheads are biased toward small LRs.</b> Once training is under way, every one-interval "
-      "lookahead picks 0.047-0.078 in interval 2 where the truth peaks at 0.13 (BS 2000, regret 0.08-0.29 pp per "
-      "seed), and at BS 125 picks 0.01-0.017 where the truth peaks at 0.047. The rest-of-run lookahead's 8-seed "
-      "pick equals the truth's in intervals 2-4; one seed's pick by it loses 0.020 pp per decision on average over "
-      "the three batch sizes, against 0.036 pp for the mildest short cooldown. A cooldown at a common level for all "
-      "candidates does not remove the bias, and its size depends on batch size and position in the run, so no fixed "
-      "cooldown factor calibrates it."),
+           "<b>Figure 1.</b> Conv, no transform: score per candidate (BS 2000, seed 0) relative to each score's own "
+           "best; a lookahead decides like the truth when its curve peaks where the truth's does. From interval 2 "
+           "on, the lookaheads mostly peak one or two grid steps below the truth."),
+    P("<b>Short lookaheads are biased toward small LRs, but not everywhere.</b> Without a transform, from interval 2 "
+      "on the lookaheads pick one or two grid steps below the truth: in interval 2 all five pick 0.078 where the "
+      "truth peaks at 0.13 (0.26 pp lost). Searching the cooldown's level does not remove this, and neither do other "
+      "shapes or lengths: of eight cooldown shapes (linear, constant, power, exponential, power to a searched end) "
+      "at 20 to 80 steps, 29 of 32 still pick 0.047 or 0.078, and the three that pick 0.13 win by at most 0.03 pp "
+      "(Exp. 34). Longer cooldowns shrink the gap: at 80 steps the best shapes rate 0.078 and 0.13 equal, but still "
+      "rate 0.22 about 0.3 pp lower, where the truth rates it equal to 0.13. Over six transforms (Section 2's four "
+      "and the two of Section 7) and four intervals, "
+      "the conv picks match the truth in 8-11 of 24 cells and lose 0.08-0.11 pp on average, lying 0.2-0.3 grid "
+      "steps low. The error depends on the transform and the interval far more than on the cooldown: in 16 of 24 "
+      "cells all five lookaheads pick the same candidate. So no fixed cooldown factor calibrates it."),
+    P("<b>Head and biases barely matter per interval.</b> Across candidates spanning x7.7, the truth varies by 0.21-"
+      "0.26 pp on average for head and both biases (1.04 pp for conv), close to one run's noise. Their lookahead "
+      "picks scatter by up to four grid steps and lose 0.06-0.13 pp. Searched cooldown multipliers are spread over "
+      "0.047-1, with 0.22 chosen for 16-28% of candidates."),
     P("<b>Shared state does not cancel noise.</b> One seed's difference between two candidates' truths, trained from "
       "the same state, has an SD of 0.12-0.27 pp in the first two intervals, as large as two independent full runs "
       "(0.17 pp). Single decisions are therefore often wrong by a grid step, but cheap: the truth is flat near its "
@@ -496,13 +507,10 @@ story = [
       "the transform) reduced to 10 interval means scores 93.86 at BS 500 when committed as steps, 0.14 pp below the "
       "baseline; the same means joined linearly through the interval midpoints match the baseline in every setting "
       "(Exp. 24). Five means joined linearly are enough (93.84-94.01 across the 12 conv-only settings), and snapping "
-      "them to the x0.6 grid costs 0.088 pp on average (Exp. 26), which bounds what a grid search committing 5 values "
-      "can reach."),
-    P("<b>A rest-of-run lookahead alone fails under transforms.</b> Our first version (v1) scored every candidate "
-      "with the rest of the run decaying linearly in the specified schedule. Under the ramp, that tail's applied LR "
-      "rises late, so large early candidates look bad: v1 scored 93.15 at BS 2000, below doing nothing (93.42; "
-      "Exp. 13). The lookahead has to follow the shape the transform requires, which a cheap first pass can supply."),
-
+      "them to the x0.6 grid costs 0.088 pp on average (Exp. 26). The grid itself does not prevent a match: searched "
+      "jointly with full runs (all 3<super>5</super> - 1 neighbours per move), 5 constant intervals of conv on the "
+      "grid reach 93.84-94.17 at BS 2000 under all six transforms, against 93.92 for the baseline on the same seed "
+      "(one seed, best of 414-744 runs each; Exp. 33), far beyond the 20-run budget."),
     P("4&nbsp;&nbsp;Interval Cooldown Search", "h1"),
     P("Each searched LR is represented during the search by 5 constant intervals of its specified value on the x0.6 "
       "grid; transforms apply on top. The budget is B = 20 runs of training steps."),
